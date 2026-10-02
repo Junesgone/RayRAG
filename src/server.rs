@@ -4075,6 +4075,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/datasets/{dataset_id}/documents/stop",
             post(crate::api::document::stop_parse_documents),
         )
+        // Upstream mounts the very same two handlers on the chunks path
+        // (`chunk_api.py`: `parse` and `stop_parsing`), so a client that starts or stops
+        // a parse through `/chunks` gets identical behaviour.
+        .route(
+            "/api/v1/datasets/{dataset_id}/chunks",
+            post(crate::api::document::parse_documents)
+                .delete(crate::api::document::stop_parse_documents),
+        )
         .route(
             "/api/v1/datasets/{id}/documents/{did}",
             get(crate::api::document::get_doc)
@@ -15709,6 +15717,24 @@ mod tests {
                 .contains("Documents not found"),
             "{parse}"
         );
+
+        // Upstream mounts the same two handlers on the chunks path.
+        let chunks_parse = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/datasets/{}/chunks", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"document_ids": ["missing-doc"]}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response_json(chunks_parse).await["code"], 102);
 
         let stop = router
             .clone()

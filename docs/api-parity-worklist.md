@@ -5,11 +5,11 @@
 
 ## 现状
 
-- 上游路由：**181**；RayRAG `/api/v1` 路由：**265**
-- 同名应答（exact）：**90**
+- 上游路由：**181**；RayRAG `/api/v1` 路由：**266**
+- 同名应答（exact）：**91**
 - 别名应答（alias，上游拼写已注册但走 RayRAG 自己的命名）：**38**
 - 形状不同但已被应答（covered）：**2**
-- 尚未实现（missing，已登记）：**51**
+- 尚未实现（missing，已登记）：**50**
 - 路径已有但方法缺失（method）：**0**
 - 未登记的缺口（mismatch，`--check` 视为失败）：**0**
 
@@ -17,57 +17,56 @@
 
 | 上游路径 | 来源文件 | 说明 |
 | --- | --- | --- |
-| `/agents/<agent_id>/upload` | `agent_api.py` | Agent 附件上传（画布内文件输入） |
-| `/agents/<agent_id>/webhook` | `agent_api.py` | Agent Webhook 配置（含 logs/test） |
-| `/agents/<agent_id>/webhook/logs` | `agent_api.py` | Agent Webhook 调用日志 |
-| `/agents/<agent_id>/webhook/test` | `agent_api.py` | Agent Webhook 连通性测试 |
-| `/agents/attachments/<attachment_id>/download` | `agent_api.py` | Agent 附件下载 |
-| `/agents/attachments/<attachment_id>/preview` | `agent_api.py` | Agent 附件预览 |
-| `/agents/download` | `agent_api.py` | Agent DSL/画布导出下载 |
-| `/agents/prompts` | `agent_api.py` | Agent 提示词模板列表 |
-| `/agents/test_db_connection` | `agent_api.py` | Agent 数据库组件连接测试 |
-| `/searchbots/ask` | `bot_api.py` | 搜索应用问答机器人（上游 bot_api 的公开问答面） |
-| `/searchbots/detail` | `bot_api.py` | 搜索应用机器人详情 |
-| `/searchbots/mindmap` | `bot_api.py` | 搜索应用脑图 |
-| `/searchbots/retrieval_test` | `bot_api.py` | 搜索应用检索测试 |
-| `/chat/audio/speech` | `chat_api.py` | TTS 语音合成 |
-| `/chat/audio/transcription` | `chat_api.py` | ASR 语音转写（当前仅有解析流水线内的 ASR） |
-| `/datasets/<dataset_id>/chunks` | `chunk_api.py` | 数据集级分块列表 |
-| `/datasets/<dataset_id>/documents/<document_id>/structure/graph` | `chunk_api.py` | 文档结构图（编译产物） |
-| `/connectors/<connector_id>` | `connector_api.py` | 连接器实例读写（RayRAG 用 data_sources 面） |
-| `/connectors/<connector_id>/logs` | `connector_api.py` | 连接器同步日志 |
-| `/connectors/<connector_id>/rebuild` | `connector_api.py` | 连接器重建索引 |
-| `/connectors/<connector_id>/test` | `connector_api.py` | 连接器连通性测试 |
-| `/datasets/<dataset_id>/<index_type>` | `dataset_api.py` | 按索引类型读取数据集 |
-| `/datasets/<dataset_id>/artifacts` | `dataset_api.py` | 数据集 Artifacts（wiki/topics/structure/graph） |
-| `/datasets/<dataset_id>/artifacts/<page_type>/<path:slug>` | `dataset_api.py` | Artifacts 单页内容 |
-| `/datasets/<dataset_id>/artifacts/alteration` | `dataset_api.py` | Artifacts 变更记录 |
-| `/datasets/<dataset_id>/artifacts/graph` | `dataset_api.py` | Artifacts 图视图 |
-| `/datasets/<dataset_id>/artifacts/structure` | `dataset_api.py` | Artifacts 结构视图 |
-| `/datasets/<dataset_id>/artifacts/topics` | `dataset_api.py` | Artifacts 主题视图 |
-| `/datasets/<dataset_id>/embedding/check` | `dataset_api.py` | 嵌入模型可用性检查 |
-| `/datasets/<dataset_id>/graph` | `dataset_api.py` | 数据集知识图谱读取 |
-| `/datasets/<dataset_id>/index` | `dataset_api.py` | 数据集索引重建 |
-| `/datasets/<dataset_id>/metadata/config` | `dataset_api.py` | 数据集元数据配置 |
-| `/datasets/<dataset_id>/navigation` | `dataset_api.py` | 数据集导航树 |
-| `/datasets/<dataset_id>/navigation/<path:name>` | `dataset_api.py` | 导航树单节点 |
-| `/datasets/<dataset_id>/navigation/<path:name>/children` | `dataset_api.py` | 导航树子节点 |
-| `/datasets/<dataset_id>/navigation/search` | `dataset_api.py` | 导航树检索 |
-| `/datasets/<dataset_id>/skills` | `dataset_api.py` | 数据集 Skills 列表 |
-| `/datasets/<dataset_id>/skills/<path:skill_kwd>` | `dataset_api.py` | 数据集 Skill 详情/更新 |
-| `/datasets/<dataset_id>/documents/<document_id>/metadata/config` | `document_api.py` | 文档级元数据配置 |
-| `/documents/artifact/<filename>` | `document_api.py` | 文档产物文件读取 |
-| `/documents/images/<image_id>` | `document_api.py` | 文档内图片读取 |
-| `/documents/upload` | `document_api.py` | 文档上传（RayRAG 用 /datasets/{id}/documents 与 /files/upload） |
-| `/thumbnails` | `document_api.py` | 缩略图服务 |
+| `/agents/<agent_id>/upload` | `agent_api.py` | 功能级缺口：画布附件上传（Agent 附件子系统）未实现 |
+| `/agents/<agent_id>/webhook` | `agent_api.py` | 功能级缺口：Agent Webhook 子系统未实现 |
+| `/agents/<agent_id>/webhook/logs` | `agent_api.py` | 功能级缺口：同上（Agent Webhook） |
+| `/agents/<agent_id>/webhook/test` | `agent_api.py` | 功能级缺口：同上（Agent Webhook） |
+| `/agents/attachments/<attachment_id>/download` | `agent_api.py` | 功能级缺口：同上（Agent 附件子系统） |
+| `/agents/attachments/<attachment_id>/preview` | `agent_api.py` | 功能级缺口：同上（Agent 附件子系统） |
+| `/agents/download` | `agent_api.py` | 功能级缺口：Agent 导出下载未实现 |
+| `/agents/prompts` | `agent_api.py` | 功能级缺口：提示词模板列表未实现 |
+| `/agents/test_db_connection` | `agent_api.py` | 功能级缺口：数据库组件连接测试未实现 |
+| `/searchbots/ask` | `bot_api.py` | 功能级缺口：搜索应用公开机器人面（beta token 换应用 + 问答）未实现 |
+| `/searchbots/detail` | `bot_api.py` | 功能级缺口：同上（搜索应用公开机器人面） |
+| `/searchbots/mindmap` | `bot_api.py` | 功能级缺口：同上（搜索应用公开机器人面） |
+| `/searchbots/retrieval_test` | `bot_api.py` | 功能级缺口：同上（搜索应用公开机器人面） |
+| `/chat/audio/speech` | `chat_api.py` | 功能级缺口：TTS 语音合成未实现（ASR 已在解析流水线内） |
+| `/chat/audio/transcription` | `chat_api.py` | 功能级缺口：独立 ASR 转写接口未实现（RAYRAG_ASR_* 目前只服务解析流水线） |
+| `/datasets/<dataset_id>/documents/<document_id>/structure/graph` | `chunk_api.py` | 功能级缺口：逐文档结构图（编译产物按文档/模板存储）未实现；RayRAG 的 GraphRAG 产物按数据集存储 |
+| `/connectors/<connector_id>` | `connector_api.py` | 功能级缺口：连接器实例面（RayRAG 的数据源在 /api/v1/data_sources/*，语义不同，未做别名） |
+| `/connectors/<connector_id>/logs` | `connector_api.py` | 功能级缺口：同上（连接器实例面） |
+| `/connectors/<connector_id>/rebuild` | `connector_api.py` | 功能级缺口：同上（连接器实例面） |
+| `/connectors/<connector_id>/test` | `connector_api.py` | 功能级缺口：同上（连接器实例面） |
+| `/datasets/<dataset_id>/<index_type>` | `dataset_api.py` | 功能级缺口：按索引类型删除索引未实现 |
+| `/datasets/<dataset_id>/artifacts` | `dataset_api.py` | 功能级缺口：产物（Wiki）引擎已移植（knowlege_wiki*.rs）但未接入运行期存储——DocStorePool 未被任何运行路径使用，需先接线存储与生成任务 |
+| `/datasets/<dataset_id>/artifacts/<page_type>/<path:slug>` | `dataset_api.py` | 功能级缺口：同上（产物引擎未接线） |
+| `/datasets/<dataset_id>/artifacts/alteration` | `dataset_api.py` | 功能级缺口：同上（产物引擎未接线） |
+| `/datasets/<dataset_id>/artifacts/graph` | `dataset_api.py` | 功能级缺口：同上（产物引擎未接线） |
+| `/datasets/<dataset_id>/artifacts/structure` | `dataset_api.py` | 功能级缺口：同上（产物引擎未接线） |
+| `/datasets/<dataset_id>/artifacts/topics` | `dataset_api.py` | 功能级缺口：同上（产物引擎未接线） |
+| `/datasets/<dataset_id>/embedding/check` | `dataset_api.py` | 功能级缺口：换模型重嵌入相似度校验未实现 |
+| `/datasets/<dataset_id>/graph` | `dataset_api.py` | 功能级缺口：数据集知识图谱读取未实现（产物按 kb 存储但缺公开读取路径） |
+| `/datasets/<dataset_id>/index` | `dataset_api.py` | 功能级缺口：按索引类型重建索引未实现 |
+| `/datasets/<dataset_id>/metadata/config` | `dataset_api.py` | 功能级缺口：数据集自动元数据配置未实现 |
+| `/datasets/<dataset_id>/navigation` | `dataset_api.py` | 功能级缺口：数据集导航引擎已移植（knowlege_dataset_nav.rs）但未接入运行期存储 |
+| `/datasets/<dataset_id>/navigation/<path:name>` | `dataset_api.py` | 功能级缺口：同上（导航引擎未接线） |
+| `/datasets/<dataset_id>/navigation/<path:name>/children` | `dataset_api.py` | 功能级缺口：同上（导航引擎未接线） |
+| `/datasets/<dataset_id>/navigation/search` | `dataset_api.py` | 功能级缺口：同上（导航引擎未接线） |
+| `/datasets/<dataset_id>/skills` | `dataset_api.py` | 功能级缺口：数据集 Skills 面未实现（Skills 索引仅有全局 /api/v1/skills/*） |
+| `/datasets/<dataset_id>/skills/<path:skill_kwd>` | `dataset_api.py` | 功能级缺口：同上（Skills 面未实现） |
+| `/datasets/<dataset_id>/documents/<document_id>/metadata/config` | `document_api.py` | 功能级缺口：文档级元数据配置未实现 |
+| `/documents/artifact/<filename>` | `document_api.py` | 功能级缺口：文档产物文件读取未实现 |
+| `/documents/images/<image_id>` | `document_api.py` | 功能级缺口：文档内图片读取未实现 |
+| `/documents/upload` | `document_api.py` | 功能级缺口：独立文档上传入口未实现（RayRAG 走 /datasets/{id}/documents） |
+| `/thumbnails` | `document_api.py` | 功能级缺口：缩略图服务未实现 |
 | `/files/link-to-datasets` | `file2document_api.py` | 功能级缺口：文件关联数据集（file2document 目前为占位实现） |
 | `/workspace-files/<file_id>/versions` | `file_commit_api.py` | 功能级缺口：文件版本历史（FileCommitService）未移植，/api/v1/file/commits 目前为空实现 |
 | `/plugin/tools` | `plugin_api.py` | 功能级缺口：上游 pluginlib 插件注册表（LLM 工具元数据）未移植；RayRAG 的画布工具目录在 /api/v1/components |
-| `/auth/password/forgot/captcha` | `user_api.py` | 忘记密码-图形验证码 |
-| `/auth/password/forgot/otp` | `user_api.py` | 忘记密码-发送 OTP |
-| `/auth/password/forgot/otp/verify` | `user_api.py` | 忘记密码-校验 OTP |
-| `/auth/password/reset` | `user_api.py` | 忘记密码-重置 |
-| `/users/me/models` | `user_api.py` | 当前用户可用模型列表 |
+| `/auth/password/forgot/captcha` | `user_api.py` | 功能级缺口：忘记密码整体流程（验证码/OTP/重置）未实现 |
+| `/auth/password/forgot/otp` | `user_api.py` | 功能级缺口：同上（忘记密码流程） |
+| `/auth/password/forgot/otp/verify` | `user_api.py` | 功能级缺口：同上（忘记密码流程） |
+| `/auth/password/reset` | `user_api.py` | 功能级缺口：同上（忘记密码流程） |
+| `/users/me/models` | `user_api.py` | 功能级缺口：租户默认模型信息（llm_id/embd_id/asr_id/img2txt_id…）读取接口未实现；RayRAG 的对应数据在 /api/v1/tenant/models |
 
 ## 别名对照（上游拼写 → RayRAG 路由）
 

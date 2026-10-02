@@ -289,6 +289,7 @@
 | GET | `/api/v1/datasets/tags/aggregation` | `-` |
 | POST | `/api/v1/datasets/{dataset_id}/documents/parse` | `-` |
 | POST | `/api/v1/datasets/{dataset_id}/documents/stop` | `-` |
+| POST | `/api/v1/datasets/{dataset_id}/chunks` | `-` |
 | GET | `/api/v1/datasets/{id}/documents/{did}` | `-` |
 | POST | `/api/v1/datasets/{id}/documents/{did}/reparse` | `-` |
 | GET | `/api/v1/documents/{doc_id}/preview` | `-` |
