@@ -986,3 +986,9 @@ the paired colour picker + hex input. */
 .ov-nav-tree table{width:100%;border-collapse:collapse;font-size:13px}
 .ov-nav-tree th,.ov-nav-tree td{padding:6px 8px;border-bottom:1px solid var(--bd);text-align:left}
 .ov-nav-children{padding:4px 0 4px 12px;font-size:13px;color:var(--t2)}
+
+/* Model settings: the endpoint health probe. */
+.endpoint-check-section{margin:14px 0}
+.endpoint-check-result{margin-top:10px;font-size:13px}
+.endpoint-check-result table{width:100%;border-collapse:collapse}
+.endpoint-check-result th,.endpoint-check-result td{padding:5px 8px;border-bottom:1px solid var(--bd);text-align:left}

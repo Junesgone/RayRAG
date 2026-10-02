@@ -2,6 +2,12 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.8.7] - 2026-10-02
+
+- **模型设置页新增「Endpoint health / Check model endpoints」按钮**：调用 `GET /api/v1/models/endpoints/check`，用表格列出**每个能力**（chat / embedding / rerank / asr / vision）的环境变量、端点、是否可达、失败详情；不可达时在末尾用红字汇总 `Unreachable: …`，并附上那句关键提醒（嵌入可达 ≠ 对话可达）。无配置或服务未启动时，**页面上直接看得出来**，而不是去猜为什么生成结果为空。
+- 这补上了用户要求里的硬规则：「每个功能都要有交互按钮」——上一版刚加的接口如果没有入口，用户依然看不到它。
+- **测试**：全量 **2146 passed / 0 failed**（kb_ui 123 条全过）。
+
 ## [0.8.6] - 2026-10-02
 
 - **新增 `GET /api/v1/models/endpoints/check`：一次调用逐个探测所有模型端点**。起因是一次真实故障——产物抽取一直空转，因为 `LLM_API_BASE` 指向的服务**根本没在运行**，而唯一的查法是登录宿主机手工 `curl`。现在按能力（chat / embedding / rerank / asr / vision）分别报告：环境变量名、base 地址、是否可达、失败详情；并返回 `unreachable` 列表。
