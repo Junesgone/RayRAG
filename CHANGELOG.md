@@ -2,6 +2,12 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.8.3] - 2026-10-02
+
+- **产物面板的 Generate 按钮真的会编译了**：此前它只显示"产物生成尚未实现"；现在调用 `POST /datasets/{id}/artifacts/compile`，并把**两阶段的结果如实说出来**——`Mapped N of M document(s), extracts E, pages created P, modified Q`；有文档抽不出东西时补一句有多少个；**当 `extracts = 0` 且确有文档时**，明确写出"模型没有从该数据集里抽到实体/概念/断言/关系/主题，因此没有产出页面——这是数据结果，不是失败"。失败则红字显示原因。
+- 与上一版配套：**接口负责把"为什么是 0"讲清楚，按钮负责把它显示给用户**，而不是留一句"排队中"。
+- **测试**：全量 **2145 passed / 0 failed**（kb_ui 123 条全过）。
+
 ## [0.8.1] - 2026-10-02
 
 - **新增 `POST /datasets/{id}/artifacts/compile`——产物（Wiki）生成终于能跑了**：这是**两阶段**作业，缺任何一步都会"静默空转"——MAP 阶段逐文档让模型抽取并**把 extracts 写进存储**，COMPILE 阶段再**从存储读回 extracts** 合成页面。本实现按此顺序执行，并返回 `{mapped, total, compile}` 让两次都可见；数据集没有已解析分块时返回 `generated: 0` 加说明，而不是看不出问题的成功；缺对话模型时返回 `code 102` 并指明。
