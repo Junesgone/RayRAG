@@ -32,79 +32,98 @@
 | 主题切换/语言切换/退出登录 | 顶栏按钮 | ✅ |
 
 > 注：🔶 表示功能入口与主流程已具备、个别文案或深度细节待后续轮次逐行对齐；✅ 表示逐项交互一致且经点击实测。
-## /| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
+## /
+| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
 |---|---|---|
 | 按钮 / 下拉 / 标签 / 悬停弹窗 / 分页（详见 ragflow-ui-map.json 对应条目） | header-parity-cdp、sidebar-routes-cdp、home-dump-cdp；布局审计 layout-audit-cdp/layout-audit-detail-cdp（溢出/不可见/低对比/截断=0）；0 pageerror | ✅ |
 
-## /datasets| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
+## /datasets
+| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
 |---|---|---|
 | 按钮 / 下拉 / 标签 / 悬停弹窗 / 分页（详见 ragflow-ui-map.json 对应条目） | ragflow-datasets-cdp、dataset-tabs-cdp、dataset-config-cdp、dataset-testing-cdp、dataset-language-select-cdp、dataset-permission-select-cdp、dataset-permission-avatar-cdp、dataset-tags-cdp、dataset-artifacts-tab-cdp、dataset-delete-route-cdp；布局审计 layout-audit-cdp/layout-audit-detail-cdp（溢出/不可见/低对比/截断=0）；0 pageerror | ✅ |
 
-## /chats| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
+## /chats
+| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
 |---|---|---|
 | 按钮 / 下拉 / 标签 / 悬停弹窗 / 分页（详见 ragflow-ui-map.json 对应条目） | chat-widget-cdp、chat-drawer-model-cdp（列表/抽屉/模型选择）；布局审计 layout-audit-cdp/layout-audit-detail-cdp（溢出/不可见/低对比/截断=0）；0 pageerror | ✅ |
 
-## /searches| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
+## /searches
+| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
 |---|---|---|
 | 按钮 / 下拉 / 标签 / 悬停弹窗 / 分页（详见 ragflow-ui-map.json 对应条目） | search-documents-cdp、search-settings-drawer-cdp、search-answer-cdp、search-related-cdp、search-mindmap-progress-cdp、search-app-sapp-cdp、search-app-slider-cdp、search-rerank-cdp、searchapp-rerank-tree-cdp、rerank-tree-cdp；布局审计 layout-audit-cdp/layout-audit-detail-cdp（溢出/不可见/低对比/截断=0）；0 pageerror | ✅ |
 
-## /agents| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
+## /agents
+| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
 |---|---|---|
 | 按钮 / 下拉 / 标签 / 悬停弹窗 / 分页（详见 ragflow-ui-map.json 对应条目） | agents-page-cdp；布局审计 layout-audit-cdp/layout-audit-detail-cdp（溢出/不可见/低对比/截断=0）；0 pageerror | ✅ |
 
-## /agent-templates| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
+## /agent-templates
+| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
 |---|---|---|
 | 按钮 / 下拉 / 标签 / 悬停弹窗 / 分页（详见 ragflow-ui-map.json 对应条目） | templates-page-cdp；布局审计 layout-audit-cdp/layout-audit-detail-cdp（溢出/不可见/低对比/截断=0）；0 pageerror | ✅ |
 
-## /memories| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
+## /memories
+| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
 |---|---|---|
 | 按钮 / 下拉 / 标签 / 悬停弹窗 / 分页（详见 ragflow-ui-map.json 对应条目） | memories-page-cdp、memory-tree-cdp；布局审计 layout-audit-cdp/layout-audit-detail-cdp（溢出/不可见/低对比/截断=0）；0 pageerror | ✅ |
 
-## /files| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
+## /files
+| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
 |---|---|---|
 | 按钮 / 下拉 / 标签 / 悬停弹窗 / 分页（详见 ragflow-ui-map.json 对应条目） | files-page-cdp；布局审计 layout-audit-cdp/layout-audit-detail-cdp（溢出/不可见/低对比/截断=0）；0 pageerror | ✅ |
 
-## /files/skills| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
+## /files/skills
+| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
 |---|---|---|
 | 按钮 / 下拉 / 标签 / 悬停弹窗 / 分页（详见 ragflow-ui-map.json 对应条目） | skills-config-cdp、skill-embd-tree-cdp；布局审计 layout-audit-cdp/layout-audit-detail-cdp（溢出/不可见/低对比/截断=0）；0 pageerror | ✅ |
 
-## /user-setting| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
+## /user-setting
+| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
 |---|---|---|
 | 按钮 / 下拉 / 标签 / 悬停弹窗 / 分页（详见 ragflow-ui-map.json 对应条目） | profile-page-cdp、joined-teams-cdp、data-source-form-cdp、added-models-dialog-cdp；布局审计 layout-audit-cdp/layout-audit-detail-cdp（溢出/不可见/低对比/截断=0）；0 pageerror | ✅ |
 
-## /user-setting/profile| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
+## /user-setting/profile
+| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
 |---|---|---|
 | 按钮 / 下拉 / 标签 / 悬停弹窗 / 分页（详见 ragflow-ui-map.json 对应条目） | profile-page-cdp、profile-tz-cdp；布局审计 layout-audit-cdp/layout-audit-detail-cdp（溢出/不可见/低对比/截断=0）；0 pageerror | ✅ |
 
-## /user-setting/locale| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
+## /user-setting/locale
+| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
 |---|---|---|
 | 按钮 / 下拉 / 标签 / 悬停弹窗 / 分页（详见 ragflow-ui-map.json 对应条目） | （见说明）；布局审计 layout-audit-cdp/layout-audit-detail-cdp（溢出/不可见/低对比/截断=0）；0 pageerror | ✅（说明：上游 routes.tsx 中 locale 子路由已注释，双方一致不提供） |
 
-## /user-setting/model| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
+## /user-setting/model
+| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
 |---|---|---|
 | 按钮 / 下拉 / 标签 / 悬停弹窗 / 分页（详见 ragflow-ui-map.json 对应条目） | model-page-layout-cdp、model-catalog-lookup-cdp、model-tree-keyboard-cdp、provider-cards-cdp、provider-modal-cdp、provider-custom-model-cdp、provider-model-picker-cdp、provider-multiselect-cdp、provider-toggle-list-cdp、provider-base-url-cdp；布局审计 layout-audit-cdp/layout-audit-detail-cdp（溢出/不可见/低对比/截断=0）；0 pageerror | ✅ |
 
-## /user-setting/team| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
+## /user-setting/team
+| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
 |---|---|---|
 | 按钮 / 下拉 / 标签 / 悬停弹窗 / 分页（详见 ragflow-ui-map.json 对应条目） | joined-teams-cdp；布局审计 layout-audit-cdp/layout-audit-detail-cdp（溢出/不可见/低对比/截断=0）；0 pageerror | ✅ |
 
-## /user-setting/api| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
+## /user-setting/api
+| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
 |---|---|---|
 | 按钮 / 下拉 / 标签 / 悬停弹窗 / 分页（详见 ragflow-ui-map.json 对应条目） | （见说明）；布局审计 layout-audit-cdp/layout-audit-detail-cdp（溢出/不可见/低对比/截断=0）；0 pageerror | ✅（说明：key 列表/生成/删除 与上游同构；由 user-setting 页面族脚本与布局审计覆盖，未单列专项脚本） |
 
-## /user-setting/mcp| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
+## /user-setting/mcp
+| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
 |---|---|---|
 | 按钮 / 下拉 / 标签 / 悬停弹窗 / 分页（详见 ragflow-ui-map.json 对应条目） | （见说明）；布局审计 layout-audit-cdp/layout-audit-detail-cdp（溢出/不可见/低对比/截断=0）；0 pageerror | ✅（说明：MCP 客户端设置 与上游同构；同上覆盖说明） |
 
-## /user-setting/data-source| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
+## /user-setting/data-source
+| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
 |---|---|---|
 | 按钮 / 下拉 / 标签 / 悬停弹窗 / 分页（详见 ragflow-ui-map.json 对应条目） | data-source-form-cdp；布局审计 layout-audit-cdp/layout-audit-detail-cdp（溢出/不可见/低对比/截断=0）；0 pageerror | ✅ |
 
-## /user-setting/chat-channel| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
+## /user-setting/chat-channel
+| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
 |---|---|---|
 | 按钮 / 下拉 / 标签 / 悬停弹窗 / 分页（详见 ragflow-ui-map.json 对应条目） | （见说明）；布局审计 layout-audit-cdp/layout-audit-detail-cdp（溢出/不可见/低对比/截断=0）；0 pageerror | ✅（说明：通道配置 与上游同构；同上覆盖说明） |
 
-## /agent-list| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
+## /agent-list
+| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
 |---|---|---|
 | 按钮 / 下拉 / 标签 / 悬停弹窗 / 分页（详见 ragflow-ui-map.json 对应条目） | sidebar-routes-cdp、agents-page-cdp；布局审计 layout-audit-cdp/layout-audit-detail-cdp（溢出/不可见/低对比/截断=0）；0 pageerror | ✅ |
 
@@ -164,31 +183,38 @@
 |---|---|---|
 | Business (button) | 同上（企业版专属，与上游 OSS 一致不注册） | ✅（说明） |
 
-## /dataset/files/a710b71c52b611f193f62728e4a35a69| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
+## /dataset/files/a710b71c52b611f193f62728e4a35a69
+| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
 |---|---|---|
 | 按钮 / 下拉 / 标签 / 悬停弹窗 / 分页（详见 ragflow-ui-map.json 对应条目） | dataset-tabs-cdp、files-page-cdp、chunk-workbench-cdp；布局审计 layout-audit-cdp/layout-audit-detail-cdp（溢出/不可见/低对比/截断=0）；0 pageerror | ✅ |
 
-## /dataset/logs/a710b71c52b611f193f62728e4a35a69| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
+## /dataset/logs/a710b71c52b611f193f62728e4a35a69
+| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
 |---|---|---|
 | 按钮 / 下拉 / 标签 / 悬停弹窗 / 分页（详见 ragflow-ui-map.json 对应条目） | dataset-logs-check、dataset-tabs-cdp；布局审计 layout-audit-cdp/layout-audit-detail-cdp（溢出/不可见/低对比/截断=0）；0 pageerror | ✅ |
 
-## /dataset/configuration/a710b71c52b611f193f62728e4a35a69| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
+## /dataset/configuration/a710b71c52b611f193f62728e4a35a69
+| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
 |---|---|---|
 | 按钮 / 下拉 / 标签 / 悬停弹窗 / 分页（详见 ragflow-ui-map.json 对应条目） | dataset-config-cdp、dataset-language-select-cdp、dataset-permission-select-cdp、dataset-tags-cdp、cfg-overflow-cdp、overflow-cdp、testing-switch-cdp、topk-cdp；布局审计 layout-audit-cdp/layout-audit-detail-cdp（溢出/不可见/低对比/截断=0）；0 pageerror | ✅ |
 
-## /dataset/retrieval/a710b71c52b611f193f62728e4a35a69| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
+## /dataset/retrieval/a710b71c52b611f193f62728e4a35a69
+| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
 |---|---|---|
 | 按钮 / 下拉 / 标签 / 悬停弹窗 / 分页（详见 ragflow-ui-map.json 对应条目） | dataset-testing-cdp、testing-switch-cdp、max-tokens/rerank 树运行验证（searchapp-rerank-tree/rerank-tree）；布局审计 layout-audit-cdp/layout-audit-detail-cdp（溢出/不可见/低对比/截断=0）；0 pageerror | ✅ |
 
-## /dataset/knowledge-graph/a710b71c52b611f193f62728e4a35a69| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
+## /dataset/knowledge-graph/a710b71c52b611f193f62728e4a35a69
+| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
 |---|---|---|
 | 按钮 / 下拉 / 标签 / 悬停弹窗 / 分页（详见 ragflow-ui-map.json 对应条目） | dataset-artifacts-tab-cdp、dataset-tabs-cdp；布局审计 layout-audit-cdp/layout-audit-detail-cdp（溢出/不可见/低对比/截断=0）；0 pageerror | ✅ |
 
-## /agent/f9e7dc32973e11f197ff23af4dabe863| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
+## /agent/f9e7dc32973e11f197ff23af4dabe863
+| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
 |---|---|---|
 | 按钮 / 下拉 / 标签 / 悬停弹窗 / 分页（详见 ragflow-ui-map.json 对应条目） | agent-explore-cdp（详情/启动/删除）；布局审计 layout-audit-cdp/layout-audit-detail-cdp（溢出/不可见/低对比/截断=0）；0 pageerror | ✅ |
 
-## /agent/f9e7dc32973e11f197ff23af4dabe863/explore| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
+## /agent/f9e7dc32973e11f197ff23af4dabe863/explore
+| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
 |---|---|---|
 | 按钮 / 下拉 / 标签 / 悬停弹窗 / 分页（详见 ragflow-ui-map.json 对应条目） | agent-explore-cdp、agent-share-cdp；布局审计 layout-audit-cdp/layout-audit-detail-cdp（溢出/不可见/低对比/截断=0）；0 pageerror | ✅ |
 
@@ -200,11 +226,13 @@
 | 路由嵌套 | `/memory`（此前缺失 → 已补）＋ `/memory/memory-message/:id`、`/memory/memory-setting/:id` | ✅ |
 （证据：本机 404 探针；上游对照 web/src/routes.tsx + pages/memory/index.tsx；`memory_shell_page` 门禁 2112 passed）
 
-## /memory/memory-message/0ee40d8a52b711f193f62728e4a35a69| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
+## /memory/memory-message/0ee40d8a52b711f193f62728e4a35a69
+| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
 |---|---|---|
 | 按钮 / 下拉 / 标签 / 悬停弹窗 / 分页（详见 ragflow-ui-map.json 对应条目） | memory-tree-cdp（消息树/搜索/分页/未知操作）；布局审计 layout-audit-cdp/layout-audit-detail-cdp（溢出/不可见/低对比/截断=0）；0 pageerror | ✅ |
 
-## /memory/memory-setting/0ee40d8a52b711f193f62728e4a35a69| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
+## /memory/memory-setting/0ee40d8a52b711f193f62728e4a35a69
+| 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
 |---|---|---|
 | 按钮 / 下拉 / 标签 / 悬停弹窗 / 分页（详见 ragflow-ui-map.json 对应条目） | memory-tree-cdp（配置表单/模型叶子/保存）；布局审计 layout-audit-cdp/layout-audit-detail-cdp（溢出/不可见/低对比/截断=0）；0 pageerror | ✅ |
 
