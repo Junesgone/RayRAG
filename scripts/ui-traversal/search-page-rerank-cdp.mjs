@@ -121,10 +121,8 @@ try {
     if (el) el.click();
   });
   await page.waitForTimeout(1500);
-  await page.evaluate(() => {
-    const c = document.getElementById('sa_rerank');
-    if (c) c.click();
-  });
+  await page.locator("#sa_rerank").click({ timeout: 5000 });
+  await page.waitForSelector("#saRerankRow:visible", { timeout: 8000 }).catch(() => {});
   await page.waitForTimeout(500);
   const toggled = await page.evaluate(() => {
     const row = document.getElementById('saRerankRow');
@@ -135,7 +133,7 @@ try {
           ? -1
           : DEFAULT_MODEL_CATALOG.length,
       rowCount: document.querySelectorAll(
-        "#saRerankSelTree .default-model-node",
+        "#saRerankSelTree .default-model-leaf",
       ).length,
     };
   });
@@ -149,7 +147,7 @@ try {
   const pick = await page.evaluate(() => {
     const rows = Array.from(
       document.querySelectorAll(
-        "#saRerankSelTree button.default-model-node",
+        "#saRerankSelTree button.default-model-leaf",
       ),
     );
     const diag = rows
