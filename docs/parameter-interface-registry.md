@@ -284,6 +284,11 @@
 | GET | `/api/v1/datasets/{id}` | `-` |
 | GET | `/api/v1/datasets/{id}/tags` | `-` |
 | POST | `/api/v1/datasets/{id}/documents` | `-` |
+| POST | `/api/v1/datasets/{dataset_id}/metadata/update` | `-` |
+| GET | `/api/v1/datasets/metadata/flattened` | `-` |
+| GET | `/api/v1/datasets/tags/aggregation` | `-` |
+| POST | `/api/v1/datasets/{dataset_id}/documents/parse` | `-` |
+| POST | `/api/v1/datasets/{dataset_id}/documents/stop` | `-` |
 | GET | `/api/v1/datasets/{id}/documents/{did}` | `-` |
 | POST | `/api/v1/datasets/{id}/documents/{did}/reparse` | `-` |
 | GET | `/api/v1/documents/{doc_id}/preview` | `-` |
@@ -293,12 +298,13 @@
 | GET | `/api/v1/datasets/{id}/documents/{did}/download` | `-` |
 | GET | `/api/v1/datasets/{id}/documents/{did}/metadata` | `-` |
 | GET | `/api/v1/datasets/{id}/metadata/keys` | `-` |
-| POST | `/api/v1/datasets/{id}/metadata/summary` | `-` |
 | ANY | `/api/v1/datasets/{id}/documents/metadatas` | `axum::routing` |
 | POST | `/api/v1/datasets/{id}/metadata/batch` | `-` |
 | GET | `/api/v1/datasets/{id}/documents/{did}/chunks` | `-` |
 | GET | `/api/v1/datasets/{id}/documents/{did}/chunks/{chunk_id}` | `-` |
 | POST | `/api/v1/retrieval` | `-` |
+| POST | `/api/v1/datasets/search` | `-` |
+| POST | `/api/v1/datasets/{dataset_id}/search` | `-` |
 | ANY | `/api/v1/conversations/{conversation_id}` | `axum::routing` |
 | ANY | `/api/v1/conversations/{conversation_id}/clear` | `axum::routing` |
 | ANY | `/api/v1/conversations/{conversation_id}/export` | `axum::routing` |

@@ -9,11 +9,13 @@
 //! - `DELETE /api/v1/datasets/{id}/tags` body `{"tags": [...]}`.
 //! - `PUT    /api/v1/datasets/{id}/tags` body `{"from_tag", "to_tag"}`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
+use crate::server::AuthContext;
+use axum::Extension;
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
@@ -138,6 +140,59 @@ pub async fn list_tags(
         .map(|(tag, count)| serde_json::json!([tag, count]))
         .collect();
     Json(serde_json::json!({"code": 0, "message": "ok", "data": data})).into_response()
+}
+
+/// `GET /api/v1/datasets/tags/aggregation?dataset_ids=a,b` — upstream
+/// `dataset_api.aggregate_tags`, the tag counter behind the dataset list's tag filter.
+///
+/// Upstream validates every dataset against the tenant and merges the per-dataset counts
+/// into `[{"value": tag, "count": n}]`.
+pub async fn aggregate_tags(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
+    let dataset_ids: Vec<String> = query
+        .get("dataset_ids")
+        .map(|raw| {
+            raw.split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    if dataset_ids.is_empty() {
+        return Json(serde_json::json!({
+            "code": 102,
+            "message": "Lack of dataset_ids in query parameters"
+        }))
+        .into_response();
+    }
+    for dataset_id in &dataset_ids {
+        let accessible = state
+            .kbs
+            .get(dataset_id)
+            .is_some_and(|kb| kb.owner_id == auth.user_id || auth.is_admin);
+        if !accessible {
+            return Json(serde_json::json!({
+                "code": 102,
+                "message": format!("No authorization for dataset '{dataset_id}'")
+            }))
+            .into_response();
+        }
+    }
+    let mut merged: BTreeMap<String, usize> = BTreeMap::new();
+    for dataset_id in &dataset_ids {
+        for (tag, count) in tag_counts(&state, dataset_id) {
+            *merged.entry(tag).or_default() += count;
+        }
+    }
+    let data: Vec<serde_json::Value> = merged
+        .into_iter()
+        .map(|(tag, count)| serde_json::json!({ "value": tag, "count": count }))
+        .collect();
+    Json(serde_json::json!({ "code": 0, "data": data })).into_response()
 }
 
 /// DELETE `/api/v1/datasets/{id}/tags`

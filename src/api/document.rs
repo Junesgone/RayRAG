@@ -772,6 +772,154 @@ pub async fn ingest_documents(
     }))
 }
 
+/// The document selection upstream's `/documents/parse` and `/documents/stop` accept.
+///
+/// Upstream reads `document_ids` (`document_api.py`: "`document_ids` is required"); the
+/// `doc_ids` spelling RayRAG's own `/documents/ingest` uses is accepted as a fallback so
+/// one body shape does not silently produce an empty selection.
+fn upstream_document_ids(body: &serde_json::Value) -> Vec<String> {
+    ["document_ids", "doc_ids"]
+        .iter()
+        .find_map(|key| body.get(*key).and_then(|value| value.as_array()))
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str())
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Resolve the selection against one dataset, upstream-style: ids that are not documents
+/// of this dataset are reported together and the request fails when none is valid.
+fn resolve_dataset_documents(
+    state: &std::sync::Arc<AppState>,
+    auth: &AuthContext,
+    kb_id: &str,
+    doc_ids: &[String],
+) -> Result<Vec<DocRecord>, Vec<String>> {
+    let mut found = Vec::new();
+    let mut missing = Vec::new();
+    for doc_id in doc_ids {
+        match state.docs.get(doc_id) {
+            Some(doc) if doc.kb_id == kb_id && kb_manageable(state, kb_id, auth) => found.push(doc),
+            _ => missing.push(doc_id.clone()),
+        }
+    }
+    if found.is_empty() && !missing.is_empty() {
+        return Err(missing);
+    }
+    Ok(found)
+}
+
+/// `POST /api/v1/datasets/{dataset_id}/documents/parse` — upstream
+/// `document_api.parse_documents`: run each selected document again and answer
+/// `{"success_count": n}` (plus `errors` when some could not be queued).
+pub async fn parse_documents(
+    State(state): State<std::sync::Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(kb_id): Path<String>,
+    axum::Json(body): axum::Json<serde_json::Value>,
+) -> impl IntoResponse {
+    if !kb_manageable(&state, &kb_id, &auth) {
+        return Json(serde_json::json!({ "code": 404, "message": "Not found" }));
+    }
+    let doc_ids = upstream_document_ids(&body);
+    if doc_ids.is_empty() {
+        return Json(serde_json::json!({ "code": 400, "message": "'document_ids' is required" }));
+    }
+    let documents = match resolve_dataset_documents(&state, &auth, &kb_id, &doc_ids) {
+        Ok(documents) => documents,
+        Err(missing) => {
+            return Json(serde_json::json!({
+                "code": 102,
+                "message": format!("Documents not found: [{}]", missing.join(", ")),
+            }));
+        }
+    };
+    let mut success_count = 0usize;
+    let mut errors: Vec<String> = Vec::new();
+    for doc in documents {
+        let run = state
+            .docs
+            .get(&doc.id)
+            .ok_or_else(|| anyhow::anyhow!("Document not found"))
+            .and_then(|doc| {
+                enqueue_document_processing(
+                    state.clone(),
+                    &auth.user_id,
+                    doc,
+                    crate::api::features::TASK_PRIORITY_HIGH,
+                )
+            });
+        match run {
+            Ok(_) => success_count += 1,
+            Err(error) => errors.push(format!("{}: {error}", doc.id)),
+        }
+    }
+    tracing::info!(dataset = %kb_id, success_count, failures = errors.len(), "Dataset documents queued for parsing");
+    if errors.is_empty() {
+        return Json(serde_json::json!({ "code": 0, "data": { "success_count": success_count } }));
+    }
+    Json(serde_json::json!({
+        "code": 0,
+        "data": { "success_count": success_count, "errors": errors },
+    }))
+}
+
+/// `POST /api/v1/datasets/{dataset_id}/documents/stop` — upstream
+/// `document_api.stop_parse_documents`: cancel the running parse of every selected
+/// document and answer `{"success_count": n}`.
+pub async fn stop_parse_documents(
+    State(state): State<std::sync::Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(kb_id): Path<String>,
+    axum::Json(body): axum::Json<serde_json::Value>,
+) -> impl IntoResponse {
+    if !kb_manageable(&state, &kb_id, &auth) {
+        return Json(serde_json::json!({ "code": 404, "message": "Not found" }));
+    }
+    let doc_ids = upstream_document_ids(&body);
+    if doc_ids.is_empty() {
+        return Json(serde_json::json!({ "code": 400, "message": "'document_ids' is required" }));
+    }
+    let documents = match resolve_dataset_documents(&state, &auth, &kb_id, &doc_ids) {
+        Ok(documents) => documents,
+        Err(missing) => {
+            return Json(serde_json::json!({
+                "code": 102,
+                "message": format!("Documents not found: [{}]", missing.join(", ")),
+            }));
+        }
+    };
+    let mut success_count = 0usize;
+    let mut errors: Vec<String> = Vec::new();
+    for doc in documents {
+        if let Err(error) = state.tasks.cancel_document(&doc.id) {
+            errors.push(format!("{}: {error}", doc.id));
+            continue;
+        }
+        if let Err(error) =
+            state
+                .docs
+                .update_status(&doc.id, "CANCELLED", 1.0, "Processing cancelled")
+        {
+            tracing::warn!(%error, doc_id = %doc.id, "stop-parse: status write failed");
+        }
+        success_count += 1;
+    }
+    tracing::info!(dataset = %kb_id, success_count, failures = errors.len(), "Dataset document parsing stopped");
+    if errors.is_empty() {
+        return Json(serde_json::json!({ "code": 0, "data": { "success_count": success_count } }));
+    }
+    Json(serde_json::json!({
+        "code": 0,
+        "data": { "success_count": success_count, "errors": errors },
+    }))
+}
+
 /// DELETE /api/v1/datasets/{kb_id}/documents/{doc_id} — delete doc
 /// PATCH /api/v1/datasets/{id}/documents/{did} — rename a document.
 pub async fn rename_doc(

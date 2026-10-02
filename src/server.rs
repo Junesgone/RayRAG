@@ -2968,6 +2968,25 @@ async fn logout(
     Json(serde_json::json!({ "code": 0, "data": true })).into_response()
 }
 
+/// POST /api/v1/datasets/{dataset_id}/search — upstream `chunk_api.retrieval_test`.
+///
+/// Upstream registers the *same* handler on `/retrieval`, `/datasets/search` and
+/// `/datasets/<dataset_id>/search`; the path-scoped variant only differs in that the id
+/// from the path becomes `dataset_ids`. Keeping the shared handler means the scoped call
+/// cannot drift from the plain one.
+async fn dataset_scoped_retrieval(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    axum::extract::Path(dataset_id): axum::extract::Path<String>,
+    Json(mut body): Json<serde_json::Value>,
+) -> Response {
+    if let Some(object) = body.as_object_mut() {
+        object.insert("dataset_ids".into(), serde_json::json!([dataset_id]));
+        object.remove("kb_id");
+    }
+    retrieval(State(state), Extension(auth), Json(body)).await
+}
+
 async fn clear_conversation(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -4024,6 +4043,31 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/documents/ingest",
             post(crate::api::document::ingest_documents),
         )
+        // Upstream `document_api.py::metadata_batch_update`: the same body as the PATCH
+        // `/documents/metadatas` route, mounted on the path its client calls.
+        .route(
+            "/api/v1/datasets/{dataset_id}/metadata/update",
+            post(crate::api::document_metadata::update_document_metadatas),
+        )
+        // Upstream `dataset_api.py::get_flattened_metadata` / `aggregate_tags`.
+        .route(
+            "/api/v1/datasets/metadata/flattened",
+            get(crate::api::document_metadata::flattened_metadata),
+        )
+        .route(
+            "/api/v1/datasets/tags/aggregation",
+            get(crate::api::dataset_tags::aggregate_tags),
+        )
+        // Upstream `document_api.py::parse_documents` / `stop_parse_documents`: the
+        // dataset-scoped selection endpoints behind the file list's toolbar.
+        .route(
+            "/api/v1/datasets/{dataset_id}/documents/parse",
+            post(crate::api::document::parse_documents),
+        )
+        .route(
+            "/api/v1/datasets/{dataset_id}/documents/stop",
+            post(crate::api::document::stop_parse_documents),
+        )
         .route(
             "/api/v1/datasets/{id}/documents/{did}",
             get(crate::api::document::get_doc)
@@ -4071,8 +4115,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(crate::api::document_metadata::metadata_keys),
         )
         .route(
+            // Upstream `document_api.py::metadata_summary` is a GET that reads
+            // `doc_ids` from the query string; the POST form is RayRAG's own. Both live
+            // on one route because axum requires a single parameter name per position.
             "/api/v1/datasets/{id}/metadata/summary",
-            post(crate::api::document_metadata::metadata_summary),
+            get(crate::api::document_metadata::metadata_summary_get)
+                .post(crate::api::document_metadata::metadata_summary),
         )
         // Upstream `document_api.update_metadata` — the endpoint the dataset
         // metadata manager calls.
@@ -4097,6 +4145,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(crate::api::chunks::get_chunk).patch(crate::api::chunks::update_chunk),
         )
         .route("/api/v1/retrieval", post(retrieval))
+        // Upstream mounts `retrieval_test` on all three paths (`chunk_api.py`).
+        .route("/api/v1/datasets/search", post(retrieval))
+        .route(
+            "/api/v1/datasets/{dataset_id}/search",
+            post(dataset_scoped_retrieval),
+        )
         .route(
             "/api/v1/conversations/{conversation_id}",
             axum::routing::delete(delete_conversation).patch(rename_conversation),
@@ -15211,6 +15265,129 @@ mod tests {
         assert_eq!(presets["data"].as_array().unwrap().len(), 6);
         assert_eq!(presets["data"][0]["id"], "brand");
         assert_eq!(presets["data"][5]["id"], "user_interview");
+    }
+
+    /// The dataset-scoped upstream endpoints must answer with upstream's own envelopes:
+    /// a selection that names unknown documents is a `102` with the ids listed, and the
+    /// two list endpoints demand `dataset_ids` in the query string.
+    #[tokio::test]
+    async fn dataset_scoped_upstream_endpoints_answer_with_upstream_envelopes() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let kb = env.state.kbs.create_for("test-user", "Scoped", "").unwrap();
+
+        let parse = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/datasets/{}/documents/parse", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"document_ids": ["missing-doc"]}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(parse.status(), StatusCode::OK);
+        let parse = response_json(parse).await;
+        assert_eq!(parse["code"], 102);
+        assert!(
+            parse["message"]
+                .as_str()
+                .unwrap()
+                .contains("Documents not found"),
+            "{parse}"
+        );
+
+        let stop = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/datasets/{}/documents/stop", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"document_ids": []}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response_json(stop).await["code"], 400);
+
+        let flattened = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/datasets/metadata/flattened")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let flattened = response_json(flattened).await;
+        assert_eq!(flattened["code"], 102);
+        assert!(
+            flattened["message"]
+                .as_str()
+                .unwrap()
+                .contains("dataset_ids")
+        );
+
+        let aggregation = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/datasets/tags/aggregation")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response_json(aggregation).await["code"], 102);
+
+        // The GET summary speaks upstream's shape (`{"summary": {...}}`).
+        let summary = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/datasets/{}/metadata/summary?doc_ids=",
+                        kb.id
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(summary.status(), StatusCode::OK);
+        let summary = response_json(summary).await;
+        assert_eq!(summary["code"], 0);
+        assert!(summary["data"]["summary"].is_object(), "{summary}");
+
+        // The scoped search path reaches the same handler as `/retrieval`.
+        let scoped = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/datasets/{}/search", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"question": "anything"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_ne!(scoped.status(), StatusCode::NOT_FOUND);
     }
 
     /// RAGFlow spells these paths with hyphens; RayRAG's own routes use underscores.

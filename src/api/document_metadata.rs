@@ -13,7 +13,7 @@ use std::sync::{Mutex, RwLock};
 
 use axum::{
     Json,
-    extract::{Extension, Path, State},
+    extract::{Extension, Path, Query, State},
     response::IntoResponse,
 };
 use std::sync::Arc;
@@ -456,6 +456,78 @@ pub async fn delete_document_metadata(
         Ok(deleted) => Json(serde_json::json!({ "code": 0, "data": deleted })).into_response(),
         Err(error) => server_error(&error.to_string()),
     }
+}
+
+/// `GET /api/v1/datasets/{id}/metadata/summary` — upstream
+/// `document_api.metadata_summary`, the GET twin of the POST form above.
+///
+/// Upstream reads `doc_ids` as a comma-separated query parameter and answers
+/// `{"summary": {field: {"type": ..., "values": [[value, count], ...]}}}`; RayRAG's
+/// summary payload already has that shape, so only the envelope changes.
+pub async fn metadata_summary_get(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(kb_id): Path<String>,
+    Query(query): Query<HashMap<String, String>>,
+) -> axum::response::Response {
+    if !kb_accessible(&state, &kb_id, &auth) {
+        return not_found();
+    }
+    let doc_ids: Option<Vec<String>> = query.get("doc_ids").map(|raw| {
+        raw.split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .collect()
+    });
+    if doc_ids.as_ref().is_some_and(|doc_ids| {
+        doc_ids.iter().any(|doc_id| {
+            state
+                .docs
+                .get(doc_id)
+                .is_none_or(|document| document.kb_id != kb_id)
+        })
+    }) {
+        return data_error("One or more documents do not belong to the knowledge base");
+    }
+    Json(serde_json::json!({
+        "code": 0,
+        "data": { "summary": state.document_metadata.summary(&kb_id, doc_ids.as_deref()) }
+    }))
+    .into_response()
+}
+
+/// `GET /api/v1/datasets/metadata/flattened?dataset_ids=a,b` — upstream
+/// `dataset_api.get_flattened_metadata`: every accessible dataset in the list, flattened
+/// into `{field: {value: [doc_ids]}}`.
+pub async fn flattened_metadata(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Query(query): Query<HashMap<String, String>>,
+) -> axum::response::Response {
+    let dataset_ids: Vec<String> = query
+        .get("dataset_ids")
+        .map(|raw| {
+            raw.split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    if dataset_ids.is_empty() {
+        return data_error("Lack of dataset_ids in query parameters");
+    }
+    for dataset_id in &dataset_ids {
+        if !kb_accessible(&state, dataset_id, &auth) {
+            return data_error(&format!("No authorization for dataset '{dataset_id}'"));
+        }
+    }
+    Json(serde_json::json!({
+        "code": 0,
+        "data": state.document_metadata.flattened(&dataset_ids)
+    }))
+    .into_response()
 }
 
 pub async fn metadata_keys(

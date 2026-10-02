@@ -67,7 +67,6 @@ KNOWN_METHOD_GAPS: dict[str, str] = {
     "/agents/<agent_id>/sessions": "DELETE 删除 Agent 会话",
     "/chats": "DELETE 清空会话列表",
     "/chats/<chat_id>": "PUT 更新会话（重命名等）",
-    "/datasets/<dataset_id>/metadata/summary": "GET 数据集元数据汇总",
     "/dify/retrieval": "GET 探测（上游与 POST 同路径）",
     "/files": "POST 新建文件 / DELETE 批量删除",
     "/providers/<provider_id_or_name>/instances/<instance_id_or_name>": "PUT 更新模型实例",
@@ -107,27 +106,18 @@ KNOWN_MISSING: dict[str, str] = {
     "/datasets/<dataset_id>/chunks": "数据集级分块列表",
     "/datasets/<dataset_id>/documents/<document_id>/metadata/config": "文档级元数据配置",
     "/datasets/<dataset_id>/documents/<document_id>/structure/graph": "文档结构图（编译产物）",
-    "/datasets/<dataset_id>/documents/batch-update-status": "文档状态批量更新",
-    "/datasets/<dataset_id>/documents/parse": "批量解析文档",
-    "/datasets/<dataset_id>/documents/stop": "批量停止解析",
     "/datasets/<dataset_id>/embedding/check": "嵌入模型可用性检查",
     "/datasets/<dataset_id>/graph": "数据集知识图谱读取",
     "/datasets/<dataset_id>/index": "数据集索引重建",
     "/datasets/<dataset_id>/metadata/config": "数据集元数据配置",
-    "/datasets/<dataset_id>/metadata/update": "批量更新文档元数据",
     "/datasets/<dataset_id>/navigation": "数据集导航树",
     "/datasets/<dataset_id>/navigation/<path:name>": "导航树单节点",
     "/datasets/<dataset_id>/navigation/<path:name>/children": "导航树子节点",
     "/datasets/<dataset_id>/navigation/search": "导航树检索",
-    "/datasets/<dataset_id>/search": "数据集内检索",
     "/datasets/<dataset_id>/skills": "数据集 Skills 列表",
     "/datasets/<dataset_id>/skills/<path:skill_kwd>": "数据集 Skill 详情/更新",
-    "/datasets/metadata/flattened": "元数据扁平键值（检索过滤用）",
-    "/datasets/search": "跨数据集检索",
-    "/datasets/tags/aggregation": "数据集标签聚合",
     "/documents/artifact/<filename>": "文档产物文件读取",
     "/documents/images/<image_id>": "文档内图片读取",
-    "/documents/ingest": "外部内容入库（ingest）",
     "/documents/upload": "文档上传（RayRAG 用 /datasets/{id}/documents 与 /files/upload）",
     "/files/<file_id>/ancestors": "文件祖先链（面包屑）",
     "/files/<file_id>/parent": "文件父目录",
@@ -177,7 +167,11 @@ def rayrgg_routes() -> dict[str, tuple[str, frozenset[str]]]:
     """
     text = SERVER_RS.read_text(encoding="utf-8", errors="replace")
     routes: dict[str, tuple[str, frozenset[str]]] = {}
-    for match in re.finditer(r'\.route\(\s*"([^"]+)"\s*,', text):
+    # A route's path may sit under a comment inside the `.route(...)` call — three
+    # endpoints were reported missing because of exactly that.
+    for match in re.finditer(
+        r'\.route\(\s*(?://[^\n]*\n\s*)*"([^"]+)"\s*,', text
+    ):
         path = match.group(1)
         if not path.startswith("/api/v1"):
             continue

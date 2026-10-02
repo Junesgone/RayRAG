@@ -5,12 +5,12 @@
 
 ## 现状
 
-- 上游路由：**181**；RayRAG `/api/v1` 路由：**249**
-- 同名应答（exact）：**77**
+- 上游路由：**181**；RayRAG `/api/v1` 路由：**261**
+- 同名应答（exact）：**86**
 - 别名应答（alias，上游拼写已注册但走 RayRAG 自己的命名）：**37**
 - 形状不同但已被应答（covered）：**2**
-- 尚未实现（missing，已登记）：**65**
-- 路径已有但方法缺失（method）：**9**
+- 尚未实现（missing，已登记）：**56**
+- 路径已有但方法缺失（method）：**8**
 - 未登记的缺口（mismatch，`--check` 视为失败）：**0**
 
 ## 未实现清单（按上游文件分组）
@@ -36,8 +36,6 @@
 | `/chats/<chat_id>/sessions/<session_id>` | `chat_api.py` | 会话（session）详情/删除 |
 | `/datasets/<dataset_id>/chunks` | `chunk_api.py` | 数据集级分块列表 |
 | `/datasets/<dataset_id>/documents/<document_id>/structure/graph` | `chunk_api.py` | 文档结构图（编译产物） |
-| `/datasets/<dataset_id>/search` | `chunk_api.py` | 数据集内检索 |
-| `/datasets/search` | `chunk_api.py` | 跨数据集检索 |
 | `/connectors/<connector_id>` | `connector_api.py` | 连接器实例读写（RayRAG 用 data_sources 面） |
 | `/connectors/<connector_id>/logs` | `connector_api.py` | 连接器同步日志 |
 | `/connectors/<connector_id>/rebuild` | `connector_api.py` | 连接器重建索引 |
@@ -59,16 +57,9 @@
 | `/datasets/<dataset_id>/navigation/search` | `dataset_api.py` | 导航树检索 |
 | `/datasets/<dataset_id>/skills` | `dataset_api.py` | 数据集 Skills 列表 |
 | `/datasets/<dataset_id>/skills/<path:skill_kwd>` | `dataset_api.py` | 数据集 Skill 详情/更新 |
-| `/datasets/metadata/flattened` | `dataset_api.py` | 元数据扁平键值（检索过滤用） |
-| `/datasets/tags/aggregation` | `dataset_api.py` | 数据集标签聚合 |
 | `/datasets/<dataset_id>/documents/<document_id>/metadata/config` | `document_api.py` | 文档级元数据配置 |
-| `/datasets/<dataset_id>/documents/batch-update-status` | `document_api.py` | 文档状态批量更新 |
-| `/datasets/<dataset_id>/documents/parse` | `document_api.py` | 批量解析文档 |
-| `/datasets/<dataset_id>/documents/stop` | `document_api.py` | 批量停止解析 |
-| `/datasets/<dataset_id>/metadata/update` | `document_api.py` | 批量更新文档元数据 |
 | `/documents/artifact/<filename>` | `document_api.py` | 文档产物文件读取 |
 | `/documents/images/<image_id>` | `document_api.py` | 文档内图片读取 |
-| `/documents/ingest` | `document_api.py` | 外部内容入库（ingest） |
 | `/documents/upload` | `document_api.py` | 文档上传（RayRAG 用 /datasets/{id}/documents 与 /files/upload） |
 | `/thumbnails` | `document_api.py` | 缩略图服务 |
 | `/files/link-to-datasets` | `file2document_api.py` | 文件关联数据集 |
@@ -101,7 +92,6 @@
 | `/agents/<agent_id>/sessions` | agent_api.py [DELETE] |
 | `/chats` | chat_api.py [DELETE] |
 | `/chats/<chat_id>` | chat_api.py [PUT] |
-| `/datasets/<dataset_id>/metadata/summary` | document_api.py [GET] |
 | `/dify/retrieval` | dify_retrieval_api.py [GET] |
 | `/files` | file_api.py [DELETE,POST] |
 | `/providers/<provider_id_or_name>/instances/<instance_id_or_name>` | provider_api.py [PUT] |
