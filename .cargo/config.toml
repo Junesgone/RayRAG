@@ -1,0 +1,23 @@
+# RayRAG 镜像配置 — 优先国内源，失败自动回退原站
+
+# === crates.io 镜像（科大源） ===
+[source.crates-io]
+replace-with = "ustc"
+
+[source.ustc]
+registry = "sparse+https://mirrors.ustc.edu.cn/crates.io-index/"
+
+# === 备用：tuna 源 ===
+[source.tuna]
+registry = "sparse+https://mirrors.tuna.tsinghua.edu.cn/crates.io-index/"
+
+# === GitHub 加速（git 协议走代理） ===
+[net]
+git-fetch-with-cli = true
+
+# Incremental compilation is off: `target/debug/incremental` grew past 100 GB in
+# this repository (every edit adds a new CGU set and nothing prunes the old
+# ones), and it is not needed for correctness — the full debug build stays fast
+# enough because the dependency artifacts are cached.
+[build]
+incremental = false
