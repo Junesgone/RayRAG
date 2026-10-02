@@ -231,3 +231,23 @@ pub async fn wiki_compile_incremental(
 **端点/UI**：`POST /datasets/{id}/wiki/compile`（或复用上游路径）+ Artifacts 面板 Generate 按钮调用它；返回值需含 `pages_created/updated/skipped` 与**逐文档跳过原因**。
 
 **验收**：① 缺 chat 模型 → `code 102` 指明；② 有分块 → 生成后 `GET /datasets/{id}/artifacts` 能读到页面（0.5.5 已实现该读取面）；③ 无分块文档 → 计入 skipped 带原因；④ **必须实测"会真正生成"的主路径**（导航那次就是这条路径 panic 的）。
+
+### 关键结构发现（本轮）：wiki 生成是**两阶段**，不能只调编排入口
+
+读 `wiki_compile_incremental` 的实现发现：它**不接收分块正文**，而是从存储里取 **MAP 阶段产出的 extracts**：
+
+```rust
+let changed_chunks = chunk_id_set(chunk_delta, "changed_chunk_ids");
+let deleted_chunks = chunk_id_set(chunk_delta, "deleted_chunk_ids");
+let new_chunks     = chunk_id_set(chunk_delta, "new_chunk_ids");
+...
+let map_results = crate::harness::knowlege_wiki::load_map_extracts_for_state(...);
+```
+
+也就是说 `chunk_delta` 只是一组**分块 id 集合**（三个键），真正的输入是**已经写进存储的 MAP extracts**。
+
+**因此端点必须按顺序做两件事**：
+1. **MAP**：对每个文档调用 `knowlege_wiki::wiki_map_from_chunks(store, chat, chunks, doc_id, tenant, kb, language, max_workers, llm_timeout, parser_config, batch_size_cap, window_fraction, target_chunk_ids, callback)`，把 extracts 写入存储（分块正文在这里才被真正使用）；
+2. **COMPILE/REDUCE**：再调 `wiki_compile_incremental(..., chunk_delta = {"new_chunk_ids": [...], "changed_chunk_ids": [], "deleted_chunk_ids": []}, previous_chunk_state = load_map_versions(...), current_chunk_state = scan_current_chunk_state(...), incremental = false, ...)` 产出页面。
+
+**这解释了为什么不能"只接编排入口"**：少了 MAP，`load_map_extracts_for_state` 取不到东西，`wiki_compile_incremental` 会安静地什么都不产出——正是本项目反复要避免的"静默成功"。
