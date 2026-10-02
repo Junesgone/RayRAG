@@ -92,62 +92,12 @@
 | `web/src/pages/user-setting/sidebar/hooks.tsx` | 47 | `src/web.rs; src/web_css.txt; src/server.rs` | Rust derives one exact active key from the current user-setting route; server and browser gates cover the root redirect, seven item clicks and back/forward navigation. React client-side navigation state remains partial (v0.3.3bo) [v0.27.2 content changed: re-audit] |
 | `web/src/routes.tsx` | 466 | `src/server.rs; src/web.rs` | Rust registers the `/dataset/{files\|retrieval\|logs\|configuration\|knowledge-graph}/{id}` detail routes; `/dataset/{id}` answers a 307 redirect into `/dataset/files/{id}` (upstream `Routes.Dataset = /dataset/files`) and `/kbs/{id}` keeps the legacy 3-tab shell. The dataset sidebar mirrors `pages/dataset/sidebar/index.tsx`: five real route links in source order with the `knowledgeDetails.*` labels (Files / Retrieval testing / Logs / Configuration / Knowledge graph), the active entry marked client-side from the URL path and the panel selected on load; the parse-log table was merged into the Logs panel so the entry count matches upstream. Remaining gaps: `/dataset/testing`, `/dataset/knowledge-graph` and `/dataset/configuration` are the same Rust shell with a preselected panel rather than separate page bundles (v0.3.5g). v0.3.5x added a machine audit of the whole upstream route table (52 paths against the deployed instance) and closed six: `/login-next` (upstream serves `/login` and `/login-next` from the same page), the canonical singular `/agent/:id` and `/search/:id` detail paths (RayRAG keeps `/agents/{id}` and `/searches/{id}` as compatible aliases), upstream's standalone `/document/:id` viewer (resolved through the document record, real 404 for unknown ids) and the public `/search/share` embed (`?tenantId=` app resolution plus the `visible_avatar` owner row, sharing the `/search` markup through `search_page_markup`). v0.3.8n closed `/agent/:id/explore` (plus the `/agents/:id/explore` alias): the Launch surface renders upstream's PageHeader breadcrumb, the 296px session column and the SessionChat column, and the toolbar Launch button navigates there like `navigateToAgentExplore`. Still open from the same table: the `/admin` subtree (`/admin` is upstream's admin *login*, plus `/admin/services`, `/admin/users`, `/admin/users/:id`, `/admin/sandbox-settings` and the enterprise-only whitelist/roles/monitoring — all registered by RayRAG, per-file residuals tracked on their own rows), the `/chunk` subtree (`/chunk`, `/chunk/parsed/chunks`, `/chunk/chunk/:id`, `/chunk/result/:id`), v0.3.8o closed `/agent/share` (the embeddable chat with the `APIToken.beta` credential, `/api/v1/system/tokens` and the `agentbots` inputs/completions endpoints; the beta-only `logs/<message_id>` trace and the floating-widget embed remain open). v0.3.8p closed `/dataflow-result` (the ingestion-log viewer with the timeline, the step result panel, the chunk result bar, the rerun flow and the dataset-row `View result` entry, backed by the new ingestion endpoints). Still open from the same table: `/agent/:id/explore`, `/agent/share` and `/dataflow-result` are registered, while the beta-only `agentbots/logs/<message_id>` trace, the floating-widget embed and the enterprise-only `/admin` whitelist/roles/monitoring entries remain [v0.27.2 content changed: re-audit] |
 
-## 复核对账队列（re-audit，385 项）
+## 复核对账队列（re-audit，335 项）
 
 上游 v0.27.2 相对 v0.26.4 变更过的已审计行；逐行复核后移除 `[v0.27.2 content changed: re-audit]` 标记并更新注记。
 
 | 文件 | 状态 | RayRAG 对应 |
 |---|---|---|
-| `api/apps/restful_apis/agent_api.py` | aligned | `src/server.rs; src/api/agent_log.rs; src/api/features.rs` |
-| `api/apps/restful_apis/bot_api.py` | aligned | `src/server.rs; src/api/` |
-| `api/apps/restful_apis/chat_api.py` | aligned | `src/server.rs; src/api/system.rs; src/api/searchapp_mgr.rs` |
-| `api/apps/restful_apis/chat_channel_api.py` | aligned | `src/server.rs; src/api/chat_channel_mgr.rs` |
-| `api/apps/restful_apis/chunk_api.py` | aligned | `src/server.rs; src/api/` |
-| `api/apps/restful_apis/compilation_template_api.py` | aligned | `src/api/compilation_templates.rs; src/api/fixtures/; src/server.rs` |
-| `api/apps/restful_apis/compilation_template_group_api.py` | aligned | `src/api/compilation_templates.rs; src/server.rs` |
-| `api/apps/restful_apis/connector_api.py` | aligned | `src/server.rs; src/api/data_source_mgr.rs; src/api/oauth_web.rs` |
-| `api/apps/restful_apis/dataset_api.py` | aligned | `src/server.rs; src/api/` |
-| `api/apps/restful_apis/dify_retrieval_api.py` | aligned | `src/server.rs; src/api/` |
-| `api/apps/restful_apis/document_api.py` | aligned | `src/server.rs; src/api/` |
-| `api/apps/restful_apis/file2document_api.py` | aligned | `src/server.rs; src/api/` |
-| `api/apps/restful_apis/file_api.py` | aligned | `src/server.rs; src/api/` |
-| `api/apps/restful_apis/file_commit_api.py` | aligned | `src/server.rs; src/api/` |
-| `api/apps/restful_apis/mcp_api.py` | aligned | `src/server.rs; src/api/mcp_mgr.rs` |
-| `api/apps/restful_apis/memory_api.py` | full | `src/server.rs; src/api/features.rs` |
-| `api/apps/restful_apis/models_api.py` | full | `src/api/tenant_models.rs; src/api/system.rs; src/server.rs` |
-| `api/apps/restful_apis/openai_api.py` | aligned | `src/server.rs; src/api/` |
-| `api/apps/restful_apis/provider_api.py` | aligned | `src/api/features.rs; src/api/tenant_models.rs; src/model_meta.rs; src/server.rs` |
-| `api/apps/restful_apis/search_api.py` | aligned | `src/server.rs; src/api/` |
-| `api/apps/restful_apis/system_api.py` | aligned | `src/api/system.rs; src/logging.rs; src/server.rs` |
-| `api/apps/restful_apis/tenant_api.py` | aligned | `src/server.rs; src/api/system.rs` |
-| `api/apps/restful_apis/user_api.py` | aligned | `src/server.rs; src/api/system.rs; src/auth.rs` |
-| `api/apps/restful_apis/utils/compilation_template_validation.py` | aligned | `src/server.rs; src/api/` |
-| `api/apps/services/dataset_api_service.py` | aligned | `src/server.rs; src/api/` |
-| `api/apps/services/document_api_service.py` | aligned | `src/server.rs; src/api/` |
-| `api/apps/services/file_api_service.py` | aligned | `src/server.rs; src/api/` |
-| `api/apps/services/memory_api_service.py` | full | `src/api/features.rs; src/api/joint_services.rs; src/memory.rs; src/server.rs` |
-| `api/apps/services/models_api_service.py` | full | `src/api/tenant_models.rs; src/api/system.rs; src/server.rs` |
-| `api/apps/services/provider_api_service.py` | aligned | `src/api/features.rs; src/api/tenant_models.rs; src/model_meta.rs; src/providers.rs; src/web.rs` |
-| `api/channels/bootstrap.py` | full | `src/channels.rs; src/server.rs` |
-| `api/db/__init__.py` | aligned | `src/api/db.rs; src/api/utils.rs; src/api/joint_services.rs; src/api/common.rs; src/api/features.rs; src/agent_templates.rs; src/web.rs` |
-| `api/db/db_models.py` | replaced | `src/auth.rs; src/kb.rs; src/stores.rs; src/api/` |
-| `api/db/db_utils.py` | replaced | `src/persistence.rs` |
-| `api/db/init_data.py` | full | `src/api/joint_services.rs` |
-| `api/db/init_data/compilation_templates/knowledge_graph.yaml` | aligned | `src/api/fixtures/compilation_template_builtins.v0.26.4.json; src/api/fixtures/compilation_template_wiki_presets.v0.26.4.json` |
-| `api/db/init_data/compilation_templates/mind_map.yaml` | aligned | `src/api/fixtures/compilation_template_builtins.v0.26.4.json; src/api/fixtures/compilation_template_wiki_presets.v0.26.4.json` |
-| `api/db/init_data/compilation_templates/page_index.yaml` | aligned | `src/api/fixtures/compilation_template_builtins.v0.26.4.json; src/api/fixtures/compilation_template_wiki_presets.v0.26.4.json` |
-| `api/db/init_data/compilation_templates/session_essence.yaml` | aligned | `src/api/fixtures/compilation_template_builtins.v0.26.4.json; src/api/fixtures/compilation_template_wiki_presets.v0.26.4.json` |
-| `api/db/init_data/compilation_templates/session_graph.yaml` | aligned | `src/api/fixtures/compilation_template_builtins.v0.26.4.json; src/api/fixtures/compilation_template_wiki_presets.v0.26.4.json` |
-| `api/db/init_data/compilation_templates/timeline.yaml` | aligned | `src/api/fixtures/compilation_template_builtins.v0.26.4.json; src/api/fixtures/compilation_template_wiki_presets.v0.26.4.json` |
-| `api/db/init_data/compilation_templates/tree.yaml` | aligned | `src/api/fixtures/compilation_template_builtins.v0.26.4.json; src/api/fixtures/compilation_template_wiki_presets.v0.26.4.json` |
-| `api/db/init_data/compilation_templates/wiki.yaml` | aligned | `src/api/fixtures/compilation_template_builtins.v0.26.4.json; src/api/fixtures/compilation_template_wiki_presets.v0.26.4.json` |
-| `api/db/init_data/compilation_templates/wiki/brand.yaml` | aligned | `src/api/fixtures/compilation_template_builtins.v0.26.4.json; src/api/fixtures/compilation_template_wiki_presets.v0.26.4.json` |
-| `api/db/init_data/compilation_templates/wiki/engineering.yaml` | aligned | `src/api/fixtures/compilation_template_builtins.v0.26.4.json; src/api/fixtures/compilation_template_wiki_presets.v0.26.4.json` |
-| `api/db/init_data/compilation_templates/wiki/general.yaml` | aligned | `src/api/fixtures/compilation_template_builtins.v0.26.4.json; src/api/fixtures/compilation_template_wiki_presets.v0.26.4.json` |
-| `api/db/init_data/compilation_templates/wiki/market.yaml` | aligned | `src/api/fixtures/compilation_template_builtins.v0.26.4.json; src/api/fixtures/compilation_template_wiki_presets.v0.26.4.json` |
-| `api/db/init_data/compilation_templates/wiki/product.yaml` | aligned | `src/api/fixtures/compilation_template_builtins.v0.26.4.json; src/api/fixtures/compilation_template_wiki_presets.v0.26.4.json` |
-| `api/db/init_data/compilation_templates/wiki/user_interview.yaml` | aligned | `src/api/fixtures/compilation_template_builtins.v0.26.4.json; src/api/fixtures/compilation_template_wiki_presets.v0.26.4.json` |
-| `api/db/joint_services/memory_message_service.py` | full | `src/api/joint_services.rs; src/api/features.rs; src/memory.rs; src/llm.rs; src/server.rs` |
 | `api/db/joint_services/tenant_model_service.py` | full | `src/api/*` |
 | `api/db/joint_services/user_account_service.py` | full | `src/api/*` |
 | `api/db/services/api_service.py` | aligned | `src/auth.rs; src/api/system.rs` |
