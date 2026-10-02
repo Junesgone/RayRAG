@@ -6911,7 +6911,7 @@ pub async fn admin_page(
     // Upstream stacks three `Spotlight` layers (`opcity` 0.4/0.3/0.3, colour
     // `rgb(128, 255, 248)`, coverage 60/12/12) over the animated `BgSvg` bands.
     b.push_str("<div class='auth-spotlight auth-spotlight-main' aria-hidden='true'></div><div class='auth-spotlight auth-spotlight-left' aria-hidden='true'></div><div class='auth-spotlight auth-spotlight-right' aria-hidden='true'></div>");
-    b.push_str("<div class='admin-login-head'><div class='admin-login-brand'><img class='admin-logo' src='/logo.svg' alt='logo'><span class='admin-login-brand-name'>RAGFlow</span></div>");
+    b.push_str("<div class='admin-login-head'><div class='admin-login-brand'><img class='admin-logo' src='/logo.svg' alt='logo'><span class='admin-login-brand-name'>RayRAG</span></div>");
     b.push_str("<h1 class='admin-login-title'>Admin console</h1></div>");
     b.push_str("<div class='admin-login-center'><div class='admin-login-column'><div class='admin-login-card card'><div class='admin-login-body'><form class='admin-login-form' id='adminLoginForm' onsubmit='event.preventDefault();adminConsoleLogin()'><div class='admin-login-item'><label class='admin-login-label required' for='adminEmail'>");
     b.push_str(t("Email", zh));
@@ -17565,7 +17565,7 @@ connection: close
                 "{path}: aside"
             );
             assert!(body.contains("src='/logo.svg'"), "{path}: brand logo");
-            assert!(body.contains(">RAGFlow</span>"), "{path}: admin.title");
+            assert!(body.contains(">RayRAG</span>"), "{path}: admin.title");
             assert!(body.contains("adminConsoleLogout()"), "{path}: logout");
             assert!(
                 body.contains(&format!("data-section='{section}'")),
