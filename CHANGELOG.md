@@ -2,6 +2,12 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.7.2] - 2026-10-02
+
+- **修掉数据集页面的 JS 报错（并确认知识图谱路由可用）**：切标签的函数在最后两行**没有做空值保护**——`document.getElementById('tab'+n).style.display=...` 与 `document.getElementById('nav'+n).classList.add('active')`。而**知识图谱按上游设计不是侧栏项，`nav4` 根本不存在**，于是在 `/dataset/knowledge-graph/{id}` 上必然抛 `TypeError: Cannot read properties of null (reading 'classList')`，并且**中断后面的激活逻辑**（tab5 Artifacts 因此可能不被正确收起）。两处都已加空值保护。
+- **知识图谱路由实测可用**：在 `/dataset/knowledge-graph/{kb}` 上，2/4/7 秒三次取样均读到 `#tab4` 处于 `display:block`，面板内容为 Knowledge Graph 说明与 **Build Graph** 按钮。上一轮"点击后 2 秒未见面板"是**取样时机/跳转方式造成的假象**，不是功能问题——本轮据实纠正。
+- **测试**：全量 **2136 passed / 0 failed**（kb_ui 123 条全过）。
+
 ## [0.7.1] - 2026-10-02
 
 - **知识图谱终于有入口了**：知识图谱面板（含 Build Graph）一直存在，按上游 v0.27.2 它**不是数据集侧栏项**而是独立路由 `/knowledge-graph/:id`——但 RayRAG 里**没有任何地方链接到它**，所以用户从界面上根本进不去，表现为"数据集没有知识图谱功能"。现在**数据集概览面板顶部**多了一个 `Knowledge graph` 按钮，指向 `/dataset/knowledge-graph/{id}`（该路由本就映射到图谱面板），与上游"从数据集进入图谱"的行为一致。
