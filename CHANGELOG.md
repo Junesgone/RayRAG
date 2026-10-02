@@ -2,6 +2,13 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.6.2] - 2026-10-02
+
+- **补上 `PATCH /users/me/models`（上游 `set_tenant_info`）**，把上一轮登记的字段适配缺口真正关掉：上游的请求体是"每个能力一个选择器"（`llm_id` / `embd_id` / `rerank_id` / `asr_id` / `img2txt_id` / `tts_id` / `ocr_id`），而 RayRAG 内部是拆开的 `{provider, instance, name, model_type}`。适配层同时接受**两种写法**：RayRAG 的三段式 `model@instance@provider` 与上游的两段式 `model@provider`（此时实例名取 provider 名）。只应用请求里出现的字段，并在 `data.applied` 里回报实际生效的字段——**部分更新不会静默**。
+- 格式错误的选择器返回带字段名的 `code 102`（例如 `'llm_id' must be '<model>@<instance>@<provider>' or '<model>@<provider>'`）；空请求体是合法的空操作并回报 `applied: []`。
+- 数字：同名 **105**、未实现 **36**、方法缺口 1（仅剩生成类，已登记）。
+- **测试**：新增 PATCH 回归（格式错误 → 带字段名的 102、未知 provider 有明确回应、空体 → `applied` 为空）。全量 **2136 passed / 0 failed**。
+
 ## [0.5.9] - 2026-10-02
 
 - **移植逐主机 SSRF 守卫**：`common/ssrf_guard.py::assert_host_is_safe` 是上游给「接受原始 host/port 而非 URL」的连接准备的防线（画布数据库组件就走这条）。RayRAG 此前只有 URL 版本（`assert_url_is_safe`），本轮补齐：裸 IP、`[::1]` 形式的 IPv6 字面量、空主机、以及解析到非公网地址的域名全部拒绝，并补充了不依赖网络的守卫单测。

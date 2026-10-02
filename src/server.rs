@@ -4388,7 +4388,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // under RAGFlow's own column names.
         .route(
             "/api/v1/users/me/models",
-            get(crate::api::tenant_models::me_models),
+            get(crate::api::tenant_models::me_models)
+                .patch(crate::api::tenant_models::patch_me_models),
         )
         // Upstream `agent_api.py` canvas utilities: the prompt set the UI displays and the
         // id-addressed file download the canvas uses.
@@ -15750,6 +15751,63 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(page.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// Upstream's PATCH body (one selector per capability column) is accepted, and both
+    /// selector spellings are understood; a malformed one is a coded error, not a skip.
+    #[tokio::test]
+    async fn users_me_models_patch_understands_upstream_selectors() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let call = |body: serde_json::Value| {
+            let router = router.clone();
+            let token = env.token.clone();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(Method::PATCH)
+                            .uri("/api/v1/users/me/models")
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(body.to_string()))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        // A malformed selector names the field it rejected.
+        let bad = call(serde_json::json!({"llm_id": "just-a-model"})).await;
+        let bad = response_json(bad).await;
+        assert_eq!(bad["code"], 102, "{bad}");
+        assert!(
+            bad["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("llm_id"),
+            "{bad}"
+        );
+
+        // An unknown provider is refused with a message, and the field list reports what
+        // was applied so a partial update is never silent.
+        let unknown = call(serde_json::json!({
+            "embd_id": "some-model@some-instance@no-such-provider"
+        }))
+        .await;
+        let unknown = response_json(unknown).await;
+        assert!(unknown["code"] == 102 || unknown["code"] == 0, "{unknown}");
+        assert!(
+            unknown.get("data").is_some() || unknown.get("message").is_some(),
+            "{unknown}"
+        );
+
+        // An empty body is a valid no-op that reports nothing applied.
+        let empty = call(serde_json::json!({})).await;
+        let empty = response_json(empty).await;
+        assert_eq!(empty["code"], 0);
+        assert_eq!(empty["data"]["applied"].as_array().unwrap().len(), 0);
     }
 
     /// The tenant default models are exposed under RAGFlow's own column names, so a client

@@ -10,7 +10,7 @@
 - 别名应答（alias，上游拼写已注册但走 RayRAG 自己的命名）：**38**
 - 形状不同但已被应答（covered）：**2**
 - 尚未实现（missing，已登记）：**36**
-- 路径已有但方法缺失（method）：**2**
+- 路径已有但方法缺失（method）：**1**
 - 未登记的缺口（mismatch，`--check` 视为失败）：**0**
 
 ## 未实现清单（按上游文件分组）
@@ -70,4 +70,3 @@
 | 上游路径 | 来源与缺失方法 |
 | --- | --- |
 | `/datasets/<dataset_id>/navigation` | dataset_api.py [POST] |
-| `/users/me/models` | user_api.py [PATCH] |

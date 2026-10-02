@@ -3790,6 +3790,85 @@ pub async fn me_models(
     Json(serde_json::json!({ "code": 0, "data": serde_json::Value::Object(data) })).into_response()
 }
 
+/// `PATCH /api/v1/users/me/models` — upstream `user_api.set_tenant_info`.
+///
+/// Upstream's body carries one **selector per capability** under its own column names
+/// (`llm_id`, `embd_id`, `asr_id`, `img2txt_id`, …), where RayRAG's `/models/default`
+/// takes one decomposed `{provider, instance, name, model_type}` per call. This adapter
+/// accepts upstream's shape and applies every field present, so a client written against
+/// upstream works unchanged; both RayRAG's three-part selector
+/// (`model@instance@provider`) and upstream's two-part `model@provider` are accepted.
+pub async fn patch_me_models(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let Some(object) = body.as_object() else {
+        return Json(serde_json::json!({ "code": 102, "message": "Body must be a JSON object." }))
+            .into_response();
+    };
+    let tenant_id = object
+        .get("tenant_id")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| auth.user_id.clone());
+    if !state.tenants.can_manage(&tenant_id, &auth.user_id) {
+        return forbidden("Tenant administrator access required");
+    }
+    let columns = [
+        ("llm_id", "chat"),
+        ("embd_id", "embedding"),
+        ("rerank_id", "rerank"),
+        ("asr_id", "asr"),
+        ("img2txt_id", "image2text"),
+        ("tts_id", "tts"),
+        ("ocr_id", "ocr"),
+    ];
+    let mut applied: Vec<String> = Vec::new();
+    for (field, model_type) in columns {
+        let Some(raw) = object.get(field).and_then(|value| value.as_str()) else {
+            continue;
+        };
+        let raw = raw.trim();
+        if raw.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = raw.split('@').map(str::trim).collect();
+        let (name, instance, provider) = match parts.as_slice() {
+            // `{model}@{instance}@{provider}` — RayRAG's own selector.
+            [name, instance, provider, ..] => (*name, *instance, *provider),
+            // `{model}@{provider}` — upstream's two-part selector; the instance is the
+            // provider's own name, which is how a single-instance provider is addressed.
+            [name, provider] => (*name, *provider, *provider),
+            _ => {
+                return Json(serde_json::json!({
+                    "code": 102,
+                    "message": format!("'{field}' must be '<model>@<instance>@<provider>' or '<model>@<provider>'")
+                }))
+                .into_response();
+            }
+        };
+        if let Err(error) = state.tenant_models.set_tenant_default_model(
+            &state.providers,
+            &tenant_id,
+            provider,
+            instance,
+            name,
+            model_type,
+        ) {
+            tracing::warn!(%error, field, "failed to set the tenant default model");
+            return Json(serde_json::json!({
+                "code": 102,
+                "message": format!("{field}: {error}")
+            }))
+            .into_response();
+        }
+        applied.push(field.to_string());
+    }
+    Json(serde_json::json!({ "code": 0, "message": "success", "data": { "applied": applied } }))
+        .into_response()
+}
+
 pub async fn get_ragflow_default_models(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
