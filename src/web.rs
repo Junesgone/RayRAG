@@ -10470,6 +10470,7 @@ mod kb_ui_tests {
         let state = Arc::new(AppState {
             static_dir: static_dir.to_string_lossy().into_owned(),
             port: 0,
+            doc_store: Arc::new(crate::doc_store::DocStorePool::memory()),
             users,
             kbs: Arc::new(KbStore::new(root.path().join("kbs.json").to_str().unwrap()).unwrap()),
             tenants: Arc::new(

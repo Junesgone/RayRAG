@@ -60,6 +60,10 @@ pub struct AppState {
     pub model_path: String,
     pub max_upload_bytes: usize,
     pub docs: Arc<crate::api::document::DocStore>,
+    /// The compiled-artifact store (RAGFlow's doc store): one shared pool so the ported
+    /// wiki / dataset-navigation / structure engines read and write exactly what the
+    /// running server serves. Without it those engines had no data path at all.
+    pub doc_store: Arc<crate::doc_store::DocStorePool>,
     pub document_metadata: Arc<crate::api::document_metadata::DocumentMetadataStore>,
     pub files: Arc<crate::api::file_mgr::FileStore>,
     pub data_sources: Option<Arc<crate::api::data_source_mgr::DataSourceStore>>,
@@ -4056,6 +4060,24 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/datasets/{dataset_id}/metadata/update",
             post(crate::api::document_metadata::update_document_metadatas),
         )
+        // Upstream `dataset_api.py` artifact surface. `HEAD` is the sidebar probe
+        // (`has_any_wiki`), `GET` lists pages, `DELETE` clears them.
+        .route(
+            "/api/v1/datasets/{dataset_id}/artifacts",
+            get(crate::api::dataset_artifacts::list_artifacts)
+                .head(crate::api::dataset_artifacts::has_any_wiki)
+                .delete(crate::api::dataset_artifacts::clear_artifacts),
+        )
+        .route(
+            "/api/v1/datasets/{dataset_id}/artifacts/topics",
+            get(crate::api::dataset_artifacts::list_artifact_topics),
+        )
+        .route(
+            "/api/v1/datasets/{dataset_id}/artifacts/{page_type}/{slug}",
+            get(crate::api::dataset_artifacts::get_artifact_page)
+                // Upstream `dataset_api.update_wiki_page`: save an edited page.
+                .put(crate::api::dataset_artifacts::update_artifact_page),
+        )
         // Upstream `dataset_api.py::get_flattened_metadata` / `aggregate_tags`.
         .route(
             "/api/v1/datasets/metadata/flattened",
@@ -5364,6 +5386,7 @@ pub async fn run(
         llm,
         embedder,
         reranker,
+        doc_store: Arc::new(crate::doc_store::DocStorePool::from_env()),
         graphs: Arc::new(crate::graph_store::GraphStore::new(&g)?),
         engine,
         vector_mirror,
@@ -5617,6 +5640,7 @@ mod tests {
         let state = Arc::new(AppState {
             static_dir: static_dir.to_string_lossy().into_owned(),
             port: 0,
+            doc_store: Arc::new(crate::doc_store::DocStorePool::memory()),
             users,
             kbs: Arc::new(KbStore::new(root.join("kbs.json").to_str().unwrap()).unwrap()),
             tenants: Arc::new(
@@ -6982,6 +7006,7 @@ mod tests {
         let state = Arc::new(AppState {
             static_dir: static_dir.to_string_lossy().into_owned(),
             port: 0,
+            doc_store: Arc::new(crate::doc_store::DocStorePool::memory()),
             users,
             kbs: Arc::new(KbStore::new(root.join("kbs.json").to_str().unwrap()).unwrap()),
             tenants: Arc::new(
@@ -15332,6 +15357,180 @@ mod tests {
         assert_eq!(presets["data"].as_array().unwrap().len(), 6);
         assert_eq!(presets["data"][0]["id"], "brand");
         assert_eq!(presets["data"][5]["id"], "user_interview");
+    }
+
+    /// The artifact surface reads the rows the wiki engines write: seed one page in the
+    /// shared doc store and walk the whole contract — HEAD probe, list, page read, edit by
+    /// row id, topic listing, and clear.
+    #[tokio::test]
+    async fn artifact_pages_are_served_from_the_shared_doc_store() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Artifacts", "")
+            .unwrap();
+        let store = env.state.doc_store.get_conn().unwrap();
+        let rows: Vec<crate::doc_store::DocRow> = vec![
+            serde_json::json!({
+                "id": "wiki-1",
+                "compile_kwd": "wiki_page",
+                "slug_kwd": "topic/rust",
+                "title_kwd": "Rust",
+                "page_type_kwd": "topic",
+                "md_with_weight": "# Rust\n\nA language.",
+            })
+            .as_object()
+            .cloned()
+            .unwrap(),
+            serde_json::json!({
+                "id": "wiki-2",
+                "compile_kwd": "wiki_page",
+                "slug_kwd": "entity/cargo",
+                "title_kwd": "Cargo",
+                "page_type_kwd": "entity",
+                "md_with_weight": "The package manager.",
+            })
+            .as_object()
+            .cloned()
+            .unwrap(),
+        ];
+        store
+            .insert(
+                &rows,
+                &crate::harness::knowlege_dataset_nav::index_name("test-user"),
+                &kb.id,
+            )
+            .unwrap();
+
+        let call = |method: Method, uri: String, body: &str| {
+            let router = router.clone();
+            let token = env.token.clone();
+            let body = body.to_string();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(method)
+                            .uri(uri)
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        // HEAD is the sidebar probe: 200 once a page exists.
+        let probe = call(
+            Method::HEAD,
+            format!("/api/v1/datasets/{}/artifacts", kb.id),
+            "",
+        )
+        .await;
+        assert_eq!(probe.status(), StatusCode::OK);
+
+        let listed = call(
+            Method::GET,
+            format!("/api/v1/datasets/{}/artifacts", kb.id),
+            "",
+        )
+        .await;
+        let listed = response_json(listed).await;
+        assert_eq!(listed["data"]["total"], 2);
+        // Ordered by page type: entity before topic.
+        assert_eq!(listed["data"]["items"][0]["slug"], "entity/cargo");
+        assert_eq!(listed["data"]["items"][0]["page_type"], "entity");
+        assert_eq!(listed["data"]["items"][1]["slug"], "topic/rust");
+
+        let filtered = call(
+            Method::GET,
+            format!("/api/v1/datasets/{}/artifacts?page_type=topic", kb.id),
+            "",
+        )
+        .await;
+        let filtered = response_json(filtered).await;
+        assert_eq!(filtered["data"]["total"], 1);
+        assert_eq!(filtered["data"]["items"][0]["slug"], "topic/rust");
+
+        let page = call(
+            Method::GET,
+            format!("/api/v1/datasets/{}/artifacts/topic/rust", kb.id),
+            "",
+        )
+        .await;
+        let page = response_json(page).await;
+        assert_eq!(page["code"], 0);
+        assert_eq!(page["data"]["title"], "Rust");
+        assert!(
+            page["data"]["content"]
+                .as_str()
+                .unwrap()
+                .contains("A language")
+        );
+
+        // A page read through the wrong type is a miss, not a silent hit.
+        let wrong_type = call(
+            Method::GET,
+            format!("/api/v1/datasets/{}/artifacts/entity/rust", kb.id),
+            "",
+        )
+        .await;
+        assert_eq!(wrong_type.status(), StatusCode::NOT_FOUND);
+
+        let topics = call(
+            Method::GET,
+            format!("/api/v1/datasets/{}/artifacts/topics", kb.id),
+            "",
+        )
+        .await;
+        let topics = response_json(topics).await;
+        assert_eq!(topics["data"]["total"], 1);
+        assert_eq!(topics["data"]["items"][0]["topic"], "rust");
+
+        let saved = call(
+            Method::PUT,
+            format!("/api/v1/datasets/{}/artifacts/topic/rust", kb.id),
+            // `r##` because the JSON itself contains a `"#` sequence.
+            r##"{"content_md":"# Rust\n\nEdited.","title":"Rust (edited)"}"##,
+        )
+        .await;
+        let saved = response_json(saved).await;
+        assert_eq!(saved["code"], 0, "save failed: {saved}");
+        assert_eq!(saved["data"]["saved"], true);
+
+        let reread = call(
+            Method::GET,
+            format!("/api/v1/datasets/{}/artifacts/topic/rust", kb.id),
+            "",
+        )
+        .await;
+        let reread = response_json(reread).await;
+        assert!(
+            reread["data"]["content"]
+                .as_str()
+                .unwrap()
+                .contains("Edited")
+        );
+        assert_eq!(reread["data"]["title"], "Rust (edited)");
+
+        let cleared = call(
+            Method::DELETE,
+            format!("/api/v1/datasets/{}/artifacts", kb.id),
+            "",
+        )
+        .await;
+        assert_eq!(response_json(cleared).await["code"], 0);
+        let probe_after = call(
+            Method::HEAD,
+            format!("/api/v1/datasets/{}/artifacts", kb.id),
+            "",
+        )
+        .await;
+        assert_eq!(probe_after.status(), StatusCode::NOT_FOUND);
     }
 
     /// Chat-app sessions must be scoped to their app: a session created under one chat is

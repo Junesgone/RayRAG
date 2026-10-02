@@ -2,6 +2,13 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.5.5] - 2026-10-02
+
+- **接上编译产物存储（解锁 17 条接口的前置条件）**：`DocStorePool` 此前在自身模块之外没有任何调用点——移植好的 wiki / 数据集导航 / 结构编译引擎（合计约 1.9 万行、单测完备）因此**读不到也写不进运行期数据**。现在它作为共享池挂在 `AppState` 上（有 `RAYRAG_POSTGRES_URL` 时走 PostgreSQL，否则内存后端），引擎与接口看到的是同一份数据。
+- **数据集产物（Wiki）接口 5 条落地**：`HEAD /datasets/{id}/artifacts`（上游侧栏探测：有产物 200、无 404）、`GET /datasets/{id}/artifacts`（分页列表 + `page_type`/`keywords`/`topic` 过滤，按类型再按标题排序，返回上游的 `{total, items:[{slug,title,page_type}]}`）、`GET /datasets/{id}/artifacts/{page_type}/{slug}`（单页，含正文/摘要/实体/来源）、`PUT` 同路径（上游 `update_wiki_page`：按行 id 更新正文与标题，避免误改同目录其它页）、`GET /datasets/{id}/artifacts/topics`（主题树）、`DELETE /datasets/{id}/artifacts`（清空产物，返回删除条数）。
+- **不假装做到的两处书面差异**：上游 PUT 会做 `[[slug]]` 链接渲染并写一条 `file_commit` 编辑记录；RayRAG 按原文保存且不写 commit（该服务未移植）——差异写在代码注释与接口工作清单里，而不是静默省略。
+- **测试**：新增产物全链路回归（往共享存储写入两页 → HEAD 200 → 列表排序与过滤 → 单页读取 → 类型不符返回 404 → 主题列表 → PUT 编辑后重读 → DELETE 清空 → HEAD 变 404）。全量 **2128 passed / 0 failed**。
+
 ## [0.5.4] - 2026-10-02
 
 - **接口对照收口，并给出剩余 50 条的真实性质**：同名应答 90 → **91**，未实现 51 → **50**，方法缺口 **0**。补齐 `/datasets/{id}/chunks` 的 `POST`/`DELETE`（上游把与 `/documents/parse`、`/documents/stop` **完全相同**的处理器挂在这条路径上，因此两条路径行为一致）。

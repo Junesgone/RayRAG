@@ -13,6 +13,7 @@ pub mod common;
 pub mod compilation_templates;
 pub mod connector;
 pub mod data_source_mgr;
+pub mod dataset_artifacts;
 pub mod dataset_tags;
 pub mod db;
 pub mod document;

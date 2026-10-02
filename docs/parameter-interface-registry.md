@@ -285,6 +285,9 @@
 | GET | `/api/v1/datasets/{id}/tags` | `-` |
 | POST | `/api/v1/datasets/{id}/documents` | `-` |
 | POST | `/api/v1/datasets/{dataset_id}/metadata/update` | `-` |
+| GET | `/api/v1/datasets/{dataset_id}/artifacts` | `-` |
+| GET | `/api/v1/datasets/{dataset_id}/artifacts/topics` | `-` |
+| GET | `/api/v1/datasets/{dataset_id}/artifacts/{page_type}/{slug}` | `-` |
 | GET | `/api/v1/datasets/metadata/flattened` | `-` |
 | GET | `/api/v1/datasets/tags/aggregation` | `-` |
 | POST | `/api/v1/datasets/{dataset_id}/documents/parse` | `-` |
