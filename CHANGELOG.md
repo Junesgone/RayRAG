@@ -2,6 +2,13 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.7.8] - 2026-10-02
+
+- **`POST /datasets/{id}/navigation` 重新落地——方法缺口清零**：这次跑在上一版新增的 `OffThreadDocStore` 之上（引擎从 async 函数内部调用同步存储时不再 panic）。语义与施工单一致：所有权检查 → **缺嵌入模型或缺对话模型分别 `code 102` 并指明缺哪一个** → `documents` 作用域（缺省=数据集全部文档）→ 按 `kb_id` 取分块、**按文档聚合且每文档限 4000 字符**（用完即丢）→ 顺序调用引擎逐文档生成 → 返回 `{generated, skipped, total}`。
+- **不静默**：指定了却没有已解析分块的文档进入 `skipped` 并带原因；数据集整体无分块时返回 `generated: 0` 加说明，而不是一个看不出问题的成功。
+- **数字**：同名 **106**、未实现 **35**、**方法缺口 1 → 0**、不匹配 0——接口层面已无"路径在、方法缺"的条目。
+- **测试**：全量 **2145 passed / 0 failed**（含缺模型的 102 回归）。
+
 ## [0.7.7] - 2026-10-02
 
 - **修掉"同步存储 vs 异步引擎"这个反复出现的坑**：新增 `OffThreadDocStore` —— 一个把**每一次**存储调用都放到**独立 OS 线程**执行的 `DocStore` 实现（`std::thread::scope` + join）。原因是：存储后端从头到尾是同步的（PostgreSQL 驱动自带 `block_on`），在 tokio worker 上调用会 panic（`Cannot start a runtime from within a runtime`）；处理器可以用 `spawn_blocking` 规避，但**移植过来的引擎是在 async 函数内部直接调存储**，外层包不住。OS 线程没有 tokio 上下文，驱动在那儿就合法——**引擎代码一行都不用改**。

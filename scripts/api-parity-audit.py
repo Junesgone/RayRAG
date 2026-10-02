@@ -64,8 +64,6 @@ COVERED: dict[str, str] = {
 # Upstream methods on paths RayRAG already answers with other methods. A path-only audit
 # cannot see these: `/users/me` answered 405 for GET until it was wired up.
 KNOWN_METHOD_GAPS: dict[str, str] = {
-    "/datasets/<dataset_id>/navigation": "POST 生成导航树需要租户嵌入/LLM 编译任务（读取/删除面已实现）",
-    "/datasets/<dataset_id>/navigation": "POST 生成导航树：端点已实现，但需要先解决「同步 DocStore 与异步引擎」的冲突（见 api-parity-plan.md）",
 }
 
 KNOWN_MISSING: dict[str, str] = {

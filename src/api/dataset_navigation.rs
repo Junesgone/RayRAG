@@ -542,3 +542,160 @@ pub async fn delete_nav_node(
         Err(response) => response,
     }
 }
+
+/// Production [`NavKbLock`](crate::harness::knowlege_dataset_nav::NavKbLock): one in-process
+/// lock per dataset, matching upstream `lock.spin_acquire()` / `release()`.
+pub struct NavKbMutex {
+    held: std::sync::Mutex<std::collections::HashSet<String>>,
+}
+
+impl Default for NavKbMutex {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl NavKbMutex {
+    pub fn new() -> Self {
+        Self {
+            held: std::sync::Mutex::new(std::collections::HashSet::new()),
+        }
+    }
+}
+
+impl crate::harness::knowlege_dataset_nav::NavKbLock for NavKbMutex {
+    fn acquire(&self, kb_id: &str) -> bool {
+        self.held
+            .lock()
+            .map(|mut held| held.insert(kb_id.to_string()))
+            .unwrap_or(false)
+    }
+
+    fn release(&self, kb_id: &str) {
+        if let Ok(mut held) = self.held.lock() {
+            held.remove(kb_id);
+        }
+    }
+}
+
+/// Cap on the text summarised for one document: the generator needs a summary, and reading a
+/// whole book into memory to summarise it would defeat the on-demand pipeline the rest of the
+/// ingestion path follows.
+const NAV_SUMMARY_CHAR_LIMIT: usize = 4000;
+
+/// `POST /api/v1/datasets/{id}/navigation` — upstream `dataset_api.generate_dataset_nav`.
+///
+/// Builds (or incrementally updates) the dataset navigation tree from the documents' parsed
+/// chunks. Every prerequisite is reported rather than skipped: a missing embedding or chat
+/// model is a `code 102` naming which one, and a document without parsed chunks lands in
+/// `skipped` with a reason, so a partial run never looks like a complete one.
+pub async fn generate_navigation(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Extension(auth): axum::extract::Extension<AuthContext>,
+    Path(kb_id): Path<String>,
+    Json(body): Json<Value>,
+) -> Response {
+    if !kb_accessible(&state, &kb_id, &auth) {
+        return data_error(&format!("You don't own the dataset {kb_id}."));
+    }
+    let Some(embedder) = state.embedder.clone() else {
+        return data_error(
+            "Navigation generation needs an embedding model. Configure one in Models and try again.",
+        );
+    };
+    let Some(llm) = state.llm.clone() else {
+        return data_error(
+            "Navigation generation needs a chat model. Configure one in Models and try again.",
+        );
+    };
+    let requested: Option<std::collections::HashSet<String>> = body
+        .get("documents")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect()
+        });
+    // Group the dataset's chunks per document, keeping only what the summariser needs.
+    let mut texts: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    {
+        let engine = state.engine.read().unwrap();
+        for chunk in engine.to_vec() {
+            if chunk.metadata.get("kb_id").map(String::as_str) != Some(kb_id.as_str()) {
+                continue;
+            }
+            let doc_id = ["doc_id", "document_id", "doc_name"]
+                .iter()
+                .find_map(|key| chunk.metadata.get(*key).cloned())
+                .unwrap_or_default();
+            if doc_id.is_empty() {
+                continue;
+            }
+            if let Some(scope) = requested.as_ref()
+                && !scope.contains(&doc_id)
+            {
+                continue;
+            }
+            let entry = texts.entry(doc_id).or_default();
+            if entry.len() < NAV_SUMMARY_CHAR_LIMIT {
+                if !entry.is_empty() {
+                    entry.push('\n');
+                }
+                let remaining = NAV_SUMMARY_CHAR_LIMIT.saturating_sub(entry.len());
+                entry.extend(chunk.content.chars().take(remaining));
+            }
+        }
+    }
+    let mut skipped: Vec<Value> = Vec::new();
+    if let Some(scope) = requested.as_ref() {
+        for doc_id in scope {
+            if !texts.contains_key(doc_id) {
+                skipped.push(serde_json::json!({
+                    "doc_id": doc_id,
+                    "reason": "no parsed chunks in this dataset"
+                }));
+            }
+        }
+    }
+    if texts.is_empty() {
+        return Json(serde_json::json!({
+            "code": 0,
+            "data": {
+                "generated": 0,
+                "skipped": skipped,
+                "total": 0,
+                "message": "No parsed chunks in this dataset; nothing to build a navigation tree from."
+            }
+        }))
+        .into_response();
+    }
+    // The engine calls the store from inside an async function, where this handler cannot
+    // wrap those calls: `OffThreadDocStore` runs each one on its own OS thread instead, so the
+    // synchronous backend never runs on a tokio worker (see the panic this replaced).
+    let store = crate::doc_store::OffThreadDocStore::new(std::sync::Arc::clone(&state.doc_store));
+    let chat = crate::llm::LlmHarnessChat::new(llm);
+    let bridge = crate::embed::EmbedderBridge::new(embedder);
+    let lock = NavKbMutex::new();
+    let total = texts.len();
+    let mut generated = 0usize;
+    for (doc_id, text) in texts {
+        crate::harness::knowlege_dataset_nav::upsert_dataset_nav_doc(
+            &store,
+            Some(&bridge as &dyn crate::structure_compile::EmbeddingBackend),
+            Some(&chat),
+            &lock,
+            &auth.user_id,
+            &kb_id,
+            &doc_id,
+            &Value::String(text),
+        )
+        .await;
+        generated += 1;
+    }
+    Json(serde_json::json!({
+        "code": 0,
+        "data": { "generated": generated, "skipped": skipped, "total": total }
+    }))
+    .into_response()
+}
