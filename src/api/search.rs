@@ -421,6 +421,14 @@ pub struct DifyRetrievalModel {
     pub rerank_id: Option<String>,
 }
 
+/// GET /api/v1/dify/retrieval/health — upstream `dify_retrieval_api.retrieval_health_check`.
+///
+/// Dify calls this before saving the external knowledge-base configuration; the
+/// upstream handler is unauthenticated and answers `{"code":0,"data":true}`.
+pub async fn dify_retrieval_health() -> impl axum::response::IntoResponse {
+    axum::Json(serde_json::json!({ "code": 0, "data": true }))
+}
+
 /// POST /api/v1/dify/retrieval — Dify-compatible retrieval endpoint
 pub async fn dify_retrieval(
     State(state): State<Arc<AppState>>,

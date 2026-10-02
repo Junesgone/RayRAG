@@ -2,6 +2,13 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.99] - 2026-10-02
+
+- **HTTP 接口对照（新维度）**：新增可复现的接口对照工具，把「上游 181 个 REST 路由 RayRAG 是否应答」变成可复核的数字——同名应答 **77**、别名应答 **37**、形状不同但已应答 **2**、尚未实现 **65**（逐条登记说明）。工具在 `--check` 下会把「别名目标被删掉」「已实现却仍挂在未实现清单」「出现未登记的新上游路由」判为失败，防止两个方向漂移。
+- **上游拼写兼容**：RAGFlow 的 `compilation-templates*` / `compilation-template-groups` 用连字符，RayRAG 自用下划线命名——现在两种拼写同时注册，写死上游路径的第三方客户端不再 404（`/searches/{id}/completion` 单数拼写同样补上）。
+- **补齐上游小接口**：`/system/ping`（未认证，返回字面量 `pong`）、`/language`（未认证的前端兼容值）、`/auth/logout`（吊销当前令牌）、`/system/stats`（与 `/stats` 同一处理器）、`/dify/retrieval/health`（Dify 外部知识库健康检查）、`/system/gaussdb/status` 与 `/system/oceanbase/status`（RayRAG 的文档引擎是 PostgreSQL，按上游「未配置」语义返回，而不是 404）。
+- **回归测试**：新增路由对照测试，逐条断言上游拼写与 RayRAG 拼写返回相同状态码与相同载荷，并验证退出登录后原令牌立即失效。
+
 ## [0.4.98] - 2026-10-02
 
 - **静默错误治理（第二批，收口）**：上一轮审计共 37 项，本轮把余下 20 项全部处理完毕——任务取消/重试/恢复路径的落库失败、文档删除与重命名过程中的补偿写入（影子删除、计数回滚、元数据恢复）、结构合并的元行写入与文档清单收缩、数据集导航行的增删改、wiki 回退 KNN 与主题向量、EPUB 条目与 XML 流、Agent 会话版本标题与运行记录、CSV 逐行解码失败、原生 zvec 检索失败回退内存打分、ASR 返回空文本、文档 redo 的分块计数重置。

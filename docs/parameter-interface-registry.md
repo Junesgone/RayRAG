@@ -431,7 +431,19 @@
 | GET | `/api/v1/compilation_template_groups/{id}` | `-` |
 | GET | `/api/v1/compilation_templates/builtins` | `-` |
 | GET | `/api/v1/compilation_templates/wiki_presets` | `-` |
+| GET | `/api/v1/compilation-template-groups` | `-` |
+| GET | `/api/v1/compilation-template-groups/{id}` | `-` |
+| ANY | `/api/v1/compilation-template-groups/{id}/execute` | `axum::routing` |
+| GET | `/api/v1/compilation-templates/builtins` | `-` |
+| GET | `/api/v1/compilation-templates/wiki-presets` | `-` |
 | GET | `/api/v1/stats` | `-` |
+| GET | `/api/v1/system/stats` | `-` |
+| GET | `/api/v1/system/ping` | `-` |
+| GET | `/api/v1/system/gaussdb/status` | `-` |
+| GET | `/api/v1/system/oceanbase/status` | `-` |
+| GET | `/api/v1/language` | `-` |
+| ANY | `/api/v1/auth/logout` | `axum::routing` |
+| GET | `/api/v1/dify/retrieval/health` | `-` |
 | GET | `/api/v1/tasks` | `-` |
 | GET | `/api/v1/pipeline/operation-logs` | `-` |
 | GET | `/api/v1/datasets/{dataset_id}/ingestions/summary` | `-` |
@@ -503,6 +515,7 @@
 | POST | `/api/v1/document/upload_info` | `-` |
 | POST | `/api/v1/sessions/related_questions` | `-` |
 | POST | `/api/v1/searches/{search_id}/completions` | `-` |
+| POST | `/api/v1/searches/{search_id}/completion` | `-` |
 | POST | `/api/v1/chat/mindmap` | `-` |
 | POST | `/api/v1/chat/recommendation` | `-` |
 | POST | `/api/v1/searchbots/related_questions` | `-` |

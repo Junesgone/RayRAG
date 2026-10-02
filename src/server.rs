@@ -2954,6 +2954,20 @@ async fn change_password(
     }
 }
 
+/// POST /api/v1/auth/logout — upstream `user_api.log_out`.
+///
+/// Upstream rewrites the stored `access_token` to `INVALID_<hex>` and saves the user
+/// row, so the token cannot be reused. RayRAG's store keeps session tokens in a map;
+/// removing the presented one has the same observable effect (the credential stops
+/// working) and answers the same envelope.
+async fn logout(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+) -> Response {
+    state.users.logout(&auth.token);
+    Json(serde_json::json!({ "code": 0, "data": true })).into_response()
+}
+
 async fn clear_conversation(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -3543,7 +3557,7 @@ fn public_api_path(path: &str) -> bool {
     // Patterns may contain one dynamic segment (`{channel}`, `{account_id}`):
     // the middleware sees the concrete request path, so placeholders are matched
     // segment-wise instead of as literals.
-    const PATTERNS: [&str; 12] = [
+    const PATTERNS: [&str; 15] = [
         "/api/v1/auth/login",
         // Upstream mounts the admin console login on the unauthenticated group
         // (`internal/router/router.go`): it is how the console obtains a token.
@@ -3554,6 +3568,11 @@ fn public_api_path(path: &str) -> bool {
         "/api/v1/version",
         "/api/v1/system/password-public-key",
         "/api/v1/system/healthz",
+        // Upstream mounts both on the unauthenticated group (`system_api.py` has no
+        // `@login_required`): the login page and the Dify probe call them before a token.
+        "/api/v1/system/ping",
+        "/api/v1/language",
+        "/api/v1/dify/retrieval/health",
         // Upstream `system_api.version` / `get_config`, plus the OAuth entry
         // points, are unauthenticated: the login page needs them before it has
         // a token.
@@ -4649,7 +4668,58 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/compilation_templates/wiki_presets",
             get(crate::api::compilation_templates::list_wiki_presets),
         )
+        // ── Upstream spellings (RAGFlow `api/apps/restful_apis/compilation_*_api.py`).
+        // RayRAG's own routes above use underscores; a client written against RAGFlow
+        // calls these hyphenated paths, so both spellings must answer.
+        .route(
+            "/api/v1/compilation-template-groups",
+            get(crate::api::compilation_templates::list_groups)
+                .post(crate::api::compilation_templates::create_group),
+        )
+        .route(
+            "/api/v1/compilation-template-groups/{id}",
+            get(crate::api::compilation_templates::get_group)
+                .put(crate::api::compilation_templates::update_group)
+                .delete(crate::api::compilation_templates::delete_group),
+        )
+        .route(
+            "/api/v1/compilation-template-groups/{id}/execute",
+            axum::routing::post(crate::api::compilation_templates::execute_group_templates),
+        )
+        .route(
+            "/api/v1/compilation-templates/builtins",
+            get(crate::api::compilation_templates::list_builtin_templates),
+        )
+        .route(
+            "/api/v1/compilation-templates/wiki-presets",
+            get(crate::api::compilation_templates::list_wiki_presets),
+        )
         .route("/api/v1/stats", get(crate::api::features::get_stats))
+        // Upstream `stats_api.stats` is mounted at `/system/stats`; RayRAG's own path
+        // above answers the same payload (pv/uv/speed/tokens/round/thumb_up).
+        .route("/api/v1/system/stats", get(crate::api::features::get_stats))
+        // Upstream `system_api.ping` (unauthenticated, literal `pong`).
+        .route("/api/v1/system/ping", get(crate::api::system::ping))
+        // Upstream `system_api.gaussdb_status` / `oceanbase_status`: RayRAG's document
+        // engine is PostgreSQL, so both answer the upstream "not in use" envelopes
+        // instead of 404 (a monitoring client reads the status field, not the code).
+        .route(
+            "/api/v1/system/gaussdb/status",
+            get(crate::api::system::gaussdb_status),
+        )
+        .route(
+            "/api/v1/system/oceanbase/status",
+            get(crate::api::system::oceanbase_status),
+        )
+        // Upstream `system_api.language` (unauthenticated front-end compatibility shim).
+        .route("/api/v1/language", get(crate::api::system::language))
+        // Upstream `user_api.log_out`.
+        .route("/api/v1/auth/logout", axum::routing::post(logout))
+        // Upstream `dify_retrieval_api.retrieval_health_check` (unauthenticated).
+        .route(
+            "/api/v1/dify/retrieval/health",
+            get(crate::api::search::dify_retrieval_health),
+        )
         .route("/api/v1/tasks", get(crate::api::features::list_tasks))
         .route(
             "/api/v1/pipeline/operation-logs",
@@ -4934,6 +5004,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/api/v1/searches/{search_id}/completions",
+            post(crate::api::features::search_complete),
+        )
+        // Upstream registers both spellings on the same handler
+        // (`search_api.py`: `/searches/<search_id>/completion` and `.../completions`).
+        .route(
+            "/api/v1/searches/{search_id}/completion",
             post(crate::api::features::search_complete),
         )
         .route(
@@ -15133,6 +15209,159 @@ mod tests {
         assert_eq!(presets["data"].as_array().unwrap().len(), 6);
         assert_eq!(presets["data"][0]["id"], "brand");
         assert_eq!(presets["data"][5]["id"], "user_interview");
+    }
+
+    /// RAGFlow spells these paths with hyphens; RayRAG's own routes use underscores.
+    /// A client written against upstream calls the hyphenated form, so both must answer
+    /// with the same status and the same payload.
+    #[tokio::test]
+    async fn upstream_spelled_routes_answer_like_the_rayrag_spelling() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+
+        for (upstream, own) in [
+            (
+                "/api/v1/compilation-templates/builtins",
+                "/api/v1/compilation_templates/builtins",
+            ),
+            (
+                "/api/v1/compilation-templates/wiki-presets",
+                "/api/v1/compilation_templates/wiki_presets",
+            ),
+            (
+                "/api/v1/compilation-template-groups",
+                "/api/v1/compilation_template_groups",
+            ),
+            ("/api/v1/system/stats", "/api/v1/stats"),
+        ] {
+            let mut statuses = Vec::new();
+            let mut bodies = Vec::new();
+            for path in [upstream, own] {
+                let response = router
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .uri(path)
+                            .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                statuses.push(response.status());
+                bodies.push(response_json(response).await);
+            }
+            assert_eq!(statuses[0], statuses[1], "status differs for {upstream}");
+            assert_eq!(statuses[0], StatusCode::OK, "{upstream}");
+            assert_eq!(bodies[0], bodies[1], "payload differs for {upstream}");
+        }
+
+        // Upstream leaves these three unauthenticated (`system_api.ping`,
+        // `system_api.language`, `dify_retrieval_api.retrieval_health_check`).
+        let ping = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/system/ping")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ping.status(), StatusCode::OK);
+        assert_eq!(
+            axum::body::to_bytes(ping.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .as_ref(),
+            b"pong"
+        );
+
+        let language = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/language")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(language.status(), StatusCode::OK);
+        assert_eq!(response_json(language).await["data"]["language"], "python");
+
+        let health = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/dify/retrieval/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(health.status(), StatusCode::OK);
+        assert_eq!(response_json(health).await["data"], true);
+
+        // Upstream answers these two with its own "document engine is not this one"
+        // envelopes; a monitoring client reads `data.status`, so both must stay 200 OK.
+        let gaussdb = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/system/gaussdb/status")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(gaussdb.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(gaussdb).await["data"]["status"],
+            "not_configured"
+        );
+
+        let oceanbase = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/system/oceanbase/status")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(oceanbase.status(), StatusCode::OK);
+        assert_eq!(response_json(oceanbase).await["data"]["status"], "error");
+
+        // Upstream `user_api.log_out`: the presented token stops working afterwards.
+        let logout = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/auth/logout")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(logout.status(), StatusCode::OK);
+        assert_eq!(response_json(logout).await["data"], true);
+        let after = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/users/me")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(after.status(), StatusCode::UNAUTHORIZED);
     }
 
     // Real GPU end-to-end: build a group with a tree template, then POST

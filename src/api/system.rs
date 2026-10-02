@@ -1106,6 +1106,58 @@ pub async fn my_llms(
 
 // ── Backward Compatibility ─────────────────────────────────────
 
+/// GET /api/v1/system/ping — upstream `system_api.ping`, unauthenticated.
+///
+/// The upstream handler answers the literal string `pong` with HTTP 200 (no JSON
+/// envelope), and RayRAG keeps that byte-for-byte: monitoring scripts and SDK
+/// probes read the body, not a `code` field.
+pub async fn ping() -> impl IntoResponse {
+    "pong"
+}
+
+/// GET /api/v1/system/gaussdb/status — upstream `system_api.gaussdb_status`.
+///
+/// Upstream proxies `health_utils.get_gaussdb_status()`, which answers
+/// `{"status":"not_configured","message":"GaussDB is not configured as the document
+/// engine"}` whenever `DOC_ENGINE` is not `gaussdb` — the default, and the only possible
+/// value for RayRAG, whose metadata store is PostgreSQL. Answering the upstream default
+/// keeps a monitoring client working; a 404 would look like a broken deployment.
+pub async fn gaussdb_status() -> impl IntoResponse {
+    Json(serde_json::json!({
+        "code": 0,
+        "data": {
+            "status": "not_configured",
+            "message": "GaussDB is not configured as the document engine",
+        }
+    }))
+}
+
+/// GET /api/v1/system/oceanbase/status — upstream `system_api.oceanbase_status`.
+///
+/// Same shape of answer: upstream raises `OceanBase is not in use.` when `DOC_ENGINE` is
+/// not `oceanbase` and the route turns that into `code: 500` with the message inside
+/// `data`. RayRAG never uses OceanBase, so it reproduces that exact envelope.
+pub async fn oceanbase_status() -> impl IntoResponse {
+    Json(serde_json::json!({
+        "code": 500,
+        "data": {
+            "status": "error",
+            "message": "Failed to get OceanBase status: OceanBase is not in use.",
+        }
+    }))
+}
+
+/// GET /api/v1/language — upstream `system_api.language`, unauthenticated.
+///
+/// Upstream answers `{"language": "python"}` as a *front-end compatibility* value: the
+/// web client (`web/src/utils/backend-runtime.ts`) maps anything other than `"go"` to
+/// `"python"`, so the field carries no information about the server implementation.
+/// RayRAG answers with the upstream value so a third-party client that compares against
+/// `"python"` keeps working; the Rust implementation is stated in `/api/v1/version`.
+pub async fn language() -> impl IntoResponse {
+    Json(serde_json::json!({ "code": 0, "data": { "language": "python" } }))
+}
+
 /// GET /api/v1/system/healthz — unauthenticated container readiness probe.
 pub async fn healthz(State(state): State<Arc<AppState>>) -> Response {
     let postgres = crate::persistence::snapshot_mirror_health();
