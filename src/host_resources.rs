@@ -95,9 +95,99 @@ fn read_mem_available(path: &Path) -> Option<u64> {
     parse_mem_available(&content)
 }
 
+/// One GPU as reported by `nvidia-smi`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GpuInfo {
+    pub name: String,
+    /// `memory.total` in bytes, when `nvidia-smi` reported it.
+    pub memory_bytes: Option<u64>,
+}
+
+/// Parse `nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits`
+/// output. Lines without a name are ignored; the memory column accepts the
+/// plain MiB figure (nounits) and a trailing `MiB`.
+pub fn parse_nvidia_smi_csv(content: &str) -> Vec<GpuInfo> {
+    let mut gpus = Vec::new();
+    for line in content.lines() {
+        let mut columns = line.split(',').map(str::trim);
+        let Some(name) = columns.next().filter(|name| !name.is_empty()) else {
+            continue;
+        };
+        let memory_bytes = columns
+            .next()
+            .map(|value| value.strip_suffix("MiB").unwrap_or(value))
+            .map(str::trim)
+            .and_then(|value| value.parse::<u64>().ok())
+            .map(|mib| mib.saturating_mul(1024 * 1024));
+        gpus.push(GpuInfo {
+            name: name.to_string(),
+            memory_bytes,
+        });
+    }
+    gpus
+}
+
+/// Detect NVIDIA GPUs via `nvidia-smi` (best effort: missing driver or binary
+/// yields an empty list).
+pub fn detect_gpus() -> Vec<GpuInfo> {
+    let output = std::process::Command::new("nvidia-smi")
+        .args([
+            "--query-gpu=name,memory.total",
+            "--format=csv,noheader,nounits",
+        ])
+        .output();
+    match output {
+        Ok(output) if output.status.success() => {
+            parse_nvidia_smi_csv(&String::from_utf8_lossy(&output.stdout))
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// One-line GPU summary for logs (`""` when no GPU is visible).
+pub fn gpu_summary(gpus: &[GpuInfo]) -> String {
+    if gpus.is_empty() {
+        return String::new();
+    }
+    let parts: Vec<String> = gpus
+        .iter()
+        .map(|gpu| match gpu.memory_bytes {
+            Some(bytes) => format!("{} ({:.0} MiB)", gpu.name, bytes as f64 / (1024.0 * 1024.0)),
+            None => gpu.name.clone(),
+        })
+        .collect();
+    format!("{} × [{}]", gpus.len(), parts.join("; "))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[test]
+    fn nvidia_smi_csv_parses_names_and_memory() {
+        let parsed =
+            parse_nvidia_smi_csv("NVIDIA GeForce RTX 4090, 24564\nNVIDIA A100-SXM4-80GB, 81920\n");
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].name, "NVIDIA GeForce RTX 4090");
+        assert_eq!(parsed[0].memory_bytes, Some(24564 * 1024 * 1024));
+        assert_eq!(parsed[1].memory_bytes, Some(81920 * 1024 * 1024));
+        assert!(parse_nvidia_smi_csv("").is_empty());
+        assert!(parse_nvidia_smi_csv(", 1234").is_empty());
+        let mib = parse_nvidia_smi_csv("RTX 3090, 24576 MiB");
+        assert_eq!(mib[0].memory_bytes, Some(24576 * 1024 * 1024));
+    }
+
+    #[test]
+    fn gpu_summary_is_empty_without_gpus() {
+        assert!(gpu_summary(&[]).is_empty());
+        let summary = gpu_summary(&[GpuInfo {
+            name: "RTX 4090".to_string(),
+            memory_bytes: Some(24564 * 1024 * 1024),
+        }]);
+        assert!(summary.contains("RTX 4090"));
+        assert!(summary.contains("24564 MiB"));
+    }
 
     #[test]
     fn mem_available_parses_kilobytes_and_ignores_other_lines() {

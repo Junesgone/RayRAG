@@ -2574,8 +2574,10 @@ fn max_concurrent_document_tasks() -> usize {
         return explicit;
     }
     let resources = crate::host_resources::HostResources::detect();
+    let gpus = crate::host_resources::gpu_summary(&crate::host_resources::detect_gpus());
     tracing::info!(
         host = %resources.summary(),
+        gpus = %gpus,
         document_tasks = resources.document_task_limit(),
         "Host resources detected; ingestion concurrency derived from them"
     );
