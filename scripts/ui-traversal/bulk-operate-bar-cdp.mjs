@@ -197,7 +197,18 @@ try {
   if (!dialog.redo) fail("the redo line must say what will be cleared");
   await page.screenshot({ path: `${shots}/bulk-parse-dialog-${STAMP}.png` });
   await page.click("[data-testid='bulk-parse-ok']");
-  await page.waitForFunction(() => !document.getElementById("bulkParseModal").classList.contains("show"), null, { timeout: 20000 });
+  try {
+    await page.waitForFunction(() => !document.getElementById("bulkParseModal").classList.contains("show"), null, { timeout: 20000 });
+  } catch (error) {
+    const diag = await page.evaluate(() => ({
+      modalShown: document.getElementById("bulkParseModal").classList.contains("show"),
+      status: (document.getElementById("bulkParseStatus") || {}).textContent || "",
+      okDisabled: (document.getElementById("bulkParseOk") || {}).disabled,
+    }));
+    results.parseTimeoutDiag = diag;
+    step("parse modal did not close", diag);
+    throw error;
+  }
   await page.waitForTimeout(1500);
   const parsed = await documents();
   results.parsed = parsed.map((doc) => ({
