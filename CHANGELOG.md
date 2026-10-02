@@ -2,6 +2,12 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.6.7] - 2026-10-02
+
+- **UI 不再说"排队中"这种含糊话**：数据集产物（Wiki）面板的 Generate 按钮原先只显示 "Wiki generation is queued for a later slice."，视图切换器则提示另一种视图"稍后切片会有"。现在两者都**如实反映后端状态**：点击 Generate 会真的去读 `GET /datasets/{id}/artifacts`，然后告诉你这个数据集当前有几页编译产物；没有产物时明确说明「产物生成尚未实现，因此这个按钮不能编译新页面；列表 / 单页读取 / 编辑 / 主题 / 清空这些接口是可用的」。
+- 这样做而不是继续留一句占位话，是因为占位话会让用户以为**功能即将可用**，而真实状态是**读取面已上线、生成面未实现**——据实说明才方便用户判断能不能用。
+- **测试**：全量 **2136 passed / 0 failed**（kb_ui 123 条全过）。
+
 ## [0.6.6] - 2026-10-02
 
 - **把「9380 也是 RAGFlow 的端口」写在用户第一次会看的地方**：默认端口沿用 9380（与 RAGFlow 一致），但这台机器上同时跑 RAGFlow 就必然撞端口——这正是此前纯 Linux 启动阻塞的同一个坑，只是发生在**默认值**上而不是命令行参数上。README 快速开始与 `.env.example` 现在都直接说明：改 `.env` 里的一行（如 `RAYRAG_PORT=9390`）再 `docker compose up -d`；启动横幅会打印**实际生效**的地址，`docker compose port rayrag 8080` 可随时查询。
