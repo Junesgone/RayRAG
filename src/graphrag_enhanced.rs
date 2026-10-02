@@ -297,6 +297,65 @@ impl EntityGraph {
     }
 
     /// Remove a node and all its edges (mirrors nx.Graph.remove_node).
+    /// Upstream `dataset_api.get_knowledge_graph` shape: `{nodes, edges}` where a node
+    /// carries its id, label, entity type and how many documents cite it, and an edge is one
+    /// connection with its weight. The view sorts by degree (upstream sorts by pagerank) and
+    /// keeps only edges whose both ends survive, so the graph never renders dangling links.
+    pub fn to_upstream_graph(&self, max_nodes: usize) -> serde_json::Value {
+        let mut degree: HashMap<&str, usize> = HashMap::new();
+        for node in self.nodes.values() {
+            degree.entry(node.name.as_str()).or_insert(0);
+            for (target, _) in &node.connections {
+                *degree.entry(target.as_str()).or_insert(0) += 1;
+                *degree.entry(node.name.as_str()).or_insert(0) += 1;
+            }
+        }
+        let mut ranked: Vec<(&String, &GraphNode)> = self.nodes.iter().collect();
+        ranked.sort_by(|left, right| {
+            let left_degree = degree.get(left.0.as_str()).copied().unwrap_or(0);
+            let right_degree = degree.get(right.0.as_str()).copied().unwrap_or(0);
+            right_degree
+                .cmp(&left_degree)
+                .then_with(|| left.0.cmp(right.0))
+        });
+        let kept: Vec<(&String, &GraphNode)> = ranked.into_iter().take(max_nodes).collect();
+        let kept_names: std::collections::HashSet<&str> =
+            kept.iter().map(|(name, _)| name.as_str()).collect();
+        let nodes: Vec<serde_json::Value> = kept
+            .iter()
+            .map(|(name, node)| {
+                serde_json::json!({
+                    "id": name,
+                    "label": node.name,
+                    "entity_type": format!("{:?}", node.entity_type),
+                    "description": node.description,
+                    "documents": node.source_id,
+                    "degree": degree.get(name.as_str()).copied().unwrap_or(0),
+                })
+            })
+            .collect();
+        let mut edges: Vec<serde_json::Value> = Vec::new();
+        for (name, node) in &kept {
+            for (target, weight) in &node.connections {
+                if target == *name || !kept_names.contains(target.as_str()) {
+                    continue;
+                }
+                edges.push(serde_json::json!({
+                    "source": name,
+                    "target": target,
+                    "weight": weight,
+                }));
+            }
+        }
+        serde_json::json!({
+            "nodes": nodes,
+            "edges": edges,
+            "total_nodes": self.nodes.len(),
+            "returned_nodes": kept.len(),
+            "returned_edges": edges.len(),
+        })
+    }
+
     pub fn remove_node(&mut self, name: &str) {
         self.nodes.remove(name);
         for node in self.nodes.values_mut() {

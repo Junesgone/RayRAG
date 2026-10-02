@@ -109,7 +109,7 @@
 | `RAYRAG_STORAGE_ACCESS_KEY` | `minioadmin` | （模板中默认注释，取消注释即生效） |
 | `RAYRAG_STORAGE_SECRET_KEY` | `minioadmin` | （模板中默认注释，取消注释即生效） |
 | `RAYRAG_STORAGE_PATH_STYLE` | `true` | （模板中默认注释，取消注释即生效） |
-| `RAYRAG_TEST_RERANKER_KEY` | `mxbai-rerank-key` |  |
+| `RAYRAG_TEST_RERANKER_KEY` | `` | 测试用的 key 保持注释态：照抄模板时不应带有任何可用凭据。 （模板中默认注释，取消注释即生效） |
 | `RAYRAG_TEST_LLM_KEY` | `` | 真实模型闭环测试里可选的 LLM key；PDF 大纲解析测试的夹具路径。 （模板中默认注释，取消注释即生效） |
 | `RAYRAG_TEST_PDF_OUTLINE` | `` | （模板中默认注释，取消注释即生效） |
 | `RAYRAG_POSTGRES_TEST_URL` | `` | 面向真实 PostgreSQL 的集成测试 DSN（默认关闭，需显式 --ignored 运行）。 （模板中默认注释，取消注释即生效） |
@@ -156,12 +156,12 @@
 | `RAYRAG_ADMIN_EMAIL` | `admin@rayrag.local` | 全新状态卷首次启动时必需；密码至少 12 个字符。 |
 | `RAYRAG_ADMIN_PASSWORD` | `` | Admin password for the account named above. Leave it unset and the first-run setup window asks for one; set a real value to bootstrap the admin without the setup step. (Commented out on purpose: an active placeholder would silently make every deployment that forgets to edit it share the same, guessable admin password.) （模板中默认注释，取消注释即生效） |
 | `RAYRAG_PASSWORD_PRIVATE_KEY_FILE` | `` | Optional RAGFlow-compatible password transport. Generate a deployment-only RSA PKCS#8/PKCS#1 key, mount it as a secret, and set the in-container path. Never reuse RAGFlow's repository-owned conf/private.pem. When unset, auth passwords are plain JSON and the deployment must terminate HTTPS upstream. |
-| `RAYRAG_POSTGRES_PASSWORD` | `change-me` | Enable with: cargo run --bin rayrag --features postgres-backend -- serve RAYRAG_POSTGRES_PASSWORD 必须与下面 DSN 里的口令一致；docker compose 用它初始化数据库。 |
+| `RAYRAG_POSTGRES_PASSWORD` | `` | Enable with: cargo run --bin rayrag --features postgres-backend -- serve RAYRAG_POSTGRES_PASSWORD 必须与下面 DSN 里的口令一致；docker compose 用它初始化数据库。 必须改成真实口令（compose 未设置时会直接报错退出，不会静默用弱口令建库）。 注释态是有意的：留着 change-me 会让所有照抄模板的部署共用同一个数据库口令。 （模板中默认注释，取消注释即生效） |
 | `RAYRAG_POSTGRES_URL` | `postgresql://rayrag:change-me@127.0.0.1:5432/rayrag` | PostgreSQL 元数据/快照库（不使用 MySQL）。两种运行方式： * 纯 Docker：compose 会用它自己的 DSN 覆盖本行（指向 postgres 服务），本行无需改动； * 纯 Linux：需要先有一个可连的 PostgreSQL 18.x。上面这行是标准本机地址， 请把用户/口令/库名/端口改成你实际的值；连不上时启动会明确报出被连的地址 （口令已脱敏）并给出处理建议，而不是只打印一句 db error。 留空 = 使用内置文件存储（JSON），适合先跑起来试用。 |
 | `RAYRAG_POSTGRES_REQUIRED_VERSION` | `18.4` |  |
 | `RAYRAG_POSTGRES_NAMESPACE` | `default` |  |
 | `RAYRAG_IMAGE` | `rayrag:local` | Docker application settings |
-| `RAYRAG_PORT` | `9380` |  |
+| `RAYRAG_PORT` | `9380` | RayRAG's web port. 9380 is also RAGFlow's default: if RAGFlow already runs on this machine, change this one line (e.g. 9390) before the first `docker compose up -d`. |
 | `RAYRAG_FEATURES` | `postgres-backend,zvec-backend` |  |
 | `POSTGRES_IMAGE` | `docker.m.daocloud.io/library/postgres:18.4` | 国内 Docker Hub 加速默认值；镜像仍严格使用要求的版本标签。 若该镜像站不可用，可改回 library/postgres:18.4、 library/rust:1.97.1-bookworm 和 library/debian:bookworm-slim。 |
 | `RUST_IMAGE` | `docker.m.daocloud.io/library/rust:1.97.1-bookworm` |  |
@@ -324,6 +324,7 @@
 | ANY | `/api/v1/conversations/{conversation_id}/clear` | `axum::routing` |
 | ANY | `/api/v1/conversations/{conversation_id}/export` | `axum::routing` |
 | ANY | `/api/v1/user/password` | `axum::routing` |
+| ANY | `/api/v1/datasets/{dataset_id}/graph` | `axum::routing` |
 | ANY | `/api/v1/datasets/{dataset_id}/graphrag/build` | `axum::routing` |
 | ANY | `/api/v1/datasets/{dataset_id}/graphrag/query` | `axum::routing` |
 | GET | `/api/v1/admin/ping` | `-` |

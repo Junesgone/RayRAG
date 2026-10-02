@@ -91,7 +91,6 @@ KNOWN_MISSING: dict[str, str] = {
     "/datasets/<dataset_id>/documents/<document_id>/metadata/config": "功能级缺口：文档级元数据配置未实现",
     "/datasets/<dataset_id>/documents/<document_id>/structure/graph": "功能级缺口：逐文档结构图（编译产物按文档/模板存储）未实现；RayRAG 的 GraphRAG 产物按数据集存储",
     "/datasets/<dataset_id>/embedding/check": "功能级缺口：换模型重嵌入相似度校验未实现",
-    "/datasets/<dataset_id>/graph": "功能级缺口：数据集知识图谱读取未实现（产物按 kb 存储但缺公开读取路径）",
     "/datasets/<dataset_id>/index": "功能级缺口：按索引类型重建索引未实现",
     "/datasets/<dataset_id>/metadata/config": "功能级缺口：数据集自动元数据配置未实现",
     "/datasets/<dataset_id>/skills": "功能级缺口：数据集 Skills 面未实现（Skills 索引仅有全局 /api/v1/skills/*）",

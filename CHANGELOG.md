@@ -2,6 +2,13 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.7.3] - 2026-10-02
+
+- **`GET /datasets/{id}/graph` 落地（上游 `get_knowledge_graph`）**：把该数据集**已经构建**的图谱按上游形状返回 `{graph: {nodes, edges}, mind_map: {}}`——节点带 id/标签/实体类型/描述/来源文档/度数，边带权重；按度数排序（上游按 pagerank）取前 N（默认 256，可 `max_nodes` 调整），**并且只保留两端都入选的边**，不会出现悬空连线。同时给 `EntityGraph` 补上了公开的序列化出口——此前它的字段全是 `#[allow(dead_code)]`，图谱构建得出来却没有对外读取的路径。
+- **未构建时说清楚**：没有图谱的数据集返回空图并带 `built: false`，而不是 404、也不是假装有一张图——UI 因此能如实显示"尚未构建"。
+- 数字：同名 **105→106**、未实现 **36→35**、方法缺口 1（生成类，已登记）。
+- **测试**：新增回归（未构建 → 200 + `built:false` + 空 nodes + 存在 mind_map）。全量 **2137 passed / 0 failed**。
+
 ## [0.7.2] - 2026-10-02
 
 - **修掉数据集页面的 JS 报错（并确认知识图谱路由可用）**：切标签的函数在最后两行**没有做空值保护**——`document.getElementById('tab'+n).style.display=...` 与 `document.getElementById('nav'+n).classList.add('active')`。而**知识图谱按上游设计不是侧栏项，`nav4` 根本不存在**，于是在 `/dataset/knowledge-graph/{id}` 上必然抛 `TypeError: Cannot read properties of null (reading 'classList')`，并且**中断后面的激活逻辑**（tab5 Artifacts 因此可能不被正确收起）。两处都已加空值保护。

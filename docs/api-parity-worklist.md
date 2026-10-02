@@ -5,11 +5,11 @@
 
 ## 现状
 
-- 上游路由：**181**；RayRAG `/api/v1` 路由：**280**
-- 同名应答（exact）：**105**
+- 上游路由：**181**；RayRAG `/api/v1` 路由：**281**
+- 同名应答（exact）：**106**
 - 别名应答（alias，上游拼写已注册但走 RayRAG 自己的命名）：**38**
 - 形状不同但已被应答（covered）：**2**
-- 尚未实现（missing，已登记）：**36**
+- 尚未实现（missing，已登记）：**35**
 - 路径已有但方法缺失（method）：**1**
 - 未登记的缺口（mismatch，`--check` 视为失败）：**0**
 
@@ -36,7 +36,6 @@
 | `/datasets/<dataset_id>/artifacts/graph` | `dataset_api.py` | 功能级缺口：同上（产物引擎未接线） |
 | `/datasets/<dataset_id>/artifacts/structure` | `dataset_api.py` | 功能级缺口：同上（产物引擎未接线） |
 | `/datasets/<dataset_id>/embedding/check` | `dataset_api.py` | 功能级缺口：换模型重嵌入相似度校验未实现 |
-| `/datasets/<dataset_id>/graph` | `dataset_api.py` | 功能级缺口：数据集知识图谱读取未实现（产物按 kb 存储但缺公开读取路径） |
 | `/datasets/<dataset_id>/index` | `dataset_api.py` | 功能级缺口：按索引类型重建索引未实现 |
 | `/datasets/<dataset_id>/metadata/config` | `dataset_api.py` | 功能级缺口：数据集自动元数据配置未实现 |
 | `/datasets/<dataset_id>/skills` | `dataset_api.py` | 功能级缺口：数据集 Skills 面未实现（Skills 索引仅有全局 /api/v1/skills/*） |

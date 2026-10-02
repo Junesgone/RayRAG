@@ -2838,6 +2838,55 @@ async fn query_graphrag(
     .into_response()
 }
 
+/// `GET /api/v1/datasets/{id}/graph` — upstream `dataset_api.get_knowledge_graph`.
+///
+/// Returns the graph this dataset has already built (the same artifacts
+/// `POST /graphrag/build` writes and `/graphrag/query` reads), shaped as upstream's
+/// `{graph: {nodes, edges}, mind_map: {}}`. A dataset with no graph yet answers with an empty
+/// graph and a `built: false` marker instead of a 404, so the UI can say "not built yet"
+/// rather than treating it as an error.
+async fn dataset_graph(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(kb_id): Path<String>,
+    Query(query): Query<DatasetGraphQuery>,
+) -> Response {
+    if !kb_accessible(&state, &kb_id, &auth) {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            &format!("You don't own the dataset {kb_id}."),
+        );
+    }
+    let max_nodes = query.max_nodes.unwrap_or(256).clamp(1, 2048);
+    let snapshot = state.graphs.snapshot();
+    let Some(graph) = snapshot.kb_graphs.get(&kb_id) else {
+        return Json(serde_json::json!({
+            "code": 0,
+            "data": {
+                "graph": { "nodes": [], "edges": [], "total_nodes": 0, "returned_nodes": 0, "returned_edges": 0 },
+                "mind_map": {},
+                "built": false,
+            }
+        }))
+        .into_response();
+    };
+    Json(serde_json::json!({
+        "code": 0,
+        "data": {
+            "graph": graph.to_upstream_graph(max_nodes),
+            "mind_map": {},
+            "built": true,
+        }
+    }))
+    .into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct DatasetGraphQuery {
+    #[serde(default)]
+    max_nodes: Option<usize>,
+}
+
 async fn build_graphrag(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -4544,6 +4593,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/user/password",
             axum::routing::patch(change_password),
+        )
+        .route(
+            "/api/v1/datasets/{dataset_id}/graph",
+            axum::routing::get(dataset_graph),
         )
         .route(
             "/api/v1/datasets/{dataset_id}/graphrag/build",
@@ -15827,6 +15880,37 @@ mod tests {
         let empty = response_json(empty).await;
         assert_eq!(empty["code"], 0);
         assert_eq!(empty["data"]["applied"].as_array().unwrap().len(), 0);
+    }
+
+    /// The graph endpoint answers in upstream's shape, and a dataset that has never built a
+    /// graph says so instead of 404-ing or pretending to have one.
+    #[tokio::test]
+    async fn dataset_graph_answers_upstream_shape() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Graph dataset", "")
+            .unwrap();
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/api/v1/datasets/{}/graph", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["data"]["built"], false);
+        assert_eq!(body["data"]["graph"]["nodes"].as_array().unwrap().len(), 0);
+        assert!(body["data"].get("mind_map").is_some());
     }
 
     /// The tenant default models are exposed under RAGFlow's own column names, so a client
