@@ -110,6 +110,11 @@ docker compose up -d --build
 
 1. **Open a browser** at `http://<your-host-ip>:9380` (locally:
    `http://127.0.0.1:9380`).
+
+> **Running RAGFlow on the same machine?** RayRAG's default port, 9380, is also RAGFlow's, so the
+> two cannot both hold it. Change one line in `.env` — `RAYRAG_PORT=9390` — and run
+> `docker compose up -d` again; the command above prints the URL that is actually in use, and
+> `docker compose port rayrag 8080` tells you the published port at any time.
 2. **Log in** with `admin@rayrag.local` and the `RAYRAG_ADMIN_PASSWORD` from `.env`.
 3. **Create a knowledge base**: left menu `Knowledge Base` → `Create knowledge base` →
    type a name → save.

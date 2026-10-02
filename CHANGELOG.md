@@ -2,6 +2,11 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.6.6] - 2026-10-02
+
+- **把「9380 也是 RAGFlow 的端口」写在用户第一次会看的地方**：默认端口沿用 9380（与 RAGFlow 一致），但这台机器上同时跑 RAGFlow 就必然撞端口——这正是此前纯 Linux 启动阻塞的同一个坑，只是发生在**默认值**上而不是命令行参数上。README 快速开始与 `.env.example` 现在都直接说明：改 `.env` 里的一行（如 `RAYRAG_PORT=9390`）再 `docker compose up -d`；启动横幅会打印**实际生效**的地址，`docker compose port rayrag 8080` 可随时查询。
+- 全量 `cargo test --locked --lib` 通过；环境变量守卫六条全过（模板键不重复、每个文档化的键都被代码读取）。
+
 ## [0.6.5] - 2026-10-02
 
 - **模板里最后两处「活的占位凭据」改为注释态**：`RAYRAG_POSTGRES_PASSWORD=change-me` 与 `RAYRAG_TEST_RERANKER_KEY=mxbai-rerank-key`。照抄 `.env.example` 的部署原本会共用同一个数据库口令；现在留空，`docker compose` 会因缺少该变量**直接报错退出**（`${VAR:?set ...}`），而不是静默用弱口令建库。这是上一轮修掉管理员口令占位值后的同类收尾：**模板里不应带任何可直接使用的凭据**。
