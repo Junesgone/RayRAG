@@ -597,6 +597,7 @@ pub async fn compile_artifacts(
     // Phase 1 — MAP: model per document, extracts stored for phase 2.
     let mut mapped = 0usize;
     let mut extracts = 0usize;
+    let mut failed_docs = 0usize;
     let mut skipped: Vec<Value> = Vec::new();
     let mut all_chunk_ids: BTreeSet<String> = BTreeSet::new();
     let total = per_doc.len();
@@ -642,11 +643,28 @@ pub async fn compile_artifacts(
                 .map(Vec::len)
                 .unwrap_or(0);
         if per_doc_extracts == 0 {
-            skipped.push(serde_json::json!({
-                "doc_id": doc_id,
-                "reason": "the model extracted no entities, concepts, claims, relations or topics from this document"
-            }));
-            tracing::info!(%doc_id, %kb_id, "artifact MAP found nothing to extract");
+            // `_meta.requested > 0` with nothing extracted means the extraction did not
+            // produce anything: that is a failure, not "this document has no entities". The
+            // earlier wording called it a data result, which was wrong - a document full of
+            // named entities came back empty because the model call itself had failed.
+            let requested = mapped_doc
+                .get("_meta")
+                .and_then(|meta| meta.get("requested"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            let (reason, failed) = if requested > 0 {
+                (
+                    "extraction produced nothing: the model call or its JSON answer failed (see the server log)",
+                    true,
+                )
+            } else {
+                ("the document had no chunk text to extract from", false)
+            };
+            if failed {
+                failed_docs += 1;
+                tracing::warn!(%doc_id, %kb_id, "artifact MAP extraction produced nothing");
+            }
+            skipped.push(serde_json::json!({ "doc_id": doc_id, "reason": reason }));
         }
         extracts += per_doc_extracts;
         mapped += 1;
@@ -696,7 +714,7 @@ pub async fn compile_artifacts(
     .await;
     Json(serde_json::json!({
         "code": 0,
-        "data": { "mapped": mapped, "total": total, "extracts": extracts, "skipped": skipped, "compile": outcome }
+        "data": { "mapped": mapped, "total": total, "extracts": extracts, "failed": failed_docs, "skipped": skipped, "compile": outcome }
     }))
     .into_response()
 }

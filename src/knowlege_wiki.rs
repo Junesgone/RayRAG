@@ -1848,15 +1848,36 @@ async fn wiki_gen_json(
     gen_conf: &Value,
 ) -> Option<Value> {
     let history = vec![json!({"role": "user", "content": user})];
-    let raw = chat.chat(system, &history, gen_conf).await.ok()?;
+    // The error used to be discarded by `.ok()?`, so a failed model call and a model that
+    // simply returned prose both surfaced as "batch extraction failed" - with no way to tell
+    // them apart from the logs. Both paths now say what happened.
+    let raw = match chat.chat(system, &history, gen_conf).await {
+        Ok(raw) => raw,
+        Err(error) => {
+            tracing::warn!(%error, "wiki_gen_json: the chat call failed");
+            return None;
+        }
+    };
     let stripped = wiki_think_re().replace(&raw, "").to_string();
     let cleaned = wiki_fence_re()
         .replace_all(&stripped, "")
         .trim()
         .to_string();
-    serde_json::from_str::<Value>(&cleaned)
-        .ok()
-        .or_else(|| parse_json_lenient(&cleaned))
+    match serde_json::from_str::<Value>(&cleaned) {
+        Ok(value) => Some(value),
+        Err(error) => match parse_json_lenient(&cleaned) {
+            Some(value) => Some(value),
+            None => {
+                tracing::warn!(
+                    %error,
+                    bytes = cleaned.len(),
+                    head = %cleaned.chars().take(160).collect::<String>(),
+                    "wiki_gen_json: the model answer was not JSON"
+                );
+                None
+            }
+        },
+    }
 }
 
 /// `_wiki_extract_one_batch`: one LLM call for one packed batch.
