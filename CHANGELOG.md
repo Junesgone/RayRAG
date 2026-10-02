@@ -2,6 +2,12 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.7.4] - 2026-10-02
+
+- **知识图谱面板开始消费 `GET /datasets/{id}/graph`**：此前面板只在点击 Build Graph 之后显示一次构建摘要（且只有一行统计 + 环形图）。现在打开 `/dataset/knowledge-graph/{id}` 时会**直接读出已构建的图谱**并渲染成两张表 —— 实体（Entity / Type / Degree / Documents）与关系（Source / Target / Weight），只在有边时显示关系表；没有实体时给出**解释性**文案（"Build Graph 从已索引分块抽取实体，文本很少的文档自然图谱很小"），而不是一片空白。
+- **未构建与读取失败分开**：`built:false` 时面板顶部明确写"尚未为该数据集构建图谱"；接口读取失败则红字显示具体错误——**两种情况不会混为一谈**。
+- **测试**：全量 **2137 passed / 0 failed**（`dataset_detail_paths_follow_upstream_sidebar_routes` 的启动脚本断言同步更新）。
+
 ## [0.7.3] - 2026-10-02
 
 - **`GET /datasets/{id}/graph` 落地（上游 `get_knowledge_graph`）**：把该数据集**已经构建**的图谱按上游形状返回 `{graph: {nodes, edges}, mind_map: {}}`——节点带 id/标签/实体类型/描述/来源文档/度数，边带权重；按度数排序（上游按 pagerank）取前 N（默认 256，可 `max_nodes` 调整），**并且只保留两端都入选的边**，不会出现悬空连线。同时给 `EntityGraph` 补上了公开的序列化出口——此前它的字段全是 `#[allow(dead_code)]`，图谱构建得出来却没有对外读取的路径。
