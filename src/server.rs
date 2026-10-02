@@ -15894,6 +15894,39 @@ mod tests {
         assert_eq!(empty["data"]["applied"].as_array().unwrap().len(), 0);
     }
 
+    /// The endpoint probe answers for every capability, and says "not set" instead of failing
+    /// when an environment variable is missing - the point is to be able to tell the difference
+    /// between "no endpoint configured" and "endpoint configured but down".
+    #[tokio::test]
+    async fn model_endpoint_check_reports_every_capability() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/models/endpoints/check")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 0, "{body}");
+        let endpoints = body["data"]["endpoints"].as_array().expect("endpoints");
+        assert_eq!(endpoints.len(), 5, "one probe per capability: {body}");
+        for endpoint in endpoints {
+            assert!(endpoint["capability"].is_string(), "{endpoint}");
+            assert!(endpoint["env"].is_string(), "{endpoint}");
+            assert!(endpoint["reachable"].is_boolean(), "{endpoint}");
+            assert!(
+                endpoint["detail"].as_str().is_some_and(|d| !d.is_empty()),
+                "every probe must explain itself: {endpoint}"
+            );
+        }
+    }
+
     /// Navigation generation reports its prerequisites instead of pretending: without models it
     /// is a coded error naming the missing piece, and on a dataset with no chunks it answers
     /// `generated: 0` with a reason rather than a silent success.
