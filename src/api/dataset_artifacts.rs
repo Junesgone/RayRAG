@@ -54,23 +54,45 @@ fn scalar(row: &Value, key: &str) -> String {
     }
 }
 
-/// The compiled-artifact store, connected off the async runtime.
+/// Run one compiled-artifact operation on a blocking thread.
 ///
-/// `DocStorePool::get_conn` blocks (the PostgreSQL driver runs its own `block_on`), so the
-/// handler awaits the blocking variant; calling the synchronous form from a request
-/// panicked the worker thread and poisoned the pool's lock.
-async fn workspace(state: &Arc<AppState>) -> Result<Arc<dyn crate::doc_store::DocStore>, Response> {
-    state.doc_store.get_conn_blocking().await.map_err(|error| {
-        tracing::error!(%error, "compiled-artifact store is unavailable");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "code": 500,
-                "message": format!("Artifact store unavailable: {error}")
-            })),
-        )
-            .into_response()
+/// The doc store backends are **synchronous**: the PostgreSQL driver runs its own
+/// `block_on`, and both connecting *and querying* from a tokio worker panic with "Cannot
+/// start a runtime from within a runtime". Every read and write therefore happens inside
+/// `spawn_blocking`, on the same pool instance so the connection stays cached.
+async fn with_store<T, F>(state: &Arc<AppState>, work: F) -> Result<T, Response>
+where
+    F: FnOnce(&dyn crate::doc_store::DocStore) -> anyhow::Result<T> + Send + 'static,
+    T: Send + 'static,
+{
+    let pool = Arc::clone(&state.doc_store);
+    match tokio::task::spawn_blocking(move || {
+        let store = pool.get_conn()?;
+        work(store.as_ref())
     })
+    .await
+    {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(error)) => {
+            tracing::error!(%error, "compiled-artifact store operation failed");
+            Err(store_error(&error))
+        }
+        Err(error) => {
+            tracing::error!(%error, "compiled-artifact store task failed");
+            Err(store_error(&anyhow::anyhow!("store task failed: {error}")))
+        }
+    }
+}
+
+fn store_error(error: &anyhow::Error) -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(serde_json::json!({
+            "code": 500,
+            "message": format!("Artifact store unavailable: {error}")
+        })),
+    )
+        .into_response()
 }
 
 fn invalid_ids(message: &str) -> Response {
@@ -89,14 +111,16 @@ pub async fn has_any_wiki(
     if !kb_accessible(&state, &kb_id, &auth) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let store = match workspace(&state).await {
-        Ok(store) => store,
-        Err(response) => return response,
-    };
-    if wiki_has_any_pages(store.as_ref(), &auth.user_id, &kb_id) {
-        StatusCode::OK.into_response()
-    } else {
-        StatusCode::NOT_FOUND.into_response()
+    let tenant = auth.user_id.clone();
+    let dataset = kb_id.clone();
+    match with_store(&state, move |store| {
+        Ok(wiki_has_any_pages(store, &tenant, &dataset))
+    })
+    .await
+    {
+        Ok(true) => StatusCode::OK.into_response(),
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(response) => response,
     }
 }
 
@@ -113,10 +137,6 @@ pub async fn list_artifacts(
     if !kb_accessible(&state, &kb_id, &auth) {
         return invalid_ids(&format!("You don't own the dataset {kb_id}."));
     }
-    let store = match workspace(&state).await {
-        Ok(store) => store,
-        Err(response) => return response,
-    };
     let page = query
         .get("page")
         .and_then(|value| value.parse::<usize>().ok())
@@ -140,7 +160,21 @@ pub async fn list_artifacts(
         .map(|value| value.trim().to_lowercase())
         .filter(|value| !value.is_empty());
 
-    let pages = search_existing_pages(store.as_ref(), &auth.user_id, &kb_id, &list_fields());
+    let tenant = auth.user_id.clone();
+    let dataset = kb_id.clone();
+    let pages = match with_store(&state, move |store| {
+        Ok(search_existing_pages(
+            store,
+            &tenant,
+            &dataset,
+            &list_fields(),
+        ))
+    })
+    .await
+    {
+        Ok(pages) => pages,
+        Err(response) => return response,
+    };
     let mut items: Vec<Value> = pages
         .into_values()
         .filter_map(|row| {
@@ -218,10 +252,6 @@ pub async fn get_artifact_page(
     if !kb_accessible(&state, &kb_id, &auth) {
         return invalid_ids(&format!("You don't own the dataset {kb_id}."));
     }
-    let store = match workspace(&state).await {
-        Ok(store) => store,
-        Err(response) => return response,
-    };
     let fields: Vec<String> = [
         "slug_kwd",
         "title_kwd",
@@ -235,7 +265,16 @@ pub async fn get_artifact_page(
     .iter()
     .map(|field| (*field).to_string())
     .collect();
-    let pages = search_existing_pages(store.as_ref(), &auth.user_id, &kb_id, &fields);
+    let tenant = auth.user_id.clone();
+    let dataset = kb_id.clone();
+    let pages = match with_store(&state, move |store| {
+        Ok(search_existing_pages(store, &tenant, &dataset, &fields))
+    })
+    .await
+    {
+        Ok(pages) => pages,
+        Err(response) => return response,
+    };
     // Upstream routes the page as `<page_type>/<path:slug>` and reassembles the full slug
     // the same way (`f"{page_type}/{slug}"`), so `/artifacts/topic/rust` finds
     // `topic/rust` rather than a page literally called `rust`.
@@ -322,10 +361,6 @@ pub async fn update_artifact_page(
     if body.get("comments").is_some_and(|value| !value.is_string()) {
         return invalid_ids("'comments' must be a string.");
     }
-    let store = match workspace(&state).await {
-        Ok(store) => store,
-        Err(response) => return response,
-    };
     let full_slug = if slug.contains('/') {
         slug.clone()
     } else {
@@ -335,7 +370,16 @@ pub async fn update_artifact_page(
         .iter()
         .map(|f| (*f).to_string())
         .collect();
-    let pages = search_existing_pages(store.as_ref(), &auth.user_id, &kb_id, &fields);
+    let tenant = auth.user_id.clone();
+    let dataset = kb_id.clone();
+    let pages = match with_store(&state, move |store| {
+        Ok(search_existing_pages(store, &tenant, &dataset, &fields))
+    })
+    .await
+    {
+        Ok(pages) => pages,
+        Err(response) => return response,
+    };
     let Some(row) = pages.get(&full_slug) else {
         return (
             StatusCode::NOT_FOUND,
@@ -368,16 +412,22 @@ pub async fn update_artifact_page(
         [("id".to_string(), Value::String(row_id.clone()))]
             .into_iter()
             .collect();
-    match store.update(&condition, &payload, &index_name(&auth.user_id), &kb_id) {
-        Ok(_) => Json(serde_json::json!({
+    let tenant = auth.user_id.clone();
+    let dataset = kb_id.clone();
+    let index = index_name(&tenant);
+    let saved = with_store(&state, move |store| {
+        store
+            .update(&condition, &payload, &index, &dataset)
+            .map(|_| ())
+    })
+    .await;
+    match saved {
+        Ok(()) => Json(serde_json::json!({
             "code": 0,
             "data": { "slug": full_slug, "page_type": page_type, "saved": true }
         }))
         .into_response(),
-        Err(error) => {
-            tracing::error!(%error, %full_slug, "Failed to save the artifact page");
-            Json(serde_json::json!({ "code": 500, "message": error.to_string() })).into_response()
-        }
+        Err(response) => response,
     }
 }
 
@@ -392,25 +442,25 @@ pub async fn clear_artifacts(
     if !kb_accessible(&state, &kb_id, &auth) {
         return invalid_ids(&format!("You don't own the dataset {kb_id}."));
     }
-    let store = match workspace(&state).await {
-        Ok(store) => store,
-        Err(response) => return response,
-    };
     let mut condition: crate::doc_store::FilterCondition = Default::default();
     condition.insert(
         "compile_kwd".to_string(),
         Value::String(WIKI_PAGE_COMPILE_KWD.to_string()),
     );
-    match store.delete(&condition, &index_name(&auth.user_id), &kb_id) {
+    let tenant = auth.user_id.clone();
+    let dataset = kb_id.clone();
+    let index = index_name(&tenant);
+    match with_store(&state, move |store| {
+        store.delete(&condition, &index, &dataset)
+    })
+    .await
+    {
         Ok(deleted) => Json(serde_json::json!({
             "code": 0,
             "data": { "deleted": deleted }
         }))
         .into_response(),
-        Err(error) => {
-            tracing::error!(%error, %kb_id, "Failed to clear dataset artifacts");
-            Json(serde_json::json!({ "code": 500, "message": error.to_string() })).into_response()
-        }
+        Err(response) => response,
     }
 }
 
@@ -425,15 +475,25 @@ pub async fn list_artifact_topics(
     if !kb_accessible(&state, &kb_id, &auth) {
         return invalid_ids(&format!("You don't own the dataset {kb_id}."));
     }
-    let store = match workspace(&state).await {
-        Ok(store) => store,
-        Err(response) => return response,
-    };
     let keywords = query
         .get("keywords")
         .map(|value| value.trim().to_lowercase())
         .unwrap_or_default();
-    let pages = search_existing_pages(store.as_ref(), &auth.user_id, &kb_id, &list_fields());
+    let tenant = auth.user_id.clone();
+    let dataset = kb_id.clone();
+    let pages = match with_store(&state, move |store| {
+        Ok(search_existing_pages(
+            store,
+            &tenant,
+            &dataset,
+            &list_fields(),
+        ))
+    })
+    .await
+    {
+        Ok(pages) => pages,
+        Err(response) => return response,
+    };
     let mut items: Vec<Value> = pages
         .into_values()
         .filter_map(|row| {

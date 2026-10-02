@@ -700,7 +700,7 @@ impl PostgresDocStore {
         sql: &str,
         params: &[&(dyn postgres::types::ToSql + Sync)],
     ) -> crate::Result<Vec<StoredRow>> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = postgres_client(&self.client);
         let rows = client.query(sql, params)?;
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {
@@ -738,7 +738,7 @@ impl DocStore for PostgresDocStore {
     }
 
     fn health(&self) -> crate::Result<HealthStatus> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = postgres_client(&self.client);
         let version: String = client.query_one("SHOW server_version", &[])?.get(0);
         let major = version
             .split('.')
@@ -759,7 +759,7 @@ impl DocStore for PostgresDocStore {
         dataset_id: &str,
         vector_size: usize,
     ) -> crate::Result<()> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = postgres_client(&self.client);
         client.execute(
             "INSERT INTO doc_store_indexes (index_name, dataset_id, vector_size, created_at)
              VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING",
@@ -777,7 +777,7 @@ impl DocStore for PostgresDocStore {
     }
 
     fn delete_idx(&self, index_name: &str, dataset_id: &str) -> crate::Result<()> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = postgres_client(&self.client);
         client.execute(
             "DELETE FROM doc_store_indexes WHERE index_name = $1 AND dataset_id = $2",
             &[&index_name, &dataset_id],
@@ -790,7 +790,7 @@ impl DocStore for PostgresDocStore {
     }
 
     fn index_exist(&self, index_name: &str, dataset_id: &str) -> crate::Result<bool> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = postgres_client(&self.client);
         let exists: bool = client.query_one(
             "SELECT EXISTS(SELECT 1 FROM doc_store_indexes WHERE index_name = $1 AND dataset_id = $2)",
             &[&index_name, &dataset_id],
@@ -804,7 +804,7 @@ impl DocStore for PostgresDocStore {
         index_name: &str,
         dataset_id: &str,
     ) -> crate::Result<Vec<String>> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = postgres_client(&self.client);
         let mut ids = Vec::with_capacity(rows.len());
         for row in rows {
             let id = row_id(row).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
@@ -828,7 +828,7 @@ impl DocStore for PostgresDocStore {
         index_name: &str,
         dataset_ids: &[String],
     ) -> crate::Result<Option<DocRow>> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = postgres_client(&self.client);
         let row = client.query_opt(
             "SELECT row FROM doc_store_chunks WHERE id = $1 AND index_name = $2 AND dataset_id = ANY($3)",
             &[&data_id, &index_name, &dataset_ids],
@@ -847,7 +847,7 @@ impl DocStore for PostgresDocStore {
     ) -> crate::Result<bool> {
         let condition_value = Value::Object(condition.clone());
         let new_value = Value::Object(new_value.clone());
-        let mut client = self.client.lock().unwrap();
+        let mut client = postgres_client(&self.client);
         let affected = client.execute(
             "UPDATE doc_store_chunks
              SET row = row || $4::jsonb
@@ -864,7 +864,7 @@ impl DocStore for PostgresDocStore {
         dataset_id: &str,
     ) -> crate::Result<usize> {
         let condition_value = Value::Object(condition.clone());
-        let mut client = self.client.lock().unwrap();
+        let mut client = postgres_client(&self.client);
         let affected = client.execute(
             "DELETE FROM doc_store_chunks WHERE dataset_id = $1 AND index_name = $2 AND row @> $3::jsonb",
             &[&dataset_id, &index_name, &condition_value],
@@ -898,7 +898,7 @@ impl DocStore for PostgresDocStore {
     }
 
     fn sql(&self, sql: &str, fetch_size: usize) -> crate::Result<Vec<Value>> {
-        let mut client = self.client.lock().unwrap();
+        let mut client = postgres_client(&self.client);
         let rows = client.query(sql, &[])?;
         let mut out = Vec::new();
         for row in rows.iter().take(fetch_size.max(1)) {
@@ -1098,6 +1098,20 @@ pub enum DocStoreBackend {
 pub struct DocStorePool {
     backend: DocStoreBackend,
     inner: RwLock<Option<Arc<dyn DocStore>>>,
+}
+
+/// The PostgreSQL client behind its mutex, tolerating a poisoned lock.
+///
+/// A panic while the client is borrowed (see `DocStorePool::get_conn`) used to poison this
+/// mutex, after which *every* later query panicked with `PoisonError` and the artifact
+/// store stayed broken until the process restarted. The client is only ever used
+/// exclusively, so recovering the guard is safe.
+fn postgres_client(
+    client: &Mutex<postgres::Client>,
+) -> std::sync::MutexGuard<'_, postgres::Client> {
+    client
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Read the pool's connection slot through a poisoned lock.
