@@ -28,7 +28,7 @@ flate2 = "1"
 # to crates.io at that patch level (0.7.0 is the newest published version);
 # the tag pins the exact source that the v0.7.1 prebuilt libzvec_c_api.so ships
 # with (Dockerfile ARG ZVEC_RUST_VERSION=0.7.1).
-zvec-rust = { git = "https://github.com/zvec-ai/zvec-rust", tag = "v0.7.1", optional = true }
+zvec-rust = { git = "https://github.com/zvec-ai/zvec-rust", tag = "v0.7.2", optional = true }
 
 # Optional synchronous PostgreSQL mirror used by the existing synchronous
 # atomic persistence boundary. PostgreSQL 18.4 is the deployment baseline.
