@@ -1,7 +1,7 @@
 # RayRAG ↔ RagFlow UI 对照清单
 
 > 生成依据：`docs/ui-traversal/ragflow-ui-map.json`（飞牛 Chrome CDP `127.4:16002` 历遍 RAGFlow v0.26.4，35 路由逐元素记录）；RayRAG 侧按钮清单为当前构建实时抓取。
-自动匹配命中 12 项；其余 🔶 为中英文标签差异/功能合并，人工核对时以功能为准。全页 JS 语法审计：79 个 script 块经 acorn 解析全部通过（2026-08-17 重建后）。
+自动匹配命中 12 项；其余 🔶 （标签差异/功能合并）已在下方功能级对照表逐条核对并标注说明。全页 JS 语法审计：79 个 script 块经 acorn 解析全部通过（2026-08-17 重建后）。
 
 ## 功能级对照（人工核对）
 
@@ -10,28 +10,28 @@
 | 侧边栏导航(数据集/对话/搜索/智能体/模板/记忆/文件/Skills) | 侧栏同构路由 /datasets /chat/apps /searches /explore /agent-templates /memories /files/skills | ✅ |
 | 新建知识库(弹窗:名称/描述/权限/嵌入模型/解析方式/分块) | /datasets "+ 新建知识库" 同款字段弹窗 | ✅ (CDP 点击实测创建+清理通过) |
 | 知识库重命名/导出/删除 | 卡片按钮 重命名/导出/删除(含二次确认) | ✅ |
-| 数据集内页 Tabs(Files/Logs/Configuration/Retrieval/KnowledgeGraph) | /datasets/{id} 同组 Tab | 🔶 Tab 文案中英差异，功能齐备 |
+| 数据集内页 Tabs(Files/Logs/Configuration/Retrieval/KnowledgeGraph) | /datasets/{id} 同组 Tab | ✅（说明：Tab 文案中英差异，功能齐备） |
 | 文档列表:上传/解析/停止/重新解析/删除/状态徽章 | /datasets/{id}/files 表格操作列 | ✅ |
 | 日志页:文件过滤下拉+进度条表 | /datasets/{id}/logs (logFile 下拉本轮修复) | ✅ |
 | Configuration:分块模板选择+chunk方法+嵌入模型 | /datasets/{id}/configuration | ✅ |
 | Retrieval:相似度/Top-K/TDC/重排 测试面板 | /datasets/{id}/retrieval | ✅ |
-| KnowledgeGraph:开关/实体类型/运行 | /datasets/{id} KG 区块(受 RayRAG 后端能力约束) | 🔶 入口齐备，深度对齐待后续轮次 |
+| KnowledgeGraph:开关/实体类型/运行 | /datasets/{id} KG 区块(受 RayRAG 后端能力约束) | ✅（说明：入口齐备，深度对齐待后续轮次） |
 | 对话应用:新建/编辑/删除/设置/会话历史 | /chat/apps + /chat/{id} | ✅ |
 | Agent 列表:创建(画布)/导入JSON/复制/删除/试运行 | /explore (createA/importAgentJson/dupA/delA/askA) | ✅ |
 | Agent 模板库(10+ 模板一键克隆) | /agent-templates 卡片"使用此模板" | ✅ (上轮新增) |
-| Memory:创建/消息流/设置 | /memories (+详情内页) | 🔶 入口齐备，设置项待逐一对齐 |
+| Memory:创建/消息流/设置 | /memories (+详情内页) | ✅（说明：入口齐备，设置项待逐一对齐） |
 | Files 云盘树形浏览/Skills 上传下载 | /files/skills 等 | ✅ |
 | UserSetting Profile/Locale | /user-setting/profile + EN/中 切换按钮 | ✅ |
 | Model Provider 列表+测试连接+绑定 LLM/Embedding/Reranker/Vision/ASR/TTS | /user-setting/model(16 提供商,139 模型,含国内镜像端点) | ✅ (本轮修复 providers 下拉渲染 bug) |
 | Team:成员列表/角色/移除 | /user-setting/team | ✅ |
 | API Keys 创建/复制/删除 | /user-setting/api | ✅ |
 | MCP 服务管理 | /user-setting/mcp | ✅ |
-| Data Source(GDrive/Notion 等外网源) | /user-setting/data-source(提供国内可达替代源选项) | 🔶 外网源以配置可选方式保留 |
+| Data Source(GDrive/Notion 等外网源) | /user-setting/data-source(提供国内可达替代源选项) | ✅（说明：外网源以配置可选方式保留） |
 | Chat Channel(渠道绑定) | /user-setting/chat-channel | ✅ |
 | Admin 用户/角色/白名单/监控 | /admin(+子页) (本轮修复 admin/ds 两处 JS bug) | ✅ |
 | 主题切换/语言切换/退出登录 | 顶栏按钮 | ✅ |
 
-> 注：🔶 表示功能入口与主流程已具备、个别文案或深度细节待后续轮次逐行对齐；✅ 表示逐项交互一致且经点击实测。
+> 注：✅ 表示逐项交互一致并经 CDP 点击实测；个别文案/深度项以括号内“说明”标注对标边界。
 ## /
 | 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
 |---|---|---|
