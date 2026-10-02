@@ -2,6 +2,12 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.8.0] - 2026-10-02
+
+- **导航树在界面上可读了**：上一版加了"Build navigation tree"按钮，但建出来的树**没有地方看**——等于做了一半。数据集「概览」面板现在会渲染导航树表格（Cluster / Type / Documents / 操作），每行可展开查看该簇的直接子节点（调用 `GET /datasets/{id}/navigation/{name}/children`）；构建完成后**自动刷新**表格，无需手动reload。没有树时给出明确空态（"No navigation tree yet. Use Build navigation tree above."）而不是一片空白。
+- **测试**：全量 **2145 passed / 0 failed**（kb_ui 123 条全过；页面启动脚本断言随之更新）。
+- 过程中一次自我纠错：往里塞 JS 时用了双引号，直接**破坏了 Rust 字符串字面量导致编译失败**；改为只用单引号的写法并用 `addEventListener` 取代内联 `onclick`，重来后通过。
+
 ## [0.7.9] - 2026-10-02
 
 - **接口有了自家按钮**：数据集「概览」面板新增 **Build navigation tree** 按钮，调用上一版落地的 `POST /datasets/{id}/navigation`，并把结果表明出来——`Generated N of M document(s)`，若有文档没有已解析分块，追加 `skipped K without parsed chunks`；失败时红字显示具体原因，并在 `data.message` 存在时一并展示（例如"该数据集没有分块"）。**不留一句"完成"就了事**。

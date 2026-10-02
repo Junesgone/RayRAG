@@ -974,3 +974,15 @@ the paired colour picker + hex input. */
 /* Dataset overview: the navigation-tree builder and its status line. */
 .ov-nav-status{margin-left:8px;font-size:12px;color:var(--tm)}
 .ov-kg{display:inline-flex;align-items:center;gap:6px}
+
+/* Dataset overview: the navigation tree the builder produces. */
+.ov-nav-tree{margin-top:12px}
+.ov-nav-tree table{width:100%;border-collapse:collapse;font-size:13px}
+.ov-nav-tree th,.ov-nav-tree td{padding:6px 8px;border-bottom:1px solid var(--bd);text-align:left}
+.ov-nav-children{padding:4px 0 4px 12px;font-size:13px;color:var(--t2)}
+
+/* Dataset overview: the navigation tree the builder produces. */
+.ov-nav-tree{margin-top:12px}
+.ov-nav-tree table{width:100%;border-collapse:collapse;font-size:13px}
+.ov-nav-tree th,.ov-nav-tree td{padding:6px 8px;border-bottom:1px solid var(--bd);text-align:left}
+.ov-nav-children{padding:4px 0 4px 12px;font-size:13px;color:var(--t2)}
