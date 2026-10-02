@@ -2,6 +2,12 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.8.1] - 2026-10-02
+
+- **新增 `POST /datasets/{id}/artifacts/compile`——产物（Wiki）生成终于能跑了**：这是**两阶段**作业，缺任何一步都会"静默空转"——MAP 阶段逐文档让模型抽取并**把 extracts 写进存储**，COMPILE 阶段再**从存储读回 extracts** 合成页面。本实现按此顺序执行，并返回 `{mapped, total, compile}` 让两次都可见；数据集没有已解析分块时返回 `generated: 0` 加说明，而不是看不出问题的成功；缺对话模型时返回 `code 102` 并指明。
+- **为什么现在才做**：它依赖三个此前缺失的零件——`LlmHarnessChat`（0.7.5，对话适配器）、`OffThreadDocStore`（0.7.7，解决"同步存储被 async 引擎调用即 panic"）、以及把两阶段结构读清楚（上一轮）。**零件不齐就动手，只会得到一个 panic 或一个什么都不生成的端点。**
+- **测试**：全量 **2145 passed / 0 failed**；登记表 **348 条路由**。
+
 ## [0.8.0] - 2026-10-02
 
 - **导航树在界面上可读了**：上一版加了"Build navigation tree"按钮，但建出来的树**没有地方看**——等于做了一半。数据集「概览」面板现在会渲染导航树表格（Cluster / Type / Documents / 操作），每行可展开查看该簇的直接子节点（调用 `GET /datasets/{id}/navigation/{name}/children`）；构建完成后**自动刷新**表格，无需手动reload。没有树时给出明确空态（"No navigation tree yet. Use Build navigation tree above."）而不是一片空白。

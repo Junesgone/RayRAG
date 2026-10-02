@@ -287,6 +287,7 @@
 | POST | `/api/v1/datasets/{id}/documents` | `-` |
 | POST | `/api/v1/datasets/{dataset_id}/metadata/update` | `-` |
 | GET | `/api/v1/datasets/{dataset_id}/artifacts` | `-` |
+| POST | `/api/v1/datasets/{dataset_id}/artifacts/compile` | `-` |
 | GET | `/api/v1/datasets/{dataset_id}/artifacts/topics` | `-` |
 | GET | `/api/v1/datasets/{dataset_id}/artifacts/{page_type}/{slug}` | `-` |
 | GET | `/api/v1/datasets/{dataset_id}/navigation` | `-` |

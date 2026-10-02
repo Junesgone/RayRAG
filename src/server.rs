@@ -4418,6 +4418,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .delete(crate::api::dataset_artifacts::clear_artifacts),
         )
         .route(
+            "/api/v1/datasets/{dataset_id}/artifacts/compile",
+            post(crate::api::dataset_artifacts::compile_artifacts),
+        )
+        .route(
             "/api/v1/datasets/{dataset_id}/artifacts/topics",
             get(crate::api::dataset_artifacts::list_artifact_topics),
         )

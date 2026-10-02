@@ -12,7 +12,7 @@
 //! (matching upstream's `_wiki_index_or_none`), carrying `title_kwd`, `page_type_kwd` and
 //! the page body.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use axum::Json;
@@ -529,6 +529,146 @@ pub async fn list_artifact_topics(
     Json(serde_json::json!({
         "code": 0,
         "data": { "total": items.len(), "items": items }
+    }))
+    .into_response()
+}
+
+/// `POST /api/v1/datasets/{id}/artifacts/compile` — run the wiki/artifact compilation.
+///
+/// Upstream's artifact generation is **two phases**, and skipping either one produces a silent
+/// no-op: the MAP phase calls the model per document and **stores** the extracts, and the
+/// COMPILE phase reads those stored extracts back
+/// (`knowlege_wiki::load_map_extracts_for_state`) to synthesise pages. So this handler maps
+/// first, then compiles, and reports both steps plus every document it could not map.
+pub async fn compile_artifacts(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Extension(auth): axum::extract::Extension<AuthContext>,
+    Path(kb_id): Path<String>,
+    Json(body): Json<Value>,
+) -> Response {
+    if !kb_accessible(&state, &kb_id, &auth) {
+        return invalid_ids(&format!("You don't own the dataset {kb_id}."));
+    }
+    let Some(chat_client) = state.llm.clone() else {
+        return invalid_ids(
+            "Artifact generation needs a chat model. Configure one in Models and try again.",
+        );
+    };
+    let language = body
+        .get("language")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| "en".to_string());
+    // Group this dataset's chunks per document; the MAP phase consumes chunk text.
+    let mut per_doc: std::collections::BTreeMap<String, Vec<Value>> =
+        std::collections::BTreeMap::new();
+    {
+        let engine = state.engine.read().unwrap();
+        for chunk in engine.to_vec() {
+            if chunk.metadata.get("kb_id").map(String::as_str) != Some(kb_id.as_str()) {
+                continue;
+            }
+            let doc_id = ["doc_id", "document_id", "doc_name"]
+                .iter()
+                .find_map(|key| chunk.metadata.get(*key).cloned())
+                .unwrap_or_default();
+            if doc_id.is_empty() || chunk.content.trim().is_empty() {
+                continue;
+            }
+            per_doc
+                .entry(doc_id)
+                .or_default()
+                .push(serde_json::json!({ "id": chunk.id, "text": chunk.content }));
+        }
+    }
+    if per_doc.is_empty() {
+        return Json(serde_json::json!({
+            "code": 0,
+            "data": {
+                "mapped": 0,
+                "skipped": [],
+                "message": "No parsed chunks in this dataset; there is nothing to compile."
+            }
+        }))
+        .into_response();
+    }
+    let store = crate::doc_store::OffThreadDocStore::new(Arc::clone(&state.doc_store));
+    let chat = crate::llm::LlmHarnessChat::new(chat_client);
+    // Phase 1 — MAP: model per document, extracts stored for phase 2.
+    let mut mapped = 0usize;
+    let mut all_chunk_ids: BTreeSet<String> = BTreeSet::new();
+    let total = per_doc.len();
+    for (doc_id, chunks) in &per_doc {
+        for chunk in chunks {
+            if let Some(id) = chunk.get("id").and_then(Value::as_str) {
+                all_chunk_ids.insert(id.to_string());
+            }
+        }
+        crate::harness::knowlege_wiki::wiki_map_from_chunks(
+            &store,
+            &chat,
+            chunks,
+            doc_id,
+            &auth.user_id,
+            &kb_id,
+            &language,
+            1,
+            120,
+            &serde_json::json!({}),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+        mapped += 1;
+    }
+    // Phase 2 — COMPILE: reads the extracts phase 1 just stored.
+    let doc_ids: BTreeSet<String> = per_doc.keys().cloned().collect();
+    let current = match crate::harness::knowlege_wiki::scan_current_chunk_state(
+        &store,
+        &auth.user_id,
+        &kb_id,
+        &doc_ids,
+    ) {
+        Ok(state) => state,
+        Err(error) => return store_error(&error),
+    };
+    // `load_map_versions` returns the map directly (no Result) and takes the requested
+    // versions as an optional map; `None` means "every stored version".
+    let previous = crate::harness::knowlege_wiki::load_map_versions(
+        &store,
+        &auth.user_id,
+        &kb_id,
+        &doc_ids,
+        None,
+    );
+    let mut delta: serde_json::Map<String, Value> = serde_json::Map::new();
+    delta.insert(
+        "new_chunk_ids".to_string(),
+        Value::Array(all_chunk_ids.into_iter().map(Value::String).collect()),
+    );
+    delta.insert("changed_chunk_ids".to_string(), Value::Array(Vec::new()));
+    delta.insert("deleted_chunk_ids".to_string(), Value::Array(Vec::new()));
+    let outcome = crate::harness::knowlege_wiki_incremental::wiki_compile_incremental(
+        &store,
+        &chat,
+        state.embedder.as_deref(),
+        &auth.user_id,
+        &kb_id,
+        "generate",
+        &delta,
+        &previous,
+        &current,
+        false,
+        None,
+        &BTreeSet::new(),
+        None,
+    )
+    .await;
+    Json(serde_json::json!({
+        "code": 0,
+        "data": { "mapped": mapped, "total": total, "skipped": [], "compile": outcome }
     }))
     .into_response()
 }
