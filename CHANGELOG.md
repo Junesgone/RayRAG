@@ -2,6 +2,13 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.7.6] - 2026-10-02
+
+- **补上嵌入侧的生产适配器 `EmbedderBridge`**：导航生成、wiki/Artifacts 生成、结构编译都依赖 `structure_compile::EmbeddingBackend`，而它和 `HarnessChat` 一样**只有测试替身**（`MockEmbed`、`FailingEmbed`）——上一轮写端点时正是被这处不匹配挡住的。`EmbedderBridge` 把运行期已持有的 `AppState.embedder`（`Arc<dyn Embedder>`）接到该 trait 上。
+- **错误语义（与前一个适配器一致）**：provider 失败**原样返回 `Err(String)`，绝不返回空向量**——调用方若收到 `Ok(vec![])` 会照样写出"没有嵌入的行"并报告成功。另外校验**返回向量数必须等于输入文本数**，数量不符也报错（这正是"静默产出错位数据"的典型来源）。
+- **测试**：新增三条 —— 批量映射（一次调用返回等量向量）、空输入短路（不调用 provider）、**provider 失败必须是错误而不是空向量**。全量 **2142 passed / 0 failed**。
+- **下一步**：两个适配器都已就位，下一轮直接落 `POST /datasets/{id}/navigation` 端点主体（骨架与四条验收在 `docs/api-parity-plan.md`）。
+
 ## [0.7.5] - 2026-10-02
 
 - **补上 `HarnessChat` 的生产适配器（长期缺件）**：`crate::harness::HarnessChat` 是导航生成、wiki/Artifacts 生成、结构编译共同依赖的对话模型接口，但此前**只有测试用的 `FakeChat`**——这正是这些"引擎已移植、单测完备"的功能一直无法上线的原因：不是缺端点，而是**缺一个把真实对话客户端接到 trait 上的适配器**。新增 `LlmHarnessChat`：把 OpenAI 形状的 `history`（`{"role","content"}`）映射为 `ChatMessage`，空 system 不发送，实现 `max_length`（取模型 `max_tokens`，下限 1024）与 `model_name`。

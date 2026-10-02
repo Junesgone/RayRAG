@@ -118,3 +118,114 @@ pub async fn hybrid_embedder(minimax_api_key: &str) -> Result<HybridEmbedder> {
     let local = Box::new(CandleEmbedder::load(CandleConfig::mini()).await?);
     Ok(HybridEmbedder::new(cloud, local))
 }
+
+/// The production bridge from the ingestion embedder to the compilation trait.
+///
+/// The ported navigation, wiki and structure-compilation engines all drive
+/// [`crate::structure_compile::EmbeddingBackend`], which had **only test doubles** — the same
+/// missing-adapter situation `HarnessChat` was in. This connects them to the embedder the
+/// running server already holds (`AppState.embedder`).
+///
+/// A failure is returned as `Err(String)`; it is never turned into an empty vector, because a
+/// caller that receives `Ok(vec![])` would happily write rows with no embedding at all.
+pub struct EmbedderBridge {
+    embedder: SharedEmbedder,
+}
+
+impl EmbedderBridge {
+    pub fn new(embedder: SharedEmbedder) -> Self {
+        Self { embedder }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::structure_compile::EmbeddingBackend for EmbedderBridge {
+    async fn encode(&self, texts: &[String]) -> std::result::Result<Vec<Vec<f32>>, String> {
+        if texts.is_empty() {
+            return Ok(Vec::new());
+        }
+        let borrowed: Vec<&str> = texts.iter().map(String::as_str).collect();
+        let vectors = self
+            .embedder
+            .embed(&borrowed)
+            .await
+            .map_err(|error| error.to_string())?;
+        if vectors.len() != texts.len() {
+            return Err(format!(
+                "embedding backend returned {} vector(s) for {} text(s)",
+                vectors.len(),
+                texts.len()
+            ));
+        }
+        Ok(vectors)
+    }
+}
+
+#[cfg(test)]
+mod embedder_bridge_tests {
+    use super::*;
+    use crate::structure_compile::EmbeddingBackend;
+
+    struct Counting {
+        dims: usize,
+        calls: std::sync::Mutex<usize>,
+    }
+
+    #[async_trait::async_trait]
+    impl Embedder for Counting {
+        async fn embed(&self, texts: &[&str]) -> crate::Result<Vec<Vec<f32>>> {
+            *self.calls.lock().unwrap() += 1;
+            Ok(texts.iter().map(|_| vec![0.5f32; self.dims]).collect())
+        }
+    }
+
+    struct Broken;
+
+    #[async_trait::async_trait]
+    impl Embedder for Broken {
+        async fn embed(&self, _texts: &[&str]) -> crate::Result<Vec<Vec<f32>>> {
+            Err(anyhow::anyhow!("provider refused the request"))
+        }
+    }
+
+    #[tokio::test]
+    async fn bridge_maps_texts_to_vectors() {
+        let inner = Arc::new(Counting {
+            dims: 3,
+            calls: std::sync::Mutex::new(0),
+        });
+        let bridge = EmbedderBridge::new(inner.clone());
+        let vectors = bridge
+            .encode(&["a".to_string(), "b".to_string()])
+            .await
+            .expect("encode");
+        assert_eq!(vectors.len(), 2);
+        assert_eq!(vectors[0].len(), 3);
+        assert_eq!(*inner.calls.lock().unwrap(), 1, "one batched call");
+    }
+
+    #[tokio::test]
+    async fn empty_input_short_circuits() {
+        let inner = Arc::new(Counting {
+            dims: 2,
+            calls: std::sync::Mutex::new(0),
+        });
+        let bridge = EmbedderBridge::new(inner.clone());
+        assert!(bridge.encode(&[]).await.unwrap().is_empty());
+        assert_eq!(
+            *inner.calls.lock().unwrap(),
+            0,
+            "no provider call for no text"
+        );
+    }
+
+    /// A provider failure must surface as an error: an empty `Ok` would let a generator write
+    /// rows with no embedding and still report success.
+    #[tokio::test]
+    async fn provider_failure_is_an_error_not_an_empty_vector() {
+        let bridge = EmbedderBridge::new(Arc::new(Broken));
+        let result = bridge.encode(&["x".to_string()]).await;
+        assert!(result.is_err(), "expected an error, got {result:?}");
+        assert!(result.unwrap_err().contains("refused"));
+    }
+}
