@@ -15352,6 +15352,17 @@ mod tests {
         assert_ne!(put_instance.status(), StatusCode::METHOD_NOT_ALLOWED);
         assert_eq!(put_instance.status(), StatusCode::NOT_FOUND);
 
+        // A partial body is a coded JSON error, not the extractor's plain-text 422: a
+        // scripted client reads `code`/`message`.
+        let partial = json_call(
+            Method::PUT,
+            "/api/v1/providers/minimax/instances/missing".to_string(),
+            "{}",
+        )
+        .await;
+        assert_eq!(partial.status(), StatusCode::OK);
+        assert_eq!(response_json(partial).await["code"], 102);
+
         let delete_models = json_call(
             Method::DELETE,
             "/api/v1/providers/minimax/instances/missing/models".to_string(),

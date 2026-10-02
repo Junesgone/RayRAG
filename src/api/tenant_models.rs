@@ -3098,8 +3098,22 @@ pub async fn update_ragflow_provider_instance(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
     Path((provider_name, instance_name)): Path<(String, String)>,
-    Json(update): Json<CreateRagflowProviderInstanceRequest>,
+    Json(body): Json<serde_json::Value>,
 ) -> Response {
+    // Parsed by hand rather than through `Json<T>`: a strict extractor answers 422 with a
+    // plain-text body, while upstream answers a coded JSON error. The UI sends the same
+    // fields either way, but a scripted client reads `code`/`message`.
+    let update: CreateRagflowProviderInstanceRequest = match serde_json::from_value(body) {
+        Ok(update) => update,
+        Err(error) => {
+            return Json(serde_json::json!({ "code": 102, "message": error.to_string() }))
+                .into_response();
+        }
+    };
+    if update.instance_name.trim().is_empty() {
+        return Json(serde_json::json!({ "code": 102, "message": "instance_name is required" }))
+            .into_response();
+    }
     let tenant_id = selected_tenant(&auth, update.tenant_id.as_deref()).to_string();
     if !state.tenants.can_manage(&tenant_id, &auth.user_id) {
         return forbidden("Tenant administrator access required");
