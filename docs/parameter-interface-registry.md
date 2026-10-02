@@ -154,7 +154,7 @@
 | `MISTRAL_OCR_TABLE_FORMAT` | `html` |  |
 | `MISTRAL_OCR_KEEP_HEADER_FOOTER` | `0` |  |
 | `RAYRAG_ADMIN_EMAIL` | `admin@rayrag.local` | 全新状态卷首次启动时必需；密码至少 12 个字符。 |
-| `RAYRAG_ADMIN_PASSWORD` | `replace-with-a-strong-admin-password` |  |
+| `RAYRAG_ADMIN_PASSWORD` | `` | Admin password for the account named above. Leave it unset and the first-run setup window asks for one; set a real value to bootstrap the admin without the setup step. (Commented out on purpose: an active placeholder would silently make every deployment that forgets to edit it share the same, guessable admin password.) （模板中默认注释，取消注释即生效） |
 | `RAYRAG_PASSWORD_PRIVATE_KEY_FILE` | `` | Optional RAGFlow-compatible password transport. Generate a deployment-only RSA PKCS#8/PKCS#1 key, mount it as a secret, and set the in-container path. Never reuse RAGFlow's repository-owned conf/private.pem. When unset, auth passwords are plain JSON and the deployment must terminate HTTPS upstream. |
 | `RAYRAG_POSTGRES_PASSWORD` | `change-me` | Enable with: cargo run --bin rayrag --features postgres-backend -- serve RAYRAG_POSTGRES_PASSWORD 必须与下面 DSN 里的口令一致；docker compose 用它初始化数据库。 |
 | `RAYRAG_POSTGRES_URL` | `postgresql://rayrag:change-me@127.0.0.1:5432/rayrag` | PostgreSQL 元数据/快照库（不使用 MySQL）。两种运行方式： * 纯 Docker：compose 会用它自己的 DSN 覆盖本行（指向 postgres 服务），本行无需改动； * 纯 Linux：需要先有一个可连的 PostgreSQL 18.x。上面这行是标准本机地址， 请把用户/口令/库名/端口改成你实际的值；连不上时启动会明确报出被连的地址 （口令已脱敏）并给出处理建议，而不是只打印一句 db error。 留空 = 使用内置文件存储（JSON），适合先跑起来试用。 |

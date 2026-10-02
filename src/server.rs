@@ -5827,6 +5827,25 @@ pub async fn run(
         "Memory tokenized-field repair skipped: the active document engine tokenizes at query time"
     );
 
+    // A placeholder admin password is a silent weak default: every deployment that copies
+    // the template without editing it would share the same, guessable credential. Say so at
+    // startup instead of letting it pass unnoticed.
+    if std::env::var("RAYRAG_ADMIN_PASSWORD")
+        .map(|value| {
+            let value = value.trim().to_ascii_lowercase();
+            value.starts_with("replace-with")
+                || value == "changeme"
+                || value == "password"
+                || value == "admin"
+        })
+        .unwrap_or(false)
+    {
+        tracing::warn!(
+            "RAYRAG_ADMIN_PASSWORD still looks like a placeholder; set a real password in .env \
+             (or leave it unset and use the first-run setup window)"
+        );
+    }
+
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
     tracing::info!(
         "RayRAG {} on http://0.0.0.0:{}",

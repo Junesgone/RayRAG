@@ -2,6 +2,13 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.6.4] - 2026-10-02
+
+- **纯 Linux 文档路径端到端复验通过**：按 README 步骤用 `ZVEC_LIB_DIR` 重新构建 release 后，`readelf -d` 显示 RUNPATH 已烘焙进二进制；**不带任何命令行参数、不设 `LD_LIBRARY_PATH`** 运行 `rayrag serve`，端口取自 `.env` 里的 `RAYRAG_PORT`（9398），`/api/v1/version` 返回 **200**。「照文档做就能跑」这件事本身现在有证据。
+- **修掉一个静默弱默认**：`.env.example` 里的 `RAYRAG_ADMIN_PASSWORD=replace-with-a-strong-admin-password` 是**未注释的占位值**——照抄模板的部署会把管理员口令设成这个人人可猜的字符串。现在该行已注释掉（留空则走首次运行的引导界面设置），并且**服务启动时若发现口令仍是占位值会输出 WARN**，而不是默默带着弱口令运行。
+- README 非 Docker 章节补充：端口优先级（**`--port` > `.env` 的 `RAYRAG_PORT` > 9380**）、zvec 共享库找不到时的症状与两种处理方式（重新导出 `ZVEC_LIB_DIR` 重建，或运行时设 `LD_LIBRARY_PATH`），并把示例 zvec 版本校准为 0.7.2。
+- **测试**：全量 **2136 passed / 0 failed**。
+
 ## [0.6.3] - 2026-10-02
 
 - **修掉纯 Linux 启动阻塞**：`rayrag serve` 的 `--port` 硬默认 9380（RAGFlow 自己的端口），**完全不读 `RAYRAG_PORT`**。在已经跑着 RAGFlow 的机器上，用 `.env` 里写好端口再运行，仍然会撞端口并以 `Address already in use` 退出——这正是上一轮纯 Linux 实测卡住的地方。现在命令行遵循统一优先级：**`--port` 参数 > env 文件里的 `RAYRAG_PORT` > 内置默认 9380**（`--static-dir` 同理接受 `RAYRAG_STATIC_DIR`）。

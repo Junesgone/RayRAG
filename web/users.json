@@ -1,15 +1,5 @@
 [
   {
-    "id": "7b042c73-1151-4c09-ac52-8c6d2a253029",
-    "nickname": "Admin",
-    "email": "admin@rayrag.local",
-    "password_hash": "$argon2id$v=19$m=65536,t=3,p=4$R7+eiHNMNmtft8uKOPDfVw$BkVP46ktcdnmSgZDQhCM9yj4ukbxNuNsVjni2vtAIiI",
-    "role": "admin",
-    "avatar": "",
-    "timezone": "",
-    "created_at": 1783769132961
-  },
-  {
     "id": "5873d72d-5e70-4efe-9676-68332cc709dc",
     "nickname": "smoke",
     "email": "smoke1790907836@example.com",
@@ -18,5 +8,15 @@
     "avatar": "",
     "timezone": "",
     "created_at": 1790907837228
+  },
+  {
+    "id": "7b042c73-1151-4c09-ac52-8c6d2a253029",
+    "nickname": "Admin",
+    "email": "admin@rayrag.local",
+    "password_hash": "$argon2id$v=19$m=65536,t=3,p=4$R7+eiHNMNmtft8uKOPDfVw$BkVP46ktcdnmSgZDQhCM9yj4ukbxNuNsVjni2vtAIiI",
+    "role": "admin",
+    "avatar": "",
+    "timezone": "",
+    "created_at": 1783769132961
   }
 ]

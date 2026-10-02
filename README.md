@@ -332,7 +332,7 @@ source "$HOME/.cargo/env"
 
 # 2) build (PostgreSQL metadata + the native zvec vector backend — both default)
 #    ZVEC_LIB_DIR points at the folder holding libzvec_c_api.so and TARGET
-export ZVEC_LIB_DIR="$HOME/.local/lib/zvec/0.7.1"
+export ZVEC_LIB_DIR="$HOME/.local/lib/zvec/0.7.2"   # any version present under ~/.local/lib/zvec
 cargo build --release --locked
 
 # 3) configure
@@ -340,9 +340,21 @@ export RAYRAG_POSTGRES_URL=postgresql://rayrag:YOUR-PASSWORD@127.0.0.1:5432/rayr
 export RAYRAG_ADMIN_EMAIL=admin@rayrag.local
 export RAYRAG_ADMIN_PASSWORD='at-least-12-characters'
 
-# 4) run
+# 4) run — flag first, then RAYRAG_PORT from .env, then 9380
 ./target/release/rayrag serve --port 9380
 ```
+
+`serve` also reads `RAYRAG_PORT` and `RAYRAG_STATIC_DIR` from the environment, including the `.env`
+file at the project root. On a machine where RAGFlow already occupies 9380, put `RAYRAG_PORT=9398`
+in `.env` and run `./target/release/rayrag serve` with **no arguments**. Precedence is
+**`--port` > `.env` `RAYRAG_PORT` > 9380**.
+
+Running it also needs `libzvec_c_api.so` to be findable. Building with `ZVEC_LIB_DIR` bakes that
+directory into the binary's runpath (`readelf -d target/release/rayrag | grep RUNPATH` shows it), so
+no `LD_LIBRARY_PATH` is needed afterwards; if you build without it, or move the library, you will see
+`error while loading shared libraries: libzvec_c_api.so` — re-export `ZVEC_LIB_DIR` (this machine has
+0.7.2 under `$HOME/.local/lib/zvec/`) and rebuild, or run with
+`LD_LIBRARY_PATH=/path/to/zvec/lib`.
 
 `postgres-backend` and `zvec-backend` are the crate's default features, so the command above already
 builds the shipped configuration and the binaries use **zvec** unless asked otherwise: point it at a
