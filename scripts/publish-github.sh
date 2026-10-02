@@ -173,6 +173,30 @@ cp -f Cargo.lock "$WORK/Cargo.lock"
 for path in "${EXCLUDES[@]}"; do
     rm -rf "$WORK/$path"
 done
+# The exclusion list above is written by name, and that mechanism has no memory of
+# files added later: `docs/api-parity-plan.md` would have been published the moment it
+# was created. Re-check the export against the list and refuse to publish on any hit, so
+# the next internal document cannot leak just because nobody remembered the list.
+leaked=0
+for path in "${EXCLUDES[@]}"; do
+    if [ -e "$WORK/$path" ]; then
+        echo "FATAL: internal path survived exclusion: $path" >&2
+        leaked=1
+    fi
+done
+# Second guard, independent of the list: no internal ledger/registry may appear anywhere
+# in the export under any name.
+while IFS= read -r found; do
+    echo "FATAL: internal document in the export: ${found#"$WORK"/}" >&2
+    leaked=1
+done < <(find "$WORK" -type f \( \
+    -name '运维记录.md' -o -name '*api-parity*' -o -name '*parameter-interface-registry*' \
+    -o -name 'MAINTENANCE.md' -o -name 'ragflow-*-coverage.md' -o -name 'ragflow-*-worklist.md' \
+    -o -name 'ragflow-file-list.txt' -o -name 'ragflow-ui-inventory.md' \) 2>/dev/null)
+if [ "$leaked" -ne 0 ]; then
+    echo "publish aborted: fix EXCLUDES or remove the file from the tracked tree" >&2
+    exit 1
+fi
 # `scripts/docker-build.sh` stamps the git revision into the image, so the
 # documented Docker workflow needs it even though the rest of scripts/ is
 # development tooling.
