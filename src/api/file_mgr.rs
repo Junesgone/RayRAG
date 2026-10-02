@@ -460,7 +460,12 @@ pub async fn delete_file(
         .into_iter()
         .find(|record| record.id == file_id);
     let Some(record) = record else {
-        return Json(serde_json::json!({ "code": 404, "message": "File not found" }))
+        // A delete of an unknown id is a miss: the status has to say so, otherwise the
+        // caller sees a successful delete whose body reports `code: 404`.
+        return (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "code": 404, "message": "File not found" })),
+        )
             .into_response();
     };
     let extension = std::path::Path::new(&record.name)
@@ -492,14 +497,26 @@ pub async fn delete_file(
 /// `previewHtmlFile()` / `downloadDocument()`; RayRAG's older `/download` alias keeps the same
 /// bytes. Upstream first looks the blob up under the record's `parent_id`, then falls back to
 /// the file→document storage address, and answers `This file is empty.` when neither holds it.
-async fn serve_file_bytes(state: &AppState, auth: &AuthContext, file_id: &str) -> Response {
+/// Serve one stored file's bytes. Shared with the agent canvas download, which addresses
+/// the same store by id.
+pub(crate) async fn serve_file_bytes(
+    state: &AppState,
+    auth: &AuthContext,
+    file_id: &str,
+) -> Response {
     let record = state
         .files
         .list_for(&auth.user_id, auth.is_admin, "root")
         .into_iter()
         .find(|record| record.id == file_id);
     let Some(record) = record else {
-        return Json(serde_json::json!({ "code": 404, "message": "File not found" }))
+        // The status must agree with the body: a download client (browser, previewer,
+        // canvas) reads the status first, so answering 200 with a `code: 404` body looked
+        // like a successful download of nothing.
+        return (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "code": 404, "message": "File not found" })),
+        )
             .into_response();
     };
     let extension = std::path::Path::new(&record.name)

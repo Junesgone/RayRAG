@@ -2972,6 +2972,57 @@ async fn logout(
     Json(serde_json::json!({ "code": 0, "data": true })).into_response()
 }
 
+/// `GET /api/v1/agents/prompts` — upstream `agent_api.prompts`.
+///
+/// The canvas shows the exact guidance its planner, reflector and citation steps run with.
+/// All four strings are the constants RayRAG already carries (ported verbatim from
+/// `rag/prompts/generator.py`), so the page and the runtime cannot disagree.
+async fn agent_prompts(
+    State(_state): State<Arc<AppState>>,
+    Extension(_auth): Extension<AuthContext>,
+) -> Response {
+    Json(serde_json::json!({
+        "code": 0,
+        "data": {
+            "task_analysis": format!(
+                "{}\n\n{}",
+                crate::prompts::RAGFLOW_ANALYZE_TASK_SYSTEM_PROMPT,
+                crate::prompts::RAGFLOW_ANALYZE_TASK_USER_PROMPT
+            ),
+            "plan_generation": crate::prompts::RAGFLOW_NEXT_STEP_PROMPT,
+            "reflection": crate::prompts::RAGFLOW_REFLECT_PROMPT,
+            "citation_guidelines": crate::prompts::RAGFLOW_CITATION_PROMPT,
+        }
+    }))
+    .into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct AgentDownloadQuery {
+    #[serde(default)]
+    id: Option<String>,
+}
+
+/// `GET /api/v1/agents/download?id=` — upstream `agent_api.download_agent_file`.
+///
+/// One stored file's bytes, addressed by id rather than by path: the canvas downloads the
+/// DSL it exported through the same file store the rest of the product uses.
+async fn agent_download(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Query(query): Query<AgentDownloadQuery>,
+) -> Response {
+    let Some(id) = query
+        .id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return api_error(StatusCode::BAD_REQUEST, "id is required");
+    };
+    crate::api::file_mgr::serve_file_bytes(&state, &auth, id).await
+}
+
 /// `GET /api/v1/searchbots/detail` — upstream `bot_api.detail_share_embedded`.
 ///
 /// The embedded search widget reads the app it was minted from: the beta token in the URL
@@ -4194,6 +4245,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(crate::api::dataset_navigation::list_nav)
                 .delete(crate::api::dataset_navigation::delete_nav),
         )
+        // Upstream `agent_api.py` canvas utilities: the prompt set the UI displays and the
+        // id-addressed file download the canvas uses.
+        .route("/api/v1/agents/prompts", get(agent_prompts))
+        .route("/api/v1/agents/download", get(agent_download))
         // Upstream `bot_api.py` embedded search-bot surface (beta-token clients).
         .route("/api/v1/searchbots/detail", get(searchbot_detail))
         .route(
@@ -15493,6 +15548,68 @@ mod tests {
         assert_eq!(presets["data"].as_array().unwrap().len(), 6);
         assert_eq!(presets["data"][0]["id"], "brand");
         assert_eq!(presets["data"][5]["id"], "user_interview");
+    }
+
+    /// Canvas utilities: the prompt set the UI displays must be the constants the runtime
+    /// uses (not a copy), and the file download is addressed by id with a coded miss.
+    #[tokio::test]
+    async fn agent_canvas_utilities_share_the_runtime_prompts_and_file_store() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let call = |method: Method, uri: String| {
+            let router = router.clone();
+            let token = env.token.clone();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(method)
+                            .uri(uri)
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        let prompts = call(Method::GET, "/api/v1/agents/prompts".to_string()).await;
+        let prompts = response_json(prompts).await;
+        assert_eq!(prompts["code"], 0);
+        let data = &prompts["data"];
+        // The UI and the planner read the same string: it is the constant, not a copy.
+        assert_eq!(
+            data["plan_generation"].as_str().unwrap(),
+            crate::prompts::RAGFLOW_NEXT_STEP_PROMPT
+        );
+        assert_eq!(
+            data["reflection"].as_str().unwrap(),
+            crate::prompts::RAGFLOW_REFLECT_PROMPT
+        );
+        assert_eq!(
+            data["citation_guidelines"].as_str().unwrap(),
+            crate::prompts::RAGFLOW_CITATION_PROMPT
+        );
+        assert_eq!(
+            data["task_analysis"].as_str().unwrap(),
+            format!(
+                "{}\n\n{}",
+                crate::prompts::RAGFLOW_ANALYZE_TASK_SYSTEM_PROMPT,
+                crate::prompts::RAGFLOW_ANALYZE_TASK_USER_PROMPT
+            )
+        );
+
+        let no_id = call(Method::GET, "/api/v1/agents/download".to_string()).await;
+        assert_eq!(no_id.status(), StatusCode::BAD_REQUEST);
+
+        let unknown = call(
+            Method::GET,
+            "/api/v1/agents/download?id=missing-file".to_string(),
+        )
+        .await;
+        // A missing file is a coded miss, never an empty 200.
+        assert_ne!(unknown.status(), StatusCode::OK);
     }
 
     /// The embedded search-bot surface: an unknown app is a coded miss, `kb_id` (the

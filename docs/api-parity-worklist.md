@@ -5,11 +5,11 @@
 
 ## 现状
 
-- 上游路由：**181**；RayRAG `/api/v1` 路由：**276**
-- 同名应答（exact）：**101**
+- 上游路由：**181**；RayRAG `/api/v1` 路由：**278**
+- 同名应答（exact）：**103**
 - 别名应答（alias，上游拼写已注册但走 RayRAG 自己的命名）：**38**
 - 形状不同但已被应答（covered）：**2**
-- 尚未实现（missing，已登记）：**40**
+- 尚未实现（missing，已登记）：**38**
 - 路径已有但方法缺失（method）：**1**
 - 未登记的缺口（mismatch，`--check` 视为失败）：**0**
 
@@ -23,8 +23,6 @@
 | `/agents/<agent_id>/webhook/test` | `agent_api.py` | 功能级缺口：同上（Agent Webhook） |
 | `/agents/attachments/<attachment_id>/download` | `agent_api.py` | 功能级缺口：同上（Agent 附件子系统） |
 | `/agents/attachments/<attachment_id>/preview` | `agent_api.py` | 功能级缺口：同上（Agent 附件子系统） |
-| `/agents/download` | `agent_api.py` | 功能级缺口：Agent 导出下载未实现 |
-| `/agents/prompts` | `agent_api.py` | 功能级缺口：提示词模板列表未实现 |
 | `/agents/test_db_connection` | `agent_api.py` | 功能级缺口：数据库组件连接测试未实现 |
 | `/searchbots/ask` | `bot_api.py` | 功能级缺口：嵌入问答使用上游自己的 SSE 帧格式（code/message/data 包封），与既有搜索补全的 chat.completion 帧不同，需要单独的流式处理器 |
 | `/chat/audio/speech` | `chat_api.py` | 功能级缺口：TTS 语音合成未实现（ASR 已在解析流水线内） |

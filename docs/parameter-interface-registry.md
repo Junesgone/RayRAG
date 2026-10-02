@@ -289,6 +289,8 @@
 | GET | `/api/v1/datasets/{dataset_id}/artifacts/topics` | `-` |
 | GET | `/api/v1/datasets/{dataset_id}/artifacts/{page_type}/{slug}` | `-` |
 | GET | `/api/v1/datasets/{dataset_id}/navigation` | `-` |
+| GET | `/api/v1/agents/prompts` | `-` |
+| GET | `/api/v1/agents/download` | `-` |
 | GET | `/api/v1/searchbots/detail` | `-` |
 | POST | `/api/v1/searchbots/retrieval_test` | `-` |
 | POST | `/api/v1/searchbots/mindmap` | `-` |
