@@ -961,3 +961,12 @@ the paired colour picker + hex input. */
 .provider-catalog-hint{margin-left:auto;font-size:11px;color:var(--tm)}
 .provider-catalog-table{width:100%;margin-top:10px;border-collapse:collapse;font-size:13px}
 .provider-catalog-table th,.provider-catalog-table td{padding:6px 8px;border-bottom:1px solid var(--bd);text-align:left}
+
+/* Dataset tab panels must contain a wide table instead of dragging the whole page sideways.
+   Measured on the configuration panel: 142 elements crossed the panel's right edge, with a
+   permissions row reaching x=1818 - the table had no width constraint and no scroll
+   container, so the document itself scrolled horizontally. The panels are now the scroll
+   container (content stays visible; nothing is hidden or squashed). */
+.ct > [id^='tab']{max-width:100%;overflow-x:auto;overscroll-behavior-x:contain}
+.ct > [id^='tab'] > .card{min-width:0}
+.ct > [id^='tab'] table{max-width:100%}
