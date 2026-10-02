@@ -168,7 +168,7 @@ try {
   check(cleaned === 0, "throwaway_dataset_deleted");
   await page.screenshot({ path: "docs/ui-traversal/rayrag-audit/dataset-permission-select.png" });
 } catch (error) {
-  results.errors.push("exception: " + String(error && error.message ? error.message : error));
+  results.errors.push("exception: " + String(error && error.stack ? error.stack : error && error.message ? error.message : error));
 } finally {
   results.pageErrors = pageErrors;
   console.log(JSON.stringify(results, null, 2));

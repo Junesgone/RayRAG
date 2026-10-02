@@ -13,3 +13,4 @@ data/
 zvec-data/
 *.index.json
 logs/
+.env.bak*

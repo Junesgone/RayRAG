@@ -2,6 +2,13 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.4.96] - 2026-10-02
+
+- **品牌**：RayRAG 专属图标（棱镜分束·三色知识块）上线：`web/static/logo.svg`、站点头部内联徽标、全站 favicon；界面可见文本统一为 RayRAG（保留上游兼容的环境变量/协议标识符）。
+- **路由**：新增 `/memory` 父壳（SideBar + 内容面板，子页 `memory-message` / `memory-setting` 嵌套其内），对齐 RAGFlow v0.27.2 `routes.tsx` 的嵌套路由结构并修复该路径 404。
+- **管理台**：服务详情（定义列表）与 Extra 信息（JsonView 树）弹窗、用户详情/改密/新建/删除流程、沙箱提供商卡片与 SSH 连通性测试等与对标页逐项对齐；新增全站排版审计脚本（溢出/不可见/低对比/截断=0）。
+- **质量**：CDP 真实点击遍历（admin 控制台 11/11 脚本全绿，0 pageerror）；`cargo fmt --check` 干净、`cargo test --locked` 全绿。
+
 ## [0.4.95] — 2026-10-02（对标批次 v0.3.10ah，task-6 收敛轮）
 
 > - zvec-rust 升级至 **v0.7.2**（最新 tag；预编译 libzvec_c_api.so 装机；check/定向测/doc_store 全绿）。
