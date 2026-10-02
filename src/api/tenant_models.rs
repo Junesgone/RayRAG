@@ -3741,6 +3741,55 @@ pub async fn list_ragflow_models(
 /// capability (`chat`, `embedding`, `rerank`, `asr`, `vision`, `tts`, `ocr`),
 /// resolved via `_get_model_info`. RayRAG emits an extra `selector` field on
 /// each entry for its own selector UI.
+/// `GET /api/v1/users/me/models` — upstream `user_api.tenant_info`.
+///
+/// The tenant row's per-capability default models under RAGFlow's own column names, so a
+/// client that reads `llm_id` / `embd_id` / `rerank_id` / `asr_id` / `img2txt_id` /
+/// `tts_id` / `ocr_id` finds what it expects (RayRAG stores the same information as
+/// `{model}@{instance}@{provider}` selectors and exposes it through
+/// [`TenantModelStore::list_default_models`]).
+pub async fn me_models(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+) -> Response {
+    let tenant_id = auth.user_id.clone();
+    let models = state
+        .tenant_models
+        .list_default_models(&state.providers, &tenant_id);
+    // Upstream's column per capability tag (`models_api_service.MODEL_TYPE_TO_FIELD`).
+    let field_for = |tag: &str| match tag {
+        "chat" => "llm_id",
+        "embedding" => "embd_id",
+        "rerank" => "rerank_id",
+        "asr" => "asr_id",
+        "image2text" => "img2txt_id",
+        "tts" => "tts_id",
+        "ocr" => "ocr_id",
+        _ => "",
+    };
+    let mut data = serde_json::Map::new();
+    data.insert("tenant_id".to_string(), serde_json::json!(tenant_id));
+    for field in [
+        "llm_id",
+        "embd_id",
+        "rerank_id",
+        "asr_id",
+        "img2txt_id",
+        "tts_id",
+        "ocr_id",
+    ] {
+        data.insert(field.to_string(), serde_json::json!(""));
+    }
+    for model in &models {
+        let field = field_for(&model.model_type);
+        if field.is_empty() || !model.enable {
+            continue;
+        }
+        data.insert(field.to_string(), serde_json::json!(model.selector.clone()));
+    }
+    Json(serde_json::json!({ "code": 0, "data": serde_json::Value::Object(data) })).into_response()
+}
+
 pub async fn get_ragflow_default_models(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,

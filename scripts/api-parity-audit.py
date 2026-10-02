@@ -65,6 +65,7 @@ COVERED: dict[str, str] = {
 # cannot see these: `/users/me` answered 405 for GET until it was wired up.
 KNOWN_METHOD_GAPS: dict[str, str] = {
     "/datasets/<dataset_id>/navigation": "POST 生成导航树需要租户嵌入/LLM 编译任务（读取/删除面已实现）",
+    "/users/me/models": "PATCH（上游 set_tenant_info）设置默认模型：RayRAG 的同等能力在 PATCH /api/v1/models/default，需按上游字段名（llm_id/embd_id/asr_id/img2txt_id）做一层适配",
 }
 
 KNOWN_MISSING: dict[str, str] = {
@@ -103,7 +104,6 @@ KNOWN_MISSING: dict[str, str] = {
     "/plugin/tools": "功能级缺口：上游 pluginlib 插件注册表（LLM 工具元数据）未移植；RayRAG 的画布工具目录在 /api/v1/components",
     "/searchbots/ask": "功能级缺口：嵌入问答使用上游自己的 SSE 帧格式（code/message/data 包封），与既有搜索补全的 chat.completion 帧不同，需要单独的流式处理器",
     "/thumbnails": "功能级缺口：缩略图服务未实现",
-    "/users/me/models": "功能级缺口：租户默认模型信息（llm_id/embd_id/asr_id/img2txt_id…）读取接口未实现；RayRAG 的对应数据在 /api/v1/tenant/models",
     "/workspace-files/<file_id>/versions": "功能级缺口：文件版本历史（FileCommitService）未移植，/api/v1/file/commits 目前为空实现",
 }
 

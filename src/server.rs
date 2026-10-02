@@ -4384,6 +4384,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(crate::api::dataset_navigation::list_nav)
                 .delete(crate::api::dataset_navigation::delete_nav),
         )
+        // Upstream `user_api.py::tenant_info`: the tenant's per-capability default models
+        // under RAGFlow's own column names.
+        .route(
+            "/api/v1/users/me/models",
+            get(crate::api::tenant_models::me_models),
+        )
         // Upstream `agent_api.py` canvas utilities: the prompt set the UI displays and the
         // id-addressed file download the canvas uses.
         .route("/api/v1/agents/prompts", get(agent_prompts))
@@ -15744,6 +15750,43 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(page.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// The tenant default models are exposed under RAGFlow's own column names, so a client
+    /// reading `llm_id`/`embd_id`/... finds every field present (empty until configured).
+    #[tokio::test]
+    async fn users_me_models_answers_upstream_column_names() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/v1/users/me/models")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 0);
+        for field in [
+            "tenant_id",
+            "llm_id",
+            "embd_id",
+            "rerank_id",
+            "asr_id",
+            "img2txt_id",
+            "tts_id",
+            "ocr_id",
+        ] {
+            assert!(
+                body["data"].get(field).is_some(),
+                "missing upstream column {field}: {body}"
+            );
+        }
     }
 
     /// The database component check: unsafe hosts and unsupported engines are coded misses,

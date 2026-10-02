@@ -5,12 +5,12 @@
 
 ## 现状
 
-- 上游路由：**181**；RayRAG `/api/v1` 路由：**279**
-- 同名应答（exact）：**104**
+- 上游路由：**181**；RayRAG `/api/v1` 路由：**280**
+- 同名应答（exact）：**105**
 - 别名应答（alias，上游拼写已注册但走 RayRAG 自己的命名）：**38**
 - 形状不同但已被应答（covered）：**2**
-- 尚未实现（missing，已登记）：**37**
-- 路径已有但方法缺失（method）：**1**
+- 尚未实现（missing，已登记）：**36**
+- 路径已有但方法缺失（method）：**2**
 - 未登记的缺口（mismatch，`--check` 视为失败）：**0**
 
 ## 未实现清单（按上游文件分组）
@@ -53,7 +53,6 @@
 | `/auth/password/forgot/otp` | `user_api.py` | 功能级缺口：同上（忘记密码流程） |
 | `/auth/password/forgot/otp/verify` | `user_api.py` | 功能级缺口：同上（忘记密码流程） |
 | `/auth/password/reset` | `user_api.py` | 功能级缺口：同上（忘记密码流程） |
-| `/users/me/models` | `user_api.py` | 功能级缺口：租户默认模型信息（llm_id/embd_id/asr_id/img2txt_id…）读取接口未实现；RayRAG 的对应数据在 /api/v1/tenant/models |
 
 ## 别名对照（上游拼写 → RayRAG 路由）
 
@@ -71,3 +70,4 @@
 | 上游路径 | 来源与缺失方法 |
 | --- | --- |
 | `/datasets/<dataset_id>/navigation` | dataset_api.py [POST] |
+| `/users/me/models` | user_api.py [PATCH] |
