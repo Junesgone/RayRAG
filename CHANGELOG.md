@@ -7,6 +7,7 @@ All notable changes to RayRAG are documented in this file.
 - **接口对标推进一批（9 条落地）**：接口对照数字由「同名 77 / 别名 37 / 未实现 65 / 方法缺 9」推进到「同名 **86** / 别名 **37** / 未实现 **56** / 方法缺 **8**」。本轮落地：数据集级批量解析 `POST /datasets/{id}/documents/parse`、批量停止 `POST /datasets/{id}/documents/stop`（均返回上游的 `{"success_count": n}`，未知文档按上游返回 `code 102` 并列出 id）、元数据汇总 `GET /datasets/{id}/metadata/summary`（上游 GET + `doc_ids` 查询，返回 `{"summary": {字段: {type, values}}}`）、元数据批量更新 `POST /datasets/{id}/metadata/update`、元数据扁平表 `GET /datasets/metadata/flattened`、标签聚合 `GET /datasets/tags/aggregation`。
 - **检索三路径同源**：上游把 `retrieval_test` 同时挂在 `/retrieval`、`/datasets/search`、`/datasets/{id}/search` 上；RayRAG 现在同样三条路径共用同一处理器，路径带 id 的那条把 id 注入 `dataset_ids`，因此三种调用不会各自漂移。
 - **工具自身的第三处缺陷（记录在案）**：接口对照工具的路由提取不接受 `.route(` 与路径字符串之间的注释行，导致 3 个**已经实现**的接口被误报为缺失（`/documents/ingest`、`/datasets/{id}/documents/batch-update-status`）。修正后重新测量并同步登记表，避免用错误数字排期。
+- **请求体字段名（第三类兼容缺口）**：上游 `retrieval_test` 用 `dataset_ids` / `document_ids` 指定检索范围，RayRAG 原来只认 `kb_ids` / `doc_ids`——按上游字段名调用会被判为"没有可访问的知识库"。现在两套字段名都接受（路径带 id 的作用域检索也走同一处理器）。
 - **测试**：新增数据集级接口的任务级回归（未知文档 → 102 且列出 id、空选择 → 400、缺 `dataset_ids` → 102、GET 汇总返回上游包封、作用域检索可达）。全量 **2124 passed / 0 failed**。
 
 ## [0.4.99] - 2026-10-02

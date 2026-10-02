@@ -3151,9 +3151,13 @@ async fn retrieval(
         .or_else(|| search_app.as_ref().map(|app| app.similarity_threshold))
         .unwrap_or(0.2)
         .clamp(0.0, 1.0) as f32;
-    // Upstream sends the singular `kb_id`; RayRAG's own clients use `kb_ids`.
+    // Upstream `chunk_api.retrieval_test` requires `dataset_ids`; RayRAG's own clients
+    // use `kb_ids`, and the share/embed links send the singular `kb_id`. All three are
+    // read here, because a client written against RAGFlow would otherwise be told that
+    // no knowledge base is accessible.
     let kb_ids: Vec<String> = b
         .get("kb_ids")
+        .or_else(|| b.get("dataset_ids"))
         .or_else(|| b.get("kb_id"))
         .and_then(|value| value.as_array())
         .map(|values| {
@@ -3165,8 +3169,11 @@ async fn retrieval(
         .filter(|values| !values.is_empty())
         .or_else(|| search_app.as_ref().map(|app| app.kb_ids.clone()))
         .unwrap_or_default();
+    // Upstream's name is `document_ids` (it copies `doc_ids` onto it on the way in);
+    // both are read so either client selects the same documents.
     let doc_ids: Option<Vec<String>> = b
         .get("doc_ids")
+        .or_else(|| b.get("document_ids"))
         .and_then(|value| value.as_array())
         .map(|values| {
             values
@@ -15374,6 +15381,7 @@ mod tests {
 
         // The scoped search path reaches the same handler as `/retrieval`.
         let scoped = router
+            .clone()
             .oneshot(
                 Request::builder()
                     .method(Method::POST)
@@ -15387,7 +15395,48 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_ne!(scoped.status(), StatusCode::NOT_FOUND);
+        // The scoped path injects `dataset_ids`; the shared handler must recognise the
+        // selection. This environment has no embedder, so the request still fails — but
+        // with the embedding error, not with "no accessible kb".
+        let scoped_body = response_json(scoped).await;
+        assert!(
+            !scoped_body["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("accessible kb_id"),
+            "scoped retrieval rejected the selection: {scoped_body}"
+        );
+
+        // Upstream's body spells the selection `dataset_ids`/`document_ids`; both must be
+        // understood by the shared handler a RAGFlow client reaches.
+        let upstream_body = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/retrieval")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "question": "anything",
+                            "dataset_ids": [kb.id.clone()],
+                            "document_ids": ["missing-doc"],
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let upstream_body = response_json(upstream_body).await;
+        assert!(
+            !upstream_body["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("accessible kb_id"),
+            "upstream body field names were not understood: {upstream_body}"
+        );
     }
 
     /// RAGFlow spells these paths with hyphens; RayRAG's own routes use underscores.
