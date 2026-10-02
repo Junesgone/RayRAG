@@ -2,6 +2,12 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.6.8] - 2026-10-02
+
+- **禁用的按钮必须说明原因**：浏览器实测发现数据集产物页的 Generate 按钮在**没有分配分块方法（pipeline）**时是灰的，而旁边**一个字都没有**——用户只会看到一个点不动的按钮，不知道缺什么。现在会直接写明：`This dataset has no chunk method assigned yet, so artifact generation cannot start.`（没有已解析分块时则写 `has no parsed chunks yet`），并指出**当前可用**的操作（读取列表 / 单页 / 主题 / 清空产物）。
+- 这与上一轮同一条原则：**界面不要说含糊话**——上一轮改的是"排队中"的假承诺，这一轮补的是"按钮灰着但不解释"的死胡同。
+- **测试**：全量 **2136 passed / 0 failed**（kb_ui 123 条全过）。
+
 ## [0.6.7] - 2026-10-02
 
 - **UI 不再说"排队中"这种含糊话**：数据集产物（Wiki）面板的 Generate 按钮原先只显示 "Wiki generation is queued for a later slice."，视图切换器则提示另一种视图"稍后切片会有"。现在两者都**如实反映后端状态**：点击 Generate 会真的去读 `GET /datasets/{id}/artifacts`，然后告诉你这个数据集当前有几页编译产物；没有产物时明确说明「产物生成尚未实现，因此这个按钮不能编译新页面；列表 / 单页读取 / 编辑 / 主题 / 清空这些接口是可用的」。
