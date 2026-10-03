@@ -11,6 +11,14 @@ single flat table. Opening a folder lists that dataset's files and offers a way 
 browser below keeps working exactly as before. The folder grid reflows with the screen
 (`repeat(auto-fill, minmax(190px, 1fr))`), so the same page works on a narrow laptop or a wide monitor.
 
+### `document_count`, the name the guide uses
+
+The dataset payload called the document count `doc_count`, while the API guide documents
+`document_count`. A client written against the guide would read `null`. Both names are now emitted —
+the documented one added, the original kept so nothing existing breaks — and the Files page's folder
+cards use whichever arrives. The assertion that caught this was first written into the wrong test (a
+navigation-tree response, which the guide does not document); it now lives in the dataset-list test.
+
 ### One unexplained test failure, explained
 
 The previous release recorded that `oauth_callback_flow_matches_upstream` had failed once in the full
