@@ -2,6 +2,51 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.13.0] - 2026-10-03
+
+### Runtime attachments: the upload endpoint, and the two that stream them back
+
+Four documented endpoints were missing, all part of one feature — a file (or a crawled page) that is
+kept as an attachment and later fetched, previewed or handed to an agent:
+
+| endpoint | behaviour |
+|---|---|
+| `POST /api/v1/documents/upload` | multipart `file`(s) **or** `?url=`; one file answers with an object, several with an array |
+| `POST /api/v1/agents/{agent_id}/upload` | the same, stored against a canvas (`102 canvas not found.` when it does not exist) |
+| `GET /api/v1/agents/attachments/{id}/download` | streams the bytes; `ext`, `mime_type`, `filename` and `disposition=inline` choose the headers |
+| `GET /api/v1/agents/attachments/{id}/preview` | the same, always inline |
+
+Two behaviours are worth naming, because both were wrong in the first draft and are now checked:
+
+* **A `?url=` upload is fetched by the server, so it is validated first.** Only `http`/`https`, no
+  loopback or private address, no `.local`/`.internal` host, at most ten redirects, and the response is
+  capped at the configured upload limit. A test asserts that `127.0.0.1`, `localhost`, `10.0.0.5`,
+  `192.168.1.10`, `172.16.4.4`, `nas.local` and `file://` are all refused before anything is fetched.
+  Upstream validates its crawl URLs the same way; an upload endpoint must not be a proxy into the
+  host's own network.
+* **Validation happens before storage.** The first draft stored a multipart file and *then* noticed that
+  a `url` had been passed too, leaving an orphan attachment behind for a request that was refused. The
+  parts are now read first, then the "not both" rule is applied, so a refused request stores nothing.
+
+The guide's two invalid-input answers are honoured exactly — `101 Provide either multipart file(s) or
+?url=..., not both.` and `101 Missing input: provide multipart file(s) or url` — which needed the route
+to take the raw request rather than a `Multipart` extractor: axum rejects a bodyless request with a 415
+before a handler runs, and the documented answer is a business code, not a transport error.
+
+**The composer control is not shipped.** I added a 📎 button to the chat composer, and the first
+insertion landed *inside* the Send button — the composer is one concatenated markup string, and a
+nested `<button>` plus a duplicate id is worse than no button at all. A second attempt put the helpers
+outside the page's `<script>`, and the review caught both. The control is removed again rather than
+half-fixed; the endpoints below are complete, tested and reachable from any client, and the composer
+needs its markup split into proper elements before a control belongs in it. (The knowledge-base page's
+*Version history* card from 0.12.0 is unaffected: it was added to markup that already had element
+boundaries.)
+
+**2191 tests pass, 0 failures**, including the upload→download→preview round trip, the `ext` header
+switch, both invalid-input cases, the internal-address refusal, and the canvas-scoped upload against
+both an unknown and a real canvas. The parity ledger moved from 22 to **18** remaining gaps
+(195 upstream routes, 330 of ours, 130 exact).
+
 ## [0.12.0] - 2026-10-03
 
 ### The workspace commit family: snapshots, diffs and version history

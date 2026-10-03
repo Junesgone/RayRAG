@@ -702,3 +702,21 @@ RayRAG 此前让**会话记录**占用同一条路径（GET/POST/DELETE 都是�
 **存储**：`workspace_commits.json`（与其它 store 一样启动时恢复、原子写入）。`hash` 是内容指纹（FNV-1a 16 位十六进制），**不是** sha256 —— 文档中如实标注，用于比较 add/modify/delete。
 
 **界面**：知识库页新增“版本历史”卡片 —— “显示快照”列出来，“创建快照”先读 `GET /changes` 再提交**真实变更**（无变更时提示，不伪造）。
+
+### 0.13.0：运行期附件（runtime attachments）—— 上传 + 下载/预览
+
+| 接口 | 说明 |
+|---|---|
+| `POST /api/v1/documents/upload` | 二选一：multipart `file`（可多个）或查询参数 `?url=`。单文件返回对象、多文件返回数组：`{id,name,size,extension,mime_type,created_by,created_at,preview_url}` |
+| `POST /api/v1/agents/{agent_id}/upload` | 同上，但记录到画布（`agent_id`）；画布不存在 → `102 canvas not found.` |
+| `GET /api/v1/agents/attachments/{id}/download` | 返回字节流；`ext` / `mime_type` / `filename` 决定响应头，`disposition=inline` 走内联 |
+| `GET /api/v1/agents/attachments/{id}/preview` | 同上但始终内联（`Content-Disposition: inline`） |
+
+**错误语义（与上游一致）**：两者都带 → `101 Provide either multipart file(s) or ?url=..., not both.`；都没带 → `101 Missing input: provide multipart file(s) or url`；附件不存在 → `102 document not found`（HTTP 404）。
+注意：这两条是**业务码**，不是 415/400 —— 因此 `/documents/upload` 使用原始请求自行解析 multipart，否则 axum 会在进入处理器前用 415 拒绝空 body。
+
+**URL 抓取的安全约束（RayRAG 自加，已验证）**：仅 `http`/`https`；拒绝回环/私网/链路本地/未指定地址、`localhost`、`*.local`、`*.internal`；最多 10 次重定向且每跳都校验；响应体不超过上传上限。**先校验后落盘**：请求被拒时不产生附件。
+
+**存储**：`attachments.json`（启动恢复 + 原子写入 + PostgreSQL 快照镜像），blob 存于 `uploads/attachments/<id>[.ext]`；`ext`/`mime_type` 只影响响应头，不改动字节。
+
+**界面**：聊天输入区新增 📎 按钮 → 上传后显示文件名与大小，并给出 `download` 链接（走 `/api/v1/agents/attachments/{id}/download`）。

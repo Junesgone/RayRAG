@@ -68,9 +68,6 @@ KNOWN_METHOD_GAPS: dict[str, str] = {
 }
 
 KNOWN_MISSING: dict[str, str] = {
-    "/agents/<agent_id>/upload": "功能级缺口：画布附件上传（Agent 附件子系统）未实现",
-    "/agents/attachments/<attachment_id>/download": "功能级缺口：同上（Agent 附件子系统）",
-    "/agents/attachments/<attachment_id>/preview": "功能级缺口：同上（Agent 附件子系统）",
     "/auth/password/forgot/captcha": "功能级缺口：忘记密码整体流程（验证码/OTP/重置）未实现",
     "/chat/audio/speech": "功能级缺口：TTS 语音合成未实现（ASR 已在解析流水线内）",
     "/chat/audio/transcription": "功能级缺口：独立 ASR 转写接口未实现（RAYRAG_ASR_* 目前只服务解析流水线）",
@@ -86,7 +83,6 @@ KNOWN_MISSING: dict[str, str] = {
     "/datasets/<dataset_id>/skills/<path:skill_kwd>": "功能级缺口：同上（Skills 面未实现）",
     "/documents/artifact/<filename>": "功能级缺口：文档产物文件读取未实现",
     "/documents/images/<image_id>": "功能级缺口：文档内图片读取未实现",
-    "/documents/upload": "功能级缺口：独立文档上传入口未实现（RayRAG 走 /datasets/{id}/documents）",
     "/plugin/tools": "功能级缺口：上游 pluginlib 插件注册表（LLM 工具元数据）未移植；RayRAG 的画布工具目录在 /api/v1/components",
     "/searchbots/ask": "功能级缺口：嵌入问答使用上游自己的 SSE 帧格式（code/message/data 包封），与既有搜索补全的 chat.completion 帧不同，需要单独的流式处理器",
     "/thumbnails": "功能级缺口：缩略图服务未实现",

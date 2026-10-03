@@ -69,6 +69,7 @@ pub struct AppState {
     pub whitelist: Arc<crate::registration_whitelist::WhitelistStore>,
     pub files: Arc<crate::api::file_mgr::FileStore>,
     pub workspace_commits: Arc<crate::api::workspaces::WorkspaceCommitStore>,
+    pub attachments: Arc<crate::api::attachments::AttachmentStore>,
     pub data_sources: Option<Arc<crate::api::data_source_mgr::DataSourceStore>>,
     pub search_apps: Option<Arc<crate::api::searchapp_mgr::SearchAppStore>>,
     pub chat_apps: Option<Arc<crate::api::chatapp_mgr::ChatAppStore>>,
@@ -5264,6 +5265,25 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/workspace-files/{file_id}/versions",
             get(crate::api::workspaces::file_versions),
         )
+        // Runtime attachments (upstream `document_api.py::upload_info` and
+        // `agent_api.py::_stream_agent_attachment`): create one from a file or a url, stream it back
+        // for download or preview, and the canvas-scoped upload.
+        .route(
+            "/api/v1/documents/upload",
+            axum::routing::post(crate::api::attachments::upload_document),
+        )
+        .route(
+            "/api/v1/agents/attachments/{attachment_id}/download",
+            get(crate::api::attachments::download_attachment),
+        )
+        .route(
+            "/api/v1/agents/attachments/{attachment_id}/preview",
+            get(crate::api::attachments::preview_attachment),
+        )
+        .route(
+            "/api/v1/agents/{agent_id}/upload",
+            axum::routing::post(crate::api::attachments::upload_agent_file),
+        )
         .route(
             "/api/v1/files/{file_id}",
             axum::routing::get(crate::api::file_mgr::get_file)
@@ -6135,6 +6155,10 @@ pub async fn run(
     let workspace_commits = Arc::new(crate::api::workspaces::WorkspaceCommitStore::new(
         &format!("{}/../uploads/", static_dir),
     )?);
+    let attachments = Arc::new(crate::api::attachments::AttachmentStore::new(&format!(
+        "{}/../uploads/attachments",
+        static_dir
+    ))?);
     let data_sources = Some(Arc::new(crate::api::data_source_mgr::DataSourceStore::new(
         &format!("{}/../uploads/", static_dir),
     )?));
@@ -6274,6 +6298,7 @@ pub async fn run(
         max_upload_bytes: max_upload_bytes(),
         docs,
         workspace_commits,
+        attachments,
         document_metadata,
         whitelist: Arc::new(crate::registration_whitelist::WhitelistStore::new(
             &whitelist_path,
@@ -6580,6 +6605,12 @@ mod tests {
             workspace_commits: Arc::new(
                 crate::api::workspaces::WorkspaceCommitStore::new(
                     root.join("workspace-commits").to_str().unwrap(),
+                )
+                .unwrap(),
+            ),
+            attachments: Arc::new(
+                crate::api::attachments::AttachmentStore::new(
+                    root.join("attachments").to_str().unwrap(),
                 )
                 .unwrap(),
             ),
@@ -7954,6 +7985,12 @@ mod tests {
             workspace_commits: Arc::new(
                 crate::api::workspaces::WorkspaceCommitStore::new(
                     root.join("workspace-commits").to_str().unwrap(),
+                )
+                .unwrap(),
+            ),
+            attachments: Arc::new(
+                crate::api::attachments::AttachmentStore::new(
+                    root.join("attachments").to_str().unwrap(),
                 )
                 .unwrap(),
             ),
@@ -13336,6 +13373,270 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    /// Runtime attachments: upload a file, stream it back for download and preview, and refuse the
+    /// two inputs the guide names as invalid.
+    #[tokio::test]
+    async fn attachments_upload_stream_and_report_bad_input() {
+        let env = test_env();
+        let boundary = "rayrag-attachment-boundary";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"notes.txt\"\r\nContent-Type: text/plain\r\n\r\nhello attachment\r\n--{boundary}--\r\n"
+        );
+        let upload = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/documents/upload")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(upload.status(), StatusCode::OK);
+        let uploaded = response_json(upload).await;
+        assert_eq!(uploaded["code"], 0, "{uploaded}");
+        assert_eq!(uploaded["data"]["name"], "notes.txt", "{uploaded}");
+        assert_eq!(uploaded["data"]["extension"], "txt", "{uploaded}");
+        assert_eq!(uploaded["data"]["mime_type"], "text/plain", "{uploaded}");
+        assert_eq!(uploaded["data"]["size"], 16, "{uploaded}");
+        assert!(
+            uploaded["data"]["preview_url"].is_null(),
+            "as documented: {uploaded}"
+        );
+        let id = uploaded["data"]["id"].as_str().unwrap().to_string();
+
+        // The same upload with a url as well is refused, in the guide's wording.
+        let both = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/documents/upload?url=https://example.com/x")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(format!(
+                        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.txt\"\r\nContent-Type: text/plain\r\n\r\nbody\r\n--{boundary}--\r\n"
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let both = response_json(both).await;
+        assert_eq!(both["code"], 101, "{both}");
+        assert_eq!(
+            both["message"],
+            "Provide either multipart file(s) or ?url=..., not both."
+        );
+
+        // Neither input is refused too.
+        let neither = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/documents/upload")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let neither = response_json(neither).await;
+        assert_eq!(neither["code"], 101, "{neither}");
+        assert_eq!(
+            neither["message"],
+            "Missing input: provide multipart file(s) or url"
+        );
+
+        // A url pointing at this host's own network is refused before anything is fetched.
+        let internal = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/documents/upload?url=http://127.0.0.1:9390/api/v1/version")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let internal = response_json(internal).await;
+        assert_eq!(internal["code"], 101, "{internal}");
+        assert!(
+            internal["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("internal address"),
+            "{internal}"
+        );
+
+        // Download serves the bytes with the uploaded type; `ext` changes the declared type.
+        let download = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/api/v1/agents/attachments/{id}/download"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(download.status(), StatusCode::OK);
+        assert_eq!(
+            download
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("text/plain")
+        );
+        let disposition = download
+            .headers()
+            .get(header::CONTENT_DISPOSITION)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        assert!(disposition.starts_with("attachment"), "{disposition}");
+        let bytes = to_bytes(download.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(String::from_utf8_lossy(&bytes), "hello attachment");
+
+        let as_pdf = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!(
+                        "/api/v1/agents/attachments/{id}/download?ext=pdf&filename=report.pdf"
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            as_pdf
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("application/pdf")
+        );
+
+        // Preview is inline, and an unknown id is the documented 102.
+        let preview = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/api/v1/agents/attachments/{id}/preview"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            preview
+                .headers()
+                .get(header::CONTENT_DISPOSITION)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .starts_with("inline"),
+            "preview is inline"
+        );
+        let missing = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/v1/agents/attachments/does-not-exist/download")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        let missing = response_json(missing).await;
+        assert_eq!(missing["code"], 102, "{missing}");
+        assert_eq!(missing["message"], "document not found");
+    }
+
+    /// The canvas-scoped upload needs a canvas that exists; otherwise it answers as upstream does.
+    #[tokio::test]
+    async fn agent_upload_requires_the_canvas() {
+        let env = test_env();
+        let boundary = "rayrag-agent-boundary";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"canvas.txt\"\r\nContent-Type: text/plain\r\n\r\ncanvas body\r\n--{boundary}--\r\n"
+        );
+        let unknown = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/agents/nope/upload")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+        let unknown = response_json(unknown).await;
+        assert_eq!(unknown["code"], 102, "{unknown}");
+        assert_eq!(unknown["message"], "canvas not found.");
+
+        let agent = env
+            .state
+            .agents
+            .create(
+                "test-user",
+                crate::api::features::AgentCreateRequest {
+                    name: "canvas-agent".into(),
+                    description: String::new(),
+                    avatar: String::new(),
+                    permission: None,
+                    canvas_category: None,
+                    canvas_type: String::new(),
+                    tags: Vec::new(),
+                    release: None,
+                    kb_ids: Vec::new(),
+                    prompt_template: None,
+                    dsl: serde_json::json!({}),
+                },
+            )
+            .unwrap();
+        let created = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/agents/{}/upload", agent.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let created = response_json(created).await;
+        assert_eq!(created["code"], 0, "{created}");
+        assert_eq!(created["data"]["name"], "canvas.txt", "{created}");
+        // It is stored against the canvas it was uploaded for.
+        let id = created["data"]["id"].as_str().unwrap();
+        let stored = env.state.attachments.get(id).expect("stored attachment");
+        assert_eq!(stored.agent_id.as_deref(), Some(agent.id.as_str()));
     }
 
     /// The workspace commit family, end to end: a snapshot records what changed, the list is

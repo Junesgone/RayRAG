@@ -10923,6 +10923,12 @@ mod kb_ui_tests {
                 .unwrap(),
             ),
             data_sources: None,
+            attachments: Arc::new(
+                crate::api::attachments::AttachmentStore::new(
+                    root.path().join("attachments").to_str().unwrap(),
+                )
+                .unwrap(),
+            ),
             search_apps: None,
             chat_apps: Some(Arc::new(
                 crate::api::chatapp_mgr::ChatAppStore::new(
