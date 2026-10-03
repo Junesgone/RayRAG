@@ -2,6 +2,12 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.9.8] - 2026-10-02
+
+- **修复滑块与数值框的联动**（浏览器实测发现的真 bug）：上一版生成的属性是 `oninput='syncSliderToNumber(this,\'cfgThrV\')'`——**单引号包裹的 HTML 属性里 `\'` 不是转义**，属性在 `\'` 处就结束了，浏览器拿到的是一个语法错误的处理函数，于是**拖动滑块数字不变、输入数字滑块也不动**（页面控制台报 `SyntaxError: Unexpected end of input`）。改为属性内使用双引号（`oninput='syncSliderToNumber(this,"cfgThrV")'`）后双向联动生效。
+- **这条是"部署后实测"抓到的**：编译、单测、fmt 全绿，但浏览器里两个方向都不工作——再次印证本阶段定下的规矩：**界面改动必须在浏览器里点一遍**。
+- 测试：全量 **2155 passed / 0 failed**。
+
 ## [0.9.7] - 2026-10-02
 
 - **创建数据集时选择自定义 Pipeline 不再是一个空壳**（用户报告）：选择 `Pipeline` 后会**显示真正的 Pipeline 选择框**（此前对话框里根本没有这个字段，选了也只有一个空标题），并在框下**静态写明下一步该做什么**——"自定义 Pipeline 需先在 **Agents** 页面创建，创建后再回到这里选择"，并附上直达 Agents 的链接；未选择 Pipeline 就提交时**给出明确原因**（把错误显示在对话框的错误位），而不是静默失败或创建一个无法解析的数据集。
