@@ -1591,6 +1591,8 @@ pub(crate) mod code {
     pub const INVALID_ARGUMENT: i32 = 101;
     pub const INVALID_OR_MISSING_DATA: i32 = 102;
     pub const OPERATION_ERROR: i32 = 103;
+    /// RAGFlow's `RetCode.NOT_EFFECTIVE`: the request worked but did not take effect.
+    pub const NOT_EFFECTIVE: i32 = 10;
     pub const CONNECTION_ERROR: i32 = 105;
     pub const STILL_RUNNING: i32 = 106;
     pub const NO_PERMISSION: i32 = 108;
@@ -5290,6 +5292,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // schema a dataset defines, and the per-document override.
         // Audio (`chat_api.py`): text to speech and speech to text through the OpenAI-compatible
         // clients in `audio.rs`.
+        // `POST /datasets/{id}/embedding/check`: do the stored vectors still agree with the model?
+        .route(
+            "/api/v1/datasets/{dataset_id}/embedding/check",
+            axum::routing::post(crate::api::embedding_check::check_dataset_embedding),
+        )
         .route(
             "/api/v1/chat/audio/speech",
             axum::routing::post(crate::api::audio_api::speech),
@@ -13434,6 +13441,118 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    /// The embedding check: it insists on `embd_id`, it refuses a dataset the caller cannot read, and
+    /// with nothing embedded it says so rather than reporting a similarity of zero as a result.
+    #[tokio::test]
+    async fn embedding_check_reports_what_it_cannot_compare() {
+        let env = test_env();
+        let kb = env.state.kbs.create_for("test-user", "emb-kb", "").unwrap();
+        let call = |uri: String, body: &str| {
+            let router = build_router(env.state.clone());
+            let token = env.token.clone();
+            let body = body.to_string();
+            async move {
+                let request = Request::builder()
+                    .method(Method::POST)
+                    .uri(uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body))
+                    .unwrap();
+                router.oneshot(request).await.unwrap()
+            }
+        };
+
+        // `embd_id` is required, exactly as upstream insists.
+        let missing = response_json(
+            call(
+                format!("/api/v1/datasets/{}/embedding/check", kb.id),
+                r#"{"n":4}"#,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(missing["code"], 102, "{missing}");
+        assert_eq!(missing["message"], "`embd_id` is required.");
+
+        // A dataset the caller cannot read is refused.
+        let unknown = response_json(
+            call(
+                "/api/v1/datasets/no-such-kb/embedding/check".to_string(),
+                r#"{"embd_id":"bge-m3"}"#,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(unknown["code"], 102, "{unknown}");
+        assert_eq!(unknown["message"], "no authorization");
+
+        // A dataset whose chunks carry no vectors has nothing to compare.
+        let empty = response_json(
+            call(
+                format!("/api/v1/datasets/{}/embedding/check", kb.id),
+                r#"{"embd_id":"bge-m3"}"#,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(empty["code"], 102, "{empty}");
+        assert_eq!(
+            empty["message"],
+            "No embedded chunks are available to compare."
+        );
+
+        // A chunk that belongs to the dataset but has no vector is still not comparable.
+        let now = 1_700_000_000_000u64;
+        env.state
+            .docs
+            .insert(crate::api::document::DocRecord {
+                id: "doc-emb-1".into(),
+                name: "emb.txt".into(),
+                kb_id: kb.id.clone(),
+                size: 4,
+                storage_name: "doc-emb-1.txt".into(),
+                content_hash: String::new(),
+                indexed_content_hash: String::new(),
+                run: "DONE".into(),
+                progress: 1.0,
+                progress_msg: String::new(),
+                chunk_count: 0,
+                created_at: now,
+                updated_at: now,
+                status: crate::api::document::enabled_status(),
+            })
+            .unwrap();
+        env.state
+            .engine
+            .write()
+            .unwrap()
+            .add(crate::search::IndexedChunk {
+                id: "chunk-without-vector".into(),
+                doc_name: "emb.txt".into(),
+                content: "text without a vector".into(),
+                embedding: Vec::new(),
+                token_count: 4,
+                position: 0,
+                metadata: [("doc_id".to_string(), "doc-emb-1".to_string())]
+                    .into_iter()
+                    .collect(),
+            });
+        let unvectorised = response_json(
+            call(
+                format!("/api/v1/datasets/{}/embedding/check", kb.id),
+                r#"{"embd_id":"bge-m3"}"#,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(unvectorised["code"], 102, "{unvectorised}");
+        assert_eq!(
+            unvectorised["message"],
+            "No embedded chunks are available to compare."
         );
     }
 

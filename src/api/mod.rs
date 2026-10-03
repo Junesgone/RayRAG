@@ -25,6 +25,7 @@ pub mod db;
 pub mod doc_assets;
 pub mod document;
 pub mod document_metadata;
+pub mod embedding_check;
 pub mod evaluation;
 pub mod features;
 pub mod file_link;

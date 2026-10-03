@@ -3325,6 +3325,35 @@ pub async fn dataset_page(
     b.push_str(if zh { "生成" } else { "Generate" });
     b.push_str("</button></div><p id='cwpMsg' class='ct-message' role='status'></p></div></div>");
     b.push_str("<script>function cwpModeChange(){var mode=document.getElementById('cwpMode').value;var msg=document.getElementById('cwpMsg');if(!msg)return;msg.textContent=mode==='llm-wiki'?'':'The '+mode+' view is not available in this build; only the compiled-page list is.';msg.style.color='var(--tm)'}async function cwpBoot(){try{var response=await fetch('/api/v1/datasets/'+encodeURIComponent(window.kbId));var data=await response.json();if(!response.ok||data.code!==0)throw new Error(data.message||('HTTP '+response.status));var kb=data.data||{};var chunks=parseInt(kb.chunk_count,10)||0;var pipeline=String(kb.pipeline_id||'').trim();var button=document.getElementById('cwpGenerate');var enabled=chunks>0&&pipeline.length>0;if(button)button.disabled=!enabled;var hint=document.getElementById('cwpMsg');if(hint&&!enabled){hint.style.color='var(--tm)';hint.textContent=(chunks>0?'This dataset has no chunk method assigned yet':'This dataset has no parsed chunks yet')+', so artifact generation cannot start. Read the list, a page, its topics or clear the artifacts above - those work today.'}}catch(error){var node=document.getElementById('cwpMsg');if(node){node.textContent=String(error.message||error);node.style.color='var(--d)'}}}async function cwpGenerate(){var node=document.getElementById('cwpMsg');if(!node)return;node.style.color='var(--tm)';node.textContent='Compiling artifacts (map, then reduce)...';try{var response=await fetch('/api/v1/datasets/'+encodeURIComponent(window.kbId)+'/artifacts/compile',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});var data=await response.json();if(data.code!==0){node.style.color='var(--d)';node.textContent=data.message||('HTTP '+response.status);return}var d=data.data||{};var compile=d.compile||{};var skipped=(d.skipped||[]).length;node.textContent='Mapped '+d.mapped+' of '+d.total+' document(s), extracts '+d.extracts+', pages created '+(compile.pages_created||0)+', modified '+(compile.pages_modified||0)+'.'+(skipped?(' '+skipped+' document(s) had nothing to extract.'):'')+(d.message?(' '+d.message):'');if((d.extracts===0)&&(d.total>0)){node.textContent+=' The model found no entities, concepts, claims, relations or topics in this dataset, so no pages were produced - that is a data result, not a failure.'}cwpBootFallback()}catch(error){node.style.color='var(--d)';node.textContent=String((error&&error.message)||error)}}function cwpBootFallback(){}if(document.getElementById('tab5'))cwpBoot();</script>");
+    // Embedding check (`POST /api/v1/datasets/{id}/embedding/check`): before switching embedding
+    // models, a user needs to know whether the vectors already stored still agree with the model.
+    // Self-contained block, and the answer is printed — including the code 10 verdict.
+    b.push_str("<div class='card' id='embCheckCard' data-testid='embedding-check-card'><h2>");
+    b.push_str(t("Embedding check", zh));
+    b.push_str("</h2><p style='color:var(--tm);font-size:13px'>");
+    b.push_str(t(
+        "Compares the vectors already stored in this dataset with what the embedding model produces now. An average below 0.9 means the stored vectors came from a different model.",
+        zh,
+    ));
+    b.push_str("</p><div style='display:flex;gap:8px;align-items:center;flex-wrap:wrap'><button class='btn btn-o btn-sm' data-testid='embedding-check-run' onclick='embCheckRun()'>");
+    b.push_str(t("Run check", zh));
+    b.push_str("</button><span id='embCheckStatus' data-testid='embedding-check-status' style='font-size:13px;color:var(--tm)'></span></div><p id='embCheckResult' data-testid='embedding-check-result' style='font-size:14px;margin-top:8px'></p></div>");
+    // One `format!` string rather than a dozen concatenations: the labels are substituted, so a
+    // missing quote cannot silently eat the following statement (which is exactly what an earlier
+    // hand-concatenated version of this script did).
+    let emb_check_js = format!(
+        "<script>function embCheckRun(){{var status=document.getElementById('embCheckStatus');var out=document.getElementById('embCheckResult');status.textContent='{checking}';status.style.color='var(--tm)';out.textContent='';fetch('/api/v1/datasets/'+encodeURIComponent(kbId)+'/embedding/check',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{embd_id:'default'}})}}).then(function(r){{return r.json()}}).then(function(data){{if(data&&data.data&&data.data.summary){{var s=data.data.summary;out.textContent='{avg} '+s.avg_cos_sim+' [{min} '+s.min_cos_sim+', {max} '+s.max_cos_sim+'], {compared} '+s.valid+'/'+s.sampled+', {model} '+s.model;if(data.code===0){{status.textContent='{ok}';status.style.color='var(--tx)'}}else{{status.textContent=(data.message||'{no}');status.style.color='var(--d)'}}}}else{{status.textContent=(data&&data.message)||'{failed}';status.style.color='var(--d)'}}}}).catch(function(e){{status.textContent=String(e);status.style.color='var(--d)'}})}}</script>",
+        checking = t("Checking...", zh),
+        avg = t("avg similarity", zh),
+        min = t("min", zh),
+        max = t("max", zh),
+        compared = t("compared", zh),
+        model = t("model", zh),
+        ok = t("The stored vectors match the model", zh),
+        no = t("The stored vectors do not match the model", zh),
+        failed = t("Could not run the check", zh),
+    );
+    b.push_str(&emb_check_js);
     // Auto-metadata schema (`GET/PUT /api/v1/datasets/{id}/metadata/config`): the fields a user
     // defines for this dataset's documents, with the deployment's built-ins shown next to them.
     b.push_str("<div class='card' id='metaSchemaCard'><h2>");
