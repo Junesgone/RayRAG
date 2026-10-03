@@ -34,7 +34,12 @@ literal `default`, which resolves to this deployment's configured `EMBED_MODEL`;
 client would have to invent a label and print it next to real numbers.
 
 The dataset configuration tab gained an **Embedding check** button that runs it and prints the average,
-the range, how many chunks were compared and which model answered — including the code 10 verdict.
+the range, how many chunks were compared and which model answered — including the code 10 verdict. The
+button asks for four chunks rather than the API default of eight, because eight measured **54.9 s**
+against this host's embedding endpoint; the default stays useful for automation and the button stays
+responsive for a person who just pressed it. The `code 10` branch is covered by the tests (threshold and
+dimension mismatch) rather than by the live probe — producing genuinely mismatched vectors live would
+mean corrupting the dataset being checked.
 
 **2210 tests pass, 0 failures**, including the cosine edge cases (identical, orthogonal, opposite,
 mismatched widths), the sampling being reproducible and in range, the threshold, the alias resolving to
