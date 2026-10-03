@@ -2,6 +2,17 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.10.3] - 2026-10-02
+
+- **补上 API 说明书里最后一条可落地的废弃别名：`POST /api/v1/file/convert` → `POST /api/v1/files/link-to-datasets`**。两条路径指向**同一个处理函数**，因此不可能各自漂移。
+- **顺带查出一个"说谎"的接口**：`POST /api/v1/file2document` 此前**只返回 `code:0` 加一句 "N file(s) queued for conversion"，实际上什么都没做**——调用方看到成功，却永远等不到文档。这正是本项目明令避免的静默成功。现在它走真实的转换逻辑。
+- **`link-to-datasets` 的真实行为**：
+  - 目录 ID 按说明书**展开为目录内的文件**（说明书原文："If a folder ID is provided, all files within that folder will be converted"），目录本身不会变成一个文档；
+  - 目标数据集先全部校验再动手，避免"一半成功"让调用方无从判断；
+  - 文件不存在或不属于当前用户 → **HTTP 404 + 业务码 102 `File not found!`**；数据集不可管理 → **404 + 102 `Can't find this dataset!`**；
+  - **一个都没转换成功时不再返回成功**，而是 **HTTP 500 + 业务码 103**，并把每个失败原因列在消息里；部分成功时成功列表照常返回、失败原因放在 `errors` 里。
+- **测试**：新增 3 条回归（空选择不算成功、目录展开为其子文件且目录本身不成为文档、不存在/他人文件必须被报告而不是跳过）。全量 **2162 passed / 0 failed**。
+
 ## [0.10.2] - 2026-10-02
 
 - **按 API 说明书落实 OpenAI 兼容接口的 `extra_body`**（说明书第三处落地）。说明书在 `POST /api/v1/openai/{chat_id}/chat/completions` 下定义三个键，此前 RayRAG **一个都没解析**：`extra_body` 里的内容被 `#[serde(flatten)]` 静默吞掉，调用方写了等于没写。

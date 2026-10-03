@@ -1337,8 +1337,39 @@ pub async fn list_commits() -> impl IntoResponse {
 
 // ── File 2 Document Conversion ─────────────────────────────────
 
-/// POST /api/v1/file2document — convert file to document
-pub async fn file2document(Json(body): Json<serde_json::Value>) -> impl IntoResponse {
+/// POST /api/v1/file2document — the pre-0.24 spelling of the conversion. It used to answer
+/// `code: 0` with "N file(s) queued for conversion" while converting nothing, which is exactly the
+/// silent success the project is meant to avoid; it now runs the real conversion.
+pub async fn file2document(
+    state: axum::extract::State<std::sync::Arc<crate::server::AppState>>,
+    axum::extract::Extension(auth): axum::extract::Extension<crate::server::AuthContext>,
+    Json(body): Json<serde_json::Value>,
+) -> axum::response::Response {
+    let mapped = serde_json::json!({
+        "file_ids": body.get("file_ids").cloned().unwrap_or(serde_json::json!([])),
+        "kb_ids": body
+            .get("kb_ids")
+            .or_else(|| body.get("dataset_ids"))
+            .cloned()
+            .unwrap_or(serde_json::json!([])),
+    });
+    let request: crate::api::file_link::LinkToDatasetsRequest = match serde_json::from_value(mapped)
+    {
+        Ok(request) => request,
+        Err(error) => {
+            return crate::server::invalid_argument(&format!("invalid request body: {error}"));
+        }
+    };
+    crate::api::file_link::link_files_to_datasets(
+        state,
+        axum::extract::Extension(auth),
+        Json(request),
+    )
+    .await
+}
+
+#[allow(dead_code)]
+async fn file2document_legacy_stub(Json(body): Json<serde_json::Value>) -> impl IntoResponse {
     let file_id = body
         .get("file_ids")
         .and_then(|v| v.as_array())

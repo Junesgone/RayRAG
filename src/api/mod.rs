@@ -22,6 +22,7 @@ pub mod document;
 pub mod document_metadata;
 pub mod evaluation;
 pub mod features;
+pub mod file_link;
 pub mod file_mgr;
 pub mod ingestion;
 pub mod joint_services;

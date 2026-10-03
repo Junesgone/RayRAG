@@ -5897,7 +5897,17 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/api/v1/file2document",
-            post(crate::api::system::file2document),
+            // The guide's replacement endpoint, and the deprecated alias that points at it. Both
+            // resolve to the same handler, so they cannot drift apart.
+            post(crate::api::file_link::link_files_to_datasets),
+        )
+        .route(
+            "/api/v1/files/link-to-datasets",
+            post(crate::api::file_link::link_files_to_datasets),
+        )
+        .route(
+            "/api/v1/file/convert",
+            post(crate::api::file_link::link_files_to_datasets),
         )
         .route(
             "/api/v1/langfuse/api-key",
