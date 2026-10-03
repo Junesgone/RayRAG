@@ -780,3 +780,23 @@ RayRAG 此前让**会话记录**占用同一条路径（GET/POST/DELETE 都是�
 :::note 仍待完成
 RAGFlow 把麦克风放在**聊天输入区**；RayRAG 目前把这个能力放在模型页卡片上。把输入区拆成合适的元素后再接麦克风按钮仍是待办（0.13.0 曾因直接往拼接字符串里塞控件而撤回）。
 :::
+
+### 0.17.0：嵌入模型检查（embedding check）
+
+`POST /api/v1/datasets/{dataset_id}/embedding/check` —— 判断「本数据集已存的向量是否仍与当前嵌入模型一致」，用于切换嵌入模型前的安全检查。
+
+请求体：`{"embd_id": "...", "n": 8, "mode": "..."}`。
+
+响应：
+```json
+{"summary": {"kb_id","model","sampled","valid","avg_cos_sim","min_cos_sim","max_cos_sim","match_mode","threshold"},
+ "results": [{"chunk_id","doc_id","doc_name","vector_field","vector_dim","stored_vector_dim","cos_sim"}]}
+```
+
+- `avg_cos_sim >= 0.9` → `code 0`；否则 → **`code 10`（NOT_EFFECTIVE）**，且附带**同样的 data** + 上游原文消息（不会把可疑数值伪装成成功）。
+- 拒绝语义：`` `embd_id` is required. `` / `no authorization` / `No embedded chunks are available to compare.`（无向量可比较时明确说「没有可比较对象」，而不是报 0 相似度）。
+- `embd_id` 允许字面量 `default` → 解析为本部署配置的 `EMBED_MODEL`（否则客户端只能编一个模型名，把编造的标签印在真实数字旁边）。
+- **等距抽样**（非随机）：同一数据集同一请求两次结果一致 —— 这个数字决定迁移是否安全。
+- **维度不一致** → `cos_sim: 0.0`，并同时给出 `vector_dim` 与 `stored_vector_dim`。
+
+**界面**：数据集配置页新增「Embedding check」按钮，运行后打印平均/最小/最大相似度、比较了多少块、以及实际模型名（含 code 10 结论）。

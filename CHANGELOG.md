@@ -2,6 +2,45 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.17.0] - 2026-10-03
+
+### The embedding check: do this dataset's stored vectors still agree with its model?
+
+Switching an embedding model on a dataset that already holds vectors is the kind of change that ruins
+retrieval without raising an error: the query vector comes from the new model, the stored vectors came
+from the old one, and the similarity scores become meaningless. Upstream answers that question with
+`POST /api/v1/datasets/{id}/embedding/check`, and RayRAG now answers it too — re-embedding a sample of
+the dataset's own chunk text and comparing against the vectors already stored:
+
+```json
+{"summary": {"kb_id", "model", "sampled", "valid", "avg_cos_sim", "min_cos_sim", "max_cos_sim",
+             "match_mode", "threshold"},
+ "results": [{"chunk_id", "doc_id", "doc_name", "vector_field", "vector_dim",
+              "stored_vector_dim", "cos_sim"}]}
+```
+
+An average at or above **0.9** is a success; below it the answer carries business code **10**
+(`NOT_EFFECTIVE`) with upstream's message and the same data attached, so a caller cannot mistake a
+worrying number for a passing check. Refusals are explicit: `` `embd_id` is required. ``,
+`no authorization`, and `No embedded chunks are available to compare.` — the last one because reporting
+a similarity of zero for a dataset with nothing embedded would read as a failed check instead of an
+absent one.
+
+Two deliberate choices: the sample is taken by **even spacing** over the dataset's embedded chunks
+rather than at random, so the same dataset gives the same answer twice — this number decides whether a
+migration is safe; and a dimension mismatch is reported as `cos_sim: 0.0` **with both widths visible**
+(`vector_dim` and `stored_vector_dim`) instead of as a generic failure. `embd_id` also accepts the
+literal `default`, which resolves to this deployment's configured `EMBED_MODEL`; without that alias a
+client would have to invent a label and print it next to real numbers.
+
+The dataset configuration tab gained an **Embedding check** button that runs it and prints the average,
+the range, how many chunks were compared and which model answered — including the code 10 verdict.
+
+**2215 tests pass, 0 failures**, including the cosine edge cases (identical, orthogonal, opposite,
+mismatched widths), the sampling being reproducible and in range, the threshold, the alias resolving to
+the configured model, and a router test that walks all three refusals. The parity ledger moved from 12
+to **11** remaining gaps (195 upstream routes, 337 of ours, 137 exact).
+
 ## [0.16.0] - 2026-10-03
 
 ### Speech: text to speech and speech to text
