@@ -4554,6 +4554,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/admin/sandbox-settings",
             get(crate::web::admin_sandbox_settings_page),
         )
+        // RAGFlow-style aliases that had no route and answered 404. `/datasets/new` is the
+        // create dialog on the datasets page, and `/knowledge` is the older name for that list.
+        .route(
+            "/datasets/new",
+            get(|| async { axum::response::Redirect::permanent("/datasets") }),
+        )
+        .route(
+            "/knowledge",
+            get(|| async { axum::response::Redirect::permanent("/datasets") }),
+        )
         .route("/login", get(crate::web::login_page))
         .route("/setup", get(crate::web::setup_page))
         .route("/metrics", get(prometheus_metrics))

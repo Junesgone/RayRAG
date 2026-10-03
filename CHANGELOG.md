@@ -2,6 +2,51 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.11.0] - 2026-10-03
+
+### The three console pages that answered 404
+
+`/admin/whitelist`, `/admin/roles` and `/admin/monitoring` existed in the console's route map but were
+never registered, so every visit returned 404. They now exist, they sit in the console sidebar beside
+the other sections, and each one is backed by real data rather than a placeholder:
+
+- **`/admin/whitelist`** is a real registration whitelist, matching RAGFlow's `enable_whitelist`
+  variable. It is **off by default**, so an existing deployment behaves exactly as before. Turn it on
+  and only the listed addresses may register; an entry may be a full address or an `@domain` so a whole
+  company can be admitted at once. The list is persisted (`RAYRAG_WHITELIST_FILE`) and survives a restart.
+  `POST /api/v1/users` consults it and refuses a stranger with business code `103` and a message naming
+  the page to fix it — not a silent rejection.
+- **`/admin/roles`** lists every account with its role and grants or revokes administrator through the
+  existing admin API.
+- **`/admin/monitoring`** reports host metrics, the service table and the running version.
+
+Measured on the running container: all three pages load with **0 console errors**, the roles table shows
+4 accounts, monitoring shows 5 services and 9 metrics, and the whitelist round trip is verified —
+a non-listed address is refused while a listed one registers, after which the deployment is restored
+to its previous state.
+
+### The chat page's own script was broken
+
+`/chat` served `innerHTML='<option value=''>…'`: the HTML attributes were written with single quotes
+inside a single-quoted JavaScript string, so the string ended early and the whole script block failed to
+parse. Every console error on that page came from this one line, and the features it defines — new chat,
+create chat, delete, rename, share — were silently undefined. The attributes are double-quoted now.
+
+To stop this class of bug from reaching a release again, a new check parses **every inline script on
+every page** with the same parser the browser uses. It found this defect, and it runs in `verify-all`
+from now on.
+
+### Also fixed
+
+- The **built-in pipeline explainer** was emitted after the configuration tab's closing tags, so it was
+  painted on *every* tab — including Artifacts and the file list. It now lives inside the tab that
+  chooses a chunk method, and the file list no longer carries it at all.
+- `GET /api/v1/datasets/{id}/documents` now answers the **documented** shape
+  `data: {"docs": [...], "total_datasets": n}`. It used to return a bare array, so a client written
+  against the API guide read `data.docs` and got null. The pages accept both shapes.
+- `/datasets/new` and `/knowledge` were 404s; they now redirect to the datasets page.
+
+**2167 tests pass**, 0 failures.
 ## [0.10.3] - 2026-10-02
 
 - **补上 API 说明书里最后一条可落地的废弃别名：`POST /api/v1/file/convert` → `POST /api/v1/files/link-to-datasets`**。两条路径指向**同一个处理函数**，因此不可能各自漂移。

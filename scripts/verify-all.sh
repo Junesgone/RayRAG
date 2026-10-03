@@ -33,6 +33,7 @@ run "HTML tag balance" python3 scripts/ui-traversal/tag-balance-check.py
 run "Sidebar routes (CDP)" node scripts/ui-traversal/sidebar-routes-cdp.mjs
 run "Layout audit (CDP)" node scripts/ui-traversal/layout-audit-cdp.mjs
 run "Dataset destinations (CDP)" node scripts/ui-traversal/dataset-pages-errors-cdp.mjs
+run "Inline script syntax (CDP)" node scripts/ui-traversal/inline-script-syntax-cdp.mjs
 
 if [ "$fail" -eq 0 ]; then echo "verify-all: ALL CHECKS PASSED"; else echo "verify-all: FAILURES PRESENT"; fi
 exit "$fail"
