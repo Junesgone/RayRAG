@@ -2,6 +2,44 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.15.0] - 2026-10-03
+
+### Auto-metadata schema: the dataset's field configuration and the per-document override
+
+Upstream documents three endpoints for the schema a dataset defines over its documents' metadata, and
+RayRAG answered none of them:
+
+| endpoint | behaviour |
+|---|---|
+| `GET /api/v1/datasets/{id}/metadata/config` | the dataset's schema, with the deployment's built-in fields alongside it |
+| `PUT /api/v1/datasets/{id}/metadata/config` | replaces the user list and answers with the stored schema |
+| `PUT /api/v1/datasets/{id}/documents/{doc_id}/metadata/config` | a per-document override |
+
+The shape is upstream's `AutoMetadataConfig`: `metadata` is what the user configured and
+`built_in_metadata` is what this deployment offers on top — the keys the extraction pipeline really
+writes (`author`, `tags`, `url`, `language`, `published_at`). A client shows both and edits only the
+first; a body that tries to set the built-ins is overridden rather than trusted, because they describe
+the deployment, not the request.
+
+**Validation is real**: a key must be non-empty after trimming and at most 255 characters, `type` must
+be one of `string`/`list`/`time`/`number`, a duplicate key is refused (it would make every later filter
+ambiguous), and an empty `enum` value is refused. A rejected body is a `101` naming the field, and the
+stored schema is left untouched — silently keeping a malformed schema would break filtering later.
+
+The interface can reach it too: the dataset configuration tab gained a *Metadata schema* card that
+lists the fields, adds and removes rows, saves through the endpoint, and shows the built-ins it cannot
+edit. It is a self-contained block (its own markup and its own `<script>`), which is the pattern that
+avoids the string-literal trap the composer control fell into in 0.13.0.
+
+Deleting a dataset now clears its schema and its documents' overrides with it — leaving them behind
+would resurrect a schema if a new dataset were ever given the same id.
+
+**2201 tests pass, 0 failures**, including every validation rule, the built-ins being the deployment's,
+the per-document scoping, and a full router round trip (read the defaults → save → read back → three
+refused bodies → the stored schema unchanged → override a document → refuse an unknown dataset on both
+verbs). The parity ledger moved from 16 to **14** remaining gaps (195 upstream routes, 334 of ours, 134
+exact).
+
 ## [0.14.0] - 2026-10-03
 
 ### Document thumbnails, and the image endpoint they point at

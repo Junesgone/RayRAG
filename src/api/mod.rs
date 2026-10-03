@@ -32,6 +32,7 @@ pub mod ingestion;
 pub mod joint_services;
 pub mod langfuse;
 pub mod mcp_mgr;
+pub mod metadata_config;
 pub mod model_catalog;
 pub mod oauth_web;
 pub mod openai_proxy;

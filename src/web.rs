@@ -3325,6 +3325,49 @@ pub async fn dataset_page(
     b.push_str(if zh { "生成" } else { "Generate" });
     b.push_str("</button></div><p id='cwpMsg' class='ct-message' role='status'></p></div></div>");
     b.push_str("<script>function cwpModeChange(){var mode=document.getElementById('cwpMode').value;var msg=document.getElementById('cwpMsg');if(!msg)return;msg.textContent=mode==='llm-wiki'?'':'The '+mode+' view is not available in this build; only the compiled-page list is.';msg.style.color='var(--tm)'}async function cwpBoot(){try{var response=await fetch('/api/v1/datasets/'+encodeURIComponent(window.kbId));var data=await response.json();if(!response.ok||data.code!==0)throw new Error(data.message||('HTTP '+response.status));var kb=data.data||{};var chunks=parseInt(kb.chunk_count,10)||0;var pipeline=String(kb.pipeline_id||'').trim();var button=document.getElementById('cwpGenerate');var enabled=chunks>0&&pipeline.length>0;if(button)button.disabled=!enabled;var hint=document.getElementById('cwpMsg');if(hint&&!enabled){hint.style.color='var(--tm)';hint.textContent=(chunks>0?'This dataset has no chunk method assigned yet':'This dataset has no parsed chunks yet')+', so artifact generation cannot start. Read the list, a page, its topics or clear the artifacts above - those work today.'}}catch(error){var node=document.getElementById('cwpMsg');if(node){node.textContent=String(error.message||error);node.style.color='var(--d)'}}}async function cwpGenerate(){var node=document.getElementById('cwpMsg');if(!node)return;node.style.color='var(--tm)';node.textContent='Compiling artifacts (map, then reduce)...';try{var response=await fetch('/api/v1/datasets/'+encodeURIComponent(window.kbId)+'/artifacts/compile',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});var data=await response.json();if(data.code!==0){node.style.color='var(--d)';node.textContent=data.message||('HTTP '+response.status);return}var d=data.data||{};var compile=d.compile||{};var skipped=(d.skipped||[]).length;node.textContent='Mapped '+d.mapped+' of '+d.total+' document(s), extracts '+d.extracts+', pages created '+(compile.pages_created||0)+', modified '+(compile.pages_modified||0)+'.'+(skipped?(' '+skipped+' document(s) had nothing to extract.'):'')+(d.message?(' '+d.message):'');if((d.extracts===0)&&(d.total>0)){node.textContent+=' The model found no entities, concepts, claims, relations or topics in this dataset, so no pages were produced - that is a data result, not a failure.'}cwpBootFallback()}catch(error){node.style.color='var(--d)';node.textContent=String((error&&error.message)||error)}}function cwpBootFallback(){}if(document.getElementById('tab5'))cwpBoot();</script>");
+    // Auto-metadata schema (`GET/PUT /api/v1/datasets/{id}/metadata/config`): the fields a user
+    // defines for this dataset's documents, with the deployment's built-ins shown next to them.
+    b.push_str("<div class='card' id='metaSchemaCard'><h2>");
+    b.push_str(t("Metadata schema", zh));
+    b.push_str("</h2><p style='color:var(--tm);font-size:13px'>");
+    b.push_str(t(
+        "Fields a user defines for this dataset's documents. Built-in fields are provided by the deployment.",
+        zh,
+    ));
+    b.push_str("</p><div style='display:flex;gap:8px;align-items:center;flex-wrap:wrap'><button class='btn btn-o btn-sm' data-testid='metadata-schema-add' onclick='metaSchemaAdd()'>+ ");
+    b.push_str(t("Add field", zh));
+    b.push_str("</button><button class='btn btn-o btn-sm' data-testid='metadata-schema-save' onclick='metaSchemaSave()'>");
+    b.push_str(t("Save", zh));
+    b.push_str("</button><span id='metaSchemaStatus' data-testid='metadata-schema-status' style='font-size:13px;color:var(--tm)'></span></div>");
+    b.push_str("<div class='table-wrap' style='margin-top:12px'><table data-testid='metadata-schema-table'><thead><tr><th>");
+    b.push_str(t("Key", zh));
+    b.push_str("</th><th>");
+    b.push_str(t("Type", zh));
+    b.push_str("</th><th>");
+    b.push_str(t("Description", zh));
+    b.push_str("</th><th></th></tr></thead><tbody id='metaSchemaRows'></tbody></table></div>");
+    b.push_str("<p id='metaSchemaBuiltins' style='margin-top:10px;color:var(--tm);font-size:13px'></p></div>");
+    b.push_str(
+        "<script>var META_SCHEMA_ROWS=[];var META_SCHEMA_TYPES=['string','list','time','number'];",
+    );
+    b.push_str("function metaSchemaStatus(text,error){var node=document.getElementById('metaSchemaStatus');if(!node)return;node.textContent=text||'';node.style.color=error?'var(--d)':'var(--tm)'}");
+    b.push_str("function metaSchemaRender(){var host=document.getElementById('metaSchemaRows');if(!host)return;host.replaceChildren();META_SCHEMA_ROWS.forEach(function(field,index){var tr=document.createElement('tr');var keyCell=document.createElement('td');var key=document.createElement('input');key.value=field.key||'';key.setAttribute('data-testid','metadata-key-'+index);key.oninput=function(){META_SCHEMA_ROWS[index].key=key.value};keyCell.appendChild(key);var typeCell=document.createElement('td');var select=document.createElement('select');META_SCHEMA_TYPES.forEach(function(name){var option=document.createElement('option');option.value=name;option.textContent=name;if(field.type===name)option.selected=true;select.appendChild(option)});select.onchange=function(){META_SCHEMA_ROWS[index].type=select.value};typeCell.appendChild(select);var descriptionCell=document.createElement('td');var description=document.createElement('input');description.value=field.description||'';description.oninput=function(){META_SCHEMA_ROWS[index].description=description.value};descriptionCell.appendChild(description);var actionCell=document.createElement('td');var remove=document.createElement('button');remove.type='button';remove.className='btn btn-o btn-sm';remove.textContent='✕';remove.onclick=function(){META_SCHEMA_ROWS.splice(index,1);metaSchemaRender()};actionCell.appendChild(remove);[keyCell,typeCell,descriptionCell,actionCell].forEach(function(cell){tr.appendChild(cell)});host.appendChild(tr)})}");
+    b.push_str("function metaSchemaAdd(){META_SCHEMA_ROWS.push({key:'',type:'string',description:''});metaSchemaRender()}");
+    b.push_str("function metaSchemaLoad(){metaSchemaStatus('");
+    b.push_str(t("Loading...", zh));
+    b.push_str("');fetch('/api/v1/datasets/'+encodeURIComponent(kbId)+'/metadata/config').then(function(response){return response.json()}).then(function(data){if(!data||data.code!==0){metaSchemaStatus((data&&data.message)||'");
+    b.push_str(t("Could not load the schema", zh));
+    b.push_str("',true);return}META_SCHEMA_ROWS=(data.data.metadata||[]).map(function(field){return {key:field.key,type:field.type,description:field.description||''}});metaSchemaRender();var builtins=(data.data.built_in_metadata||[]).map(function(field){return field.key});var node=document.getElementById('metaSchemaBuiltins');if(node)node.textContent='");
+    b.push_str(t("Built-in fields:", zh));
+    b.push_str(" '+builtins.join(', ');metaSchemaStatus(META_SCHEMA_ROWS.length+' ");
+    b.push_str(t("field(s)", zh));
+    b.push_str("')}).catch(function(error){metaSchemaStatus(String(error),true)})}");
+    b.push_str("function metaSchemaSave(){var fields=META_SCHEMA_ROWS.map(function(field){return {key:(field.key||'').trim(),type:field.type||'string',description:field.description||undefined}}).filter(function(field){return field.key});metaSchemaStatus('");
+    b.push_str(t("Saving...", zh));
+    b.push_str("');fetch('/api/v1/datasets/'+encodeURIComponent(kbId)+'/metadata/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({metadata:fields})}).then(function(response){return response.json()}).then(function(data){if(!data||data.code!==0){metaSchemaStatus((data&&data.message)||'");
+    b.push_str(t("Could not save the schema", zh));
+    b.push_str("',true);return}metaSchemaLoad()}).catch(function(error){metaSchemaStatus(String(error),true)})}");
+    b.push_str("if(document.readyState!=='loading')metaSchemaLoad();else document.addEventListener('DOMContentLoaded',metaSchemaLoad);</script>");
     b.push_str("</div></div>");
     // JS
     let embd_fields_payload = serde_json::json!([
@@ -10930,6 +10973,12 @@ mod kb_ui_tests {
                 .unwrap(),
             ),
             search_apps: None,
+            metadata_config: Arc::new(
+                crate::api::metadata_config::MetadataConfigStore::new(
+                    root.path().join("metadata-config.json").to_str().unwrap(),
+                )
+                .unwrap(),
+            ),
             chat_apps: Some(Arc::new(
                 crate::api::chatapp_mgr::ChatAppStore::new(
                     root.path().join("chat_apps.json").to_str().unwrap(),

@@ -70,6 +70,7 @@ pub struct AppState {
     pub files: Arc<crate::api::file_mgr::FileStore>,
     pub workspace_commits: Arc<crate::api::workspaces::WorkspaceCommitStore>,
     pub attachments: Arc<crate::api::attachments::AttachmentStore>,
+    pub metadata_config: Arc<crate::api::metadata_config::MetadataConfigStore>,
     pub data_sources: Option<Arc<crate::api::data_source_mgr::DataSourceStore>>,
     pub search_apps: Option<Arc<crate::api::searchapp_mgr::SearchAppStore>>,
     pub chat_apps: Option<Arc<crate::api::chatapp_mgr::ChatAppStore>>,
@@ -1014,8 +1015,22 @@ async fn update_dataset(
 /// Removes one dataset and everything hanging off it (documents, graph assets).
 /// Shared by `DELETE /api/v1/datasets/{id}` and the upstream collection route.
 fn delete_dataset_data(state: &Arc<AppState>, dataset_id: &str) -> crate::Result<bool> {
+    let document_ids: Vec<String> = state
+        .docs
+        .list(dataset_id)
+        .into_iter()
+        .map(|doc| doc.id)
+        .collect();
     for doc in state.docs.list(dataset_id) {
         delete_document_data(state, &doc)?;
+    }
+    // The metadata schema and its per-document overrides go with the dataset; leaving them behind
+    // would resurrect a schema if a new dataset were ever given the same id.
+    if let Err(error) = state
+        .metadata_config
+        .drop_dataset(dataset_id, &document_ids)
+    {
+        tracing::warn!(%error, dataset_id, "Failed to persist metadata configuration cleanup");
     }
     // 清理该数据集的图谱资产
     let mut snapshot = state.graphs.snapshot();
@@ -5271,6 +5286,17 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/thumbnails",
             get(crate::api::doc_assets::list_thumbnails),
         )
+        // Auto-metadata configuration (upstream `dataset_api.py` + `document_api.py`): the field
+        // schema a dataset defines, and the per-document override.
+        .route(
+            "/api/v1/datasets/{dataset_id}/metadata/config",
+            get(crate::api::metadata_config::get_dataset_metadata_config)
+                .put(crate::api::metadata_config::update_dataset_metadata_config),
+        )
+        .route(
+            "/api/v1/datasets/{dataset_id}/documents/{document_id}/metadata/config",
+            axum::routing::put(crate::api::metadata_config::update_document_metadata_config),
+        )
         .route(
             "/api/v1/documents/images/{image_id}",
             get(crate::api::doc_assets::document_image),
@@ -6169,6 +6195,9 @@ pub async fn run(
         "{}/../uploads/attachments",
         static_dir
     ))?);
+    let metadata_config = Arc::new(crate::api::metadata_config::MetadataConfigStore::new(
+        &format!("{}/../uploads/metadata_config.json", static_dir),
+    )?);
     let data_sources = Some(Arc::new(crate::api::data_source_mgr::DataSourceStore::new(
         &format!("{}/../uploads/", static_dir),
     )?));
@@ -6309,6 +6338,7 @@ pub async fn run(
         docs,
         workspace_commits,
         attachments,
+        metadata_config,
         document_metadata,
         whitelist: Arc::new(crate::registration_whitelist::WhitelistStore::new(
             &whitelist_path,
@@ -6621,6 +6651,12 @@ mod tests {
             attachments: Arc::new(
                 crate::api::attachments::AttachmentStore::new(
                     root.join("attachments").to_str().unwrap(),
+                )
+                .unwrap(),
+            ),
+            metadata_config: Arc::new(
+                crate::api::metadata_config::MetadataConfigStore::new(
+                    root.join("metadata-config.json").to_str().unwrap(),
                 )
                 .unwrap(),
             ),
@@ -8001,6 +8037,12 @@ mod tests {
             attachments: Arc::new(
                 crate::api::attachments::AttachmentStore::new(
                     root.join("attachments").to_str().unwrap(),
+                )
+                .unwrap(),
+            ),
+            metadata_config: Arc::new(
+                crate::api::metadata_config::MetadataConfigStore::new(
+                    root.join("metadata-config.json").to_str().unwrap(),
                 )
                 .unwrap(),
             ),
@@ -13383,6 +13425,221 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    /// The auto-metadata configuration: a dataset starts with the deployment's built-ins and no
+    /// user fields, a saved schema comes back, an invalid one is refused with the field named, and a
+    /// document override is kept per document.
+    #[tokio::test]
+    async fn metadata_configuration_is_validated_stored_and_scoped() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "meta-kb", "")
+            .unwrap();
+        let call = |method: Method, uri: String, body: Option<&str>| {
+            let router = build_router(env.state.clone());
+            let token = env.token.clone();
+            let body = body.map(str::to_string);
+            async move {
+                let mut request = Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"));
+                let payload = match body {
+                    Some(body) => {
+                        request = request.header(header::CONTENT_TYPE, "application/json");
+                        Body::from(body)
+                    }
+                    None => Body::empty(),
+                };
+                router
+                    .oneshot(request.body(payload).unwrap())
+                    .await
+                    .unwrap()
+            }
+        };
+
+        // A fresh dataset has no user fields but does have the built-ins.
+        let initial = response_json(
+            call(
+                Method::GET,
+                format!("/api/v1/datasets/{}/metadata/config", kb.id),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(initial["code"], 0, "{initial}");
+        assert_eq!(
+            initial["data"]["metadata"].as_array().unwrap().len(),
+            0,
+            "{initial}"
+        );
+        let built_ins = initial["data"]["built_in_metadata"].as_array().unwrap();
+        assert!(
+            built_ins.iter().any(|field| field["key"] == "author"),
+            "the deployment offers the keys its pipeline writes: {initial}"
+        );
+
+        // Saving a schema returns it.
+        let saved = response_json(
+            call(
+                Method::PUT,
+                format!("/api/v1/datasets/{}/metadata/config", kb.id),
+                Some(
+                    r#"{"metadata":[{"key":"company","type":"string","description":"the company"}],"built_in_metadata":[{"key":"mine","type":"string"}]}"#,
+                ),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(saved["code"], 0, "{saved}");
+        assert_eq!(saved["data"]["metadata"][0]["key"], "company", "{saved}");
+        assert!(
+            !saved["data"]["built_in_metadata"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|field| field["key"] == "mine"),
+            "a client cannot define the built-ins: {saved}"
+        );
+
+        let reread = response_json(
+            call(
+                Method::GET,
+                format!("/api/v1/datasets/{}/metadata/config", kb.id),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(reread["data"]["metadata"][0]["key"], "company", "{reread}");
+
+        // An invalid schema is refused with the reason, and nothing is stored.
+        for (body, expected) in [
+            (
+                r#"{"metadata":[{"key":"","type":"string"}]}"#,
+                "at least 1 character",
+            ),
+            (
+                r#"{"metadata":[{"key":"company","type":"text"}]}"#,
+                "'string', 'list', 'time' or 'number'",
+            ),
+            (
+                r#"{"metadata":[{"key":"company","type":"string"},{"key":"company","type":"list"}]}"#,
+                "Duplicated metadata key",
+            ),
+        ] {
+            let refused = call(
+                Method::PUT,
+                format!("/api/v1/datasets/{}/metadata/config", kb.id),
+                Some(body),
+            )
+            .await;
+            assert_eq!(refused.status(), StatusCode::BAD_REQUEST, "{body}");
+            let refused = response_json(refused).await;
+            assert_eq!(refused["code"], 101, "{refused}");
+            assert!(
+                refused["message"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains(expected),
+                "{refused}"
+            );
+        }
+        let still = response_json(
+            call(
+                Method::GET,
+                format!("/api/v1/datasets/{}/metadata/config", kb.id),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            still["data"]["metadata"][0]["key"], "company",
+            "a refused update leaves the stored schema alone: {still}"
+        );
+
+        // A document override needs a document of that dataset.
+        let missing = call(
+            Method::PUT,
+            format!(
+                "/api/v1/datasets/{}/documents/no-such-doc/metadata/config",
+                kb.id
+            ),
+            Some(r#"{"metadata":[{"key":"author","type":"string"}]}"#),
+        )
+        .await;
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            response_json(missing).await["message"],
+            "The dataset does not have the document."
+        );
+
+        let now = 1_700_000_000_000u64;
+        env.state
+            .docs
+            .insert(crate::api::document::DocRecord {
+                id: "doc-meta-1".into(),
+                name: "meta.txt".into(),
+                kb_id: kb.id.clone(),
+                size: 4,
+                storage_name: "doc-meta-1.txt".into(),
+                content_hash: String::new(),
+                indexed_content_hash: String::new(),
+                run: "DONE".into(),
+                progress: 1.0,
+                progress_msg: String::new(),
+                chunk_count: 0,
+                created_at: now,
+                updated_at: now,
+                status: crate::api::document::enabled_status(),
+            })
+            .unwrap();
+        let override_saved = response_json(
+            call(
+                Method::PUT,
+                format!(
+                    "/api/v1/datasets/{}/documents/doc-meta-1/metadata/config",
+                    kb.id
+                ),
+                Some(r#"{"metadata":[{"key":"author","type":"string"}]}"#),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(override_saved["code"], 0, "{override_saved}");
+        assert_eq!(
+            override_saved["data"]["metadata"][0]["key"], "author",
+            "{override_saved}"
+        );
+        assert_eq!(
+            env.state
+                .metadata_config
+                .get_document("doc-meta-1")
+                .unwrap()
+                .metadata[0]
+                .key,
+            "author"
+        );
+
+        // An unknown dataset is refused on both verbs.
+        for method in [Method::GET, Method::PUT] {
+            let response = call(
+                method,
+                "/api/v1/datasets/no-such-kb/metadata/config".into(),
+                Some(r#"{"metadata":[]}"#),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+            assert_eq!(
+                response_json(response).await["message"],
+                "The dataset doesn't exist"
+            );
+        }
     }
 
     /// The document thumbnail map and the image endpoint its urls point at: a real image document

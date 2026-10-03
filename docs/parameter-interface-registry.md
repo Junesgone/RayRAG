@@ -731,3 +731,24 @@ RayRAG 此前让**会话记录**占用同一条路径（GET/POST/DELETE 都是�
 **缩略图生成**：仅对**可解码的图片**文档（png/jpg/jpeg/webp/bmp/gif/tif/tiff）生成 —— 等比缩放到最长边 200px 后编为 JPEG（质量 80），缓存在 `uploads/thumbnails/{doc_id}.jpg`；PDF/Word 等需要渲染器的格式**没有**缩略图，映射值为 `null`（不伪造占位图）。小图仍会转码为 JPEG，保证格式一致、可按 id 缓存。
 
 **图像 id 解析**：上游 id 为 32 位十六进制（无短横线），可按第一个短横线切分；RayRAG 的知识库 id 是**带短横线的 UUID**，故改为**最长前缀匹配**现有知识库，余下部分为文件名（文件名本身可含短横线）。文档 id 取“去**任意**扩展名”后的名字。
+
+### 0.15.0：自动元数据模式（dataset / document 配置）
+
+上游 `validation_utils.AutoMetadataConfig` 的形状：
+
+```json
+{ "metadata": [ {"key": "...", "type": "string|list|time|number", "description": "...", "enum": ["..."]} ],
+  "built_in_metadata": [ ... 同形状 ... ] }
+```
+
+| 接口 | 说明 |
+|---|---|
+| `GET /api/v1/datasets/{id}/metadata/config` | 返回该数据集的模式；`built_in_metadata` 由**部署**提供（本实现为解析管线真正会写入的键：`author`/`tags`/`url`/`language`/`published_at`） |
+| `PUT /api/v1/datasets/{id}/metadata/config` | 替换用户列表并回显；请求里自带 `built_in_metadata` 会被**覆盖**（它描述部署而非请求） |
+| `PUT /api/v1/datasets/{id}/documents/{doc_id}/metadata/config` | 单文档覆盖 |
+
+**校验（真实生效）**：`key` 去空白后非空且 ≤255 字符；`type` ∈ string/list/time/number；重复 `key` 拒绝（会让后续过滤歧义）；`enum` 中的空值拒绝。被拒 → **101** 并指出字段，且**已存模式不变**。
+**错误语义**：未知数据集 → `404 / 102 The dataset doesn't exist`；数据集没有该文档 → `404 / 102 The dataset does not have the document.`
+**清理**：删除数据集时一并清除其模式与各文档覆盖（否则同 id 新建数据集会"复活"旧模式）。
+**存储**：`uploads/metadata_config.json`（启动恢复 + 原子写入 + PostgreSQL 快照镜像）。
+**界面**：数据集配置页新增“元数据模式”卡片（增删行 + 保存 + 显示内置字段），整块自带 `<script>`（避免 0.13.0 聊天输入区那类字符串字面量陷阱）。
