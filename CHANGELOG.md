@@ -2,6 +2,14 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.9.2] - 2026-10-02
+
+- **Agent 页面新增 Webhook 面板**：上一版把 webhook 接口做好了，但页面上没有入口（本阶段同类问题的第 5 次）。Agent 详情页现在有：URL 输入框、Enabled 勾选、**Save webhook / Send test delivery / Show delivery log / Remove** 四个按钮，以及状态行与投递日志区。
+  - 打开页面**自动读取**已注册的 webhook（没有则显示"还没有注册"的原话）；
+  - **Test** 之后自动刷新日志，成功与否用颜色区分（失败为红），并逐条显示 `时间 - 事件 - OK/FAILED - HTTP 状态或传输错误 - 耗时`；
+  - 保存/删除都把接口返回的**原话**显示出来，不吞错误。
+- **测试**：全量 **2151 passed / 0 failed**（kb_ui 123 条全过）。
+
 ## [0.9.1] - 2026-10-02
 
 - **Agent Webhook 子系统落地**（上游 `agent_api.py` 的三条路径）：`GET/POST/PUT/PATCH/DELETE /api/v1/agents/{id}/webhook`、`GET .../webhook/logs`、`POST .../webhook/test`。

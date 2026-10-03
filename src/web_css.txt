@@ -992,3 +992,8 @@ the paired colour picker + hex input. */
 .endpoint-check-result{margin-top:10px;font-size:13px}
 .endpoint-check-result table{width:100%;border-collapse:collapse}
 .endpoint-check-result th,.endpoint-check-result td{padding:5px 8px;border-bottom:1px solid var(--bd);text-align:left}
+
+/* Agent page: the webhook panel and its delivery log. */
+.agent-webhook-status{margin-top:10px;font-size:13px}
+.agent-webhook-logs{margin-top:8px;font-size:12px;max-height:220px;overflow:auto}
+.agent-webhook-log{padding:3px 0;border-bottom:1px solid var(--bd)}
