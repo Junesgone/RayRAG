@@ -6129,19 +6129,25 @@ pub async fn run(
     // A placeholder admin password is a silent weak default: every deployment that copies
     // the template without editing it would share the same, guessable credential. Say so at
     // startup instead of letting it pass unnoticed.
-    if std::env::var("RAYRAG_ADMIN_PASSWORD")
+    // The first account is admin/admin/admin by design, so the deployment starts with a
+    // well-known credential. RAGFlow-style first login should be easy, but silently keeping a
+    // guessable password is not: say so at startup, in one line, with what to do about it.
+    let configured_admin_password = std::env::var("RAYRAG_ADMIN_PASSWORD").ok();
+    let looks_like_a_placeholder = configured_admin_password
+        .as_deref()
         .map(|value| {
             let value = value.trim().to_ascii_lowercase();
             value.starts_with("replace-with")
                 || value == "changeme"
                 || value == "password"
                 || value == "admin"
+                || value.len() < 12
         })
-        .unwrap_or(false)
-    {
+        .unwrap_or(true);
+    if looks_like_a_placeholder {
         tracing::warn!(
-            "RAYRAG_ADMIN_PASSWORD still looks like a placeholder; set a real password in .env \
-             (or leave it unset and use the first-run setup window)"
+            "the first account uses the default password 'admin'; change it after signing in \
+             (Profile -> password) or set RAYRAG_ADMIN_PASSWORD before the first start"
         );
     }
 

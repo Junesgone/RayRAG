@@ -26,10 +26,13 @@ RAYRAG_PORT=$PORT
 RAYRAG_ENV_FILE=$DIR/.env
 RAYRAG_DATA_DIR=$DIR/data
 RAYRAG_STATIC_DIR=$DIR/web
-RAYRAG_ADMIN_EMAIL=admin@rayrag.local
-RAYRAG_ADMIN_PASSWORD=setup-e2e-password-123
 ENV
 
+ZVEC_LIB_DIR="${ZVEC_LIB_DIR:-$(ls -d "$HOME"/.local/lib/zvec/* 2>/dev/null | tail -1)}"
+export ZVEC_LIB_DIR
+if [ -d "${ZVEC_LIB_DIR:-}" ]; then
+  export LD_LIBRARY_PATH="$ZVEC_LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
 RAYRAG_ENV_FILE="$DIR/.env" ./target/release/rayrag serve >"$LOG" 2>&1 &
 PID=$!
 for _ in $(seq 1 30); do
@@ -37,12 +40,13 @@ for _ in $(seq 1 30); do
   sleep 2
 done
 
+# Default first login: the account is admin/admin/admin with nothing configured.
 TOKEN=$(curl -s --max-time 15 -X POST "http://127.0.0.1:$PORT/api/v1/auth/login" \
   -H 'Content-Type: application/json' \
-  -d '{"email":"admin@rayrag.local","password":"setup-e2e-password-123"}' \
+  -d '{"email":"admin","password":"admin"}' \
   | python3 -c "import json,sys;print(json.load(sys.stdin).get('data',{}).get('access_token',''))" 2>/dev/null)
 if [ -z "$TOKEN" ]; then
-  echo "FAIL: a fresh deployment could not log in with RAYRAG_ADMIN_PASSWORD" >&2
+  echo "FAIL: a fresh deployment could not log in with the default admin/admin account" >&2
   tail -5 "$LOG" >&2
   exit 1
 fi
@@ -56,5 +60,5 @@ if ! grep -q "^$KEY=7$" "$DIR/.env"; then
   echo "FAIL: $KEY was not written to the env file" >&2
   exit 1
 fi
-echo "fresh login: OK"
+echo "fresh login: OK (default admin/admin account)"
 echo "env write-back: OK ($KEY=7 written to the isolated env file)"

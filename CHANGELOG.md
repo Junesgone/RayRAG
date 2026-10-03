@@ -2,6 +2,13 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.9.10] - 2026-10-02
+
+- **首次登录账号改为 `admin` / `admin` / `admin`（用户名、昵称、密码），不再生成随机密码、也不再因"密码不够 12 位"而拒绝启动**（用户要求）。此前 bootstrap 要求必须设置 `RAYRAG_ADMIN_PASSWORD` 且长度 ≥12，否则**直接启动失败**；现在未配置时就用 `admin`，`RAYRAG_ADMIN_EMAIL` 默认也从 `admin@rayrag.local` 改为 **`admin`**，并新增 `RAYRAG_ADMIN_NICKNAME`（默认 `admin`）三个都可被环境变量覆盖。
+- **仍然"不静默"**：启动时会用一行 WARN 说明"首个账号用的是默认密码 admin，请在登录后修改（Profile → password），或在首次启动前设置 RAYRAG_ADMIN_PASSWORD"；`RAYRAG_ADMIN_PASSWORD` 被显式设置为 **空字符串**时**报错拒绝**（避免出现空密码账号）。
+- **验证（端到端，非单测）**：新增的隔离自检 `scripts/setup-writeback-e2e.sh` 现在**不预设任何管理员变量**，跑的正是全新部署的默认路径——实跑结果：`fresh login: OK (default admin/admin account)`；同一次运行里 env 写回也仍然通过。
+- 文档同步：README 的登录说明与 `.env.example` 的「First login」段落都改为 admin/admin/admin，并说明可覆盖。
+
 ## [0.9.9] - 2026-10-02
 
 - **修复两处"页面 JS 不生效"的真 bug（都是浏览器实测抓到的）**：

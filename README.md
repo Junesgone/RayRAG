@@ -70,7 +70,7 @@ When it finishes you will see something like:
   RayRAG is up and running 🎉
 ------------------------------------------------------------
   Web UI   : http://192.168.1.10:9380
-  Login    : admin@rayrag.local
+  Login    : admin / admin  (username and password are both 'admin' at first)
   Password : see RAYRAG_ADMIN_PASSWORD in the .env file
 ------------------------------------------------------------
   Logs     : docker compose logs -f rayrag
@@ -115,7 +115,9 @@ docker compose up -d --build
 > two cannot both hold it. Change one line in `.env` — `RAYRAG_PORT=9390` — and run
 > `docker compose up -d` again; the command above prints the URL that is actually in use, and
 > `docker compose port rayrag 8080` tells you the published port at any time.
-2. **Log in** with `admin@rayrag.local` and the `RAYRAG_ADMIN_PASSWORD` from `.env`.
+2. **Log in** as `admin` with the password `admin` — the first account is created with all three
+   fields set to `admin` so a fresh deployment needs no generated password. **Change it right after
+   signing in** (the first-run page and the profile page both offer it).
 3. **Create a knowledge base**: left menu `Knowledge Base` → `Create knowledge base` →
    type a name → save.
 4. **Upload documents**: open the knowledge base → `Files` tab → `+ Add file`, drop your
@@ -365,7 +367,7 @@ cargo build --release --locked
 
 # 3) configure
 export RAYRAG_POSTGRES_URL=postgresql://rayrag:YOUR-PASSWORD@127.0.0.1:5432/rayrag
-export RAYRAG_ADMIN_EMAIL=admin@rayrag.local
+export RAYRAG_ADMIN_EMAIL=admin          # username of the first account (default: admin)
 export RAYRAG_ADMIN_PASSWORD='at-least-12-characters'
 
 # 4) run — flag first, then RAYRAG_PORT from .env, then 9380

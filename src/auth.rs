@@ -93,20 +93,24 @@ impl UserStore {
                 .map(|u| (u.email.clone(), u))
                 .collect()
         } else {
-            // Never expose a network service with a well-known default password.
-            let initial_password = std::env::var("RAYRAG_ADMIN_PASSWORD").map_err(|_| {
-                anyhow::anyhow!(
-                    "users file does not exist; set RAYRAG_ADMIN_PASSWORD for initial bootstrap"
-                )
-            })?;
-            if initial_password.len() < 12 {
-                anyhow::bail!("RAYRAG_ADMIN_PASSWORD must be at least 12 characters");
-            }
+            // First login is `admin` / `admin` / `admin`: the operator asked for a predictable
+            // account instead of a generated password, so the username, nickname and password all
+            // default to "admin" and the first-run guide is what tells them to change it. The
+            // environment can still override each of the three.
             let initial_email =
-                std::env::var("RAYRAG_ADMIN_EMAIL").unwrap_or_else(|_| "admin@rayrag.local".into());
+                std::env::var("RAYRAG_ADMIN_EMAIL").unwrap_or_else(|_| "admin".into());
+            let initial_nickname =
+                std::env::var("RAYRAG_ADMIN_NICKNAME").unwrap_or_else(|_| "admin".into());
+            let initial_password =
+                std::env::var("RAYRAG_ADMIN_PASSWORD").unwrap_or_else(|_| "admin".into());
+            if initial_password.trim().is_empty() {
+                anyhow::bail!(
+                    "RAYRAG_ADMIN_PASSWORD is empty; unset it to use the default 'admin'"
+                );
+            }
             let admin = User {
                 id: uuid::Uuid::new_v4().to_string(),
-                nickname: "Admin".into(),
+                nickname: initial_nickname,
                 email: initial_email,
                 password_hash: hash_password(&initial_password)?,
                 role: "admin".into(),
