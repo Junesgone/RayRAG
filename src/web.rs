@@ -9803,8 +9803,8 @@ document.addEventListener('keydown',function(event){if(event.key==='Escape'){clo
     let capability_script = format!(
         r#"<script>function capabilityLoad(){{var host=document.getElementById('capabilityRows');if(!host)return;fetch('/api/v1/plugins').then(function(r){{return r.json()}}).then(function(data){{var list=(data&&data.data&&data.data.capabilities)||[];var note=document.getElementById('capabilityNote');host.replaceChildren();if(!list.length){{var row=document.createElement('tr');var cell=document.createElement('td');cell.colSpan=4;cell.textContent='{empty}';row.appendChild(cell);host.appendChild(row);return}}list.forEach(function(item){{var row=document.createElement('tr');var name=document.createElement('td');name.textContent=item.name;var state=document.createElement('td');state.textContent=item.available?'{yes}':'{no}';state.style.color=item.available?'var(--tx)':'var(--d)';var model=document.createElement('td');model.textContent=item.model||'-';var where=document.createElement('td');where.textContent=item.configured_by||'';row.appendChild(name);row.appendChild(state);row.appendChild(model);row.appendChild(where);host.appendChild(row)}});if(note){{var missing=list.filter(function(item){{return !item.available&&item.detail}}).map(function(item){{return item.name+': '+item.detail}});note.textContent=missing.join(' ');note.style.color=missing.length?'var(--d)':'var(--tm)'}}}}).catch(function(error){{var note=document.getElementById('capabilityNote');if(note){{note.textContent=String(error);note.style.color='var(--d)'}}}})}}if(document.readyState!=='loading')capabilityLoad();else document.addEventListener('DOMContentLoaded',capabilityLoad);</script>"#,
         empty = t("Nothing to report", zh),
-        yes = t("available", zh),
-        no = t("unavailable", zh),
+        yes = t("configured", zh),
+        no = t("not configured", zh),
     );
     b.push_str(&capability_script);
     // Speech (`chat/audio/speech` + `chat/audio/transcription`): a card that reaches both endpoints,

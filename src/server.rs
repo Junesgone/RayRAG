@@ -13600,6 +13600,23 @@ mod tests {
             );
         }
         assert_eq!(plugins["data"]["total"], capabilities.len(), "{plugins}");
+        assert_eq!(
+            plugins["data"]["configured"],
+            capabilities
+                .iter()
+                .filter(|entry| entry["available"] == true)
+                .count(),
+            "{plugins}"
+        );
+        // The report says what `available` means, so a configured-but-stopped provider cannot
+        // be mistaken for a working one.
+        assert!(
+            plugins["data"]["note"]
+                .as_str()
+                .unwrap()
+                .contains("not that the endpoint is reachable"),
+            "{plugins}"
+        );
 
         // Toggling says why it cannot, instead of the old success message for a no-op.
         let toggled = response_json(call(Method::POST, "/api/v1/plugins/ocr/toggle").await).await;

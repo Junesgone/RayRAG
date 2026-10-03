@@ -833,5 +833,6 @@ RAGFlow 把麦克风放在**聊天输入区**；RayRAG 目前把这个能力放�
 
 - **单一来源**：工具目录来自注册表，并用**调用者自己的数据集**充实 retrieval 工具的描述 —— 模型不可能传入它从未见过的 dataset id。
 - **能力报告**：`llm` / `embedding` / `rerank` / `vision` / `ocr` / `tts` / `asr`；每行都给出**配置位置**（`LLM_API_BASE / LLM_MODEL` 等）；**不可用项必须带 `detail` 说明原因**（测试强制）。
+- **`available` 的语义是「已配置」而非「当前可达」**：响应内含 `note` 明确说明，计数字段名为 `configured`，界面用词也是 *configured*（本机 rerank 端点已配置但服务已停，若读成「rerank 可用」就是错的）。
 - **不再谎报成功**：`toggle` 原返回 `"Plugin X toggled"` 而什么都没做，现改为明确拒绝 + 原因。
 - **界面**：模型页新增「Capabilities」卡片，渲染该报告并把缺失项的原因列在下方。

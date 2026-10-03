@@ -31,6 +31,11 @@ rather than a bare `false` — a distinction the test suite enforces by failing 
 capability without a `detail`. (It failed on the first run for exactly that reason: `llm` and
 `embedding` reported `false` with nothing to act on, so both gained one.)
 
+The payload also states what `available` means: **configuration, not liveness**. On this host the rerank
+endpoint is configured while the reranker itself is stopped, so a report that read as "reranking works"
+would be wrong; the response carries that sentence, the count is labelled `configured`, and the UI says
+*configured* rather than *available*.
+
 `toggle` now answers `103` with the reason — these capabilities are provider-backed and configured
 through the wizard or the environment, so a runtime switch would be a claim the deployment cannot
 honour — and names the capability when the id is unknown.

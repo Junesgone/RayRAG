@@ -82,6 +82,7 @@ pub(crate) fn catalogue(state: &AppState, auth: &AuthContext) -> Vec<ToolMetadat
 pub struct Capability {
     pub id: String,
     pub name: String,
+    /// Whether this deployment is configured for the capability. It is not a liveness probe.
     pub available: bool,
     /// The model or endpoint behind it, when one is configured.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -216,8 +217,11 @@ pub async fn list_plugins(
         "code": 0,
         "data": {
             "capabilities": capabilities,
-            "available": capabilities.iter().filter(|entry| entry.available).count(),
+            "configured": capabilities.iter().filter(|entry| entry.available).count(),
             "total": capabilities.len(),
+            // The wording matters: this is a configuration report, not a liveness probe. A reranker
+            // whose endpoint is configured but stopped would otherwise read as working.
+            "note": "`available` means this deployment is configured for the capability, not that the endpoint is reachable right now. Test a provider with its own check, for example POST /api/v1/datasets/{id}/embedding/check.",
         },
         "message": "success",
     }))
