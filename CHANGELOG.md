@@ -47,6 +47,13 @@ across documents** (a `#` heading in one file nested under the `##` heading the 
 sibling, and the no-heading fallback keyed a document as `notes-txt` instead of `notes`. All three were
 found by the compiler's own tests, not by a running deployment.
 
+Then the CDP page-error suite refused the whole dataset page twice: the card had been appended **inside
+an open `<script>`**, where the browser parsed its markup as JS (`Unexpected token '<'`), and after that
+was fixed, three CSS declarations (`align-items:center`, `gap:8px`, `padding:4px 0`) were sitting in the
+script as bare statements because a `head.style.` prefix had been dropped (`Unexpected token ':'`). The
+page test now extracts the script bodies and fails if card markup, or a bare CSS declaration, is inside
+one — neither shape is visible to a brace-balance check, and both were found only by loading the page.
+
 The first live compile then answered `102 "The dataset has no indexed content to compile skills from"`
 for a dataset with 19 documents and parsed chunks — **the deployment proved the unit tests wrong about
 where the corpus lives**. Reading PostgreSQL showed the document index holding only nav-cluster and wiki
