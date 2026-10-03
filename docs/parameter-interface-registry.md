@@ -877,3 +877,12 @@ RAGFlow 把麦克风放在**聊天输入区**；RayRAG 目前把这个能力放�
 - **keywords**：服务端按实体 `name` / 文本子串过滤（上游还会走向量检索补候选；此处确定性过滤，差异已登记）。
 - **DELETE**：删除该模板的 compact graph 行 + entity/relation 行；`raptor` 只删投影行（摘要分块仍可检索）；空 `template_id` → `102 \`template_id\` is required`。
 - **易错点**：`filter_entities_with_relations` 返回的是**实体**（不是关系），误用会把关系替换成节点列表。
+
+### 0.23.0：嵌入搜索机器人 `POST /searchbots/ask`（SSE）
+
+- **请求**：`{question, kb_ids|[kb_id], search_id?, top_k?, similarity_threshold?, vector_similarity_weight?, rerank_id?}`；`question`/`kb_ids` 缺失 → `101`；`search_id` 存在且其 `search_config.kb_ids` 非空时**优先使用该列表**（上游顺序）。
+- **越权**：任一无权数据集 → `102 You don't own the requested dataset`。
+- **帧格式（上游自有包封）**：`data:{"code":0,"message":"","data":{"answer":…,"reference":{chunks,doc_aggs,total}}}`；失败帧 `code:500` + `message` + `data.answer="**ERROR**: …"`；**结束帧** `data:{"code":0,"message":"","data":true}`。
+- **响应头**：`text/event-stream; charset=utf-8`、`Cache-Control: no-cache`、`Connection: keep-alive`、`X-Accel-Buffering: no`。
+- **检索复用** `/api/v1/search` 的现有实现（避免第二套打分规则漂移）；回答走 `state.tenant_models.resolve(..., Chat)` → `llm_client().chat_completion()`；**无可用聊天模型时在帧内报错并附带已检索到的引用**，不返回空答案。
+- **UI**：`/search` 页新增 `#askCard`（`data-testid='ask-card|ask-question|ask-send|ask-status|ask-answer|ask-refs'`），逐帧读取流、识别 `data:true` 结束、浏览器不支持流式时回退整体读取；数据集取自页面自身选择器 `searchDocsSelectedKbs()`。

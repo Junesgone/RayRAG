@@ -2,6 +2,46 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.23.0] - 2026-10-04
+
+### The embedded search bot's stream
+
+`POST /api/v1/searchbots/ask` now exists. Upstream answers it with Server-Sent Events in its own
+envelope, which is why it is not the same handler as `/search`:
+
+```text
+data:{"code": 0, "message": "", "data": {"answer": "…", "reference": {…}}}
+data:{"code": 500, "message": "…", "data": {"answer": "**ERROR**: …"}}
+data:{"code": 0, "message": "", "data": true}
+```
+
+* `question` and `kb_ids` are validated first, and a saved `search_id` contributes its own dataset list
+  when it has one — the same order upstream follows.
+* A dataset the caller cannot reach is refused with upstream's wording, `You don't own the requested
+  dataset`.
+* The embedded client sends `kb_id`, singular, which may be one id or a list; both spellings are accepted.
+* Retrieval goes through the **existing** search endpoint rather than a second scoring implementation.
+  The two must not drift, and the alternative was a copy of its ranking rules that would.
+* The answer needs a chat model, resolved the way the rest of RayRAG resolves one. When none is reachable
+  the stream says so **in a frame** — `code: 500`, the error text, and the same text inside `answer` so a
+  client that renders only the answer still shows what happened — followed by the references that were
+  retrieved and the done frame. A client never receives a silent empty answer.
+* The response headers are upstream's: `text/event-stream; charset=utf-8`, `Cache-Control: no-cache`,
+  `Connection: keep-alive`, `X-Accel-Buffering: no`.
+
+### The surface
+
+The search page carries an **Ask** card now: a question box, an *Ask* button, the streamed answer and the
+sources it cited. Its script reads the stream frame by frame, treats `data:true` as the end, and falls
+back to reading the whole body when a browser cannot stream. The card reads the datasets from the page's
+own picker, so it asks about what the user has selected.
+
+**2237 tests pass, 0 failures**, including the frame envelope and prompt construction, and the route end
+to end: the two argument refusals, the inaccessible-dataset refusal with its exact wording, and a real
+stream whose headers and frames are checked (the reference frame carries the retrieved chunks, empty for
+an empty dataset, and the stream always ends with the done frame). The parity ledger drops from **4 gaps
+to 3**.
+
 ## [0.22.0] - 2026-10-04
 
 ### A whole subsystem that had no way out: the per-document structure graph

@@ -71,7 +71,6 @@ KNOWN_MISSING: dict[str, str] = {
     "/datasets/<dataset_id>/skills": "功能级缺口：数据集 Skills 面未实现（Skills 索引仅有全局 /api/v1/skills/*）",
     "/datasets/<dataset_id>/skills/<path:skill_kwd>": "功能级缺口：同上（Skills 面未实现）",
     "/documents/artifact/<filename>": "功能级缺口：文档产物文件读取未实现",
-    "/searchbots/ask": "功能级缺口：嵌入问答使用上游自己的 SSE 帧格式（code/message/data 包封），与既有搜索补全的 chat.completion 帧不同，需要单独的流式处理器",
 }
 
 

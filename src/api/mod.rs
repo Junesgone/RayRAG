@@ -45,6 +45,7 @@ pub mod runtime_config;
 pub mod sandbox_admin;
 pub mod search;
 pub mod searchapp_mgr;
+pub mod searchbot;
 pub mod setup;
 pub mod skill_index;
 pub mod structure_graph;

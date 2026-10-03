@@ -4007,6 +4007,127 @@ pub async fn search_page(
 ) -> impl IntoResponse {
     let (mut b, zh) = search_page_markup(&state, &req);
     b.push_str(SEARCH_METADATA_JS);
+    // The embedded search bot's surface: `POST /searchbots/ask` streams upstream's frames and nothing
+    // called it. One `@TOKEN@` template substituted by `replace` — the script is full of braces.
+    let ask_template = r##"<div class='card' id='askCard' data-testid='ask-card' style='margin-top:18px'>
+<h3 style='margin:0 0 6px'>@TITLE@</h3>
+<p style='color:var(--t2);font-size:13px;margin:0 0 12px'>@HINT@</p>
+<label for='askQuestion' style='display:block;font-size:13px;margin-bottom:4px'>@QUESTION_LABEL@</label>
+<input id='askQuestion' data-testid='ask-question' placeholder='@QUESTION_PLACEHOLDER@' style='width:100%;margin-bottom:10px'>
+<button type='button' id='askSend' data-testid='ask-send' class='btn' style='width:100%'>@SEND@</button>
+<div id='askStatus' data-testid='ask-status' role='status' aria-live='polite' style='font-size:13px;margin-top:10px;color:var(--t2)'></div>
+<div id='askAnswer' data-testid='ask-answer' style='white-space:pre-wrap;margin-top:8px'></div>
+<ul id='askRefs' data-testid='ask-refs' style='font-size:12px;color:var(--t2);margin:10px 0 0;padding-left:18px'></ul>
+</div>
+<script>
+(function(){
+  var status=document.getElementById('askStatus');
+  var answer=document.getElementById('askAnswer');
+  var refs=document.getElementById('askRefs');
+  function say(text,error){status.textContent=text;status.style.color=error?'#c0392b':'var(--t2)';}
+  function selectedKbs(){
+    // The page's own dataset picker is the source of truth when it is present.
+    if(typeof searchDocsSelectedKbs==='function'){
+      try{var picked=searchDocsSelectedKbs();if(picked&&picked.length)return picked;}catch(e){}
+    }
+    var seeded=window.RAYRAG_ASK_KB_IDS||[];
+    return seeded;
+  }
+  function showRefs(reference){
+    refs.textContent='';
+    var chunks=(reference&&reference.chunks)||[];
+    chunks.slice(0,8).forEach(function(chunk){
+      var item=document.createElement('li');
+      var name=chunk.docnm_kwd||chunk.document_keyword||'@DOCUMENT@';
+      var text=(chunk.content_with_weight||chunk.content||'').slice(0,140);
+      item.textContent=name+': '+text;
+      refs.appendChild(item);
+    });
+  }
+  function ask(){
+    var question=(document.getElementById('askQuestion').value||'').trim();
+    var kbIds=selectedKbs();
+    if(!question){say(@QUESTION_REQUIRED@,true);return;}
+    if(!kbIds.length){say(@KB_REQUIRED@,true);return;}
+    say(@ASKING@);
+    answer.textContent='';
+    refs.textContent='';
+    fetch('/api/v1/searchbots/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:question,kb_ids:kbIds})})
+      .then(function(response){
+        if(!response.body||!response.body.getReader){
+          // No streaming support: fall back to reading the whole frame list at once.
+          return response.text().then(function(text){consume(text);});
+        }
+        var reader=response.body.getReader();
+        var decoder=new TextDecoder();
+        var buffer='';
+        function pump(){
+          return reader.read().then(function(result){
+            if(result.done){consume(buffer);return;}
+            buffer+=decoder.decode(result.value,{stream:true});
+            var split;
+            while((split=buffer.indexOf('\n\n'))>=0){
+              consume(buffer.slice(0,split));
+              buffer=buffer.slice(split+2);
+            }
+            return pump();
+          });
+        }
+        return pump();
+      })
+      .catch(function(error){say(@FAILED@+' '+error,true);});
+  }
+  function consume(chunk){
+    chunk.split('\n').forEach(function(line){
+      if(line.indexOf('data:')!==0)return;
+      var payload;
+      try{payload=JSON.parse(line.slice(5));}catch(e){return;}
+      if(payload.data===true){say(@DONE@);return;}
+      if(payload.code!==0){say(payload.message||@FAILED@,true);}
+      if(payload.data&&typeof payload.data==='object'){
+        if(payload.data.reference)showRefs(payload.data.reference);
+        if(payload.data.answer)answer.textContent+=payload.data.answer;
+      }
+    });
+  }
+  document.getElementById('askSend').addEventListener('click',ask);
+  document.getElementById('askQuestion').addEventListener('keydown',function(event){if(event.key==='Enter')ask();});
+})();
+</script>"##;
+    let ask_card = [
+        ("@TITLE@", t("Ask the knowledge base", zh).to_string()),
+        (
+            "@HINT@",
+            t(
+                "Streams an answer from the embedded search bot, with its sources.",
+                zh,
+            )
+            .to_string(),
+        ),
+        ("@QUESTION_LABEL@", t("Question", zh).to_string()),
+        (
+            "@QUESTION_PLACEHOLDER@",
+            t("What do you want to know?", zh).to_string(),
+        ),
+        ("@SEND@", t("Ask", zh).to_string()),
+        ("@DOCUMENT@", json_script_string(t("document", zh))),
+        (
+            "@QUESTION_REQUIRED@",
+            json_script_string(t("Please input a question", zh)),
+        ),
+        (
+            "@KB_REQUIRED@",
+            json_script_string(t("Select at least one dataset first", zh)),
+        ),
+        ("@ASKING@", json_script_string(t("Asking…", zh))),
+        ("@DONE@", json_script_string(t("Done.", zh))),
+        ("@FAILED@", json_script_string(t("The request failed.", zh))),
+    ]
+    .iter()
+    .fold(ask_template.to_string(), |html, (token, value)| {
+        html.replace(token, value)
+    });
+    b.push_str(&ask_card);
     Html(layout(t("Search", zh), &b, zh))
 }
 
@@ -12774,6 +12895,43 @@ connection: close
         assert_eq!(bare[0].display_name, "Jumpcloud");
         assert_eq!(bare[0].icon, "sso");
         assert!(crate::oauth_config::parse("not-json").is_empty());
+    }
+
+    /// The embedded search bot needs a surface too: the ask card streams `POST /searchbots/ask` and
+    /// shows the answer with its sources.
+    #[tokio::test]
+    async fn the_ask_card_streams_the_search_bot_answer() {
+        let (_root, state) = test_state();
+        let req = axum::http::Request::builder()
+            .uri("/search")
+            .header("Cookie", "lang=en")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let html = body_of(search_page(State(state), req).await).await;
+        assert_inline_scripts_balance(&html, "/search");
+        for marker in [
+            "data-testid='ask-card'",
+            "data-testid='ask-question'",
+            "data-testid='ask-send'",
+            "data-testid='ask-status'",
+            "data-testid='ask-answer'",
+            "data-testid='ask-refs'",
+            // The stream is consumed frame by frame, and the done frame is recognised.
+            "'/api/v1/searchbots/ask'",
+            "payload.data===true",
+            "searchDocsSelectedKbs",
+        ] {
+            assert!(html.contains(marker), "missing {marker}");
+        }
+        let leftover: Vec<&str> = html
+            .match_indices('@')
+            .map(|(index, _)| &html[index..(index + 24).min(html.len())])
+            .filter(|slice| slice.chars().nth(1).is_some_and(|c| c.is_ascii_uppercase()))
+            .collect();
+        assert!(
+            leftover.is_empty(),
+            "unsubstituted placeholders {leftover:?}"
+        );
     }
 
     /// The reset flow needs a surface, not only endpoints: the captcha image, the answer box, the

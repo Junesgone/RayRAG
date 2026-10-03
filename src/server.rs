@@ -5107,6 +5107,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(crate::api::admin::get_log_levels).put(crate::api::admin::set_log_level),
         )
         .route("/api/v1/search", post(crate::api::search::weighted_search))
+        // The embedded search bot: upstream answers this one with a Server-Sent Events stream in its own
+        // envelope, which is why it is a separate handler from `/search`.
+        .route("/api/v1/searchbots/ask", post(crate::api::searchbot::ask))
         .route(
             "/api/v1/dify/retrieval",
             // Upstream registers GET (probe) and POST (retrieval) on this path.
@@ -13582,6 +13585,124 @@ mod tests {
             direct_pool_users.is_empty(),
             "these handlers touch the doc store without a blocking wrapper (req_store / spawn_blocking / \
              with_store), so their queries would run on a tokio worker: {direct_pool_users:?}"
+        );
+    }
+
+    /// `POST /searchbots/ask`: the embedded stream. Every refusal and the frame envelope are checked
+    /// here; the answer text needs a reachable chat model, so the failure frame is what a deployment
+    /// without one produces — and that path is part of the contract too.
+    #[tokio::test]
+    async fn searchbots_ask_streams_upstreams_envelope() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Ask dataset", "")
+            .unwrap();
+        let call = |body: serde_json::Value| {
+            let router = build_router(env.state.clone());
+            let token = env.token.clone();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(Method::POST)
+                            .uri("/api/v1/searchbots/ask")
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(body.to_string()))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        // No question: the argument error comes before anything else.
+        let no_question = response_json(call(serde_json::json!({"kb_ids": [kb.id]})).await).await;
+        assert_eq!(
+            no_question["code"],
+            crate::server::code::INVALID_ARGUMENT,
+            "{no_question}"
+        );
+        // No dataset: also an argument error, and the message names the field.
+        let no_kb = response_json(call(serde_json::json!({"question": "hi"})).await).await;
+        assert_eq!(
+            no_kb["code"],
+            crate::server::code::INVALID_ARGUMENT,
+            "{no_kb}"
+        );
+        assert!(
+            no_kb["message"].as_str().unwrap().contains("kb_ids"),
+            "{no_kb}"
+        );
+        // A dataset the caller cannot reach uses upstream's wording.
+        let foreign = response_json(
+            call(serde_json::json!({"question": "hi", "kb_ids": ["someone-elses-kb"]})).await,
+        )
+        .await;
+        assert_eq!(
+            foreign["code"],
+            crate::server::code::INVALID_OR_MISSING_DATA,
+            "{foreign}"
+        );
+        assert_eq!(
+            foreign["message"], "You don't own the requested dataset",
+            "{foreign}"
+        );
+
+        // A reachable dataset streams. The stream headers are upstream's, and the frames are its envelope.
+        let streamed = call(serde_json::json!({
+            "question": "what is in this dataset?",
+            "kb_id": kb.id,
+        }))
+        .await;
+        assert_eq!(streamed.status(), StatusCode::OK);
+        assert_eq!(
+            streamed.headers().get(header::CONTENT_TYPE).unwrap(),
+            "text/event-stream; charset=utf-8"
+        );
+        assert_eq!(
+            streamed.headers().get(header::CACHE_CONTROL).unwrap(),
+            "no-cache"
+        );
+        assert_eq!(streamed.headers().get("x-accel-buffering").unwrap(), "no");
+        let body = String::from_utf8(
+            to_bytes(streamed.into_body(), 1 << 20)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        let frames: Vec<serde_json::Value> = body
+            .lines()
+            .filter_map(|line| line.strip_prefix("data:"))
+            .map(|payload| serde_json::from_str(payload).unwrap())
+            .collect();
+        assert!(frames.len() >= 2, "the stream must carry frames: {body}");
+        for frame in &frames {
+            assert!(frame.get("code").is_some(), "{frame}");
+            assert!(frame.get("message").is_some(), "{frame}");
+        }
+        let last = frames.last().unwrap();
+        assert_eq!(last["code"], 0, "{body}");
+        assert_eq!(
+            last["data"], true,
+            "the stream ends with the done frame: {body}"
+        );
+        // The empty dataset retrieves nothing, so the reference is present and empty, and the answer
+        // frame reports why there is no model answer rather than inventing one.
+        let answer_frame = frames
+            .iter()
+            .find(|frame| frame["data"].get("reference").is_some())
+            .expect("a reference frame");
+        assert_eq!(
+            answer_frame["data"]["reference"]["chunks"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0,
+            "{answer_frame}"
         );
     }
 
