@@ -90,13 +90,24 @@ for (const path of paths) {
       continue;
     }
     const data = await page.evaluate(() => {
+      // A table wider than the screen is fine when its own container scrolls; what a user notices is
+      // the page itself moving sideways, so only uncontained elements count.
+      const insideHorizontalScroller = (element) => {
+        let node = element.parentElement;
+        while (node) {
+          const overflow = getComputedStyle(node).overflowX;
+          if (overflow === "auto" || overflow === "scroll") return true;
+          node = node.parentElement;
+        }
+        return false;
+      };
       const viewport = window.innerWidth;
       const oversized = [];
       let cards = 0;
       for (const element of document.querySelectorAll("body *")) {
         const rect = element.getBoundingClientRect();
         if (rect.width <= 0 || rect.height <= 0) continue;
-        if (rect.width > viewport + 2) {
+        if (rect.width > viewport + 2 && !insideHorizontalScroller(element)) {
           const name =
             element.tagName.toLowerCase() +
             (element.id ? "#" + element.id : "") +
@@ -134,6 +145,4 @@ const bad = rows.filter((row) => row.status >= 400 || row.errors || row.overflow
 console.log(JSON.stringify({ pages: paths.length, checked: rows.length, problems: bad.length }, null, 1));
 for (const row of bad) console.log(JSON.stringify(row));
 if (!bad.length) console.log("no page errors, no horizontal overflow, nothing wider than the viewport");
-await page.close();
-await context.close();
-await browser.close();
+process.exit(bad.length ? 1 : 0);

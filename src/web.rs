@@ -2880,7 +2880,7 @@ pub async fn dataset_page(
     b.push_str("<div class='ov-nav-tree' id='ovNavTree' data-testid='dataset-nav-tree' aria-live='polite'></div></div>");
     b.push_str("<div class='card'><h2>");
     b.push_str(t("Recent Activity", zh));
-    b.push_str("</h2><table><thead><tr><th>");
+    b.push_str("</h2><div class='table-wrap'><table><thead><tr><th>");
     b.push_str(t("Document", zh));
     b.push_str("</th><th>");
     b.push_str(t("Status", zh));
@@ -2888,12 +2888,12 @@ pub async fn dataset_page(
     b.push_str(t("Chunks", zh));
     b.push_str("</th><th>");
     b.push_str(t("Date", zh));
-    b.push_str("</th></tr></thead><tbody id='actList'></tbody></table></div>");
+    b.push_str("</th></tr></thead><tbody id='actList'></tbody></table></div></div>");
     // Tab 5: Logs (RAGFlow parity) — parse run status with File filter
     b.push_str("<div id='datasetLogs'><div class='card'><h2>");
     b.push_str(t("Logs", zh));
     b.push_str("</h2><div class='st' style='margin-bottom:12px'><div class='sc'><span class='lbl'>File</span><select id='logFile' onchange='filterLogs()' style='max-width:260px'><option value=''>All files</option></select></div></div>");
-    b.push_str("<table style='width:100%'><thead><tr><th style='text-align:left'>Document</th><th style='text-align:left'>Status</th><th style='text-align:left'>Chunks</th><th style='text-align:left'>Progress</th></tr></thead><tbody id='logBody'></tbody></table>");
+    b.push_str("<div class='table-wrap'><table style='width:100%'><thead><tr><th style='text-align:left'>Document</th><th style='text-align:left'>Status</th><th style='text-align:left'>Chunks</th><th style='text-align:left'>Progress</th></tr></thead><tbody id='logBody'></tbody></table></div>");
     b.push_str("<script>function badge(run){run=run||'UNSTARTED';if(run==='DONE')return '<span class=\\\"badge bs\\\">DONE</span>';if(run==='RUNNING')return '<span class=\\\"badge bi\\\">RUNNING</span>';if(run==='FAILED')return '<span class=\\\"badge bw\\\" style=\\\"color:var(--d)\\\">FAILED</span>';return '<span class=\\\"badge bw\\\">'+(run||'UNSTARTED')+'</span>'};;function filterLogs(){var f=document.getElementById('logFile').value;var rows=document.querySelectorAll('#logBody tr');rows.forEach(function(r){r.style.display=(!f||r.getAttribute('data-f')===f)?'':'none'})};function loadLogs(){fetch('/api/v1/datasets/'+kbId+'/documents').then(function(r){return r.json()}).then(function(d){var docs=(d.data&&d.data.docs)||d.data||[];var sel=document.getElementById('logFile');var cur=sel.value;sel.innerHTML='<option value=\"\">All files</option>';var seen={};var h='';docs.forEach(function(dd){var nm=dd.name||'?';if(!seen[nm]){seen[nm]=1;sel.innerHTML+='<option value=\"'+nm.replace(/'/g,'&#39;')+'\">'+nm+'</option>'}});sel.value=cur;docs.forEach(function(dd){var nm=dd.name||\'?\';var st=dd.run||dd.status||'UNSTARTED';var ch=dd.chunk_count!=null?dd.chunk_count:0;var pg=Math.max(0,Math.min(100,Math.round((dd.progress||0)*100)));h+='<tr data-f=\"'+nm.replace(/'/g,'&#39;')+'\"><td>'+nm+'</td><td>'+badge(st)+'</td><td>'+ch+'</td><td><div style=\"width:110px;height:6px;background:var(--bd)\"><div style=\"height:6px;width:'+pg+'%;background:var(--p)\"></div></div></td></tr>'});document.getElementById('logBody').innerHTML=h;filterLogs()})};loadLogs();</script></div></div>");
     // Close the overview (tab1) panel that hosts the merged Logs section so the
     // remaining panels stay siblings instead of nesting inside the hidden tab1.
@@ -3087,7 +3087,6 @@ pub async fn dataset_page(
     b.push_str(t("Edit", zh));
     b.push_str("',renameTitle:'");
     b.push_str(t("Rename tag", zh));
-    b.push_str(DS_TAG_SCRIPT);
     b.push_str("'};</script>");
     b.push_str("<tr id='dsTagTabsRow'><td colspan='2'><section class='ds-tag-tabs' data-testid='ds-tag-tabs'><div class='ds-segment' role='tablist'><button type='button' role='tab' aria-checked='true' id='dsTagTabCloud' onclick=\"dsTagTab('cloud')\">");
     b.push_str(t("Tag cloud", zh));
@@ -3324,8 +3323,9 @@ function cfgAvatarCrop(file){return cfgAvatarLoad(file).then(function(img){retur
 // Interactive crop: the modal shows the image with a draggable selection box.
 function openAvatarCropModal(file,inputId,previewId,statusId){return new Promise(function(resolve){return cfgAvatarLoad(file).then(function(img){var modal=document.getElementById('avatarCropModal');if(!modal)return cfgAvatarCropAt(img,cfgAvatarCropArea(img));var area=cfgAvatarCropArea(img);var image=document.getElementById('avatarCropImage');var box=document.getElementById('avatarCropBox');var stage=document.getElementById('avatarCropStage');image.src=img.src;modal.dataset.input=inputId;modal.dataset.preview=previewId;modal.dataset.status=statusId||'';modal._image=img;modal._area=area;var apply=function(){var scale=Math.min(stage.clientWidth/img.width,stage.clientHeight/img.height);image.style.width=(img.width*scale)+'px';image.style.height=(img.height*scale)+'px';var offsetX=(stage.clientWidth-img.width*scale)/2;var offsetY=(stage.clientHeight-img.height*scale)/2;image.style.marginLeft=offsetX+'px';image.style.marginTop=offsetY+'px';box.style.width=(area.size*scale)+'px';box.style.height=(area.size*scale)+'px';box.style.left=(offsetX+area.x*scale)+'px';box.style.top=(offsetY+area.y*scale)+'px'};modal._apply=apply;var dragging=false;var startX=0;var startY=0;var originX=0;var originY=0;var move=function(event){if(!dragging)return;var scale=Math.min(stage.clientWidth/img.width,stage.clientHeight/img.height);var dx=(event.clientX-startX)/scale;var dy=(event.clientY-startY)/scale;area.x=Math.max(0,Math.min(originX+dx,img.width-area.size));area.y=Math.max(0,Math.min(originY+dy,img.height-area.size));apply();event.preventDefault()};var up=function(){dragging=false;document.removeEventListener('mousemove',move);document.removeEventListener('mouseup',up)};box.onmousedown=function(event){dragging=true;startX=event.clientX;startY=event.clientY;originX=area.x;originY=area.y;document.addEventListener('mousemove',move);document.addEventListener('mouseup',up);event.preventDefault()};var zoom=function(event){var delta=event.deltaY>0?0.9:1.1;var size=Math.max(20,Math.min(area.size*delta,Math.min(img.width,img.height)));var centerX=(area.x+area.size/2)/img.width;var centerY=(area.y+area.size/2)/img.height;area.size=size;area.x=Math.max(0,Math.min(centerX*img.width-size/2,img.width-size));area.y=Math.max(0,Math.min(centerY*img.height-size/2,img.height-size));apply();event.preventDefault()};stage.addEventListener('wheel',zoom,{passive:false});modal._resolve=resolve;modal.classList.add('show');setTimeout(apply,0)})})}
 function avatarCropConfirm(){var modal=document.getElementById('avatarCropModal');var img=modal._image;var area=modal._area;var value=cfgAvatarCropAt(img,area);var input=document.getElementById(modal.dataset.input);if(input){input.value=value;input.dispatchEvent(new Event('change',{bubbles:true}))}var preview=document.getElementById(modal.dataset.preview);if(preview)preview.src=value;modal.classList.remove('show');if(modal._resolve)modal._resolve(value);return value}
-function avatarCropCancel(){var modal=document.getElementById('avatarCropModal');modal.classList.remove('show');if(modal._resolve)modal._resolve(null)}
-function cfgAvatarSet(dataUrl){var wrap=document.getElementById('cfgAvatarPreviewWrap');var add=document.getElementById('cfgAvatarAdd');var img=document.getElementById('cfgAvatarPreview');if(dataUrl){if(img)img.src=dataUrl;if(wrap)wrap.hidden=false;if(add)add.hidden=true}else{if(img)img.removeAttribute('src');if(wrap)wrap.hidden=true;if(add)add.hidden=false}}
+function avatarCropCancel(){var modal=document.getElementById('avatarCropModal');modal.classList.remove('show');if(modal._resolve)modal._resolve(null)}");
+    b.push_str(DS_TAG_SCRIPT);
+    b.push_str("function cfgAvatarSet(dataUrl){var wrap=document.getElementById('cfgAvatarPreviewWrap');var add=document.getElementById('cfgAvatarAdd');var img=document.getElementById('cfgAvatarPreview');if(dataUrl){if(img)img.src=dataUrl;if(wrap)wrap.hidden=false;if(add)add.hidden=true}else{if(img)img.removeAttribute('src');if(wrap)wrap.hidden=true;if(add)add.hidden=false}}
 async function onAvatarPick(input){var file=input.files&&input.files[0];if(!file){avatarDataUrl='';cfgAvatarSet('');return}if(!DATASET_AVATAR_EXT.test(file.name)){var m=document.getElementById('cfgMsg');if(m){m.textContent=DATASET_AVATAR_TYPE_ERROR;m.style.color='var(--d)'}input.value='';return}if(file.size>5*1024*1024){var m2=document.getElementById('cfgMsg');if(m2){m2.textContent='Avatar image must not exceed 5 MB';m2.style.color='var(--d)'}input.value='';return}try{var croppedAvatar=await openAvatarCropModal(file,'','profileAvatarPreview','');if(croppedAvatar===null)return;avatarDataUrl=croppedAvatar;cfgAvatarSet(croppedAvatar)}catch(error){var m3=document.getElementById('cfgMsg');if(m3){m3.textContent=String(error.message||error);m3.style.color='var(--d)'}}finally{input.value=''}}
 function removeDatasetAvatar(){avatarDataUrl='';cfgAvatarSet('');var m=document.getElementById('cfgMsg');if(m){m.textContent='';m.style.color=''}}
 function normalizeDefaultModelStoredValues(){MODEL_FIELDS.forEach(function(field){var trigger=document.getElementById(field.domId);if(!trigger)return;var value=trigger.dataset.value||'';if(!value||parseDefaultModelValue(value))return;var parts=value.split('/');if(parts.length!==3)return;var match=DEFAULT_MODEL_CATALOG.find(function(item){return item.name===parts[2]&&item.instance_id===parts[1]&&item.provider_id===parts[0]});if(!match)return;trigger.dataset.value=match.selector;trigger.dataset.savedValue=match.selector;renderDefaultModelTrigger(field)})}</script>");
@@ -12059,6 +12059,10 @@ connection: close
             ">Tag table<",
         ] {
             assert!(html.contains(marker), "tag tab marker missing: {marker}");
+            assert!(
+                !html.contains("b.push_str("),
+                "the rendered dataset page contains Rust source"
+            );
         }
         let css = include_str!("web_css.txt");
         for rule in [
@@ -19277,6 +19281,32 @@ connection: close
     /// another selector) used to break the CSS parser mid-sheet: every rule
     /// after it - `.provider-tz-list`, `.set-switch`, the switch toggles - was
     /// silently dropped by the browser.
+    #[test]
+    /// Rust statements have twice been injected into a page's inline JavaScript, where they are
+    /// literal text rather than code. Rendered pages assert that they carry no Rust source; this
+    /// asserts the other half: both tag-tab pages emit the same shared script.
+    #[test]
+    fn pages_share_one_tag_script() {
+        let source = include_str!("web.rs");
+        for marker in ["pub async fn dataset_page(", "pub async fn kb_detail_page("] {
+            let start = source.find(marker).expect("page function");
+            let rest = &source[start + marker.len()..];
+            let end = rest
+                .find("\npub ")
+                .map(|offset| start + marker.len() + offset)
+                .unwrap_or(source.len());
+            assert!(
+                source[start..end].contains("b.push_str(DS_TAG_SCRIPT);"),
+                "{marker} must push the shared tag script"
+            );
+        }
+        assert_eq!(
+            source.matches("const DS_TAG_SCRIPT: &str = \"").count(),
+            1,
+            "the tag script must be defined exactly once"
+        );
+    }
+
     #[test]
     fn stylesheet_has_no_truncated_rules() {
         fn check(css: &str) -> Result<(), String> {

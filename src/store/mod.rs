@@ -87,10 +87,7 @@ impl OnlineVectorMirror {
     }
 
     fn from_env_subdirectory(_subdirectory: &str) -> Result<Self> {
-        let backend = std::env::var(VECTOR_BACKEND_ENV)
-            .unwrap_or_else(|_| default_vector_backend().to_string())
-            .trim()
-            .to_ascii_lowercase();
+        let backend = requested_backend(std::env::var(VECTOR_BACKEND_ENV).ok().as_deref());
         match backend.as_str() {
             "json" => Ok(Self::disabled()),
             "zvec" => {
@@ -667,6 +664,16 @@ fn validate_dimensions(kb_id: &str, chunks: &[&IndexedChunk], dimension: usize) 
     Ok(())
 }
 
+/// Resolve the vector backend: an explicit value wins, otherwise the compiled-in default.
+fn requested_backend(explicit: Option<&str>) -> String {
+    explicit
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| default_vector_backend().to_string())
+        .trim()
+        .to_ascii_lowercase()
+}
+
 impl ZvecStore {
     /// Create a store. The selected backend is controlled by
     /// `RAYRAG_VECTOR_BACKEND=json|zvec` and defaults to zvec whenever the
@@ -689,10 +696,7 @@ impl ZvecStore {
             anyhow::bail!("Vector dimension must be greater than zero");
         }
 
-        let backend = std::env::var(VECTOR_BACKEND_ENV)
-            .unwrap_or_else(|_| default_vector_backend().to_string())
-            .trim()
-            .to_ascii_lowercase();
+        let backend = requested_backend(std::env::var(VECTOR_BACKEND_ENV).ok().as_deref());
         match backend.as_str() {
             "json" => {
                 let index_path = json_path
@@ -1445,13 +1449,15 @@ mod tests {
             "json"
         };
         assert_eq!(default_vector_backend(), expected);
-        // An explicit environment value always wins over the default.
-        if cfg!(feature = "zvec-backend") {
-            unsafe { std::env::set_var("RAYRAG_VECTOR_BACKEND", "json") };
-            let store = ZvecStore::new("default-backend-probe", 4).unwrap();
-            assert_eq!(store.backend_name(), "json");
-            unsafe { std::env::remove_var("RAYRAG_VECTOR_BACKEND") };
-        }
+        // An explicit value always wins over the default. The resolution is asserted directly rather
+        // than through the environment: `set_var` is process-global, so a parallel test opening a
+        // store at that moment used to fail this one.
+        assert_eq!(requested_backend(Some("json")), "json");
+        assert_eq!(requested_backend(Some(" JSON ")), "json");
+        assert_eq!(requested_backend(Some("")), expected);
+        assert_eq!(requested_backend(None), expected);
+        // Opening a real collection is covered by the store tests below; doing it here would take
+        // the zvec lock that another test in this binary may already hold.
     }
 
     fn json_backend_is_immediately_searchable_after_insert() {

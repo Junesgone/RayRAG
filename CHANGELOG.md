@@ -4,9 +4,66 @@ All notable changes to RayRAG are documented in this file.
 
 ## [0.11.9] - 2026-10-03
 
+### Sidebars now follow the window (reported by the user)
+
+Reported: some sidebars do not grow, shrink or wrap when the window changes — the admin console's in
+particular. Measured before the fix, at widths 1600 → 390: the admin sidebar was **288px at every width
+down to 768px** (it had no breakpoint at all), the user-setting sidebar was **303px**, and the dataset
+and template sidebars were **220px**. They now use `clamp()` columns, so they grow and shrink with the
+viewport with sane bounds:
+
+| page | before | after |
+|---|---|---|
+| `/admin/*`, `/admin/users` | 288px fixed | 288px @1600 → 198px @900, stacked full width ≤768px |
+| `/user-setting` | 303px fixed | 336px @1600 → 200px @900, 64px icon rail ≤768px |
+| `/dataset/*` | 220px fixed | 272px @1600 → 187px @900, stacked ≤768px |
+| `/agent-templates` | 220px fixed | 256px @1600 → 173px @900, stacked ≤600px |
+
+Sidebar labels wrap (`overflow-wrap:anywhere`) instead of running past the edge, and a new probe
+(`sidebar-responsive-cdp.mjs`) walks five pages through nine widths and fails if a
+sidebar stops following the window, if a label overflows without ellipsis, or if the page scrolls
+sideways. It is part of `verify-all.sh`, as is the page audit below.
+
 ### Every page, at a desktop and a phone width, audited for what a user would notice
 
-A new audit (`scripts/ui-traversal/responsive-cdp.mjs`) walks the app's known routes plus deep links to
+`responsive-cdp.mjs` walks the app's known routes plus deep links to real records —
+34 pages — at 1280px and 480px, recording per page: HTTP status, **page errors**, horizontal overflow,
+elements wider than the viewport outside a scroll container, and whether the page uses card containers.
+It found three things a passing test suite had not:
+
+- **`/search` threw `TypeError: (list || []).forEach is not a function`.** It still assumed the documents
+  endpoint answers a bare array; since 0.11.x it answers the documented `{docs, total_datasets}`. It now
+  accepts both.
+- **`/kbs/{id}` threw `ReferenceError: dsTagLoad is not defined`.** The knowledge-base page renders the
+  tag-set tab and calls `dsTagLoad()`, but the tag script lived only in the dataset page's inline
+  JavaScript. It is now one shared block (`DS_TAG_SCRIPT`) that both pages push.
+- **`/dataset/configuration/{id}` overflowed a 480px viewport by 148px.** The configuration tabs are
+  label/field tables with a 220px label column; a `max-width:600px` rule now stacks those cells. The
+  dataset tab's two tables got the scroll wrapper their siblings already had, which also fixes a
+  document-name-dependent overflow.
+
+The search page also had a silently failing call: it asked for metadata keys without `dataset_ids`, so
+the endpoint answered `102 Lack of dataset_ids in query parameters` and the code ignored the business
+code, leaving the key list empty.
+
+### One flaky test, fixed at its cause
+
+`default_backend_follows_the_compiled_features` set `RAYRAG_VECTOR_BACKEND` in the process environment,
+which is global: a parallel test opening a store at that moment read the other test's value. Backend
+resolution is now a named function (`requested_backend`) that both call sites share and the test asserts
+directly, with no environment mutation.
+
+Three mistakes of my own were caught on the way, each by a check that exists for exactly this: two edits
+that landed **inside** a Rust string literal (injecting `b.push_str(...)` as literal page text — caught by
+the rendered-page and browser checks) and a stray `}` in the stylesheet (caught by the parser test).
+
+**2183 tests pass**, 0 failures; `verify-all.sh` passes nine suites, two of them new.
+
+## [0.11.9] - 2026-10-03
+
+### Every page, at a desktop and a phone width, audited for what a user would notice
+
+A new audit (`responsive-cdp.mjs`) walks the app's known routes plus deep links to
 real records — 34 pages — at 1280px and 480px, and records per page: HTTP status, **page errors**,
 horizontal overflow, elements wider than the viewport outside a scroll container, and whether the page
 uses card containers at all. It found three things a passing test suite had not:
