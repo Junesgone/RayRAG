@@ -41,7 +41,7 @@ who typed a path should not be told "root directory URL is required".
 The data-source settings page gained a **Connectors** card that lists the instances with Test, Rebuild,
 Logs and Delete per row, plus a create form whose type list is rendered from the registry.
 
-**2221 tests pass, 0 failures**, including the owner scoping, the bounded history, the registry-derived
+**2216 tests pass, 0 failures**, including the owner scoping, the bounded history, the registry-derived
 type list, both configuration key spellings, and a router test that walks create → read → probe a real
 two-file directory → rebuild → history → patch → delete → refusals. The write verbs keep the
 management-write guard they always had: a non-admin still gets `403`. The parity ledger moved from 11 to
