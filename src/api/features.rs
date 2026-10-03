@@ -530,7 +530,16 @@ pub async fn list_chat_sessions(
     Path(chat_id): Path<String>,
     Query(query): Query<HashMap<String, String>>,
 ) -> axum::response::Response {
-    if chat_app_for(&state, &auth, &chat_id).is_none() {
+    // `GET /api/v1/chats` answers with this project's conversation records, so an id taken from
+    // that list must work here. Without the fallback every id the list returns answered
+    // "Chat not found", which reads as broken data rather than two id spaces.
+    let app = chat_app_for(&state, &auth, &chat_id);
+    let fallback = if app.is_none() {
+        state.conversations.get_for(&chat_id, &auth.user_id)
+    } else {
+        None
+    };
+    if app.is_none() && fallback.is_none() {
         return chat_not_found();
     }
     let page: usize = query
@@ -544,7 +553,10 @@ pub async fn list_chat_sessions(
         .filter(|value| *value > 0)
         .unwrap_or(30)
         .min(100);
-    let mut sessions = chat_sessions_for(&state, &auth, &chat_id);
+    let mut sessions = match fallback {
+        Some(conversation) => vec![conversation],
+        None => chat_sessions_for(&state, &auth, &chat_id),
+    };
     sessions.sort_by(|left, right| {
         right
             .created_at

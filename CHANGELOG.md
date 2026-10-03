@@ -2,6 +2,34 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.11.3] - 2026-10-03
+
+### Every chat id the listing returns now works at its sessions endpoint
+
+`GET /api/v1/chats` answers with this project's conversation records, while
+`GET /api/v1/chats/{chat_id}/sessions` looked only in the chat-app store. The two id spaces did not
+meet, so a client that listed chats and then asked for a session got `404 Chat not found` for **every
+entry it had just been given**. The sessions handler now falls back to the conversation store, so an id
+from the listing resolves to that conversation.
+
+This closes the visible symptom. The deeper difference is recorded, not papered over: the guide's
+`/api/v1/chats` lists chat *assistants*, while RayRAG returns chat *sessions* — the collection semantics
+are still not aligned and the internal worklist says so.
+
+### Also in this release
+
+- The remaining documented-shape deviations are written down with the reason they are not fixed in one
+  go: `GET /api/v1/files` answers a bare array where the guide documents
+  `{total, files, parent_folder}`, and the sessions list answers `{items, total, page, page_size}` where
+  the guide documents an array. Both are consumed as-is by the pages and by tests, so they need the
+  migration done in one piece rather than half-way.
+
+The audit from 0.11.2 stands at 22 remaining gaps out of the guide's documented fields, all of them
+concepts this project keeps elsewhere (`llm_id`, `llm_setting`, `prompt_config`) or values it does not
+track (`token_num`, `thumbnail`).
+
+**2174 tests pass**, 0 failures.
+
 ## [0.11.2] - 2026-10-03
 
 ### The API guide's field names, added systematically

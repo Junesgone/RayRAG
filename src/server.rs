@@ -13225,6 +13225,66 @@ mod tests {
         );
     }
 
+    /// Every id `GET /api/v1/chats` lists must work at the sessions endpoint. It did not: the
+    /// list answers with conversation records while the sessions handler looked only in the chat
+    /// app store, so a client following the listing got "Chat not found" for each entry.
+    #[tokio::test]
+    async fn a_chat_id_from_the_listing_resolves_at_its_sessions_endpoint() {
+        let env = non_admin_env();
+        // The fixture's user is `member-user`; `create` would make an ownerless record that the
+        // listing filters out.
+        let conversation = env
+            .state
+            .conversations
+            .create_for("member-user", "Listed chat")
+            .expect("conversation");
+        let router = build_router(env.state.clone());
+        let listed = response_json(
+            router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/v1/chats")
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
+        let rows = listed["data"].as_array().cloned().unwrap_or_default();
+        assert!(
+            rows.iter().any(|row| row["id"] == conversation.id),
+            "the created conversation is listed: {listed}"
+        );
+
+        let sessions = router
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/chats/{}/sessions", conversation.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            sessions.status(),
+            StatusCode::OK,
+            "an id the listing just returned must not 404 at its own sessions endpoint"
+        );
+        let body = response_json(sessions).await;
+        let items = body["data"]["items"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            items.iter().any(|row| row["id"] == conversation.id),
+            "the conversation is its own session: {body}"
+        );
+    }
+
     #[tokio::test]
     async fn chat_lifecycle_hides_other_users_sessions() {
         let env = non_admin_env();

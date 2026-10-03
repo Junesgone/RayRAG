@@ -74,3 +74,21 @@
 - 实测账本：`upstream=181 rayrgg=308 exact=118 alias=38 covered=2 missing=23 method=1 mismatch=0`。
 - 注：`verify-all.sh` 的 parity 检查会因"KNOWN_MISSING 里的条目已被实现"而失败——这次失败**是账本正确工作的表现**，
   不是回归；更新账本后通过。
+
+## 已实现的字段名对齐（0.11.2）
+
+`api::compat` 在所有列表/详情端点上**附加**说明书记载的字段名（原字段保留）：
+`embedding_model`←`embd_id`、`dataset_ids`←`kb_ids`、`created_by`/`tenant_id`←`owner_id`、
+`create_time`/`update_time`←`created_at`/`updated_at`、`location`←`storage_name`、`title`←`name`（agent），
+并把 `parser_config` 由 JSON 字符串解析为说明书要求的对象、把 `chunk_method` 提升为同级字段。
+审计工具：`scripts/api-field-audit.py`（**报告而非门禁**，未接入 verify-all）。
+首轮 48 → 22 项缺失，agent/chunk_list/memory/retrieval/search_app 已全绿。
+
+## 仍未对齐的响应结构（不得当作已完成）
+
+1. `GET /api/v1/files`：说明书 `data:{total, files, parent_folder}`，RayRAG 返回**裸数组**。
+   与此前已修的 documents 同类；UI 的 `loadFiles()` 与多条测试按数组消费，需同步改。
+2. `GET /api/v1/chats/{chat_id}/sessions`：说明书 `data:[…]`（数组），RayRAG 返回 `data:{items,total,page,page_size}`。
+3. **语义差异**：说明书的 `/api/v1/chats` 列的是"聊天助手"，RayRAG 返回的是**会话记录**
+   （`conversations`）。0.11.2 只修了"列表返回的 id 在 sessions 端点 404"这一可见症状（加了回退），
+   **集合语义本身尚未对齐**，属未完成项。
