@@ -1,0 +1,2354 @@
+{
+  "AIRTABLE": [
+    {
+      "label": "Access Token",
+      "name": "config.credentials.airtable_access_token",
+      "type": "Password",
+      "required": true
+    },
+    {
+      "label": "Base ID",
+      "name": "config.base_id",
+      "type": "Text",
+      "required": true
+    },
+    {
+      "label": "Table Name OR ID",
+      "name": "config.table_name_or_id",
+      "type": "Text",
+      "required": true
+    }
+  ],
+  "ASANA": [
+    {
+      "label": "API Token",
+      "name": "config.credentials.asana_api_token_secret",
+      "type": "Password",
+      "required": true
+    },
+    {
+      "label": "Workspace ID",
+      "name": "config.asana_workspace_id",
+      "type": "Text",
+      "required": true
+    },
+    {
+      "label": "Project IDs",
+      "name": "config.asana_project_ids",
+      "type": "Text",
+      "required": false
+    },
+    {
+      "label": "Team ID",
+      "name": "config.asana_team_id",
+      "type": "Text",
+      "required": false
+    }
+  ],
+  "AZURE_BLOB": [
+    {
+      "label": "Auth Mode",
+      "name": "config.auth_mode",
+      "type": "Select",
+      "required": true,
+      "options": [
+        {
+          "label": "Account Key",
+          "value": "account_key"
+        },
+        {
+          "label": "Connection String",
+          "value": "connection_string"
+        },
+        {
+          "label": "SAS Token",
+          "value": "sas_token"
+        }
+      ],
+      "tooltip_en": "Choose the authentication method. Account Key and Connection String require container_name; SAS Token requires container_url + sas_token.",
+      "tooltip_zh": "选择认证方式。账户密钥和连接字符串需填写容器名称；SAS 令牌方式需填写容器 URL 和 SAS 令牌。"
+    },
+    {
+      "label": "Account Name",
+      "name": "config.credentials.account_name",
+      "type": "Text",
+      "required": false,
+      "placeholder": "mystorageaccount",
+      "show_when": [
+        {
+          "field": "config.auth_mode",
+          "equals": "account_key"
+        }
+      ]
+    },
+    {
+      "label": "Account Key",
+      "name": "config.credentials.account_key",
+      "type": "Password",
+      "required": false,
+      "show_when": [
+        {
+          "field": "config.auth_mode",
+          "equals": "account_key"
+        }
+      ],
+      "tooltip_en": "Storage account access key (Base64-encoded). Required for account-key auth.",
+      "tooltip_zh": "存储账户访问密钥（Base64 编码），账户密钥认证时必填。"
+    },
+    {
+      "label": "Connection String",
+      "name": "config.credentials.connection_string",
+      "type": "Password",
+      "required": false,
+      "show_when": [
+        {
+          "field": "config.auth_mode",
+          "equals": "connection_string"
+        }
+      ],
+      "tooltip_en": "Full Azure Storage connection string (DefaultEndpointsProtocol=https;AccountName=...;...). Required for connection-string auth.",
+      "tooltip_zh": "完整的 Azure 存储连接字符串（DefaultEndpointsProtocol=https;AccountName=...;...），连接字符串认证时必填。"
+    },
+    {
+      "label": "Container URL",
+      "name": "config.credentials.container_url",
+      "type": "Text",
+      "required": false,
+      "placeholder": "https://account.blob.core.windows.net/container",
+      "show_when": [
+        {
+          "field": "config.auth_mode",
+          "equals": "sas_token"
+        }
+      ],
+      "tooltip_en": "Full HTTPS URL of the container (e.g. https://account.blob.core.windows.net/container). Required for SAS-token auth.",
+      "tooltip_zh": "容器的完整 HTTPS 地址（例如 https://account.blob.core.windows.net/container），SAS 令牌认证时必填。"
+    },
+    {
+      "label": "SAS Token",
+      "name": "config.credentials.sas_token",
+      "type": "Password",
+      "required": false,
+      "show_when": [
+        {
+          "field": "config.auth_mode",
+          "equals": "sas_token"
+        }
+      ],
+      "tooltip_en": "SAS query string (without the leading \"?\"). Required for SAS-token auth.",
+      "tooltip_zh": "SAS 查询字符串（不含开头的\"?\"），SAS 令牌认证时必填。"
+    },
+    {
+      "label": "Container Name",
+      "name": "config.credentials.container_name",
+      "type": "Text",
+      "required": false,
+      "placeholder": "my-container",
+      "show_when": [
+        {
+          "field": "config.auth_mode",
+          "equals": "account_key"
+        },
+        {
+          "field": "config.auth_mode",
+          "equals": "connection_string"
+        }
+      ],
+      "tooltip_en": "Name of the container to index. Required for account-key and connection-string auth.",
+      "tooltip_zh": "要索引的容器名称，账户密钥和连接字符串认证时必填。"
+    },
+    {
+      "label": "Prefix (optional)",
+      "name": "config.prefix",
+      "type": "Text",
+      "required": false,
+      "placeholder": "documents/reports/",
+      "tooltip_en": "Optional blob name prefix to limit indexing to a virtual folder (e.g. documents/reports/). Leave blank to index the entire container.",
+      "tooltip_zh": "可选的 Blob 名称前缀，用于限定索引范围（例如 documents/reports/）。留空则索引整个容器。"
+    },
+    {
+      "label": "Batch Size",
+      "name": "config.batch_size",
+      "type": "Number",
+      "required": false
+    }
+  ],
+  "BIGQUERY": [
+    {
+      "label": "Project ID",
+      "name": "config.project_id",
+      "type": "Text",
+      "required": true,
+      "placeholder": "my-gcp-project",
+      "tooltip_en": "GCP project that owns the query jobs (e.g. my-gcp-project)."
+    },
+    {
+      "label": "Location",
+      "name": "config.location",
+      "type": "Text",
+      "required": false,
+      "placeholder": "US",
+      "tooltip_en": "Default location for the client and query jobs, such as US or EU. Leave empty to let BigQuery infer it."
+    },
+    {
+      "label": "Service Account JSON",
+      "name": "config.credentials.service_account_json",
+      "type": "Password",
+      "required": true,
+      "placeholder": "{ ",
+      "tooltip_en": "Service account key JSON with BigQuery access. Paste the full key file contents."
+    },
+    {
+      "label": "Dataset ID",
+      "name": "config.dataset_id",
+      "type": "Text",
+      "required": false,
+      "placeholder": "analytics",
+      "tooltip_en": "Dataset id for table mode. Required together with Table ID when no SQL query is provided."
+    },
+    {
+      "label": "Table ID",
+      "name": "config.table_id",
+      "type": "Text",
+      "required": false,
+      "placeholder": "customers",
+      "tooltip_en": "Table id for table mode. Required together with Dataset ID when no SQL query is provided."
+    },
+    {
+      "label": "SQL Query",
+      "name": "config.query",
+      "type": "Textarea",
+      "required": false,
+      "placeholder": "Leave empty to use Dataset ID + Table ID",
+      "tooltip_en": "Custom GoogleSQL query. Takes precedence over Dataset ID and Table ID. Standard SQL only."
+    },
+    {
+      "label": "Content Columns",
+      "name": "config.content_columns",
+      "type": "Text",
+      "required": true,
+      "placeholder": "name,description,notes",
+      "tooltip_en": "Comma-separated column names whose values will be combined as document content for vectorization."
+    },
+    {
+      "label": "Metadata Columns",
+      "name": "config.metadata_columns",
+      "type": "Text",
+      "required": false,
+      "placeholder": "customer_id,status,region",
+      "tooltip_en": "Comma-separated column names to store as document metadata (not vectorized, but searchable)."
+    },
+    {
+      "label": "ID Column",
+      "name": "config.id_column",
+      "type": "Text",
+      "required": false,
+      "placeholder": "customer_id",
+      "tooltip_en": "Column to use as unique document ID. If not specified, a hash of the content will be used."
+    },
+    {
+      "label": "Timestamp Column",
+      "name": "config.timestamp_column",
+      "type": "Text",
+      "required": false,
+      "placeholder": "updated_at",
+      "tooltip_en": "Timestamp, datetime, date, or numeric column for incremental sync. Only rows newer than the last sync will be fetched."
+    },
+    {
+      "label": "Max Bytes Billed",
+      "name": "config.maximum_bytes_billed",
+      "type": "Number",
+      "required": false,
+      "placeholder": "1073741824",
+      "tooltip_en": "Hard cost guard applied to every query job, in bytes. Defaults to 1 GiB."
+    },
+    {
+      "label": "Job Timeout (ms)",
+      "name": "config.job_timeout_ms",
+      "type": "Number",
+      "required": false,
+      "placeholder": "300000",
+      "tooltip_en": "Optional per-query job timeout in milliseconds."
+    },
+    {
+      "label": "Page Size",
+      "name": "config.page_size",
+      "type": "Number",
+      "required": false,
+      "placeholder": "1000"
+    },
+    {
+      "label": "Batch Size",
+      "name": "config.batch_size",
+      "type": "Number",
+      "required": false,
+      "placeholder": "100"
+    },
+    {
+      "label": "Use Query Cache",
+      "name": "config.use_query_cache",
+      "type": "Checkbox",
+      "required": false
+    }
+  ],
+  "BITBUCKET": [
+    {
+      "label": "Bitbucket Account Email",
+      "name": "config.credentials.bitbucket_account_email",
+      "type": "Email",
+      "required": true,
+      "tooltip_en": "The Bitbucket workspace to index (e.g., \"atlassian\" from https://bitbucket.org/atlassian/workspace ).",
+      "tooltip_zh": "要索引的 Bitbucket 工作区（例如：https://bitbucket.org/atlassian/workspace 中的 \"atlassian\"）"
+    },
+    {
+      "label": "Bitbucket API Token",
+      "name": "config.credentials.bitbucket_api_token",
+      "type": "Password",
+      "required": true,
+      "tooltip_en": "The Bitbucket workspace to index (e.g., \"atlassian\" from https://bitbucket.org/atlassian/workspace ).",
+      "tooltip_zh": "要索引的 Bitbucket 工作区（例如：https://bitbucket.org/atlassian/workspace 中的 \"atlassian\"）"
+    },
+    {
+      "label": "Workspace",
+      "name": "config.workspace",
+      "type": "Text",
+      "required": true,
+      "tooltip_en": "The Bitbucket workspace to index (e.g., \"atlassian\" from https://bitbucket.org/atlassian/workspace ).",
+      "tooltip_zh": "要索引的 Bitbucket 工作区（例如：https://bitbucket.org/atlassian/workspace 中的 \"atlassian\"）"
+    },
+    {
+      "label": "Index Mode",
+      "name": "config.index_mode",
+      "type": "Segmented",
+      "options": [
+        {
+          "label": "Repositories",
+          "value": "repositories"
+        },
+        {
+          "label": "Project(s)",
+          "value": "projects"
+        },
+        {
+          "label": "Workspace",
+          "value": "workspace"
+        }
+      ]
+    },
+    {
+      "label": "Repository Slugs",
+      "name": "config.repository_slugs",
+      "type": "Text",
+      "show_when": [
+        {
+          "field": "config.index_mode",
+          "equals": "repositories"
+        }
+      ],
+      "validate": [
+        {
+          "when": [
+            {
+              "field": "config.index_mode",
+              "equals": "repositories"
+            }
+          ],
+          "require": "nonempty",
+          "field": "config.repository_slugs",
+          "message_en": "Repository Slugs is required"
+        }
+      ]
+    },
+    {
+      "label": "Projects",
+      "name": "config.projects",
+      "type": "Text",
+      "show_when": [
+        {
+          "field": "config.index_mode",
+          "equals": "projects"
+        }
+      ],
+      "validate": [
+        {
+          "when": [
+            {
+              "field": "config.index_mode",
+              "equals": "projects"
+            }
+          ],
+          "require": "nonempty",
+          "field": "config.projects",
+          "message_en": "Projects is required"
+        }
+      ]
+    },
+    {
+      "label": " ",
+      "name": "filter.tip",
+      "type": "Custom",
+      "show_when": [
+        {
+          "field": "config.index_mode",
+          "equals": "workspace"
+        }
+      ],
+      "panel_en": "This connector will index all repositories in the workspace."
+    }
+  ],
+  "BOX": [
+    {
+      "label": "Box OAuth Configuration",
+      "name": "config.credentials.box_tokens",
+      "type": "Textarea",
+      "required": true
+    },
+    {
+      "label": "Folder ID",
+      "name": "config.folder_id",
+      "type": "Text",
+      "required": false,
+      "placeholder": "Defaults root"
+    }
+  ],
+  "CONFLUENCE": [
+    {
+      "label": "Confluence Username",
+      "name": "config.credentials.confluence_username",
+      "type": "Text",
+      "required": true,
+      "tooltip_en": "The base URL of your Confluence instance (e.g., https://your-domain.atlassian.net/wiki)",
+      "tooltip_zh": "Confluence Wiki 的基础 URL（例如 https://your-domain.atlassian.net/wiki）"
+    },
+    {
+      "label": "Confluence Access Token",
+      "name": "config.credentials.confluence_access_token",
+      "type": "Password",
+      "required": true,
+      "tooltip_en": "The base URL of your Confluence instance (e.g., https://your-domain.atlassian.net/wiki)",
+      "tooltip_zh": "Confluence Wiki 的基础 URL（例如 https://your-domain.atlassian.net/wiki）"
+    },
+    {
+      "label": "Wiki Base URL",
+      "name": "config.wiki_base",
+      "type": "Text",
+      "required": false,
+      "tooltip_en": "The base URL of your Confluence instance (e.g., https://your-domain.atlassian.net/wiki)",
+      "tooltip_zh": "Confluence Wiki 的基础 URL（例如 https://your-domain.atlassian.net/wiki）"
+    },
+    {
+      "label": "Is Cloud",
+      "name": "config.is_cloud",
+      "type": "Checkbox",
+      "required": false,
+      "tooltip_en": "Check if this is a Confluence Cloud instance, uncheck for Confluence Server/Data Center",
+      "tooltip_zh": "检查这是否是 Confluence Cloud 实例，如果是 Confluence 服务/数据中心，则取消选中。"
+    },
+    {
+      "label": "Index Mode",
+      "name": "config.index_mode",
+      "type": "Segmented",
+      "options": [
+        {
+          "label": "Everything",
+          "value": "everything"
+        },
+        {
+          "label": "Space",
+          "value": "space"
+        },
+        {
+          "label": "Page",
+          "value": "page"
+        }
+      ]
+    },
+    {
+      "label": "Page ID",
+      "name": "config.page_id",
+      "type": "Text",
+      "show_when": [
+        {
+          "field": "config.index_mode",
+          "equals": "page"
+        }
+      ],
+      "validate": [
+        {
+          "when": [
+            {
+              "field": "config.index_mode",
+              "equals": "page"
+            }
+          ],
+          "require": "nonempty",
+          "field": "config.page_id",
+          "message_en": "Page ID is required"
+        }
+      ]
+    },
+    {
+      "label": " ",
+      "name": "filter.tip",
+      "type": "Custom",
+      "show_when": [
+        {
+          "field": "config.index_mode",
+          "equals": "everything"
+        }
+      ],
+      "panel_en": "This choice will index all pages the provided credentials have access to."
+    },
+    {
+      "label": "Space Key",
+      "name": "config.space",
+      "type": "Text",
+      "show_when": [
+        {
+          "field": "config.index_mode",
+          "equals": "space"
+        }
+      ],
+      "validate": [
+        {
+          "when": [
+            {
+              "field": "config.index_mode",
+              "equals": "space"
+            }
+          ],
+          "require": "nonempty",
+          "field": "config.space",
+          "message_en": "Space Key is required"
+        }
+      ]
+    },
+    {
+      "label": "Index Recursively",
+      "name": "config.index_recursively",
+      "type": "Checkbox",
+      "show_when": [
+        {
+          "field": "config.index_mode",
+          "equals": "page"
+        }
+      ]
+    }
+  ],
+  "DINGTALK_AI_TABLE": [
+    {
+      "label": "Access Token",
+      "name": "config.credentials.access_token",
+      "type": "Password",
+      "required": true
+    },
+    {
+      "label": "Base ID",
+      "name": "config.table_id",
+      "type": "Text",
+      "required": true
+    },
+    {
+      "label": "Operator ID",
+      "name": "config.operator_id",
+      "type": "Text",
+      "required": true
+    }
+  ],
+  "DISCORD": [
+    {
+      "label": "Discord Bot Token",
+      "name": "config.credentials.discord_bot_token",
+      "type": "Password",
+      "required": true
+    }
+  ],
+  "DROPBOX": [
+    {
+      "label": "Access Token",
+      "name": "config.credentials.dropbox_access_token",
+      "type": "Password",
+      "required": true,
+      "tooltip_en": "Generate a long-lived access token in the Dropbox App Console with files.metadata.read, files.content.read, and sharing.read scopes.",
+      "tooltip_zh": "请在 Dropbox App Console 生成 Access Token，并勾选 files.metadata.read、files.content.read、sharing.read 等必要权限。"
+    },
+    {
+      "label": "Batch Size",
+      "name": "config.batch_size",
+      "type": "Number",
+      "required": false,
+      "placeholder": "Defaults to 2"
+    }
+  ],
+  "GITHUB": [
+    {
+      "label": "Repository Owner",
+      "name": "config.repository_owner",
+      "type": "Text",
+      "required": true
+    },
+    {
+      "label": "Repository Name",
+      "name": "config.repository_name",
+      "type": "Text",
+      "required": true
+    },
+    {
+      "label": "GitHub Access Token",
+      "name": "config.credentials.github_access_token",
+      "type": "Password",
+      "required": true
+    },
+    {
+      "label": "Include Pull Requests",
+      "name": "config.include_pull_requests",
+      "type": "Checkbox",
+      "required": false
+    },
+    {
+      "label": "Include Issues",
+      "name": "config.include_issues",
+      "type": "Checkbox",
+      "required": false
+    }
+  ],
+  "GITLAB": [
+    {
+      "label": "Project Owner",
+      "name": "config.project_owner",
+      "type": "Text",
+      "required": true
+    },
+    {
+      "label": "Project Name",
+      "name": "config.project_name",
+      "type": "Text",
+      "required": true
+    },
+    {
+      "label": "GitLab Personal Access Token",
+      "name": "config.credentials.gitlab_access_token",
+      "type": "Password",
+      "required": true
+    },
+    {
+      "label": "GitLab URL",
+      "name": "config.gitlab_url",
+      "type": "Text",
+      "required": true,
+      "placeholder": "https://gitlab.com"
+    },
+    {
+      "label": "include Merge Requests",
+      "name": "config.include_mrs",
+      "type": "Checkbox",
+      "required": false
+    },
+    {
+      "label": "include Issues",
+      "name": "config.include_issues",
+      "type": "Checkbox",
+      "required": false
+    },
+    {
+      "label": "include Code Files",
+      "name": "config.include_code_files",
+      "type": "Checkbox",
+      "required": false
+    }
+  ],
+  "GMAIL": [
+    {
+      "label": "Primary Admin Email",
+      "name": "config.credentials.google_primary_admin",
+      "type": "Text",
+      "required": true,
+      "placeholder": "admin@example.com",
+      "tooltip_en": "Primary admin email with Gmail / Workspace access, used to enumerate domain users and as the default sync account.",
+      "tooltip_zh": "拥有 Gmail / Workspace 访问权限的主要管理员邮箱，用于列出域内用户并作为默认同步账号。"
+    },
+    {
+      "label": "OAuth Token JSON",
+      "name": "config.credentials.google_tokens",
+      "type": "Textarea",
+      "required": true,
+      "tooltip_en": "Upload the OAuth JSON generated from Google Console. If it only contains client credentials, run the browser-based verification once to mint long-lived refresh tokens.",
+      "tooltip_zh": "请上传由 Google Console 生成的 OAuth JSON。如果仅包含 client credentials，请通过浏览器授权一次以获取长期有效的刷新 Token。"
+    },
+    {
+      "label": "authentication method",
+      "name": "config.credentials.authentication_method",
+      "type": "Text",
+      "required": false,
+      "default_value": "uploaded"
+    }
+  ],
+  "GOOGLE_CLOUD_STORAGE": [
+    {
+      "label": "GCS Access Key ID",
+      "name": "config.credentials.access_key_id",
+      "type": "Text",
+      "required": true
+    },
+    {
+      "label": "GCS Secret Access Key",
+      "name": "config.credentials.secret_access_key",
+      "type": "Password",
+      "required": true
+    },
+    {
+      "label": "Bucket Name",
+      "name": "config.bucket_name",
+      "type": "Text",
+      "required": true
+    }
+  ],
+  "GOOGLE_DRIVE": [
+    {
+      "label": "Primary Admin Email",
+      "name": "config.credentials.google_primary_admin",
+      "type": "Text",
+      "required": true,
+      "placeholder": "admin@example.com",
+      "tooltip_en": "Email address that has access to the Drive content being synced",
+      "tooltip_zh": "拥有相应 Drive 访问权限的管理员邮箱。"
+    },
+    {
+      "label": "OAuth Token JSON",
+      "name": "config.credentials.google_tokens",
+      "type": "Textarea",
+      "required": true,
+      "tooltip_en": "Upload the OAuth token JSON generated from the OAuth helper or Google Cloud Console. You may also upload a client_secret JSON from an \"installed\" or \"web\" application. If this is your first sync, a browser window will open to complete the OAuth consent. If the JSON already contains a refresh token, it will be reused automatically.",
+      "tooltip_zh": "请上传由 OAuth helper 或 Google Cloud Console 导出的 OAuth token JSON。也支持上传 “installed” 或 “web” 类型的 client_secret JSON。若为首次同步，将自动弹出浏览器完成 OAuth 授权流程；如果该 JSON 已包含 refresh token，将会被自动复用。"
+    },
+    {
+      "label": "My Drive Emails",
+      "name": "config.my_drive_emails",
+      "type": "Text",
+      "required": true,
+      "placeholder": "user1@example.com,user2@example.com",
+      "tooltip_en": "Comma-separated emails whose \"My Drive\" contents should be indexed (include the primary admin).",
+      "tooltip_zh": "需要索引其 “我的云端硬盘” 的邮箱，多个邮箱用逗号分隔（建议包含管理员）。"
+    },
+    {
+      "label": "Shared Folder URLs",
+      "name": "config.shared_folder_urls",
+      "type": "Textarea",
+      "required": true,
+      "placeholder": "https://drive.google.com/drive/folders/XXXXX,https://drive.google.com/drive/folders/YYYYY",
+      "tooltip_en": "Comma-separated Google Drive folder links to crawl.",
+      "tooltip_zh": "需要同步的 Google Drive 文件夹链接，多个链接用逗号分隔。"
+    },
+    {
+      "label": "Shared Drive URLs",
+      "name": "config.shared_drive_urls",
+      "type": "Text",
+      "required": false
+    },
+    {
+      "label": "Specific User Emails",
+      "name": "config.specific_user_emails",
+      "type": "Text",
+      "required": false
+    },
+    {
+      "label": "Include My Drive",
+      "name": "config.include_my_drives",
+      "type": "Checkbox",
+      "required": false
+    },
+    {
+      "label": "Include Shared Drives",
+      "name": "config.include_shared_drives",
+      "type": "Checkbox",
+      "required": false
+    },
+    {
+      "label": "Include “Shared with me”",
+      "name": "config.include_files_shared_with_me",
+      "type": "Checkbox",
+      "required": false
+    },
+    {
+      "label": "Allow Images",
+      "name": "config.allow_images",
+      "type": "Checkbox",
+      "required": false
+    },
+    {
+      "label": "authentication method",
+      "name": "config.credentials.authentication_method",
+      "type": "Text",
+      "required": false,
+      "default_value": "uploaded"
+    }
+  ],
+  "IMAP": [
+    {
+      "label": "Username",
+      "name": "config.credentials.imap_username",
+      "type": "Text",
+      "required": true
+    },
+    {
+      "label": "Password",
+      "name": "config.credentials.imap_password",
+      "type": "Password",
+      "required": true
+    },
+    {
+      "label": "Host",
+      "name": "config.imap_host",
+      "type": "Text",
+      "required": true
+    },
+    {
+      "label": "Port",
+      "name": "config.imap_port",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "label": "Poll Range",
+      "name": "config.poll_range",
+      "type": "Number",
+      "required": false
+    }
+  ],
+  "JIRA": [
+    {
+      "label": "Jira User Email",
+      "name": "config.credentials.jira_user_email",
+      "type": "Text",
+      "required": true,
+      "placeholder": "you@example.com",
+      "show_when": [
+        {
+          "field": "config.is_cloud",
+          "equals": "false",
+          "negate": true
+        }
+      ],
+      "tooltip_en": "Email associated with the Jira account/API token.",
+      "tooltip_zh": "与 API Token 对应的 Jira 账户邮箱。",
+      "validate": [
+        {
+          "when": [
+            {
+              "field": "config.is_cloud",
+              "equals": "false",
+              "negate": true
+            }
+          ],
+          "require": "nonempty",
+          "field": "config.credentials.jira_user_email",
+          "message_en": "Jira User Email is required"
+        }
+      ]
+    },
+    {
+      "label": "Jira Username",
+      "name": "config.credentials.jira_username",
+      "type": "Text",
+      "required": true,
+      "show_when": [
+        {
+          "field": "config.is_cloud",
+          "equals": "false"
+        }
+      ],
+      "tooltip_en": "Email associated with the Jira account/API token.",
+      "tooltip_zh": "与 API Token 对应的 Jira 账户邮箱。",
+      "validate": [
+        {
+          "when": [
+            {
+              "field": "config.is_cloud",
+              "equals": "false"
+            }
+          ],
+          "require": "nonempty",
+          "field": "config.credentials.jira_username",
+          "message_en": "Jira Username is required"
+        }
+      ]
+    },
+    {
+      "label": "Jira Base URL",
+      "name": "config.base_url",
+      "type": "Text",
+      "required": true,
+      "placeholder": "https://your-domain.atlassian.net",
+      "tooltip_en": "Base URL of your Jira site (e.g., https://your-domain.atlassian.net).",
+      "tooltip_zh": "Jira 的 Base URL，例如：https://your-domain.atlassian.net。"
+    },
+    {
+      "label": "Project Key",
+      "name": "config.project_key",
+      "type": "Text",
+      "required": false,
+      "placeholder": "RAGFlow",
+      "tooltip_en": "Optional: limit syncing to a single project key (e.g., ENG).",
+      "tooltip_zh": "可选：仅同步指定的项目（如 RAG）。"
+    },
+    {
+      "label": "Custom JQL",
+      "name": "config.jql_query",
+      "type": "Textarea",
+      "required": false,
+      "placeholder": "project = RAG AND updated >= -7d",
+      "tooltip_en": "Optional JQL filter. Leave blank to rely on project/time filters.",
+      "tooltip_zh": "可选：自定义 JQL 过滤条件，留空则使用项目 / 时间范围。"
+    },
+    {
+      "label": "Batch Size",
+      "name": "config.batch_size",
+      "type": "Number",
+      "required": false,
+      "tooltip_en": "Maximum number of issues requested from Jira per batch.",
+      "tooltip_zh": "每次向 Jira 请求的 Issue 数量上限。"
+    },
+    {
+      "label": "Attachment Size Limit (bytes)",
+      "name": "config.attachment_size_limit",
+      "type": "Number",
+      "required": false,
+      "default_value": "10485760",
+      "tooltip_en": "Attachments larger than this number of bytes will be skipped.",
+      "tooltip_zh": "超过该字节阈值的附件会被跳过。"
+    },
+    {
+      "label": "Labels to Skip",
+      "name": "config.labels_to_skip",
+      "type": "Tag",
+      "required": false,
+      "tooltip_en": "Labels that should be skipped while indexing (comma separated).",
+      "tooltip_zh": "需要跳过的标签（逗号分隔）。"
+    },
+    {
+      "label": "Comment Email Blacklist",
+      "name": "config.comment_email_blacklist",
+      "type": "Tag",
+      "required": false,
+      "tooltip_en": "Comments whose author email matches these entries will be ignored.",
+      "tooltip_zh": "这些邮箱作者的评论会被忽略。"
+    },
+    {
+      "label": "Include Comments",
+      "name": "config.include_comments",
+      "type": "Checkbox",
+      "required": false,
+      "default_value": "true",
+      "tooltip_en": "Include Jira comments in the generated markdown document.",
+      "tooltip_zh": "同步评论。"
+    },
+    {
+      "label": "Include Attachments",
+      "name": "config.include_attachments",
+      "type": "Checkbox",
+      "required": false,
+      "default_value": "false",
+      "tooltip_en": "Download attachments as separate documents during sync.",
+      "tooltip_zh": "开启后会将附件下载为独立文档。"
+    },
+    {
+      "label": "Mode",
+      "name": "config.is_cloud",
+      "type": "Segmented",
+      "options": [
+        {
+          "label": "Cloud",
+          "value": "true"
+        },
+        {
+          "label": "Server",
+          "value": "false"
+        }
+      ],
+      "default_value": "true",
+      "tooltip_en": "API token generated from https://id.atlassian.com/manage-profile/security/api-tokens.",
+      "tooltip_zh": "在 https://id.atlassian.com/manage-profile/security/api-tokens 生成的 API Token。 (Clould only)"
+    },
+    {
+      "label": "Jira API Token",
+      "name": "config.credentials.jira_api_token",
+      "type": "Password",
+      "required": false,
+      "show_when": [
+        {
+          "field": "config.is_cloud",
+          "equals": "false",
+          "negate": true
+        }
+      ],
+      "validate": [
+        {
+          "when": [
+            {
+              "field": "config.is_cloud",
+              "equals": "false",
+              "negate": true
+            }
+          ],
+          "require": "nonempty",
+          "field": "config.credentials.jira_api_token",
+          "message_en": "Jira API Token is required"
+        }
+      ]
+    },
+    {
+      "label": "Jira Password",
+      "name": "config.credentials.jira_password",
+      "type": "Password",
+      "required": false,
+      "show_when": [
+        {
+          "field": "config.is_cloud",
+          "equals": "false"
+        }
+      ],
+      "tooltip_en": "Optional password for Jira Server/Data Center environments.",
+      "tooltip_zh": "可选：仅 Jira Server/Data Center 环境需要的密码字段。",
+      "validate": [
+        {
+          "when": [
+            {
+              "field": "config.is_cloud",
+              "equals": "false"
+            }
+          ],
+          "require": "nonempty",
+          "field": "config.credentials.jira_password",
+          "message_en": "Jira Password is required"
+        }
+      ]
+    },
+    {
+      "label": "Use Scoped Token",
+      "name": "config.scoped_token",
+      "type": "Checkbox",
+      "required": false,
+      "show_when": [
+        {
+          "field": "config.is_cloud",
+          "equals": "false",
+          "negate": true
+        }
+      ],
+      "tooltip_en": "Enable this when using scoped Atlassian tokens (api.atlassian.com).",
+      "tooltip_zh": "仅当凭证为 Atlassian scoped token（api.atlassian.com）时生效。"
+    }
+  ],
+  "MOODLE": [
+    {
+      "label": "Moodle URL",
+      "name": "config.moodle_url",
+      "type": "Text",
+      "required": true,
+      "placeholder": "https://moodle.example.com"
+    },
+    {
+      "label": "API Token",
+      "name": "config.credentials.moodle_token",
+      "type": "Password",
+      "required": true
+    }
+  ],
+  "MYSQL": [
+    {
+      "label": "Host",
+      "name": "config.host",
+      "type": "Text",
+      "required": true,
+      "placeholder": "localhost"
+    },
+    {
+      "label": "Port",
+      "name": "config.port",
+      "type": "Number",
+      "required": true,
+      "placeholder": "3306"
+    },
+    {
+      "label": "Database",
+      "name": "config.database",
+      "type": "Text",
+      "required": true
+    },
+    {
+      "label": "Username",
+      "name": "config.credentials.username",
+      "type": "Text",
+      "required": true
+    },
+    {
+      "label": "Password",
+      "name": "config.credentials.password",
+      "type": "Password",
+      "required": true
+    },
+    {
+      "label": "SQL Query",
+      "name": "config.query",
+      "type": "Textarea",
+      "required": false,
+      "placeholder": "Leave empty to load all tables",
+      "tooltip_en": "SQL query to extract data from your database (e.g., SELECT * FROM products WHERE status = \"active\")."
+    },
+    {
+      "label": "Content Columns",
+      "name": "config.content_columns",
+      "type": "Text",
+      "required": false,
+      "placeholder": "title,description,content",
+      "tooltip_en": "Comma-separated column names whose values will be combined as document content for vectorization."
+    },
+    {
+      "label": "Metadata Columns",
+      "name": "config.metadata_columns",
+      "type": "Text",
+      "required": false,
+      "placeholder": "id,category,status",
+      "tooltip_en": "Comma-separated column names to store as document metadata (not vectorized, but searchable)."
+    },
+    {
+      "label": "ID Column",
+      "name": "config.id_column",
+      "type": "Text",
+      "required": false,
+      "placeholder": "id",
+      "tooltip_en": "Column to use as unique document ID. If not specified, a hash of the content will be used."
+    },
+    {
+      "label": "Timestamp Column",
+      "name": "config.timestamp_column",
+      "type": "Text",
+      "required": false,
+      "placeholder": "updated_at",
+      "tooltip_en": "Datetime/timestamp column for incremental sync. Only rows modified after the last sync will be fetched."
+    }
+  ],
+  "NOTION": [
+    {
+      "label": "Notion Integration Token",
+      "name": "config.credentials.notion_integration_token",
+      "type": "Password",
+      "required": true
+    },
+    {
+      "label": "Root Page Id",
+      "name": "config.root_page_id",
+      "type": "Text",
+      "required": false
+    }
+  ],
+  "OCI_STORAGE": [
+    {
+      "label": "OCI Namespace",
+      "name": "config.credentials.namespace",
+      "type": "Text",
+      "required": true
+    },
+    {
+      "label": "OCI Region",
+      "name": "config.credentials.region",
+      "type": "Text",
+      "required": true
+    },
+    {
+      "label": "OCI Access Key ID",
+      "name": "config.credentials.access_key_id",
+      "type": "Text",
+      "required": true
+    },
+    {
+      "label": "OCI Secret Access Key",
+      "name": "config.credentials.secret_access_key",
+      "type": "Password",
+      "required": true
+    },
+    {
+      "label": "Bucket Name",
+      "name": "config.bucket_name",
+      "type": "Text",
+      "required": true
+    }
+  ],
+  "ONEDRIVE": [
+    {
+      "label": "Tenant ID",
+      "name": "config.credentials.tenant_id",
+      "type": "Text",
+      "required": true,
+      "placeholder": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+      "tooltip_en": "Azure Active Directory tenant ID (Directory ID) of the Microsoft 365 organisation.",
+      "tooltip_zh": "Microsoft 365 组织的 Azure Active Directory 租户 ID（目录 ID）。"
+    },
+    {
+      "label": "Client ID",
+      "name": "config.credentials.client_id",
+      "type": "Text",
+      "required": true,
+      "placeholder": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+      "tooltip_en": "Application (client) ID of the Azure AD app registration with Files.Read.All permission.",
+      "tooltip_zh": "拥有 Files.Read.All 权限的 Azure AD 应用注册的应用程序（客户端）ID。"
+    },
+    {
+      "label": "Client Secret",
+      "name": "config.credentials.client_secret",
+      "type": "Password",
+      "required": true,
+      "tooltip_en": "Client secret value generated in the Azure AD app registration.",
+      "tooltip_zh": "在 Azure AD 应用注册中生成的客户端密钥值。"
+    },
+    {
+      "label": "Folder Path (optional)",
+      "name": "config.folder_path",
+      "type": "Text",
+      "required": false,
+      "placeholder": "/Documents/Reports",
+      "tooltip_en": "Optional sub-folder path to limit indexing (e.g. /Documents/Reports). Leave blank to index the entire drive.",
+      "tooltip_zh": "可选的子文件夹路径，用于限制索引范围（例如 /Documents/Reports）。留空则索引整个云盘。"
+    },
+    {
+      "label": "Batch Size",
+      "name": "config.batch_size",
+      "type": "Number",
+      "required": false
+    }
+  ],
+  "OUTLOOK": [
+    {
+      "label": "Tenant ID",
+      "name": "config.credentials.tenant_id",
+      "type": "Text",
+      "required": true,
+      "placeholder": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+      "tooltip_en": "Azure Active Directory tenant ID (Directory ID) of the Microsoft 365 organisation.",
+      "tooltip_zh": "Microsoft 365 组织的 Azure Active Directory 租户 ID（目录 ID）。"
+    },
+    {
+      "label": "Client ID",
+      "name": "config.credentials.client_id",
+      "type": "Text",
+      "required": true,
+      "placeholder": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+      "tooltip_en": "Application (client) ID of the Azure AD app registration with Mail.Read permission.",
+      "tooltip_zh": "拥有 Mail.Read 权限的 Azure AD 应用注册的应用程序（客户端）ID。"
+    },
+    {
+      "label": "Client Secret",
+      "name": "config.credentials.client_secret",
+      "type": "Password",
+      "required": true,
+      "tooltip_en": "Client secret value generated in the Azure AD app registration.",
+      "tooltip_zh": "在 Azure AD 应用注册中生成的客户端密钥值。"
+    },
+    {
+      "label": "Mail Folder",
+      "name": "config.folder",
+      "type": "Text",
+      "required": false,
+      "placeholder": "inbox",
+      "tooltip_en": "Mail folder to sync (e.g. inbox, sentitems, archive). Defaults to inbox.",
+      "tooltip_zh": "要同步的邮件文件夹（例如 inbox、sentitems、archive），默认为 inbox。"
+    },
+    {
+      "label": "Mailbox User IDs (optional)",
+      "name": "config.user_ids",
+      "type": "Text",
+      "required": false,
+      "placeholder": "support@example.com, sales@example.com",
+      "tooltip_en": "Comma-separated UPNs or object IDs of mailboxes to sync. Leave blank to sync every mailbox in the tenant (requires User.Read.All).",
+      "tooltip_zh": "要同步的邮箱 UPN 或对象 ID 列表（逗号分隔）。留空则同步租户内的所有邮箱（需要 User.Read.All 权限）。"
+    },
+    {
+      "label": "Batch Size",
+      "name": "config.batch_size",
+      "type": "Number",
+      "required": false
+    }
+  ],
+  "POSTGRESQL": [
+    {
+      "label": "Host",
+      "name": "config.host",
+      "type": "Text",
+      "required": true,
+      "placeholder": "localhost"
+    },
+    {
+      "label": "Port",
+      "name": "config.port",
+      "type": "Number",
+      "required": true,
+      "placeholder": "5432"
+    },
+    {
+      "label": "Database",
+      "name": "config.database",
+      "type": "Text",
+      "required": true
+    },
+    {
+      "label": "Username",
+      "name": "config.credentials.username",
+      "type": "Text",
+      "required": true
+    },
+    {
+      "label": "Password",
+      "name": "config.credentials.password",
+      "type": "Password",
+      "required": true
+    },
+    {
+      "label": "SQL Query",
+      "name": "config.query",
+      "type": "Textarea",
+      "required": false,
+      "placeholder": "Leave empty to load all tables"
+    },
+    {
+      "label": "Content Columns",
+      "name": "config.content_columns",
+      "type": "Text",
+      "required": false,
+      "placeholder": "title,description,content",
+      "tooltip_en": "Comma-separated column names whose values will be combined as document content for vectorization."
+    },
+    {
+      "label": "Metadata Columns",
+      "name": "config.metadata_columns",
+      "type": "Text",
+      "required": false,
+      "placeholder": "id,category,status",
+      "tooltip_en": "Comma-separated column names to store as document metadata (not vectorized, but searchable)."
+    },
+    {
+      "label": "ID Column",
+      "name": "config.id_column",
+      "type": "Text",
+      "required": false,
+      "placeholder": "id",
+      "tooltip_en": "Column to use as unique document ID. If not specified, a hash of the content will be used."
+    },
+    {
+      "label": "Timestamp Column",
+      "name": "config.timestamp_column",
+      "type": "Text",
+      "required": false,
+      "placeholder": "updated_at",
+      "tooltip_en": "Datetime/timestamp column for incremental sync. Only rows modified after the last sync will be fetched."
+    }
+  ],
+  "R2": [
+    {
+      "label": "R2 Account ID",
+      "name": "config.credentials.account_id",
+      "type": "Text",
+      "required": true
+    },
+    {
+      "label": "R2 Access Key ID",
+      "name": "config.credentials.r2_access_key_id",
+      "type": "Text",
+      "required": true
+    },
+    {
+      "label": "R2 Secret Access Key",
+      "name": "config.credentials.r2_secret_access_key",
+      "type": "Password",
+      "required": true
+    },
+    {
+      "label": "Bucket Name",
+      "name": "config.bucket_name",
+      "type": "Text",
+      "required": true
+    }
+  ],
+  "REST_API": [
+    {
+      "label": "Base URL",
+      "name": "config.url",
+      "type": "Text",
+      "required": true,
+      "placeholder": "https://api.example.com/v1/resources"
+    },
+    {
+      "label": "HTTP Method",
+      "name": "config.method",
+      "type": "Select",
+      "required": true,
+      "default_value": "GET",
+      "options": [
+        {
+          "label": "GET",
+          "value": "GET"
+        },
+        {
+          "label": "POST",
+          "value": "POST"
+        }
+      ]
+    },
+    {
+      "label": "Query Parameters",
+      "name": "config.query_params",
+      "type": "Textarea",
+      "required": false
+    },
+    {
+      "label": "Items Path",
+      "name": "config.items_path",
+      "type": "Text",
+      "required": false,
+      "placeholder": "$.items",
+      "tooltip_en": "Field name or JSONPath to the array of items in the response. Leave empty to auto-detect (tries \"items\", \"results\", \"data\", etc.)."
+    },
+    {
+      "label": "ID Field",
+      "name": "config.id_field",
+      "type": "Text",
+      "required": false,
+      "placeholder": "id",
+      "tooltip_en": "Field path within each item used to build a stable document ID. Leave empty to auto-generate from content hash."
+    },
+    {
+      "label": "Auth Type",
+      "name": "config.auth_type",
+      "type": "Select",
+      "required": true,
+      "default_value": "none",
+      "options": [
+        {
+          "label": "None",
+          "value": "none"
+        },
+        {
+          "label": "API Key (Header)",
+          "value": "api_key_header"
+        },
+        {
+          "label": "Bearer Token",
+          "value": "bearer"
+        },
+        {
+          "label": "Basic Auth",
+          "value": "basic"
+        }
+      ]
+    },
+    {
+      "label": "API Key Header Name",
+      "name": "config.auth_config.header_name",
+      "type": "Text",
+      "required": false,
+      "placeholder": "X-API-Key",
+      "show_when": [
+        {
+          "field": "config.auth_type",
+          "equals": "api_key_header"
+        }
+      ]
+    },
+    {
+      "label": "API Key Value",
+      "name": "config.credentials.api_key",
+      "type": "Password",
+      "required": false,
+      "show_when": [
+        {
+          "field": "config.auth_type",
+          "equals": "api_key_header"
+        }
+      ]
+    },
+    {
+      "label": "Bearer Token",
+      "name": "config.credentials.token",
+      "type": "Password",
+      "required": false,
+      "show_when": [
+        {
+          "field": "config.auth_type",
+          "equals": "bearer"
+        }
+      ]
+    },
+    {
+      "label": "Username",
+      "name": "config.credentials.username",
+      "type": "Text",
+      "required": false,
+      "show_when": [
+        {
+          "field": "config.auth_type",
+          "equals": "basic"
+        }
+      ]
+    },
+    {
+      "label": "Password",
+      "name": "config.credentials.password",
+      "type": "Password",
+      "required": false,
+      "show_when": [
+        {
+          "field": "config.auth_type",
+          "equals": "basic"
+        }
+      ]
+    },
+    {
+      "label": "Content Fields",
+      "name": "config.content_fields",
+      "type": "Text",
+      "required": true,
+      "placeholder": "title,body",
+      "tooltip_en": "Comma-separated list of item fields to concatenate into the document content."
+    },
+    {
+      "label": "Metadata Fields",
+      "name": "config.metadata_fields",
+      "type": "Text",
+      "required": false,
+      "placeholder": "author,category",
+      "tooltip_en": "Comma-separated list of item fields to store as metadata."
+    },
+    {
+      "label": "Pagination Type",
+      "name": "config.pagination_type",
+      "type": "Select",
+      "required": true,
+      "default_value": "none",
+      "options": [
+        {
+          "label": "None",
+          "value": "none"
+        },
+        {
+          "label": "Page",
+          "value": "page"
+        },
+        {
+          "label": "Offset",
+          "value": "offset"
+        },
+        {
+          "label": "Cursor",
+          "value": "cursor"
+        }
+      ]
+    },
+    {
+      "label": "Start Page",
+      "name": "config.pagination_config.start_page",
+      "type": "Number",
+      "required": false,
+      "default_value": "1",
+      "show_when": [
+        {
+          "field": "config.pagination_type",
+          "equals": "page"
+        }
+      ]
+    },
+    {
+      "label": "Offset Param",
+      "name": "config.pagination_config.offset_param",
+      "type": "Text",
+      "required": false,
+      "default_value": "offset",
+      "show_when": [
+        {
+          "field": "config.pagination_type",
+          "equals": "offset"
+        }
+      ]
+    },
+    {
+      "label": "Start Offset",
+      "name": "config.pagination_config.start_offset",
+      "type": "Number",
+      "required": false,
+      "default_value": "0",
+      "show_when": [
+        {
+          "field": "config.pagination_type",
+          "equals": "offset"
+        }
+      ]
+    },
+    {
+      "label": "Cursor Param",
+      "name": "config.pagination_config.cursor_param",
+      "type": "Text",
+      "required": false,
+      "default_value": "cursor",
+      "show_when": [
+        {
+          "field": "config.pagination_type",
+          "equals": "cursor"
+        }
+      ]
+    },
+    {
+      "label": "Next Cursor JSONPath",
+      "name": "config.pagination_config.next_cursor_path",
+      "type": "Text",
+      "required": false,
+      "placeholder": "$.next_cursor",
+      "show_when": [
+        {
+          "field": "config.pagination_type",
+          "equals": "cursor"
+        }
+      ],
+      "tooltip_en": "JSONPath expression that resolves to the next-page cursor in the API response."
+    },
+    {
+      "label": "Advanced Settings",
+      "name": "config.show_advanced",
+      "type": "Switch",
+      "required": false
+    },
+    {
+      "label": "Custom Headers (JSON)",
+      "name": "config.headers",
+      "type": "Textarea",
+      "required": false,
+      "tooltip_en": "Optional JSON object of additional HTTP headers to send with every request."
+    },
+    {
+      "label": "Limit Param",
+      "name": "config.pagination_config.limit_param",
+      "type": "Text",
+      "required": false,
+      "placeholder": "limit (leave empty if already in Query Parameters)",
+      "show_when": [
+        {
+          "field": "config.pagination_type",
+          "equals": "offset"
+        }
+      ]
+    },
+    {
+      "label": "Initial Cursor",
+      "name": "config.pagination_config.initial_cursor",
+      "type": "Text",
+      "required": false,
+      "show_when": [
+        {
+          "field": "config.pagination_type",
+          "equals": "cursor"
+        }
+      ]
+    },
+    {
+      "label": "Max Pages",
+      "name": "config.max_pages",
+      "type": "Number",
+      "required": false,
+      "default_value": "1000"
+    },
+    {
+      "label": "Request Delay (seconds)",
+      "name": "config.request_delay",
+      "type": "Number",
+      "required": false,
+      "placeholder": "0.5",
+      "default_value": "0.5",
+      "tooltip_en": "Delay in seconds between consecutive page requests. Helps avoid rate limiting from the API. Set to 0 to disable."
+    },
+    {
+      "label": "Poll Timestamp Field",
+      "name": "config.poll_timestamp_field",
+      "type": "Text",
+      "required": false,
+      "placeholder": "updated_at",
+      "tooltip_en": "Field path in each item that represents the last updated time, used for incremental sync."
+    },
+    {
+      "label": "Request Body (POST) JSON",
+      "name": "config.request_body",
+      "type": "Textarea",
+      "required": false,
+      "show_when": [
+        {
+          "field": "config.method",
+          "equals": "POST"
+        }
+      ],
+      "tooltip_en": "Optional JSON body to send for POST requests. Used together with query params and pagination."
+    }
+  ],
+  "RSS": [
+    {
+      "label": "Feed URL",
+      "name": "config.feed_url",
+      "type": "Text",
+      "required": true,
+      "placeholder": "https://example.com/feed.xml"
+    },
+    {
+      "label": "Batch Size",
+      "name": "config.batch_size",
+      "type": "Number",
+      "required": false
+    }
+  ],
+  "S3": [
+    {
+      "label": "Bucket Name",
+      "name": "config.bucket_name",
+      "type": "Text",
+      "required": true
+    },
+    {
+      "label": "Region",
+      "name": "config.credentials.region",
+      "type": "Select",
+      "required": false,
+      "validate": [
+        {
+          "when": [
+            {
+              "field": "config.bucket_type",
+              "equals": "s3",
+              "default": "s3"
+            },
+            {
+              "field": "config.credentials.aws_access_key_id",
+              "any_filled": [
+                "config.credentials.aws_access_key_id",
+                "config.credentials.aws_secret_access_key"
+              ]
+            }
+          ],
+          "require": "nonempty",
+          "field": "config.credentials.region",
+          "message_en": "Region is required when using access key"
+        }
+      ],
+      "allow_custom": true
+    },
+    {
+      "label": "Prefix",
+      "name": "config.prefix",
+      "type": "Text",
+      "required": false,
+      "tooltip_en": "Specify the folder path within your S3 bucket to fetch files from.\nExample: general/v2/"
+    },
+    {
+      "label": "Mode",
+      "name": "config.bucket_type",
+      "type": "Segmented",
+      "options": [
+        {
+          "label": "S3",
+          "value": "s3"
+        },
+        {
+          "label": "S3 Compatible",
+          "value": "s3_compatible"
+        }
+      ]
+    },
+    {
+      "label": "Authentication",
+      "name": "config.credentials.authentication_method",
+      "type": "Segmented",
+      "options": [
+        {
+          "label": "Access Key",
+          "value": "access_key"
+        },
+        {
+          "label": "IAM Role",
+          "value": "iam_role"
+        },
+        {
+          "label": "Assume Role",
+          "value": "assume_role"
+        }
+      ],
+      "show_when": [
+        {
+          "field": "config.bucket_type",
+          "equals": "s3",
+          "default": "s3"
+        }
+      ]
+    },
+    {
+      "label": "AWS Access Key ID",
+      "name": "config.credentials.aws_access_key_id",
+      "type": "Text",
+      "show_when": [
+        {
+          "field": "config.credentials.authentication_method",
+          "equals": "access_key"
+        },
+        {
+          "field": "config.bucket_type",
+          "equals": "s3_compatible",
+          "default": "s3"
+        }
+      ],
+      "validate": [
+        {
+          "when": [],
+          "when_any": [
+            [
+              {
+                "field": "config.credentials.authentication_method",
+                "equals": "access_key"
+              }
+            ],
+            [
+              {
+                "field": "config.bucket_type",
+                "equals": "s3_compatible",
+                "default": "s3"
+              }
+            ]
+          ],
+          "require": "nonempty",
+          "field": "config.credentials.aws_access_key_id",
+          "message_en": "AWS Access Key ID is required"
+        }
+      ]
+    },
+    {
+      "label": "AWS Secret Access Key",
+      "name": "config.credentials.aws_secret_access_key",
+      "type": "Password",
+      "show_when": [
+        {
+          "field": "config.credentials.authentication_method",
+          "equals": "access_key"
+        },
+        {
+          "field": "config.bucket_type",
+          "equals": "s3_compatible",
+          "default": "s3"
+        }
+      ],
+      "validate": [
+        {
+          "when": [],
+          "when_any": [
+            [
+              {
+                "field": "config.credentials.authentication_method",
+                "equals": "access_key"
+              }
+            ],
+            [
+              {
+                "field": "config.bucket_type",
+                "equals": "s3_compatible",
+                "default": "s3"
+              }
+            ]
+          ],
+          "require": "nonempty",
+          "field": "config.credentials.aws_secret_access_key",
+          "message_en": "\"AWS Secret Access Key\" is required"
+        }
+      ]
+    },
+    {
+      "label": "Role ARN",
+      "name": "config.credentials.aws_role_arn",
+      "type": "Text",
+      "placeholder": "arn:aws:iam::123456789012:role/YourRole",
+      "show_when": [
+        {
+          "field": "config.credentials.authentication_method",
+          "equals": "iam_role"
+        }
+      ],
+      "show_when_all": [
+        {
+          "field": "config.bucket_type",
+          "equals": "s3",
+          "default": "s3"
+        }
+      ],
+      "validate": [
+        {
+          "when": [
+            {
+              "field": "config.credentials.authentication_method",
+              "equals": "iam_role"
+            },
+            {
+              "field": "config.bucket_type",
+              "equals": "s3",
+              "default": "s3"
+            }
+          ],
+          "require": "nonempty",
+          "field": "config.credentials.aws_role_arn",
+          "message_en": "Role ARN is required when using an IAM role"
+        }
+      ],
+      "tooltip_en": "The role will be assumed by the runtime environment."
+    },
+    {
+      "label": " ",
+      "name": "filter.tip",
+      "type": "Custom",
+      "panel_en": "No credentials required. Uses the default environment role.",
+      "show_when_all": [
+        {
+          "field": "config.credentials.authentication_method",
+          "equals": "assume_role"
+        },
+        {
+          "field": "config.bucket_type",
+          "equals": "s3",
+          "default": "s3"
+        }
+      ]
+    },
+    {
+      "label": "Addressing Style",
+      "name": "config.credentials.addressing_style",
+      "type": "Select",
+      "required": false,
+      "default_value": "virtual",
+      "options": [
+        {
+          "label": "Virtual Hosted Style",
+          "value": "virtual"
+        },
+        {
+          "label": "Path Style",
+          "value": "path"
+        }
+      ],
+      "show_when": [
+        {
+          "field": "config.bucket_type",
+          "equals": "s3_compatible",
+          "default": "s3"
+        }
+      ],
+      "tooltip_en": "Required for S3 compatible Storage Box. Specify the S3-compatible addressing style.\nExample: Virtual Hosted Style"
+    },
+    {
+      "label": "Endpoint URL",
+      "name": "config.credentials.endpoint_url",
+      "type": "Text",
+      "required": false,
+      "placeholder": "https://fsn1.your-objectstorage.com",
+      "show_when": [
+        {
+          "field": "config.bucket_type",
+          "equals": "s3_compatible",
+          "default": "s3"
+        }
+      ],
+      "tooltip_en": "Required for S3 compatible Storage Box. Specify the S3-compatible endpoint URL.\nExample: https://fsn1.your-objectstorage.com"
+    }
+  ],
+  "SALESFORCE": [
+    {
+      "label": "Instance URL",
+      "name": "config.credentials.instance_url",
+      "type": "Text",
+      "required": true,
+      "placeholder": "https://your-domain.my.salesforce.com",
+      "tooltip_en": "Salesforce org URL, e.g. https://your-domain.my.salesforce.com (no trailing slash).",
+      "tooltip_zh": "Salesforce 组织地址，例如 https://your-domain.my.salesforce.com（不要包含末尾斜杠）。"
+    },
+    {
+      "label": "Client ID",
+      "name": "config.credentials.client_id",
+      "type": "Text",
+      "required": true,
+      "tooltip_en": "Consumer Key of a Connected App with Client Credentials Flow enabled and the api scope.",
+      "tooltip_zh": "已启用 Client Credentials Flow 且包含 api 权限的 Connected App 的 Consumer Key。"
+    },
+    {
+      "label": "Client Secret",
+      "name": "config.credentials.client_secret",
+      "type": "Password",
+      "required": true,
+      "tooltip_en": "Consumer Secret of the Connected App used for client-credentials authentication.",
+      "tooltip_zh": "用于客户端凭证身份验证的 Connected App 的 Consumer Secret。"
+    },
+    {
+      "label": "Objects",
+      "name": "config.objects",
+      "type": "Text",
+      "required": false,
+      "placeholder": "Account,Contact,Opportunity,Case,Knowledge__kav",
+      "tooltip_en": "Comma-separated SObject API names to index. Defaults to Account, Contact, Opportunity, Case, Knowledge__kav.",
+      "tooltip_zh": "要索引的 SObject API 名称列表（逗号分隔）。默认值：Account, Contact, Opportunity, Case, Knowledge__kav。"
+    },
+    {
+      "label": "API Version",
+      "name": "config.api_version",
+      "type": "Text",
+      "required": false,
+      "placeholder": "v59.0",
+      "tooltip_en": "Salesforce REST API version (e.g. v59.0). Use the version your org supports.",
+      "tooltip_zh": "Salesforce REST API 版本（例如 v59.0），请使用您组织所支持的版本。"
+    },
+    {
+      "label": "Batch Size",
+      "name": "config.batch_size",
+      "type": "Number",
+      "required": false
+    }
+  ],
+  "SEAFILE": [
+    {
+      "label": "SeaFile Server URL",
+      "name": "config.seafile_url",
+      "type": "Text",
+      "required": true,
+      "placeholder": "https://seafile.example.com",
+      "tooltip_en": "The full URL of your SeaFile server including the protocol. Example: https://seafile.example.com - Do not include a trailing slash or any path after the domain."
+    },
+    {
+      "label": "Sync Scope",
+      "name": "config.sync_scope",
+      "type": "Segmented",
+      "options": [
+        {
+          "label": "Entire Account",
+          "value": "account"
+        },
+        {
+          "label": "Single Library",
+          "value": "library"
+        },
+        {
+          "label": "Specific Directory",
+          "value": "directory"
+        }
+      ],
+      "tooltip_en": "Controls what gets synchronised: "
+    },
+    {
+      "label": " ",
+      "name": "filter.account-tip",
+      "type": "Custom",
+      "show_when": [
+        {
+          "field": "config.sync_scope",
+          "equals": "account",
+          "default": "account"
+        }
+      ],
+      "panel_en": "Syncs all libraries visible to the Account API Token below."
+    },
+    {
+      "label": "Account API Token",
+      "name": "config.credentials.seafile_token",
+      "type": "Password",
+      "required": false,
+      "default_value": "",
+      "show_when": [
+        {
+          "field": "config.sync_scope",
+          "equals": "account"
+        },
+        {
+          "field": "config.sync_scope",
+          "equals": "library"
+        },
+        {
+          "field": "config.sync_scope",
+          "equals": "directory"
+        }
+      ],
+      "validate": [
+        {
+          "when": [
+            {
+              "field": "config.sync_scope",
+              "equals": "account",
+              "default": "account"
+            }
+          ],
+          "require": "nonempty",
+          "field": "config.credentials.seafile_token",
+          "message_en": "Account API Token is required for Entire Account scope"
+        }
+      ],
+      "tooltip_en": "Your account-level SeaFile API token. Grants access to all libraries visible to your account. Required when sync scope is \"Entire Account\". For \"Single Library\" or \"Specific Directory\" you can use this token or a Library API Token instead."
+    },
+    {
+      "label": "Include Shared Libraries",
+      "name": "config.include_shared",
+      "type": "Checkbox",
+      "required": false,
+      "show_when": [
+        {
+          "field": "config.sync_scope",
+          "equals": "account"
+        }
+      ],
+      "default_value": "true",
+      "tooltip_en": "When enabled, libraries that other users have shared with you are included in the synchronisation. When disabled, only libraries owned by your account are synchronised. Only applies when sync scope is \"Entire Account\"."
+    },
+    {
+      "label": " ",
+      "name": "filter.token-tip",
+      "type": "Custom",
+      "show_when": [
+        {
+          "field": "config.sync_scope",
+          "any_of": [
+            "library",
+            "directory"
+          ],
+          "default": "account"
+        }
+      ],
+      "panel_en": "Provide one of these authentication methods:\nAccount API Token - grants access to all your libraries.\nLibrary Token - scoped to a single library only (more secure)."
+    },
+    {
+      "label": "Library Token",
+      "name": "config.credentials.repo_token",
+      "type": "Password",
+      "required": false,
+      "show_when": [
+        {
+          "field": "config.sync_scope",
+          "equals": "library"
+        },
+        {
+          "field": "config.sync_scope",
+          "equals": "directory"
+        }
+      ],
+      "validate": [
+        {
+          "when": [
+            {
+              "field": "config.sync_scope",
+              "any_of": [
+                "library",
+                "directory"
+              ],
+              "default": "account"
+            }
+          ],
+          "require": "any_of",
+          "field": "config.credentials.repo_token",
+          "targets": [
+            "config.credentials.seafile_token",
+            "config.credentials.repo_token"
+          ],
+          "message_en": "Provide either an Account API Token or a Library Token"
+        }
+      ],
+      "tooltip_en": "A library-scoped API token that only grants access to one specific library. Can be used instead of the Account API Token for \"Single Library\" and \"Specific Directory\" sync scopes."
+    },
+    {
+      "label": "Library ID",
+      "name": "config.repo_id",
+      "type": "Text",
+      "required": false,
+      "placeholder": "e.g. 7a9e1b3c-4d5f-6a7b-8c9d-0e1f2a3b4c5d",
+      "show_when": [
+        {
+          "field": "config.sync_scope",
+          "equals": "library"
+        },
+        {
+          "field": "config.sync_scope",
+          "equals": "directory"
+        }
+      ],
+      "validate": [
+        {
+          "when": [
+            {
+              "field": "config.sync_scope",
+              "any_of": [
+                "library",
+                "directory"
+              ],
+              "default": "account"
+            }
+          ],
+          "require": "nonempty",
+          "field": "config.repo_id",
+          "message_en": "Library ID is required"
+        }
+      ],
+      "tooltip_en": "The unique identifier (UUID) of the SeaFile library you want to synchronise. You can find it in your browser address bar when you open the library in the SeaFile web interface. Example: 7a9e1b3c-4d5f-6a7b-8c9d-0e1f2a3b4c5d. Required when sync scope is \"Single Library\" or \"Specific Directory\"."
+    },
+    {
+      "label": "Directory Path",
+      "name": "config.sync_path",
+      "type": "Text",
+      "required": false,
+      "placeholder": "/Documents/Reports",
+      "show_when": [
+        {
+          "field": "config.sync_scope",
+          "equals": "directory"
+        }
+      ],
+      "validate": [
+        {
+          "when": [
+            {
+              "field": "config.sync_scope",
+              "equals": "directory",
+              "default": "account"
+            }
+          ],
+          "require": "nonempty",
+          "field": "config.sync_path",
+          "message_en": "Directory Path is required"
+        }
+      ],
+      "tooltip_en": "The absolute path of the folder to synchronise within the library specified by the Library ID above. Must start with a forward slash. All files and subfolders under this path will be included recursively. Example: /Documents/Reports. Important: The folder must exist inside the specified library. Paths outside the library are not supported. Only used when sync scope is \"Specific Directory\"."
+    },
+    {
+      "label": "Batch Size",
+      "name": "config.batch_size",
+      "type": "Number",
+      "required": false,
+      "placeholder": "100",
+      "tooltip_en": "The number of documents processed and returned per batch during synchronisation. "
+    }
+  ],
+  "SHAREPOINT": [
+    {
+      "label": "Site URL",
+      "name": "config.credentials.site_url",
+      "type": "Text",
+      "required": true,
+      "placeholder": "https://contoso.sharepoint.com/sites/MySite",
+      "tooltip_en": "Full URL of the SharePoint site to index, e.g. https://contoso.sharepoint.com/sites/MySite. Requires an Azure AD app with Sites.Read.All and Files.Read.All application permissions (admin consent).",
+      "tooltip_zh": "要索引的 SharePoint 站点完整 URL，例如 https://contoso.sharepoint.com/sites/MySite。需要具备 Sites.Read.All 与 Files.Read.All 应用权限（管理员同意）的 Azure AD 应用。"
+    },
+    {
+      "label": "Tenant ID",
+      "name": "config.credentials.tenant_id",
+      "type": "Text",
+      "required": true
+    },
+    {
+      "label": "Client ID",
+      "name": "config.credentials.client_id",
+      "type": "Text",
+      "required": true
+    },
+    {
+      "label": "Client Secret",
+      "name": "config.credentials.client_secret",
+      "type": "Password",
+      "required": true
+    }
+  ],
+  "SLACK": [
+    {
+      "label": "Slack Bot Token",
+      "name": "config.credentials.slack_bot_token",
+      "type": "Password",
+      "required": true,
+      "tooltip_en": "Slack bot user OAuth token (starts with xoxb-). The app needs the channels:read, channels:history, and users:read scopes.",
+      "tooltip_zh": "Slack 机器人用户 OAuth Token（以 xoxb- 开头）。应用需具备 channels:read、channels:history 和 users:read 权限。"
+    }
+  ],
+  "TEAMS": [
+    {
+      "label": "Tenant ID",
+      "name": "config.credentials.tenant_id",
+      "type": "Text",
+      "required": true,
+      "tooltip_en": "Azure AD tenant ID. Requires an app with Team.ReadBasic.All and ChannelMessage.Read.All application permissions (admin consent).",
+      "tooltip_zh": "Azure AD 租户 ID。需要具备 Team.ReadBasic.All 与 ChannelMessage.Read.All 应用权限（管理员同意）的应用。"
+    },
+    {
+      "label": "Client ID",
+      "name": "config.credentials.client_id",
+      "type": "Text",
+      "required": true
+    },
+    {
+      "label": "Client Secret",
+      "name": "config.credentials.client_secret",
+      "type": "Password",
+      "required": true
+    }
+  ],
+  "WEBDAV": [
+    {
+      "label": "WebDAV Server URL",
+      "name": "config.base_url",
+      "type": "Text",
+      "required": true,
+      "placeholder": "https://webdav.example.com"
+    },
+    {
+      "label": "Username",
+      "name": "config.credentials.username",
+      "type": "Text",
+      "required": true
+    },
+    {
+      "label": "Password",
+      "name": "config.credentials.password",
+      "type": "Password",
+      "required": true
+    },
+    {
+      "label": "Remote Path",
+      "name": "config.remote_path",
+      "type": "Text",
+      "required": false,
+      "placeholder": "/",
+      "tooltip_en": "Optional: Specify a folder path on the WebDAV server (e.g., /Documents). Leave empty to sync from root."
+    }
+  ],
+  "ZENDESK": [
+    {
+      "label": "Zendesk Domain",
+      "name": "config.credentials.zendesk_subdomain",
+      "type": "Text",
+      "required": true
+    },
+    {
+      "label": "Zendesk Email",
+      "name": "config.credentials.zendesk_email",
+      "type": "Text",
+      "required": true
+    },
+    {
+      "label": "Zendesk Token",
+      "name": "config.credentials.zendesk_token",
+      "type": "Password",
+      "required": true
+    },
+    {
+      "label": "Content",
+      "name": "config.zendesk_content_type",
+      "type": "Segmented",
+      "required": true,
+      "options": [
+        {
+          "label": "Articles",
+          "value": "articles"
+        },
+        {
+          "label": "Tickets",
+          "value": "tickets"
+        }
+      ]
+    }
+  ]
+}
