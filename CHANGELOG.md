@@ -2,6 +2,14 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.9.9] - 2026-10-02
+
+- **修复两处"页面 JS 不生效"的真 bug（都是浏览器实测抓到的）**：
+  1. `dsParseTypeChange()` 被我改写时**丢掉语句分隔符并多了一个括号**，整段是语法错误，导致选择 `Pipeline` 时毫无反应（控制台 `Unexpected token 'var'`、`dsParseTypeChange is not defined`）——现在函数恢复正确，**选择 Pipeline 会显示 Pipeline 选择框与提示**；
+  2. 滑块联动函数 `syncSliderToNumber` / `syncNumberToSlider` 只加进了**两个脚本段中的一个**，而渲染滑块的页面用的是另一段 → 控制台 `... is not defined`、拖动无效。现在**两个脚本段都定义**。
+- 教训（本阶段第三次同源）：**Rust 字符串里内嵌 JS，编译通过 ≠ 浏览器能跑**。因此每次界面改动都必须在浏览器里点一遍并**读控制台错误**——本轮正是靠 `page.on('pageerror')` 抓到这两处。
+- 测试：全量 **2155 passed / 0 failed**。
+
 ## [0.9.8] - 2026-10-02
 
 - **修复滑块与数值框的联动**（浏览器实测发现的真 bug）：上一版生成的属性是 `oninput='syncSliderToNumber(this,\'cfgThrV\')'`——**单引号包裹的 HTML 属性里 `\'` 不是转义**，属性在 `\'` 处就结束了，浏览器拿到的是一个语法错误的处理函数，于是**拖动滑块数字不变、输入数字滑块也不动**（页面控制台报 `SyntaxError: Unexpected end of input`）。改为属性内使用双引号（`oninput='syncSliderToNumber(this,"cfgThrV")'`）后双向联动生效。
