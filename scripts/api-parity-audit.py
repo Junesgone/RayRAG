@@ -68,8 +68,6 @@ KNOWN_METHOD_GAPS: dict[str, str] = {
 }
 
 KNOWN_MISSING: dict[str, str] = {
-    "/datasets/<dataset_id>/skills": "功能级缺口：数据集 Skills 面未实现（Skills 索引仅有全局 /api/v1/skills/*）",
-    "/datasets/<dataset_id>/skills/<path:skill_kwd>": "功能级缺口：同上（Skills 面未实现）",
 }
 
 

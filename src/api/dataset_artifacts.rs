@@ -60,7 +60,7 @@ fn scalar(row: &Value, key: &str) -> String {
 /// `block_on`, and both connecting *and querying* from a tokio worker panic with "Cannot
 /// start a runtime from within a runtime". Every read and write therefore happens inside
 /// `spawn_blocking`, on the same pool instance so the connection stays cached.
-async fn with_store<T, F>(state: &Arc<AppState>, work: F) -> Result<T, Response>
+pub(crate) async fn with_store<T, F>(state: &Arc<AppState>, work: F) -> Result<T, Response>
 where
     F: FnOnce(&dyn crate::doc_store::DocStore) -> anyhow::Result<T> + Send + 'static,
     T: Send + 'static,

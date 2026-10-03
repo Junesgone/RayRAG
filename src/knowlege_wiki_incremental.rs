@@ -321,7 +321,9 @@ pub fn should_re_synthesize(
         && (total_sources as f64) >= (existing_sources.len() as f64) * RE_SYNTHESIS_GROWTH_RATIO
 }
 
-fn inc_search_page(
+/// Paged row query against the tenant index. Shared with the skill compiler so both read the
+/// index the same way.
+pub(crate) fn inc_search_page(
     store: &dyn DocStore,
     tenant_id: &str,
     kb_id: &str,

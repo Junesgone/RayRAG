@@ -2,6 +2,54 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.25.0] - 2026-10-04
+
+### The last two gaps: the compiled skill tree
+
+`GET|HEAD|DELETE /api/v1/datasets/{id}/skills` and `GET|DELETE /api/v1/datasets/{id}/skills/<path:skill_kwd>`
+were the final entries in the parity ledger. They could not exist for the same reason the artifact route
+could not: **nothing produced the data**. Upstream builds a recursive skill tree with Corpus2Skill, one row
+per node (`compile_kwd = "skill"`, carrying `skill_kwd`, `depth_int`, `children_kwd`, `source_doc_ids`,
+`md_with_weight`) plus one aggregate row (`compile_kwd = "skill_all"`) holding the whole tree as a single
+markdown document.
+
+RayRAG compiles that tree **from the corpus structure itself**: the heading hierarchy of the indexed
+chunks, in document order, each node carrying the text beneath its heading. This is a deliberate,
+documented divergence from upstream's LLM-driven compiler, and it is the honest choice here:
+
+* it needs no chat model, so a deployment with no model still gets a real tree instead of an invented one;
+* the same rows in the same order always compile to the same tree;
+* every byte served comes from the corpus — nothing is synthesised.
+
+A corpus with no headings falls back to one node per document, named after the document stem. That is
+still derived from the corpus, and it is reported as such rather than silently returning an empty tree.
+An empty dataset is refused with `102 "The dataset has no indexed content to compile skills from"` instead
+of storing a tree that looks compiled.
+
+* **Routes**, with upstream's shapes: the aggregate row (or `null`), a node by path (or `null`), both
+  deletions answering `{"deleted": n}` — where deleting a branch counts its descendants, and the parent
+  forgets the child it lost. `HEAD` answers `200`/`404` with no body. A dataset the caller cannot reach is
+  refused with upstream's exact wording *and* its business code (`500 "no authorization"`), which differs
+  from RayRAG's usual permission code on purpose and is recorded in the registry.
+* **The producer** is `POST /api/v1/datasets/{id}/skills/compile`, a RayRAG addition: upstream drives
+  compilation from its UI, and a button needs an endpoint. It reads the dataset's indexed chunks through
+  the sanctioned blocking wrapper, pages the index in 500-row windows, and stops at a 20,000-row cap, so a
+  large dataset is read in order rather than pulled into memory at once.
+* **The UI** is a *Compiled skills* card on the dataset page: compile, refresh, delete-all, and per node a
+  toggle, a *View* that fetches the node body, and a *Delete*. The card states where the content comes
+  from rather than implying a model wrote it.
+
+### Bugs the new tests caught before they shipped
+
+Writing the compiler first and testing it immediately paid off three times: the heading stack **leaked
+across documents** (a `#` heading in one file nested under the `##` heading the previous file ended on),
+`open.truncate(depth)` made **every second `##` heading a child of the previous one** instead of a
+sibling, and the no-heading fallback keyed a document as `notes-txt` instead of `notes`. All three were
+found by the compiler's own tests, not by a running deployment.
+
+**2248 tests pass, 0 failures; the parity ledger reads missing=0** — every upstream route in the v0.27.2
+API guide is now implemented, aliased, or covered.
+
 ## [0.24.0] - 2026-10-04
 
 ### Sandbox artifacts had no home, so the route could not exist

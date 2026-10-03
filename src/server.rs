@@ -72,6 +72,7 @@ pub struct AppState {
     pub attachments: Arc<crate::api::attachments::AttachmentStore>,
     pub metadata_config: Arc<crate::api::metadata_config::MetadataConfigStore>,
     pub artifacts: Arc<crate::api::artifacts::ArtifactStore>,
+    pub skill_trees: Arc<crate::api::skill_tree::SkillTreeStore>,
     pub connectors: Arc<crate::api::connector::ConnectorStore>,
     pub data_sources: Option<Arc<crate::api::data_source_mgr::DataSourceStore>>,
     pub search_apps: Option<Arc<crate::api::searchapp_mgr::SearchAppStore>>,
@@ -5351,6 +5352,23 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/documents/artifacts",
             get(crate::api::artifacts::list_artifacts),
         )
+        // The compiled skill tree. Upstream reads and deletes it through these five verbs; the compile
+        // route is RayRAG's producer, because a button needs an endpoint (see the registry).
+        .route(
+            "/api/v1/datasets/{kb_id}/skills",
+            get(crate::api::skill_tree::get_skills)
+                .head(crate::api::skill_tree::head_skills)
+                .delete(crate::api::skill_tree::delete_skills),
+        )
+        .route(
+            "/api/v1/datasets/{kb_id}/skills/compile",
+            post(crate::api::skill_tree::compile_skills),
+        )
+        .route(
+            "/api/v1/datasets/{kb_id}/skills/{*skill_kwd}",
+            get(crate::api::skill_tree::get_skill_node)
+                .delete(crate::api::skill_tree::delete_skill_node),
+        )
         .route(
             "/api/v1/documents/images/{image_id}",
             get(crate::api::doc_assets::document_image),
@@ -6289,6 +6307,9 @@ pub async fn run(
         "{static_dir}/../uploads/artifacts.json"
     ));
     let artifacts = crate::api::artifacts::ArtifactStore::shared();
+    let skill_trees = Arc::new(crate::api::skill_tree::SkillTreeStore::new(&format!(
+        "{static_dir}/../uploads/skill_trees.json"
+    ))?);
     let data_sources = Some(Arc::new(crate::api::data_source_mgr::DataSourceStore::new(
         &format!("{}/../uploads/", static_dir),
     )?));
@@ -6431,6 +6452,7 @@ pub async fn run(
         attachments,
         metadata_config,
         artifacts,
+        skill_trees,
         connectors,
         document_metadata,
         whitelist: Arc::new(crate::registration_whitelist::WhitelistStore::new(
@@ -6713,6 +6735,7 @@ mod tests {
             port: 0,
             doc_store: Arc::new(crate::doc_store::DocStorePool::memory()),
             artifacts: Arc::new(crate::api::artifacts::ArtifactStore::in_memory()),
+            skill_trees: Arc::new(crate::api::skill_tree::SkillTreeStore::in_memory()),
             users,
             kbs: Arc::new(KbStore::new(root.join("kbs.json").to_str().unwrap()).unwrap()),
             tenants: Arc::new(
@@ -8146,6 +8169,7 @@ mod tests {
                 .unwrap(),
             ),
             artifacts: Arc::new(crate::api::artifacts::ArtifactStore::in_memory()),
+            skill_trees: Arc::new(crate::api::skill_tree::SkillTreeStore::in_memory()),
             metadata_config: Arc::new(
                 crate::api::metadata_config::MetadataConfigStore::new(
                     root.join("metadata-config.json").to_str().unwrap(),
@@ -13614,6 +13638,157 @@ mod tests {
             "these handlers touch the doc store without a blocking wrapper (req_store / spawn_blocking / \
              with_store), so their queries would run on a tokio worker: {direct_pool_users:?}"
         );
+    }
+
+    /// The skill routes: the aggregate row, a node by path, both deletions, and the refusals. The
+    /// tree itself is built by the compiler's own tests; here the stored tree goes in directly so the
+    /// route contract is what is under test.
+    #[tokio::test]
+    async fn the_skill_routes_serve_and_delete_what_was_compiled() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Skills KB", "d")
+            .unwrap();
+        let tree = crate::api::skill_tree::build_tree(
+            &kb.id,
+            &[
+                crate::api::skill_tree::SkillSourceChunk {
+                    doc_id: "d1".into(),
+                    doc_name: "guide.md".into(),
+                    content: "# Install\n\nRun it.".into(),
+                },
+                crate::api::skill_tree::SkillSourceChunk {
+                    doc_id: "d1".into(),
+                    doc_name: "guide.md".into(),
+                    content: "## Linux\n\nTarball.".into(),
+                },
+            ],
+            1,
+        );
+        env.state.skill_trees.put(&kb.id, tree.clone());
+
+        let call = |method: Method, uri: String| {
+            let router = build_router(env.state.clone());
+            let token = env.token.clone();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(method)
+                            .uri(uri)
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        // HEAD answers 200 while a tree exists and 404 once it is gone.
+        let head = call(Method::HEAD, format!("/api/v1/datasets/{}/skills", kb.id)).await;
+        assert_eq!(head.status(), StatusCode::OK);
+        assert_eq!(
+            to_bytes(head.into_body(), 1 << 20).await.unwrap().len(),
+            0,
+            "a HEAD carries no body"
+        );
+
+        // The aggregate row is served whole, with the fields upstream's row carries.
+        let all =
+            response_json(call(Method::GET, format!("/api/v1/datasets/{}/skills", kb.id)).await)
+                .await;
+        assert_eq!(all["code"], 0, "{all}");
+        assert_eq!(all["data"]["compile_kwd"], "skill_all", "{all}");
+        assert_eq!(
+            all["data"]["children_kwd"],
+            serde_json::json!(["install"]),
+            "{all}"
+        );
+        assert_eq!(all["data"]["node_count"], 2, "{all}");
+        assert!(
+            all["data"]["md_with_weight"]
+                .as_str()
+                .unwrap()
+                .contains("Run it."),
+            "{all}"
+        );
+
+        // A node is fetched by its path, and its children are named.
+        let node = response_json(
+            call(
+                Method::GET,
+                format!("/api/v1/datasets/{}/skills/install", kb.id),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(node["data"]["skill_kwd"], "install", "{node}");
+        assert_eq!(
+            node["data"]["children_kwd"],
+            serde_json::json!(["install/linux"]),
+            "{node}"
+        );
+        assert_eq!(node["data"]["compile_kwd"], "skill", "{node}");
+        assert_eq!(node["data"]["depth_int"], 1, "{node}");
+        let nested = response_json(
+            call(
+                Method::GET,
+                format!("/api/v1/datasets/{}/skills/install/linux", kb.id),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(nested["data"]["skill_kwd"], "install/linux", "{nested}");
+
+        // An unknown node is `null`, not an error: that is what upstream answers.
+        let missing = response_json(
+            call(
+                Method::GET,
+                format!("/api/v1/datasets/{}/skills/nope", kb.id),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(missing["code"], 0, "{missing}");
+        assert!(missing["data"].is_null(), "{missing}");
+
+        // Deleting a branch reports the rows it removed, descendants included.
+        let removed = response_json(
+            call(
+                Method::DELETE,
+                format!("/api/v1/datasets/{}/skills/install", kb.id),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(removed["data"]["deleted"], 2, "{removed}");
+        assert!(
+            env.state.skill_trees.get(&kb.id).is_none(),
+            "the last branch took the tree with it"
+        );
+        let head_after = call(Method::HEAD, format!("/api/v1/datasets/{}/skills", kb.id)).await;
+        assert_eq!(head_after.status(), StatusCode::NOT_FOUND);
+
+        // Deleting a tree that is not there reports zero rather than failing.
+        let again =
+            response_json(call(Method::DELETE, format!("/api/v1/datasets/{}/skills", kb.id)).await)
+                .await;
+        assert_eq!(again["data"]["deleted"], 0, "{again}");
+
+        // A dataset the caller cannot reach is refused with upstream's wording and code.
+        let foreign = response_json(
+            call(
+                Method::GET,
+                "/api/v1/datasets/nobody-elses/skills".to_string(),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(foreign["code"], 500, "{foreign}");
+        assert_eq!(foreign["message"], "no authorization", "{foreign}");
     }
 
     /// The artifact route: what the executor collected can be fetched by its owner, and every refusal

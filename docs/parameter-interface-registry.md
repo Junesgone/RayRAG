@@ -896,3 +896,19 @@ RAGFlow 把麦克风放在**聊天输入区**；RayRAG 目前把这个能力放�
 - **存储**：`uploads/artifacts.json`（+ PostgreSQL 镜像）；单文件上限 16 MB、总量 500，占用超限拒绝并记日志（**不能静默丢弃**）。
 - **生产者**：agent 代码执行路径把 `SandboxResult.artifacts` 写入 `ArtifactStore::shared()`（执行器拿不到 AppState）；**API 持有同一个 Arc 实例**，否则会读到陈旧副本（只在文件型存储的生产环境才暴露）。
 - **UI**：沙箱设置页 `#sbArtifactCard`（`data-testid='sandbox-artifact-card|sandbox-artifact-refresh|sandbox-artifact-status|sandbox-artifact-download|sandbox-artifact-delete'`）；下载走带 token 的 fetch + Blob（裸 `<a href>` 不带 token 会被拒）。
+
+### 0.25.0：技能树（Skills）
+
+- **上游契约**：每个技能节点一行（`compile_kwd="skill"`，字段 `skill_kwd` / `depth_int` / `children_kwd` / `source_doc_ids` / `md_with_weight`），再加一行聚合（`compile_kwd="skill_all"`，正文为整棵树的 markdown）。常量与上游一致：`_SKILL_COMPILE_KWD="skill"`、`_SKILL_ALL_COMPILE_KWD="skill_all"`。
+- **接口**：
+  - `GET /api/v1/datasets/{id}/skills` → `{code:0,data:<聚合行|null>}`
+  - `HEAD` 同路径 → 有树 `200`、无树 `404`，无正文；无权限 `403`（HEAD 无法带拒绝正文，由状态码承载）
+  - `DELETE` 同路径 → `{code:0,data:{deleted:n}}`（聚合行计 1）
+  - `GET /api/v1/datasets/{id}/skills/<path:skill_kwd>` → `{code:0,data:<节点行|null>}`（支持 `install/linux` 形式）
+  - `DELETE` 同路径 → `{code:0,data:{deleted:n}}`，删除子树（含后代），父节点同步移除该子键
+  - **RayRAG 补充**：`POST /api/v1/datasets/{id}/skills/compile`（上游由 UI 驱动知识编译，无 REST 路由；按钮需要端点）
+- **权限拒绝**：`{code:500, message:"no authorization"}` —— **故意**照抄上游这些路由的业务码 500，与 RayRAG 其他数据集路由常用的 102 不同，属于「1:1 对齐上游」的例外，已在运维记录中标注。
+- **编译来源（重要差异）**：上游用 LLM（Corpus2Skill）生成技能树；RayRAG **从语料结构编译**：按已索引分块的标题层级（`#`..`######`）在文档内建树，节点正文即该标题下的原文；无标题语料回退为「每文档一个节点」，键取文档名去扩展名。**不合成任何文本**，无需模型，同序同结果。空数据集返回 `102 The dataset has no indexed content to compile skills from`，不落一棵看起来像编译成功的空树。
+- **读取顺序与上限**：按文档分组（稳定排序，保留文档内原序），`inc_search_page` 分页 500 行/页，累计上限 20000 行；超出时记 warning。
+- **存储**：`uploads/skill_trees.json`（键为数据集 id；+ PostgreSQL 镜像）。
+- **UI**：数据集页 `#dsSkillCard`（`data-testid='dataset-skill-card|compile|reload|delete-all|status|tree|toggle|view|delete'`）。

@@ -49,6 +49,7 @@ pub mod searchapp_mgr;
 pub mod searchbot;
 pub mod setup;
 pub mod skill_index;
+pub mod skill_tree;
 pub mod structure_graph;
 pub mod structure_graph_common;
 pub mod system;

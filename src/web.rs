@@ -3550,6 +3550,154 @@ function toggleChunkOptions(){var m=document.getElementById('chunkMethod').value
     b.push_str("function kgRenderGraph(g){if(!g)return '';var nodes=g.nodes||[];var edges=g.edges||[];var h='<p style=margin:0 0 10px><strong>'+nodes.length+'</strong> nodes / <strong>'+edges.length+'</strong> edges</p>';if(!nodes.length){h+='<p style=color:var(--tm)>This dataset has no entities yet. Build Graph extracts them from the indexed chunks - a document with little text yields little graph.</p>';return h}h+='<table><thead><tr><th>Entity</th><th>Type</th><th>Degree</th><th>Documents</th></tr></thead><tbody>';nodes.slice(0,50).forEach(function(n){h+='<tr><td>'+String(n.label||n.id||'')+'</td><td class=co>'+String(n.entity_type||'')+'</td><td>'+(n.degree||0)+'</td><td>'+((n.documents||[]).length)+'</td></tr>'});h+='</tbody></table>';if(edges.length){h+='<p style=margin:10px 0 4px><strong>Relations</strong></p><table><thead><tr><th>Source</th><th>Target</th><th>Weight</th></tr></thead><tbody>';edges.slice(0,50).forEach(function(e){h+='<tr><td>'+String(e.source||'')+'</td><td>'+String(e.target||'')+'</td><td class=co>'+Number(e.weight||0).toFixed(3)+'</td></tr>'});h+='</tbody></table>'}return h}function loadGraph(){var box=document.getElementById('graphResult');if(!box)return;fetch('/api/v1/datasets/'+kbId+'/graph').then(function(r){return r.json()}).then(function(d){if(d.code!==0){box.innerHTML='<p style=color:var(--d)>'+(d.message||'failed to read the graph')+'</p>';return}var data=d.data||{};box.innerHTML=(data.built?'':'<p style=color:var(--tm)>No graph has been built for this dataset yet.</p>')+kgRenderGraph(data.graph)}).catch(function(error){box.innerHTML='<p style=color:var(--d)>'+String((error&&error.message)||error)+'</p>'})}function navTreeEscape(v){var s=String(v==null?'':v);s=s.split('&').join('&amp;');s=s.split('<').join('&lt;');s=s.split('>').join('&gt;');return s}function navLoadChildren(host,name){host.textContent='Loading...';fetch('/api/v1/datasets/'+kbId+'/navigation/'+encodeURIComponent(name)+'/children').then(function(r){return r.json()}).then(function(d){if(d.code!==0){host.innerHTML='<span style=color:var(--d)>'+navTreeEscape(d.message||'failed')+'</span>';return}var items=(d.data&&d.data.items)||[];if(!items.length){host.innerHTML='<span style=color:var(--tm)>No children.</span>';return}host.innerHTML=items.map(function(n){return navTreeEscape(n.name)+' <span class=co>('+navTreeEscape(n.type)+')</span>'}).join('<br>')}).catch(function(e){host.textContent=String((e&&e.message)||e)})}function navLoadTree(){var box=document.getElementById('ovNavTree');if(!box)return;fetch('/api/v1/datasets/'+kbId+'/navigation').then(function(r){return r.json()}).then(function(d){if(d.code!==0){box.innerHTML='<p style=color:var(--d)>'+navTreeEscape(d.message||'failed to read the navigation tree')+'</p>';return}var items=(d.data&&d.data.items)||[];if(!items.length){box.innerHTML='<p style=color:var(--tm)>No navigation tree yet. Use Build navigation tree above.</p>';return}var table=document.createElement('table');var head=document.createElement('thead');var headRow=document.createElement('tr');['Cluster','Type','Documents',''].forEach(function(label){var th=document.createElement('th');th.textContent=label;headRow.appendChild(th)});head.appendChild(headRow);table.appendChild(head);var body=document.createElement('tbody');items.forEach(function(n){var tr=document.createElement('tr');[n.name,n.type,String(n.doc_count||0)].forEach(function(value){var td=document.createElement('td');td.textContent=value;tr.appendChild(td)});var actions=document.createElement('td');var button=document.createElement('button');button.type='button';button.className='btn btn-o btn-sm';button.textContent=n.has_children?'Children':'Open';actions.appendChild(button);tr.appendChild(actions);body.appendChild(tr);var sub=document.createElement('tr');sub.style.display='none';var cell=document.createElement('td');cell.colSpan=4;var host=document.createElement('div');host.className='ov-nav-children';cell.appendChild(host);sub.appendChild(cell);body.appendChild(sub);button.addEventListener('click',function(){if(sub.style.display!=='none'){sub.style.display='none';return}sub.style.display='';navLoadChildren(host,n.name)})});table.appendChild(body);box.replaceChildren(table)}).catch(function(e){box.innerHTML='<p style=color:var(--d)>'+navTreeEscape((e&&e.message)||e)+'</p>'})}function buildNavTree(){var st=document.getElementById('ovNavStatus');if(st){st.textContent='Building navigation tree...';st.style.color='var(--tm)'}fetch('/api/v1/datasets/'+kbId+'/navigation',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(function(r){return r.json()}).then(function(d){if(!st)return;if(d.code!==0){st.style.color='var(--d)';st.textContent=d.message||'failed';return}var data=d.data||{};var skipped=(data.skipped||[]).length;st.style.color='var(--tm)';st.textContent='Generated '+data.generated+' of '+data.total+' document(s)'+(skipped?(', skipped '+skipped+' without parsed chunks'):'')+'.';if(data.message){st.textContent+=' '+data.message}navLoadTree()}).catch(function(error){if(st){st.style.color='var(--d)';st.textContent=String((error&&error.message)||error)}})}function buildGraph(){document.getElementById('graphResult').innerHTML='<p style=color:var(--tm)>Building... (LLM entity extraction)</p>';fetch('/api/v1/datasets/'+kbId+'/graphrag/build',{method:'POST'}).then(function(r){return r.json()}).then(function(d){if(d.code!==0){document.getElementById('graphResult').textContent='Error: '+(d.message||'unknown');return}var data=d.data||{};var nodes=data.node_list||[];var maxD=1;nodes.forEach(function(n){maxD=Math.max(maxD,n.degree||1)});var R=120;var svg='<svg width=640 height=460 style=background:var(--bg);border-radius:var(--r)><text x=320 y=30 text-anchor=middle font-size=14 fill=var(--t2)>'+data.nodes+' nodes / '+data.edges+' edges</text>';nodes.slice(0,24).forEach(function(n,i){var ang=2*Math.PI*i/nodes.slice(0,24).length;var cx=320+R*Math.cos(ang);var cy=240+R*Math.sin(ang);var r=(n.degree||1)/maxD*22+10;svg+='<line x1=320 y1=240 x2='+cx+' y2='+cy+' stroke=var(--p) stroke-opacity=0.35></line><circle cx='+cx+' cy='+cy+' r='+r+' fill=var(--p) fill-opacity=0.15 stroke=var(--p)></circle><text x='+cx+' y='+(cy+r+14)+' text-anchor=middle font-size=11 fill=var(--t2)>'+String(n.name||'').slice(0,14)+'</text>'});svg+='<circle cx=320 cy=240 r=26 fill=var(--p)></circle><text x=320 y=245 text-anchor=middle font-size=11 fill=var(--bg)>KB</text></svg>';var h='<div style=margin-bottom:8px>Nodes: '+data.nodes+' | Edges: '+data.edges+' | Documents: '+data.documents+' | Entities: '+data.entities+'</div>'+svg+'<div style=margin-top:10px;font-size:12px;color:var(--tm)>(环形图：节点大小=degree，中心=知识库)</div>';document.getElementById('graphResult').innerHTML=h}).catch(function(e){document.getElementById('graphResult').textContent='Error: '+e})};");
     // Model options are rendered by the shared default-model tree (the field is a
     // popover trigger, not a <select>), so no legacy <option> injection here.
+    // The compiled skill tree. Upstream builds it with an LLM; RayRAG compiles it from the document
+    // heading structure, so the card says where the content comes from instead of implying a model
+    // wrote it. The bytes a node shows are corpus text.
+    let skill_template = r##"<section class='card' id='dsSkillCard' data-testid='dataset-skill-card' style='margin-top:16px'>
+<header style='display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap'>
+<h2 style='margin:0'>@TITLE@</h2>
+<div style='display:flex;gap:8px;flex-wrap:wrap'>
+<button type='button' class='btn' id='dsSkillCompile' data-testid='dataset-skill-compile'>@COMPILE@</button>
+<button type='button' class='btn ghost' id='dsSkillReload' data-testid='dataset-skill-reload'>@RELOAD@</button>
+<button type='button' class='btn ghost' id='dsSkillDeleteAll' data-testid='dataset-skill-delete-all'>@DELETE_ALL@</button>
+</div>
+</header>
+<p style='color:var(--t2);font-size:13px;margin:6px 0'>@HINT@</p>
+<div id='dsSkillStatus' data-testid='dataset-skill-status' role='status' aria-live='polite' style='font-size:13px'></div>
+<div id='dsSkillTree' data-testid='dataset-skill-tree' style='margin-top:8px'></div>
+</section>
+<script>
+(function(){
+var KB=document.querySelector('[data-kb-id]')?document.querySelector('[data-kb-id]').getAttribute('data-kb-id'):location.pathname.split('/').pop();
+var base='/api/v1/datasets/'+encodeURIComponent(KB)+'/skills';
+function say(text,error){var node=document.getElementById('dsSkillStatus');node.textContent=text;node.style.color=error?'#c0392b':'var(--t2)';}
+function nodeRow(node,depth){
+  var wrap=document.createElement('div');
+  wrap.style.marginLeft=(depth*16)+'px';
+  var head=document.createElement('div');
+  head.style.display='flex';align-items:center;gap:8px;padding='4px 0';
+  var toggle=document.createElement('button');
+  toggle.type='button';toggle.className='btn ghost';toggle.textContent=node.children_kwd&&node.children_kwd.length?'+':'-';
+  toggle.setAttribute('data-testid','dataset-skill-toggle');
+  toggle.addEventListener('click',function(){
+    var kids=wrap.querySelector('[data-skill-children]');
+    if(!kids)return;
+    kids.hidden=!kids.hidden;
+    toggle.textContent=kids.hidden?'+':'-';
+  });
+  var label=document.createElement('span');
+  label.textContent=node.skill_kwd;
+  label.style.fontWeight='600';
+  var size=document.createElement('span');
+  size.textContent=(node.md_with_weight||'').length+' @CHARS@';
+  size.style.color='var(--t2)';size.style.fontSize='12px';
+  var view=document.createElement('button');
+  view.type='button';view.className='btn ghost';view.textContent=@VIEW@;
+  view.setAttribute('data-testid','dataset-skill-view');
+  view.addEventListener('click',function(){
+    var body=wrap.querySelector('[data-skill-body]');
+    if(body){body.remove();return;}
+    fetch(base+'/'+encodeURIComponent(node.skill_kwd)).then(function(r){return r.json();}).then(function(payload){
+      var pre=document.createElement('pre');
+      pre.setAttribute('data-skill-body','1');
+      pre.style.whiteSpace='pre-wrap';pre.style.fontSize='12px';pre.style.background='var(--bg2,#f6f6f6)';
+      pre.style.padding='8px';pre.style.borderRadius='6px';
+      pre.textContent=(payload.data&&payload.data.md_with_weight)||@NOTHING@;
+      wrap.appendChild(pre);
+    });
+  });
+  var remove=document.createElement('button');
+  remove.type='button';remove.className='btn ghost';remove.textContent=@DELETE@;
+  remove.setAttribute('data-testid','dataset-skill-delete');
+  remove.addEventListener('click',function(){
+    fetch(base+'/'+encodeURIComponent(node.skill_kwd),{method:'DELETE'}).then(function(r){return r.json();}).then(function(payload){
+      say(@DELETED@+' '+((payload.data&&payload.data.deleted)||0));
+      load();
+    });
+  });
+  head.appendChild(toggle);head.appendChild(label);head.appendChild(size);head.appendChild(view);head.appendChild(remove);
+  wrap.appendChild(head);
+  if(node.children_kwd&&node.children_kwd.length){
+    var kids=document.createElement('div');
+    kids.setAttribute('data-skill-children','1');
+    kids.hidden=true;
+    node.children_kwd.forEach(function(child){
+      fetch(base+'/'+encodeURIComponent(child)).then(function(r){return r.json();}).then(function(payload){
+        if(payload.data)kids.appendChild(nodeRow(payload.data,depth+1));
+      });
+    });
+    wrap.appendChild(kids);
+  }
+  return wrap;
+}
+function load(){
+  fetch(base).then(function(r){return r.json();}).then(function(payload){
+    var tree=document.getElementById('dsSkillTree');
+    tree.textContent='';
+    if(payload.code!==0){say(payload.message||@LOAD_FAILED@,true);return;}
+    var all=payload.data;
+    if(!all){say(@EMPTY@);return;}
+    say(@COMPILED@+' '+((all.source_doc_ids||[]).length)+' @DOCS@ / '+((all.children_kwd||[]).length)+' @ROOTS@');
+    (all.children_kwd||[]).forEach(function(root){
+      fetch(base+'/'+encodeURIComponent(root)).then(function(r){return r.json();}).then(function(payload){
+        if(payload.data)tree.appendChild(nodeRow(payload.data,0));
+      });
+    });
+  }).catch(function(error){say(@LOAD_FAILED@+' '+error,true);});
+}
+document.getElementById('dsSkillReload').addEventListener('click',load);
+document.getElementById('dsSkillCompile').addEventListener('click',function(){
+  var button=this;button.disabled=true;say(@COMPILING@);
+  fetch(base+'/compile',{method:'POST'}).then(function(r){return r.json();}).then(function(payload){
+    button.disabled=false;
+    if(payload.code!==0){say(payload.message||@COMPILE_FAILED@,true);return;}
+    say(@COMPILED_NOW@+' '+payload.data.nodes+' @NODES@');
+    load();
+  }).catch(function(error){button.disabled=false;say(@COMPILE_FAILED@+' '+error,true);});
+});
+document.getElementById('dsSkillDeleteAll').addEventListener('click',function(){
+  fetch(base,{method:'DELETE'}).then(function(r){return r.json();}).then(function(payload){
+    say(@DELETED@+' '+((payload.data&&payload.data.deleted)||0));
+    load();
+  });
+});
+load();
+})();
+</script>"##;
+    let skill_card = [
+        ("@TITLE@", t("Compiled skills", zh).to_string()),
+        (
+            "@HINT@",
+            t(
+                "Compiled from this dataset's document heading structure — no model is involved, and every byte shown comes from the corpus.",
+                zh,
+            )
+            .to_string(),
+        ),
+        ("@COMPILE@", t("Compile skills", zh).to_string()),
+        ("@RELOAD@", t("Refresh", zh).to_string()),
+        ("@DELETE_ALL@", t("Delete all", zh).to_string()),
+        ("@VIEW@", t("View", zh).to_string()),
+        ("@DELETE@", t("Delete", zh).to_string()),
+        ("@CHARS@", t("chars", zh).to_string()),
+        ("@NOTHING@", json_script_string(t("(empty section)", zh))),
+        ("@CHARS@", t("chars", zh).to_string()),
+        ("@LOAD_FAILED@", json_script_string(t("Could not load the skill tree.", zh))),
+        ("@EMPTY@", json_script_string(t("Nothing compiled yet.", zh))),
+        ("@COMPILED@", json_script_string(t("Compiled:", zh))),
+        ("@DOCS@", t("documents", zh).to_string()),
+        ("@ROOTS@", t("top-level skills", zh).to_string()),
+        ("@COMPILING@", json_script_string(t("Compiling…", zh))),
+        ("@COMPILE_FAILED@", json_script_string(t("Could not compile the skills.", zh))),
+        ("@COMPILED_NOW@", json_script_string(t("Compiled", zh))),
+        ("@NODES@", t("nodes", zh).to_string()),
+        ("@DELETED@", json_script_string(t("Deleted", zh))),
+    ]
+    .iter()
+    .fold(skill_template.to_string(), |html, (token, value)| {
+        html.replace(token, value)
+    });
+    b.push_str(&skill_card);
     b.push_str("loadDocs();loadConfig();dsTagLoad();showTab(0);navLoadTree();if(location.pathname.indexOf('/dataset/knowledge-graph/')>=0)loadGraph();</script>");
     b.push_str(SEARCH_METADATA_JS);
     Html(layout(&name, &b, zh))
@@ -11415,6 +11563,7 @@ mod kb_ui_tests {
             port: 0,
             doc_store: Arc::new(crate::doc_store::DocStorePool::memory()),
             artifacts: Arc::new(crate::api::artifacts::ArtifactStore::in_memory()),
+            skill_trees: Arc::new(crate::api::skill_tree::SkillTreeStore::in_memory()),
             users,
             kbs: Arc::new(KbStore::new(root.path().join("kbs.json").to_str().unwrap()).unwrap()),
             tenants: Arc::new(
@@ -17003,6 +17152,34 @@ connection: close
             html.contains("loadKbModelCatalog()") && html.contains("'/api/v1/models'"),
             "dataset configuration must load the model catalog for the embedding field"
         );
+        // The compiled-skill card, and the shapes that would make its script a syntax error while
+        // still looking like valid HTML.
+        assert_inline_scripts_balance(&html, "/dataset/{tab}/{id}");
+        for marker in [
+            "data-testid='dataset-skill-card'",
+            "data-testid='dataset-skill-compile'",
+            "data-testid='dataset-skill-reload'",
+            "data-testid='dataset-skill-delete-all'",
+            "data-testid='dataset-skill-status'",
+            "data-testid='dataset-skill-tree'",
+            // The URLs are built from one base, so that is what the page must contain.
+            "'/api/v1/datasets/'+encodeURIComponent(KB)+'/skills'",
+            "base+'/compile'",
+            "encodeURIComponent(node.skill_kwd)",
+        ] {
+            assert!(html.contains(marker), "missing {marker}");
+        }
+        for shape in [
+            "say(Could not",
+            "say(Nothing compiled",
+            "say(Compiled:",
+            "say(Compiling",
+        ] {
+            assert!(
+                !html.contains(shape),
+                "a script placeholder was substituted unquoted: {shape}"
+            );
+        }
     }
 
     #[tokio::test]
