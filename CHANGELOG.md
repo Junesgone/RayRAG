@@ -41,6 +41,17 @@ What the endpoint does, following upstream `chunk_api`:
 The response carries `total_entities`, `total_relations`, `returned_entities`, `returned_relations`,
 `templates`, plus `scanned_rows` and `truncated`, so a capped scan is visible rather than silent.
 
+### The live deployment caught what 2233 tests could not
+
+The first build passed the whole suite and then **panicked twice** on the running deployment:
+`get_conn()` starts the Postgres driver's own runtime, and a tokio worker cannot do that ("Cannot start a
+runtime from within a runtime"). Every other test uses the in-memory store, which does not panic, so the
+suite was green while the endpoint returned nothing. Both handlers now use `get_conn_blocking()` — the
+form `DocStorePool` documents as the only one handlers may use — and a new source-scanning test fails the
+suite if any handler reaches for the synchronous connector again, so this class of bug cannot return
+quietly. The scan immediately found a second call site to check (`dataset_artifacts`, safe inside
+`spawn_blocking`) and now treats the two documented blocking wrappers as the only exceptions.
+
 ### One bug the new test caught in my own code
 
 `filter_entities_with_relations` returns **entities**; I assigned it to `relations`, and the endpoint
@@ -48,7 +59,7 @@ cheerfully reported two relation-shaped nodes as the relations. The router test 
 rows and failed on it. The pipeline is now `dedup_entities` → `normalize_relation_endpoints`, with the
 misuse recorded in a comment so the next reader does not repeat it.
 
-**2232 tests pass, 0 failures**, including: both matcher directions; the bucket rules (template, legacy,
+**2233 tests pass, 0 failures**, including: both matcher directions; the bucket rules (template, legacy,
 kind normalisation); keyword narrowing; and the route end to end — real rows in the shared doc store
 come back grouped by template, `DELETE` removes one template's rows and leaves the others, an empty
 `template_id` is refused, and a document in another dataset is refused with upstream's wording. The
