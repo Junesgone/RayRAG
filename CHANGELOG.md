@@ -2,6 +2,12 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.9.7] - 2026-10-02
+
+- **创建数据集时选择自定义 Pipeline 不再是一个空壳**（用户报告）：选择 `Pipeline` 后会**显示真正的 Pipeline 选择框**（此前对话框里根本没有这个字段，选了也只有一个空标题），并在框下**静态写明下一步该做什么**——"自定义 Pipeline 需先在 **Agents** 页面创建，创建后再回到这里选择"，并附上直达 Agents 的链接；未选择 Pipeline 就提交时**给出明确原因**（把错误显示在对话框的错误位），而不是静默失败或创建一个无法解析的数据集。
+- 实现上刻意**不引入动态注入的 JS**：提示文案由服务端直接渲染（本阶段已因"把 JS 字符串渲染成页面文本"踩过一次坑），切换显示只用一行属性赋值。
+- 测试：全量 **2155 passed / 0 failed**。
+
 ## [0.9.6] - 2026-10-02
 
 - **数据集 Configuration 页新增固定的「Built-in pipeline introduction / 内置流水线说明」栏目**（用户要求）。栏目逐个列出上游的 12 种内置分块方法（General/naive、Book、Email、Laws、Manual、One、Paper、Picture、Presentation、Q&A、Table、Tag），**说明文字取自 RAGFlow 自身的 `knowledgeConfiguration` 文案**（`web/src/locales/en.ts`，由 `category-panel.tsx` 的 `DescriptionKeyMap` 映射），包含各自支持的**文件格式**与分块行为要点，以可折叠条目呈现。

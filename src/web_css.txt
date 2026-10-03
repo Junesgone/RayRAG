@@ -1017,3 +1017,7 @@ select:disabled option{color:#8a8f98}
 .bp-desc{font-size:12px;color:var(--t2);padding:6px 0 2px}
 .bp-desc p{margin:0 0 6px}
 .bp-desc ul,.bp-desc ol{margin:0 0 6px;padding-left:18px}
+
+/* Create-dataset dialog: the pipeline hint next to the picker. */
+.ds-field-hint{display:block;margin-top:4px;font-size:12px;color:var(--t2)}
+.ds-field-hint a{color:var(--t);text-decoration:underline}
