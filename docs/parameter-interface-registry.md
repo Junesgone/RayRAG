@@ -774,3 +774,9 @@ RayRAG 此前让**会话记录**占用同一条路径（GET/POST/DELETE 都是�
 2. transcription `stream=true` 只发**一个** `partial` 事件（载全部文本）+ `[DONE]`：底层转写调用本身不是流式的；伪造分段边界只会更像而不是更准。
 
 **环境变量**：`RAYRAG_TTS_API_BASE` / `RAYRAG_TTS_API_KEY` / `RAYRAG_TTS_MODEL`（默认 `tts-1`）/ `RAYRAG_TTS_VOICE`（默认 `alloy`）；ASR 沿用 `RAYRAG_ASR_API_BASE` / `RAYRAG_ASR_API_KEY` / `RAYRAG_ASR_MODEL`（默认 `whisper-1`）。首次引导界面与 `.env.example` 同步新增这 4 个 TTS 字段。
+
+**界面**：模型页新增 **Speech** 卡片 —— 输入文本点 🔊「朗读」（成功则用 `Blob` 播放 `audio/mpeg`），或选择音频点 📝「转写」。**失败以文字呈现**（未配置时显示 `No default TTS model is set` 之类原句），不会静默无反应。文件选择器的 `accept` 即上面的白名单。CDP 实测：卡片/两个按钮/accept 均存在，空文本提示「Type something first」，未配置 TTS 显示原句，未选文件提示「Choose an audio file first」，页面 **0 报错**。
+
+:::note 仍待完成
+RAGFlow 把麦克风放在**聊天输入区**；RayRAG 目前把这个能力放在模型页卡片上。把输入区拆成合适的元素后再接麦克风按钮仍是待办（0.13.0 曾因直接往拼接字符串里塞控件而撤回）。
+:::

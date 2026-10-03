@@ -27,6 +27,15 @@ Two deliberate differences, both in the direction of not hiding a failure:
   `[DONE]`, because the transcription call underneath is not itself streaming. Inventing partial
   boundaries would look more faithful and tell the client less.
 
+The interface reaches both: the model page gained a **Speech** card — type text and hear it, or choose an
+audio file and read the transcript. Its failures are printed as text, so an unconfigured deployment
+shows the sentence naming the missing model instead of doing nothing. Walking it in a browser as a user
+(CDP) reported the card, both buttons and the file picker's accept list (exactly the allowlist above);
+*Speak* with empty text said `Type something first`, *Speak* with text on this unconfigured deployment
+said `No default TTS model is set`, *Transcribe* with no file said `Choose an audio file first`, and the
+page logged **0 errors**. The chat composer's own microphone control — where upstream puts it — is still
+pending; this card is a working surface, not a claim that the composer is finished.
+
 Configuration is `RAYRAG_TTS_API_BASE` / `RAYRAG_TTS_API_KEY` / `RAYRAG_TTS_MODEL` /
 `RAYRAG_TTS_VOICE` (defaults `tts-1`, `alloy`) alongside the existing `RAYRAG_ASR_*`. The first-login
 wizard and `.env.example` gained the four TTS fields in the same release, so the guide, the template
