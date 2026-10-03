@@ -5288,6 +5288,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         // Auto-metadata configuration (upstream `dataset_api.py` + `document_api.py`): the field
         // schema a dataset defines, and the per-document override.
+        // Audio (`chat_api.py`): text to speech and speech to text through the OpenAI-compatible
+        // clients in `audio.rs`.
+        .route(
+            "/api/v1/chat/audio/speech",
+            axum::routing::post(crate::api::audio_api::speech),
+        )
+        .route(
+            "/api/v1/chat/audio/transcription",
+            axum::routing::post(crate::api::audio_api::transcription),
+        )
         .route(
             "/api/v1/datasets/{dataset_id}/metadata/config",
             get(crate::api::metadata_config::get_dataset_metadata_config)
@@ -13425,6 +13435,92 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    /// The audio endpoints, on a deployment with no speech model configured — which is the state the
+    /// guide documents failures for. Missing text is an argument error, missing configuration is the
+    /// documented `102`, and a suffix outside the allowlist is refused before any provider is called.
+    #[tokio::test]
+    async fn audio_endpoints_report_their_documented_refusals() {
+        let env = test_env();
+        let call = |uri: &str, content_type: &str, body: Vec<u8>| {
+            let router = build_router(env.state.clone());
+            let token = env.token.clone();
+            let uri = uri.to_string();
+            let content_type = content_type.to_string();
+            async move {
+                let request = Request::builder()
+                    .method(Method::POST)
+                    .uri(uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .header(header::CONTENT_TYPE, content_type)
+                    .body(Body::from(body))
+                    .unwrap();
+                router.oneshot(request).await.unwrap()
+            }
+        };
+
+        // Speech needs text before anything else.
+        let missing = call(
+            "/api/v1/chat/audio/speech",
+            "application/json",
+            br#"{}"#.to_vec(),
+        )
+        .await;
+        assert_eq!(missing.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response_json(missing).await["message"],
+            "required argument are missing: text"
+        );
+
+        // With text but no configured endpoint, the answer is the documented sentence.
+        let unconfigured = call(
+            "/api/v1/chat/audio/speech",
+            "application/json",
+            br#"{"text":"hello"}"#.to_vec(),
+        )
+        .await;
+        assert_eq!(unconfigured.status(), StatusCode::OK);
+        let unconfigured = response_json(unconfigured).await;
+        assert_eq!(unconfigured["code"], 102, "{unconfigured}");
+        assert_eq!(unconfigured["message"], "No default TTS model is set");
+
+        // A body without a file part.
+        let boundary = "X-BOUNDARY";
+        let no_file = call(
+            "/api/v1/chat/audio/transcription",
+            &format!("multipart/form-data; boundary={boundary}"),
+            format!("--{boundary}\r\nContent-Disposition: form-data; name=\"stream\"\r\n\r\nfalse\r\n--{boundary}--\r\n").into_bytes(),
+        )
+        .await;
+        let no_file = response_json(no_file).await;
+        assert_eq!(no_file["code"], 102, "{no_file}");
+        assert_eq!(no_file["message"], "Missing 'file' in multipart form-data");
+
+        // A suffix outside the allowlist, named exactly as the guide names it.
+        let mp4 = call(
+            "/api/v1/chat/audio/transcription",
+            &format!("multipart/form-data; boundary={boundary}"),
+            format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"clip.mp4\"\r\nContent-Type: video/mp4\r\n\r\nnotaudio\r\n--{boundary}--\r\n").into_bytes(),
+        )
+        .await;
+        let mp4 = response_json(mp4).await;
+        assert_eq!(mp4["code"], 102, "{mp4}");
+        assert_eq!(
+            mp4["message"],
+            "Unsupported audio format: .mp4. Allowed: .aac, .flac, .m4a, .mp3, .ogg, .opus, .wav, .webm, .wma"
+        );
+
+        // An accepted suffix reaches the model lookup, which is where an unconfigured deployment stops.
+        let wav = call(
+            "/api/v1/chat/audio/transcription",
+            &format!("multipart/form-data; boundary={boundary}"),
+            format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"clip.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFFfake\r\n--{boundary}--\r\n").into_bytes(),
+        )
+        .await;
+        let wav = response_json(wav).await;
+        assert_eq!(wav["code"], 102, "{wav}");
+        assert_eq!(wav["message"], "No default ASR model is set");
     }
 
     /// The auto-metadata configuration: a dataset starts with the deployment's built-ins and no

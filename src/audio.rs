@@ -47,6 +47,39 @@ pub struct Transcription {
     pub tokens: usize,
 }
 
+/// Build an optional TTS client from environment (`RAYRAG_TTS_API_BASE` +
+/// `RAYRAG_TTS_API_KEY` + `RAYRAG_TTS_MODEL` + `RAYRAG_TTS_VOICE`). Returns `Ok(None)` when the base
+/// URL is unset or blank, which is what makes `POST /api/v1/chat/audio/speech` answer
+/// "No default TTS model is set" instead of guessing an endpoint.
+pub fn tts_from_env() -> Result<Option<TtsClient>> {
+    let Some(api_base) = std::env::var("RAYRAG_TTS_API_BASE")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+    let api_key = std::env::var("RAYRAG_TTS_API_KEY").unwrap_or_default();
+    let model = std::env::var("RAYRAG_TTS_MODEL")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "tts-1".to_string());
+    let voice = std::env::var("RAYRAG_TTS_VOICE")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "alloy".to_string());
+    Ok(Some(TtsClient::with_voice(
+        AudioConfig {
+            api_base,
+            api_key,
+            model,
+        },
+        voice,
+    )))
+}
+
 /// Speech-to-text client (OpenAI-compatible `/audio/transcriptions`).
 #[derive(Debug, Clone)]
 pub struct AsrClient {

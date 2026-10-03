@@ -2,6 +2,41 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.16.0] - 2026-10-03
+
+### Speech: text to speech and speech to text
+
+Upstream's chat surface has two audio endpoints; RayRAG had clients for both providers in `audio.rs`
+but no route that used them. This release adds the routes and makes an unconfigured deployment say so:
+
+| endpoint | behaviour |
+|---|---|
+| `POST /api/v1/chat/audio/speech` | `{"text": …}` in, `audio/mpeg` out, with `Cache-Control: no-cache`, `Connection: keep-alive` and `X-Accel-Buffering: no` |
+| `POST /api/v1/chat/audio/transcription` | multipart `file` plus `stream`; `{"text": …, "tokens": …}` or an SSE stream |
+
+The wording is upstream's, because clients match on it: `102 No default TTS model is set`,
+`102 No default ASR model is set`, `102 Missing 'file' in multipart form-data`, and
+`102 Unsupported audio format: .mp4. Allowed: .aac, .flac, .m4a, .mp3, .ogg, .opus, .wav, .webm, .wma`.
+A missing `text` is a `101` naming the field rather than upstream's unhandled lookup.
+
+Two deliberate differences, both in the direction of not hiding a failure:
+
+* **speech synthesizes before answering**, so a provider error is an explicit `105` carrying the
+  provider message instead of a truncated audio stream whose headers already promised `200 OK`;
+* **`stream=true` on transcription emits one `partial` event carrying the whole transcript** and then
+  `[DONE]`, because the transcription call underneath is not itself streaming. Inventing partial
+  boundaries would look more faithful and tell the client less.
+
+Configuration is `RAYRAG_TTS_API_BASE` / `RAYRAG_TTS_API_KEY` / `RAYRAG_TTS_MODEL` /
+`RAYRAG_TTS_VOICE` (defaults `tts-1`, `alloy`) alongside the existing `RAYRAG_ASR_*`. The first-login
+wizard and `.env.example` gained the four TTS fields in the same release, so the guide, the template
+and the registry cannot drift apart.
+
+**2210 tests pass, 0 failures**, including the suffix parsing, the exact refusal sentence, the
+allowlist as the documented set, and a router test that walks the documented refusals over a real
+multipart body. The parity ledger moved from 14 to **12** remaining gaps (195 upstream routes, 336 of
+ours, 136 exact).
+
 ## [0.15.0] - 2026-10-03
 
 ### Auto-metadata schema: the dataset's field configuration and the per-document override

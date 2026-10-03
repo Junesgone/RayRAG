@@ -752,3 +752,25 @@ RayRAG 此前让**会话记录**占用同一条路径（GET/POST/DELETE 都是�
 **清理**：删除数据集时一并清除其模式与各文档覆盖（否则同 id 新建数据集会"复活"旧模式）。
 **存储**：`uploads/metadata_config.json`（启动恢复 + 原子写入 + PostgreSQL 快照镜像）。
 **界面**：数据集配置页新增“元数据模式”卡片（增删行 + 保存 + 显示内置字段），整块自带 `<script>`（避免 0.13.0 聊天输入区那类字符串字面量陷阱）。
+
+### 0.16.0：语音接口（TTS / ASR）
+
+| 接口 | 行为 |
+|---|---|
+| `POST /api/v1/chat/audio/speech` | 入 `{"text": …}`；出 `audio/mpeg`，带 `Cache-Control: no-cache`、`Connection: keep-alive`、`X-Accel-Buffering: no` |
+| `POST /api/v1/chat/audio/transcription` | 入 multipart `file` + `stream`；出 `{"text": …, "tokens": …}` 或 SSE |
+
+**错误语义（与上游逐字一致，客户端会按字面匹配）**
+- 未配置 TTS：`102 No default TTS model is set`
+- 未配置 ASR：`102 No default ASR model is set`
+- 缺 file 部件：`102 Missing 'file' in multipart form-data`
+- 后缀不在白名单：`102 Unsupported audio format: .mp4. Allowed: .aac, .flac, .m4a, .mp3, .ogg, .opus, .wav, .webm, .wma`
+- 缺 `text`：`400 / 101 required argument are missing: text`（上游直接下标取值会抛异常；RayRAG 明确指名字段）
+
+以上 `102` 均为 **HTTP 200 + 业务码**（对应上游 `get_data_error_result`）。供应商调用失败 → **502 / 105** 并带供应商原文。
+
+**两处有意差异（都不隐藏失败）**
+1. speech 先合成再应答：供应商出错 → 明确的 105，而不是「响应头已 200 但音频被截断」。
+2. transcription `stream=true` 只发**一个** `partial` 事件（载全部文本）+ `[DONE]`：底层转写调用本身不是流式的；伪造分段边界只会更像而不是更准。
+
+**环境变量**：`RAYRAG_TTS_API_BASE` / `RAYRAG_TTS_API_KEY` / `RAYRAG_TTS_MODEL`（默认 `tts-1`）/ `RAYRAG_TTS_VOICE`（默认 `alloy`）；ASR 沿用 `RAYRAG_ASR_API_BASE` / `RAYRAG_ASR_API_KEY` / `RAYRAG_ASR_MODEL`（默认 `whisper-1`）。首次引导界面与 `.env.example` 同步新增这 4 个 TTS 字段。

@@ -69,8 +69,6 @@ KNOWN_METHOD_GAPS: dict[str, str] = {
 
 KNOWN_MISSING: dict[str, str] = {
     "/auth/password/forgot/captcha": "功能级缺口：忘记密码整体流程（验证码/OTP/重置）未实现",
-    "/chat/audio/speech": "功能级缺口：TTS 语音合成未实现（ASR 已在解析流水线内）",
-    "/chat/audio/transcription": "功能级缺口：独立 ASR 转写接口未实现（RAYRAG_ASR_* 目前只服务解析流水线）",
     "/connectors/<connector_id>": "功能级缺口：连接器实例面（RayRAG 的数据源在 /api/v1/data_sources/*，语义不同，未做别名）",
     "/connectors/<connector_id>/logs": "功能级缺口：同上（连接器实例面）",
     "/connectors/<connector_id>/rebuild": "功能级缺口：同上（连接器实例面）",
