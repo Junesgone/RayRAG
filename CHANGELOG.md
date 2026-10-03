@@ -2,6 +2,25 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.11.1] - 2026-10-03
+
+### The Files page is grouped by dataset
+
+The top level of **Files** now shows one folder per dataset, with its name and file count, instead of a
+single flat table. Opening a folder lists that dataset's files and offers a way back; the workspace file
+browser below keeps working exactly as before. The folder grid reflows with the screen
+(`repeat(auto-fill, minmax(190px, 1fr))`), so the same page works on a narrow laptop or a wide monitor.
+
+### One unexplained test failure, explained
+
+The previous release recorded that `oauth_callback_flow_matches_upstream` had failed once in the full
+parallel run while passing on its own, and said the cause was unknown. It was found: the test starts a
+local fake OAuth provider that read the request with **a single `read()`** and then asserted on its
+contents. Under parallel load a request can arrive in two segments, so the assertions saw half a request,
+the thread panicked, and the client side failed with an unrelated-looking error. The fake provider now
+reads the headers, then the body those headers announce, so it always sees the whole request. Two
+consecutive full runs pass with 2167 tests.
+
 ## [0.11.0] - 2026-10-03
 
 ### The three console pages that answered 404
