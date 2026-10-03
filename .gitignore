@@ -15,3 +15,9 @@ zvec-data/
 logs/
 .env.bak*
 _tmp-*.mjs
+
+# Runtime state, never source: document metadata, memories, tokens, traces. Eight of these were
+# published once because the exclusion list is written by name and had no entry for them; they are
+# untracked and ignored now, and the publish script refuses to ship any of them.
+/web/*.json
+/web/uploads/*.json

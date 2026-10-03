@@ -857,3 +857,12 @@ RAGFlow 把麦克风放在**聊天输入区**；RayRAG 目前把这个能力放�
 **实机验证抓到的两个错误（第一版实现）**
 1. 渠道配置是**包裹**的（`{"channels": {…}}`，运行时消费的形状）；读顶层会把包裹键当成一个名为 `channels` 的渠道。现改为纯函数 `channel_entries()` / `channel_rows_from_config()` / `bot_rows_from_config()`，并**对包裹与未包裹两种形状都做单测**。
 2. factory 的 `configured` 原先只看「是否存在 provider 行」，而引导流程会为每个本地引擎播种行 —— 于是三个云端 factory 在没有任何密钥时也显示已配置。现要求**密钥存在**才算：`configured`（需密钥）与 `instances`（实例数）分开报告。
+
+### 0.21.0：验证码接口 + 发布快照的结构性清理
+
+- **接口**：`GET|POST /api/v1/auth/password/forgot/captcha?email=...` → `image/png`（300×120），响应头 `Cache-Control: no-store`、`x-captcha-ttl: 60`；缺 `email` → `400` + 明确文案。上游只注册 POST、却把 MIME 标成 `image/JPEG`；RayRAG 同时接受 GET（浏览器取图用 GET）并回真正的 `image/png`。
+- **验证码参数**：长度 **4**（上游 `OTP_LENGTH`）、有效期 **60 秒**、字符集 `A-Z0-9`、**大小写不敏感**、**一次性**（答对即作废，答错保留重试）。
+- **闸门**：`POST /api/v1/auth/password/forgot/otp` 新增必填 `captcha`；缺失与错误返回**不同文案**（`102`）：「先取图」与「答案错误或已过期，请重新取图」。
+- **免登录修复**：`/auth/password/forgot/captcha`、`/forgot/otp`、`/forgot/otp/verify`、`/auth/password/reset` 原本被 bearer 中间件拦住（忘记密码的人没有 token），现与上游一致置于未认证组，有单测钉住。
+- **UI**：登录页新增自包含「重置密码」卡片 `#resetCard`（`data-testid='reset-card|reset-email|reset-captcha-image|reset-captcha|reset-reload|reset-send|reset-code|reset-new-password|reset-submit|reset-status'`）；占位符用 `@TOKEN@` + `replace`。
+- **发布规则（重要）**：`web/*.json` 与 `web/uploads/*.json` 一律**不随快照发布**（运行时状态：文档、元数据、记忆、令牌、轨迹），发布脚本对导出结果做结构性删除 + **任一残留即 FATAL 拒绝发布**；源仓库同步 `git rm --cached` + `.gitignore`。教训：按名单排除的机制对「后来新增的文件」没有记忆。

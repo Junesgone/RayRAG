@@ -173,6 +173,12 @@ cp -f Cargo.lock "$WORK/Cargo.lock"
 for path in "${EXCLUDES[@]}"; do
     rm -rf "$WORK/$path"
 done
+# Runtime state is not source. The list above is written by name, and eight state files were published
+# because nobody had added them: `web/docs.json` and `web/document_metadata.json` carried this
+# deployment's documents and metadata, `web/api_tokens.json` would have carried its API tokens. The rule
+# is structural now — nothing at these depths ships, whatever it is called.
+find "$WORK/web" -maxdepth 1 -type f -name '*.json' -delete 2>/dev/null || true
+find "$WORK/web/uploads" -maxdepth 1 -type f -name '*.json' -delete 2>/dev/null || true
 # The exclusion list above is written by name, and that mechanism has no memory of
 # files added later: `docs/api-parity-plan.md` would have been published the moment it
 # was created. Re-check the export against the list and refuse to publish on any hit, so
@@ -184,6 +190,12 @@ for path in "${EXCLUDES[@]}"; do
         leaked=1
     fi
 done
+# Guard for runtime state, checked the same way and independently of the list: no state file may
+# survive anywhere under `web/`, at the two depths where the stores live.
+while IFS= read -r found; do
+    echo "FATAL: runtime state file in the export: ${found#"$WORK"/}" >&2
+    leaked=1
+done < <(find "$WORK/web" -maxdepth 2 -type f -name '*.json' 2>/dev/null)
 # Second guard, independent of the list: no internal ledger/registry may appear anywhere
 # in the export under any name.
 while IFS= read -r found; do

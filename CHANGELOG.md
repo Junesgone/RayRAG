@@ -2,6 +2,63 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.21.0] - 2026-10-04
+
+### Eight runtime state files were being published, and now cannot be
+
+While adding the captcha below, the publish snapshot was audited against what it actually contained
+rather than against its exclusion list — and the list had no entries for the state stores. Eight files
+from this deployment were in the published repository: `web/docs.json` and
+`web/document_metadata.json` carried its documents, dataset ids and metadata, `web/graphrag.json` its
+knowledge-graph checkpoint, `web/system_settings.json` its settings. `web/api_tokens.json` was published
+too; its list happened to be empty, so the API tokens of whoever deploys next would have been the first
+ones to leak.
+
+The exclusion list is written by name and has no memory of files added later, so the rule is structural
+now: nothing under `web/` or `web/uploads/` at state depth ships, whatever it is called, and the publish
+script **refuses to publish** if any such file survives the export. All twenty-four state files are
+untracked and ignored in the source repository as well. The snapshot was re-verified by hand: no state
+file, no live dataset id, no probe filename, no credential.
+
+### The captcha the reset flow never had
+
+Upstream's password reset has two halves: `/auth/password/forgot/captcha` issues an image, and the OTP
+request sends nothing until the answer comes back. RayRAG had the OTP half only, so reset codes could be
+requested for arbitrary addresses in a loop.
+
+* **The image is drawn here.** Pillow is not available to a Rust binary, so `src/captcha.rs` carries a
+  5x7 glyph table for `A–Z` and `0–9` and paints a real 300x120 PNG with the `image` crate: per-character
+  jitter, a dotted background, two crossing strokes. No font file, nothing to install. The noise is seeded
+  from the answer, so one answer always draws one picture — which is what makes the renderer testable —
+  and the drawing is verified as an image (PNG signature, decoded dimensions, distinct colours, dark ink
+  present) rather than as "some bytes came back".
+* **The answer is single-use, case-insensitive and lives 60 seconds**, matching upstream's
+  `REDIS_CONN.set(captcha_key(email), captcha_text, 60)`. A wrong answer leaves the question standing so
+  the user can retype it; the right one is consumed.
+* **The reset code is gated.** `POST /auth/password/forgot/otp` requires `captcha` and distinguishes the
+  two failures: no answer ("fetch the image first") versus wrong or expired ("fetch a new image").
+
+### A reset flow nobody could reach
+
+The auth middleware required a bearer token for `/auth/password/forgot/otp` and `/auth/password/reset` —
+endpoints whose entire purpose is to serve someone who has **forgotten their password and therefore has
+no token**. Upstream mounts all three handlers on the unauthenticated group. They are public now, and a
+unit test pins it, because this regression makes the feature unreachable in a way no error message
+explains.
+
+### The flow finally has a surface
+
+The endpoints had no UI at all. The login page carries a self-contained reset card now — email, the
+captcha image (click it or *Refresh captcha* to reload), the answer box, *Send reset code*, then the code
+and a new password with *Reset password* — with a `data-testid` on every control. The card is one
+`@TOKEN@` template substituted by `replace`, not `format!`: the script is full of braces and every one
+would have had to be doubled.
+
+**2228 tests pass, 0 failures**, including the whole flow through the router — PNG magic bytes and
+dimensions from the endpoint, `400` for a missing address, the two distinct refusals for a missing and a
+wrong answer, acceptance of the issued answer, and rejection of a replayed one. The parity ledger drops
+from **6 gaps to 5**.
+
 ## [0.20.0] - 2026-10-03
 
 ### The last four invented lists
