@@ -172,6 +172,52 @@ pub async fn list_structure_artifacts(
     list_literal_artifact_type(state, auth, kb_id, "structure", query).await
 }
 
+/// `DELETE /api/v1/datasets/{id}/artifacts/structure` — upstream clears **only** the structure
+/// artifacts of a dataset.
+///
+/// RayRAG's `DELETE /datasets/{id}/artifacts` clears every artifact page; this one filters on the
+/// row's `page_type_kwd`, the same field the listing filters on (and the same condition style
+/// `clear_artifacts` already uses). It reports how many rows went away, and says so plainly when
+/// there were none rather than returning a bare success.
+pub async fn delete_structure_artifacts(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Extension(auth): axum::extract::Extension<AuthContext>,
+    Path(kb_id): Path<String>,
+) -> Response {
+    if !kb_accessible(&state, &kb_id, &auth) {
+        return invalid_ids(&format!("You don't own the dataset {kb_id}."));
+    }
+    let mut condition: crate::doc_store::FilterCondition = Default::default();
+    condition.insert(
+        "page_type_kwd".to_string(),
+        Value::String("structure".to_string()),
+    );
+    let tenant = auth.user_id.clone();
+    let dataset = kb_id.clone();
+    let index = index_name(&tenant);
+    match with_store(&state, move |store| {
+        store.delete(&condition, &index, &dataset)
+    })
+    .await
+    {
+        Ok(removed) => Json(serde_json::json!({
+            "code": 0,
+            "data": {
+                "dataset_id": kb_id,
+                "page_type": "structure",
+                "removed": removed,
+                "message": if removed == 0 {
+                    "No structure artifacts were stored for this dataset."
+                } else {
+                    "Structure artifacts removed."
+                }
+            }
+        }))
+        .into_response(),
+        Err(response) => response,
+    }
+}
+
 /// `GET /api/v1/datasets/{id}/artifacts/graph` — upstream literal route.
 pub async fn list_graph_artifacts(
     state: State<Arc<AppState>>,

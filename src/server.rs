@@ -4573,7 +4573,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // Upstream declares these three as literal routes rather than one parameterised path.
         .route(
             "/api/v1/datasets/{dataset_id}/artifacts/structure",
-            get(crate::api::dataset_artifacts::list_structure_artifacts),
+            get(crate::api::dataset_artifacts::list_structure_artifacts)
+                .delete(crate::api::dataset_artifacts::delete_structure_artifacts),
         )
         .route(
             "/api/v1/datasets/{dataset_id}/artifacts/graph",
@@ -16069,6 +16070,41 @@ mod tests {
         let empty = response_json(empty).await;
         assert_eq!(empty["code"], 0);
         assert_eq!(empty["data"]["applied"].as_array().unwrap().len(), 0);
+    }
+
+    /// Clearing structure artifacts reports a number and explains a zero, instead of a bare
+    /// success - the failure mode this whole phase keeps running into.
+    #[tokio::test]
+    async fn clearing_structure_artifacts_explains_an_empty_result() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Artifacts dataset", "")
+            .unwrap();
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!("/api/v1/datasets/{}/artifacts/structure", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 0, "{body}");
+        assert_eq!(body["data"]["page_type"], "structure");
+        assert_eq!(body["data"]["removed"], 0);
+        assert!(
+            body["data"]["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("No structure artifacts")),
+            "an empty clear must say so: {body}"
+        );
     }
 
     /// Index maintenance is exposed where upstream has it, and a dataset with nothing indexed

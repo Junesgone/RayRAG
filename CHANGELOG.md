@@ -2,6 +2,12 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.9.0] - 2026-10-02
+
+- **补上上一版刻意留下的那一条**：`DELETE /api/v1/datasets/{id}/artifacts/structure` —— 上游只清**结构类**产物，而 RayRAG 原有的 `DELETE /datasets/{id}/artifacts` 会清空**全部**产物页。上一版因为"没摸清产物行的形状"而**拒绝交付半成品**；本版按行上的 `page_type_kwd` 过滤（与列表过滤同一个字段、与 `clear_artifacts` 同一种条件写法），并返回删除条数与说明（0 条时明确写 "No structure artifacts were stored for this dataset."）。
+- **账面**：**方法缺口 1 → 0**，同路径应答 **111**，未实现 **30**，不匹配 0。
+- **测试**：新增一条（空数据集清空必须说明原因）。全量 **2148 passed / 0 failed**。
+
 ## [0.8.9] - 2026-10-02
 
 - **产物读取面对齐上游的三条字面路径**：`GET /api/v1/datasets/{id}/artifacts/{structure,graph,alteration}`。三条路径都复用同一份列表逻辑（把路径段折进查询），**两个形状不可能各走各的**；未知产物类型会**列出支持的类型**，而不是回一个空列表让人误以为"这个数据集没有"。
