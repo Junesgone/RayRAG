@@ -31,7 +31,7 @@ channels come from, instead of looking like a broken page.
 `WorkspaceCommitStore::recent(limit)` — a per-scope listing cannot answer a deployment-wide question, and
 an empty array cannot answer it either.
 
-**2220 tests pass, 0 failures**, including one test that ties each of the four answers to its source (the
+**2219 tests pass, 0 failures**, including one test that ties each of the four answers to its source (the
 factory count against `preset_count()`, `configured` against the provider store, a written commit
 appearing in the listing) so a literal cannot quietly return. The parity ledger is unchanged at
 **6** gaps, because these four endpoints already existed — they were just not telling the truth.
