@@ -52,6 +52,19 @@ suite if any handler reaches for the synchronous connector again, so this class 
 quietly. The scan immediately found a second call site to check (`dataset_artifacts`, safe inside
 `spawn_blocking`) and now treats the two documented blocking wrappers as the only exceptions.
 
+It took three attempts, and the deployment rejected two of them:
+
+1. `get_conn()` → panicked on connect;
+2. `get_conn_blocking()` → connected, then panicked on the first **query** (the driver starts a runtime
+   per call, so on a tokio worker even a query is fatal);
+3. everything inside `spawn_blocking`, but driving the async helpers with `Handle::block_on` → panicked
+   again, because `block_on` re-enters the runtime inside the blocking task.
+
+What works is what `dataset_artifacts` already did: a blocking task that calls **synchronous** store
+code, with no runtime handle anywhere. `structure_graph_common::{graph_search, build_bucket}` are
+synchronous cores now, so the endpoint has no async store layer to misuse. Each of the three failures was
+observed on the running deployment, not inferred: `panics: 0` is the closing measurement.
+
 ### One bug the new test caught in my own code
 
 `filter_entities_with_relations` returns **entities**; I assigned it to `relations`, and the endpoint
