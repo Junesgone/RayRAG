@@ -16,6 +16,15 @@ tool catalogue — turned up four more. Each now reads the source that actually 
 | `GET /api/v1/bots` | two fixed rows (`slack-local`, `discord-local`) | the configured channels that carry a callback |
 | `GET /api/v1/file/commits` | a hard-coded empty array | the workspace commit store |
 
+The live check caught two mistakes in the first version of this work, which is why it is worth running:
+
+* the channel configuration is **wrapped** (`{"channels": {…}}`, the shape the runtime consumes), and
+  reading the top level reported a single channel literally called `channels`. The mapping is now a pure
+  function tested against both the wrapped and the unwrapped shape.
+* a factory was reported as `configured` when a provider row existed, and the wizard seeds rows for every
+  local engine — so three factories looked ready with no credential anywhere. `configured` now requires
+  a **present key** (the row count is still reported separately as `instances`).
+
 The factory list now reports each factory's **real capabilities** as tags (`LLM`, `TEXT EMBEDDING`,
 `RERANK`, `IMAGE2TEXT`, `TTS`, `SPEECH2TEXT`, `OCR`), its model count, the environment variable its key
 comes from, whether **this deployment** has it configured, and a `domestic` flag for the
@@ -31,7 +40,7 @@ channels come from, instead of looking like a broken page.
 `WorkspaceCommitStore::recent(limit)` — a per-scope listing cannot answer a deployment-wide question, and
 an empty array cannot answer it either.
 
-**2219 tests pass, 0 failures**, including one test that ties each of the four answers to its source (the
+**2222 tests pass, 0 failures**, including one test that ties each of the four answers to its source (the
 factory count against `preset_count()`, `configured` against the provider store, a written commit
 appearing in the listing) so a literal cannot quietly return. The parity ledger is unchanged at
 **6** gaps, because these four endpoints already existed — they were just not telling the truth.

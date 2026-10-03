@@ -727,32 +727,67 @@ pub struct BotChannel {
     pub webhook_url: Option<String>,
 }
 
-/// GET /api/v1/bots — list bot integrations
+/// The channel map inside the configuration: `channels_config_from_env()` wraps its entries in a
+/// `channels` key (the shape the runtime consumes), so reading the top level would report one channel
+/// literally called `channels` — which is what the first version of this endpoint did.
+pub(crate) fn channel_entries(config: &serde_json::Value) -> Vec<(String, serde_json::Value)> {
+    let map = config
+        .get("channels")
+        .and_then(|value| value.as_object())
+        .or_else(|| config.as_object());
+    map.map(|channels| {
+        channels
+            .iter()
+            .map(|(id, value)| (id.clone(), value.clone()))
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+/// Channel rows for the API, from the configuration as it really is.
+pub(crate) fn channel_rows_from_config(config: &serde_json::Value) -> Vec<serde_json::Value> {
+    channel_entries(config)
+        .into_iter()
+        .map(|(id, value)| {
+            let enabled = value
+                .get("enabled")
+                .and_then(|flag| flag.as_bool())
+                .unwrap_or(true);
+            serde_json::json!({
+                "id": id,
+                "name": channel_display_name(&id),
+                "channel_type": id,
+                "enabled": enabled,
+                "config": value,
+            })
+        })
+        .collect()
+}
+
+/// Bot rows: a configured channel that carries an outbound `callback_url`.
+pub(crate) fn bot_rows_from_config(config: &serde_json::Value) -> Vec<serde_json::Value> {
+    channel_entries(config)
+        .into_iter()
+        .filter_map(|(id, value)| {
+            let callback = value.get("callback_url").and_then(|url| url.as_str())?;
+            Some(serde_json::json!({
+                "id": format!("{id}-local"),
+                "platform": id,
+                "name": format!("{} Bot", channel_display_name(&id)),
+                "enabled": value.get("enabled").and_then(|flag| flag.as_bool()).unwrap_or(true),
+                "webhook_url": callback,
+            }))
+        })
+        .collect()
+}
+
 /// `GET /api/v1/bots` — the bots wired to this deployment.
 ///
 /// It used to answer with two invented rows (`slack-local`, `discord-local`). A bot here is a channel
 /// that carries an outbound callback, which is what makes it a bot rather than a plain channel — so the
 /// list is derived from the same configuration and cannot disagree with it.
 pub async fn list_bots() -> Response {
-    let configured = crate::channels::channels_config_from_env();
-    let rows: Vec<serde_json::Value> = configured
-        .as_object()
-        .map(|channels| {
-            channels
-                .iter()
-                .filter_map(|(id, config)| {
-                    let callback = config.get("callback_url").and_then(|value| value.as_str())?;
-                    Some(serde_json::json!({
-                        "id": format!("{id}-local"),
-                        "platform": id,
-                        "name": format!("{} Bot", channel_display_name(id)),
-                        "enabled": config.get("enabled").and_then(|value| value.as_bool()).unwrap_or(true),
-                        "webhook_url": callback,
-                    }))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    let rows = bot_rows_from_config(&crate::channels::channels_config_from_env());
     Json(serde_json::json!({
         "code": 0,
         "data": rows,
@@ -773,35 +808,13 @@ pub struct ChatChannel {
     pub config: serde_json::Value,
 }
 
-/// GET /api/v1/channels — list chat channels
 /// `GET /api/v1/channels` — the chat channels this deployment is configured with.
 ///
 /// It used to answer with two invented rows (`feishu`, `webchat`) whatever the deployment had. The
 /// source is now `channels_config_from_env()`, the same configuration the channel runtime reads, so a
 /// channel appears here exactly when a message sent to it would be handled.
 pub async fn list_channels() -> Response {
-    let configured = crate::channels::channels_config_from_env();
-    let rows: Vec<serde_json::Value> = configured
-        .as_object()
-        .map(|channels| {
-            channels
-                .iter()
-                .map(|(id, config)| {
-                    let enabled = config
-                        .get("enabled")
-                        .and_then(|value| value.as_bool())
-                        .unwrap_or(true);
-                    serde_json::json!({
-                        "id": id,
-                        "name": channel_display_name(id),
-                        "channel_type": id,
-                        "enabled": enabled,
-                        "config": config,
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    let rows = channel_rows_from_config(&crate::channels::channels_config_from_env());
     Json(serde_json::json!({
         "code": 0,
         "data": rows,
@@ -872,6 +885,73 @@ pub async fn mcp_tools_full() -> impl IntoResponse {
                 .collect::<Vec<_>>(),
         }
     }))
+}
+
+#[cfg(test)]
+mod channel_config_tests {
+    use super::*;
+
+    #[test]
+    fn both_configuration_shapes_are_read_and_the_wrapper_is_not_a_channel() {
+        // The shape `channels_config_from_env()` produces.
+        let wrapped = serde_json::json!({
+            "channels": {
+                "feishu": {"enabled": true, "app_id": "a"},
+                "webhook": {"enabled": false, "callback_url": "https://example.com/hook"}
+            }
+        });
+        assert_eq!(channel_entries(&wrapped).len(), 2);
+        let rows = channel_rows_from_config(&wrapped);
+        assert_eq!(rows.len(), 2);
+        assert!(
+            rows.iter().all(|row| row["id"] != "channels"),
+            "the wrapper key must not be reported as a channel: {rows:?}"
+        );
+        assert!(
+            rows.iter()
+                .any(|row| row["id"] == "feishu" && row["enabled"] == true)
+        );
+        assert!(
+            rows.iter()
+                .any(|row| row["id"] == "webhook" && row["enabled"] == false)
+        );
+
+        // The unwrapped shape, which RAYRAG_CHANNELS_CONFIG may be given as.
+        let plain = serde_json::json!({"feishu": {"enabled": true}});
+        let rows = channel_rows_from_config(&plain);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["id"], "feishu");
+
+        // Nothing configured means nothing claimed.
+        assert!(channel_rows_from_config(&serde_json::json!({})).is_empty());
+        assert!(channel_rows_from_config(&serde_json::json!({"channels": {}})).is_empty());
+    }
+
+    #[test]
+    fn a_bot_is_a_channel_with_a_callback() {
+        let config = serde_json::json!({
+            "channels": {
+                "webhook": {"callback_url": "https://example.com/hook", "enabled": true},
+                "feishu": {"app_id": "a", "app_secret": "b"}
+            }
+        });
+        let bots = bot_rows_from_config(&config);
+        assert_eq!(
+            bots.len(),
+            1,
+            "only the callback channel is a bot: {bots:?}"
+        );
+        assert_eq!(bots[0]["platform"], "webhook");
+        assert_eq!(bots[0]["webhook_url"], "https://example.com/hook");
+        assert_eq!(bots[0]["id"], "webhook-local");
+    }
+
+    #[test]
+    fn a_display_name_is_capitalised_not_invented() {
+        assert_eq!(channel_display_name("feishu"), "Feishu");
+        assert_eq!(channel_display_name("webhook"), "Webhook");
+        assert_eq!(channel_display_name(""), "");
+    }
 }
 
 #[cfg(test)]

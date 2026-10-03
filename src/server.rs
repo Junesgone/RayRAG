@@ -13571,6 +13571,15 @@ mod tests {
             channels["data"].as_array().unwrap().len(),
             "{channels}"
         );
+        // The configuration wraps its entries, and the wrapper must never be reported as a channel.
+        assert!(
+            channels["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|row| row["id"] != "channels"),
+            "{channels}"
+        );
 
         // Bots: a bot is a configured channel with a callback, so with no configuration there is none.
         let bots = response_json(get("/api/v1/bots").await).await;

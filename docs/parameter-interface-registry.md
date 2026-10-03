@@ -853,3 +853,7 @@ RAGFlow 把麦克风放在**聊天输入区**；RayRAG 目前把这个能力放�
 - **channels / bots**：空列表会带 `note` 说明来源（`RAYRAG_CHANNELS_CONFIG` 或各渠道环境变量），不会看起来像页面坏了。
 - **bots 的定义**：配置中带 `callback_url` 的渠道 —— 否则它只是渠道。
 - **commits**：只有存储为空才报「没有提交」。
+
+**实机验证抓到的两个错误（第一版实现）**
+1. 渠道配置是**包裹**的（`{"channels": {…}}`，运行时消费的形状）；读顶层会把包裹键当成一个名为 `channels` 的渠道。现改为纯函数 `channel_entries()` / `channel_rows_from_config()` / `bot_rows_from_config()`，并**对包裹与未包裹两种形状都做单测**。
+2. factory 的 `configured` 原先只看「是否存在 provider 行」，而引导流程会为每个本地引擎播种行 —— 于是三个云端 factory 在没有任何密钥时也显示已配置。现要求**密钥存在**才算：`configured`（需密钥）与 `instances`（实例数）分开报告。
