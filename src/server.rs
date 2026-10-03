@@ -71,6 +71,7 @@ pub struct AppState {
     pub workspace_commits: Arc<crate::api::workspaces::WorkspaceCommitStore>,
     pub attachments: Arc<crate::api::attachments::AttachmentStore>,
     pub metadata_config: Arc<crate::api::metadata_config::MetadataConfigStore>,
+    pub artifacts: Arc<crate::api::artifacts::ArtifactStore>,
     pub connectors: Arc<crate::api::connector::ConnectorStore>,
     pub data_sources: Option<Arc<crate::api::data_source_mgr::DataSourceStore>>,
     pub search_apps: Option<Arc<crate::api::searchapp_mgr::SearchAppStore>>,
@@ -5340,6 +5341,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(crate::api::structure_graph::document_structure_graph)
                 .delete(crate::api::structure_graph::delete_document_structure_graph),
         )
+        // The sandbox artifacts a code execution produced. Upstream serves one by filename from its
+        // artifact bucket; RayRAG stores what its executor collected and serves it the same way.
+        .route(
+            "/api/v1/documents/artifact/{filename}",
+            get(crate::api::artifacts::get_artifact).delete(crate::api::artifacts::delete_artifact),
+        )
+        .route(
+            "/api/v1/documents/artifacts",
+            get(crate::api::artifacts::list_artifacts),
+        )
         .route(
             "/api/v1/documents/images/{image_id}",
             get(crate::api::doc_assets::document_image),
@@ -6272,6 +6283,12 @@ pub async fn run(
         "{}/../uploads/connectors.json",
         static_dir
     ))?);
+    // Sandbox artifacts: the executor writes through `ArtifactStore::shared()`, so the API holds that
+    // very instance. Two instances over one file would leave the route reading a stale copy.
+    crate::api::artifacts::ArtifactStore::set_default_path(format!(
+        "{static_dir}/../uploads/artifacts.json"
+    ));
+    let artifacts = crate::api::artifacts::ArtifactStore::shared();
     let data_sources = Some(Arc::new(crate::api::data_source_mgr::DataSourceStore::new(
         &format!("{}/../uploads/", static_dir),
     )?));
@@ -6413,6 +6430,7 @@ pub async fn run(
         workspace_commits,
         attachments,
         metadata_config,
+        artifacts,
         connectors,
         document_metadata,
         whitelist: Arc::new(crate::registration_whitelist::WhitelistStore::new(
@@ -6694,6 +6712,7 @@ mod tests {
             static_dir: static_dir.to_string_lossy().into_owned(),
             port: 0,
             doc_store: Arc::new(crate::doc_store::DocStorePool::memory()),
+            artifacts: Arc::new(crate::api::artifacts::ArtifactStore::in_memory()),
             users,
             kbs: Arc::new(KbStore::new(root.join("kbs.json").to_str().unwrap()).unwrap()),
             tenants: Arc::new(
@@ -8126,6 +8145,7 @@ mod tests {
                 )
                 .unwrap(),
             ),
+            artifacts: Arc::new(crate::api::artifacts::ArtifactStore::in_memory()),
             metadata_config: Arc::new(
                 crate::api::metadata_config::MetadataConfigStore::new(
                     root.join("metadata-config.json").to_str().unwrap(),
@@ -8180,8 +8200,16 @@ mod tests {
     }
 
     async fn response_json(response: Response) -> serde_json::Value {
+        let status = response.status();
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        serde_json::from_slice(&body).unwrap()
+        // A non-JSON body used to surface as "expected value at line 1 column 1" with no clue which
+        // route produced it; naming the body costs nothing and saves the round trip.
+        serde_json::from_slice(&body).unwrap_or_else(|error| {
+            panic!(
+                "expected a JSON body, got status {status} with {} ({error})",
+                String::from_utf8_lossy(&body)
+            )
+        })
     }
 
     #[tokio::test]
@@ -13586,6 +13614,157 @@ mod tests {
             "these handlers touch the doc store without a blocking wrapper (req_store / spawn_blocking / \
              with_store), so their queries would run on a tokio worker: {direct_pool_users:?}"
         );
+    }
+
+    /// The artifact route: what the executor collected can be fetched by its owner, and every refusal
+    /// upstream defines comes back with upstream's wording.
+    #[tokio::test]
+    async fn sandbox_artifacts_are_served_to_their_owner_only() {
+        let env = test_env();
+        let store = env.state.artifacts.clone();
+        // An artifact exactly as the sandbox reports it: base64 of "hello artifact".
+        let content = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            b"hello artifact",
+        );
+        assert!(store.put("test-user", "chart.png", "image/png", &content));
+
+        let call = |method: Method, uri: String| {
+            let router = build_router(env.state.clone());
+            let token = env.token.clone();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(method)
+                            .uri(uri)
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        // The owner gets the bytes, with the type and an inline filename.
+        let fetched = call(
+            Method::GET,
+            "/api/v1/documents/artifact/chart.png".to_string(),
+        )
+        .await;
+        assert_eq!(fetched.status(), StatusCode::OK);
+        assert_eq!(
+            fetched.headers().get(header::CONTENT_TYPE).unwrap(),
+            "image/png"
+        );
+        assert_eq!(
+            fetched.headers().get(header::CONTENT_DISPOSITION).unwrap(),
+            "inline; filename=\"chart.png\""
+        );
+        let bytes = to_bytes(fetched.into_body(), 1 << 20).await.unwrap();
+        assert_eq!(&bytes[..], b"hello artifact");
+
+        // A path, a traversal attempt and an unsupported type are all refused before the store is read.
+        for (uri, expected) in [
+            // A literal backslash stays inside one path segment, so it reaches the handler and is
+            // refused there. A `%2F` would be split by the router before the handler ever sees it.
+            (
+                "/api/v1/documents/artifact/dir%5Cchart.png",
+                "Invalid filename.",
+            ),
+            ("/api/v1/documents/artifact/script.sh", "invalid file type"),
+            (
+                "/api/v1/documents/artifact/missing.png",
+                "Artifact not found.",
+            ),
+        ] {
+            let raw = call(Method::GET, uri.to_string()).await;
+            let status = raw.status();
+            let bytes = to_bytes(raw.into_body(), 1 << 20).await.unwrap();
+            let refused: serde_json::Value =
+                serde_json::from_slice(&bytes).unwrap_or_else(|error| {
+                    panic!(
+                        "{uri} returned {status} with a non-JSON body: {} ({error})",
+                        String::from_utf8_lossy(&bytes)
+                    )
+                });
+            assert_eq!(
+                refused["code"],
+                crate::server::code::INVALID_OR_MISSING_DATA,
+                "{uri}: {refused}"
+            );
+            assert_eq!(refused["message"], expected, "{uri}");
+        }
+
+        // The listing is the caller's own, and deleting removes it from the route.
+        let listed =
+            response_json(call(Method::GET, "/api/v1/documents/artifacts".to_string()).await).await;
+        assert_eq!(listed["data"]["total"], 1, "{listed}");
+        assert_eq!(
+            listed["data"]["artifacts"][0]["name"], "chart.png",
+            "{listed}"
+        );
+        assert!(
+            listed["data"]["artifacts"][0].get("content_b64").is_none(),
+            "bytes stay out of listings: {listed}"
+        );
+
+        let removed = response_json(
+            call(
+                Method::DELETE,
+                "/api/v1/documents/artifact/chart.png".to_string(),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(removed["code"], 0, "{removed}");
+        assert!(
+            store.get_for("test-user", false, "chart.png").is_none(),
+            "the handler said success, so the store must be empty"
+        );
+        let raw_gone = call(
+            Method::GET,
+            "/api/v1/documents/artifact/chart.png".to_string(),
+        )
+        .await;
+        let gone = response_json(raw_gone).await;
+        assert_eq!(gone["message"], "Artifact not found.", "{gone}");
+
+        // The fixture user is an administrator, and an administrator sees every artifact — that is the
+        // documented rule, so it is asserted rather than assumed away.
+        assert!(store.put("someone-else", "private.png", "image/png", &content));
+        let as_admin = call(
+            Method::GET,
+            "/api/v1/documents/artifact/private.png".to_string(),
+        )
+        .await;
+        assert_eq!(as_admin.status(), StatusCode::OK);
+
+        // A non-administrator does not.
+        let other = non_admin_env();
+        assert!(
+            other
+                .state
+                .artifacts
+                .put("someone-else", "private.png", "image/png", &content)
+        );
+        let other_router = build_router(other.state.clone());
+        let foreign = response_json(
+            other_router
+                .oneshot(
+                    Request::builder()
+                        .method(Method::GET)
+                        .uri("/api/v1/documents/artifact/private.png")
+                        .header(header::AUTHORIZATION, format!("Bearer {}", other.token))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(foreign["message"], "Artifact not found.", "{foreign}");
     }
 
     /// `POST /searchbots/ask`: the embedded stream. Every refusal and the frame envelope are checked

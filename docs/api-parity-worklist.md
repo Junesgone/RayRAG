@@ -5,11 +5,11 @@
 
 ## 现状
 
-- 上游路由：**195**；RayRAG `/api/v1` 路由：**345**
-- 同名应答（exact）：**145**
+- 上游路由：**195**；RayRAG `/api/v1` 路由：**347**
+- 同名应答（exact）：**146**
 - 别名应答（alias，上游拼写已注册但走 RayRAG 自己的命名）：**45**
 - 形状不同但已被应答（covered）：**2**
-- 尚未实现（missing，已登记）：**3**
+- 尚未实现（missing，已登记）：**2**
 - 路径已有但方法缺失（method）：**1**
 - 未登记的缺口（mismatch，`--check` 视为失败）：**0**
 
@@ -19,7 +19,6 @@
 | --- | --- | --- |
 | `/datasets/<dataset_id>/skills` | `dataset_api.py` | 功能级缺口：数据集 Skills 面未实现（Skills 索引仅有全局 /api/v1/skills/*） |
 | `/datasets/<dataset_id>/skills/<path:skill_kwd>` | `dataset_api.py` | 功能级缺口：同上（Skills 面未实现） |
-| `/documents/artifact/<filename>` | `document_api.py` | 功能级缺口：文档产物文件读取未实现 |
 
 ## 别名对照（上游拼写 → RayRAG 路由）
 

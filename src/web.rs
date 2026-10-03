@@ -7868,6 +7868,95 @@ function adminSandboxCell(row,text,className){var cell=document.createElement('t
 function adminLoadSandbox(){var rows=document.getElementById('adminSandboxRows');var message=document.getElementById('adminSandboxMessage');fetch('/api/v1/system/variables').then(function(response){return response.json()}).then(function(data){rows.replaceChildren();(data.data||[]).forEach(function(setting){var row=document.createElement('tr');adminSandboxCell(row,setting.name,'admin-code');adminSandboxCell(row,setting.data_type);var valueCell=document.createElement('td');var input=document.createElement('input');input.className='admin-value-input';input.value=setting.value==null?'':setting.value;input.setAttribute('data-setting',setting.name);valueCell.appendChild(input);row.appendChild(valueCell);var actionCell=document.createElement('td');var save=document.createElement('button');save.type='button';save.className='btn btn-o';save.textContent='Save';save.onclick=function(){save.disabled=true;fetch('/api/v1/system/variables',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({var_name:setting.name,var_value:input.value})}).then(function(response){return response.json()}).then(function(result){if(result.code!==0)throw new Error(result.message||'Save failed');if(message)message.textContent='Saved '+setting.name}).catch(function(error){if(message)message.textContent=error.message}).finally(function(){save.disabled=false})};actionCell.appendChild(save);row.appendChild(actionCell);rows.appendChild(row)})}).catch(function(error){if(message)message.textContent=error.message})}
 sbLoadProviders();adminLoadSandbox();</script>"#,
     );
+    // The artifacts a sandbox run left behind. Upstream shows them beside the conversation; RayRAG keeps
+    // them here until the chat surface grows a place for them, and the API behind the card is the same
+    // user-scoped one. The bytes are fetched with the page's authenticated fetch wrapper rather than a
+    // plain link, because a bare `href` would carry no token.
+    let artifact_template = r##"<section class='sb-card' id='sbArtifactCard' data-testid='sandbox-artifact-card'><header class='sb-card-head'><h2>@TITLE@</h2></header>
+<p class='sb-description'>@HINT@</p>
+<div style='display:flex;gap:8px;margin-bottom:10px'>
+<button type='button' class='btn ghost' id='sbArtifactRefresh' data-testid='sandbox-artifact-refresh'>@REFRESH@</button>
+</div>
+<div id='sbArtifactStatus' data-testid='sandbox-artifact-status' role='status' aria-live='polite' style='font-size:13px;color:var(--t2)'></div>
+<table class='table' style='width:100%;margin-top:10px' id='sbArtifactTable' hidden>
+<thead><tr><th>@NAME@</th><th>@SIZE@</th><th></th></tr></thead>
+<tbody id='sbArtifactRows'></tbody>
+</table>
+</section>
+<script>
+function sbArtifactSay(text,error){var node=document.getElementById('sbArtifactStatus');node.textContent=text;node.style.color=error?'#c0392b':'var(--t2)';}
+function sbArtifactDownload(name){
+  // The page's fetch wrapper adds the bearer token; a plain anchor would not.
+  fetch('/api/v1/documents/artifact/'+encodeURIComponent(name)).then(function(response){
+    if(!response.ok)throw new Error('HTTP '+response.status);
+    return response.blob();
+  }).then(function(blob){
+    var url=URL.createObjectURL(blob);
+    var link=document.createElement('a');
+    link.href=url;link.download=name;document.body.appendChild(link);link.click();
+    document.body.removeChild(link);URL.revokeObjectURL(url);
+    sbArtifactSay(@DOWNLOADED@+' '+name);
+  }).catch(function(error){sbArtifactSay(@FETCH_FAILED@+' '+error,true);});
+}
+function sbArtifactDelete(name){
+  fetch('/api/v1/documents/artifact/'+encodeURIComponent(name),{method:'DELETE'}).then(function(response){
+    return response.json();
+  }).then(function(body){
+    if(body.code!==0){sbArtifactSay(body.message||@DELETE_FAILED@,true);return;}
+    sbArtifactSay(@DELETED@+' '+name);
+    sbArtifactLoad();
+  }).catch(function(error){sbArtifactSay(@DELETE_FAILED@+' '+error,true);});
+}
+function sbArtifactLoad(){
+  fetch('/api/v1/documents/artifacts').then(function(response){return response.json();}).then(function(body){
+    if(body.code!==0){sbArtifactSay(body.message||@FETCH_FAILED@,true);return;}
+    var items=(body.data&&body.data.artifacts)||[];
+    var rows=document.getElementById('sbArtifactRows');
+    rows.textContent='';
+    document.getElementById('sbArtifactTable').hidden=items.length===0;
+    sbArtifactSay(items.length?(@COUNT@+' '+items.length):@EMPTY@);
+    items.forEach(function(item){
+      var row=document.createElement('tr');
+      var nameCell=document.createElement('td');nameCell.textContent=item.name;
+      var sizeCell=document.createElement('td');sizeCell.textContent=item.size+' B';
+      var actionCell=document.createElement('td');
+      var download=document.createElement('button');
+      download.type='button';download.className='btn ghost';download.textContent=@DOWNLOAD@;
+      download.setAttribute('data-testid','sandbox-artifact-download');
+      download.addEventListener('click',function(){sbArtifactDownload(item.name);});
+      var remove=document.createElement('button');
+      remove.type='button';remove.className='btn ghost';remove.textContent=@DELETE@;
+      remove.setAttribute('data-testid','sandbox-artifact-delete');
+      remove.addEventListener('click',function(){sbArtifactDelete(item.name);});
+      actionCell.appendChild(download);actionCell.appendChild(remove);
+      row.appendChild(nameCell);row.appendChild(sizeCell);row.appendChild(actionCell);
+      rows.appendChild(row);
+    });
+  }).catch(function(error){sbArtifactSay(@FETCH_FAILED@+' '+error,true);});
+}
+document.getElementById('sbArtifactRefresh').addEventListener('click',sbArtifactLoad);
+sbArtifactLoad();
+</script>"##;
+    let artifact_card = [
+        ("@TITLE@", t("Sandbox artifacts", zh).to_string()),
+        ("@HINT@", t("Files your code executions produced. Each one is downloadable; they belong to the signed-in account.", zh).to_string()),
+        ("@REFRESH@", t("Refresh", zh).to_string()),
+        ("@NAME@", t("Name", zh).to_string()),
+        ("@SIZE@", t("Size", zh).to_string()),
+        ("@DOWNLOAD@", t("Download", zh).to_string()),
+        ("@DELETE@", t("Delete", zh).to_string()),
+        ("@COUNT@", t("Artifacts:", zh).to_string()),
+        ("@EMPTY@", t("No artifacts yet. Run the Code component and its output files appear here.", zh).to_string()),
+        ("@DOWNLOADED@", t("Downloaded", zh).to_string()),
+        ("@DELETED@", t("Deleted", zh).to_string()),
+        ("@FETCH_FAILED@", t("Could not load the artifacts.", zh).to_string()),
+        ("@DELETE_FAILED@", t("Could not delete it.", zh).to_string()),
+    ]
+    .iter()
+    .fold(artifact_template.to_string(), |html, (token, value)| {
+        html.replace(token, value)
+    });
+    b.push_str(&artifact_card);
     Html(layout_plain(
         "Sandbox settings",
         &admin_console_shell(AdminConsoleSection::SandboxSettings, &b, zh),
@@ -11325,6 +11414,7 @@ mod kb_ui_tests {
             static_dir: static_dir.to_string_lossy().into_owned(),
             port: 0,
             doc_store: Arc::new(crate::doc_store::DocStorePool::memory()),
+            artifacts: Arc::new(crate::api::artifacts::ArtifactStore::in_memory()),
             users,
             kbs: Arc::new(KbStore::new(root.path().join("kbs.json").to_str().unwrap()).unwrap()),
             tenants: Arc::new(
@@ -18426,6 +18516,50 @@ connection: close
         assert!(
             html.contains("exportChunks"),
             "export chunks handler missing"
+        );
+    }
+
+    /// The artifact card lists what the sandbox left behind and downloads it with the token the page's
+    /// fetch wrapper adds — a plain link would be refused.
+    #[tokio::test]
+    async fn the_sandbox_page_lists_and_downloads_artifacts() {
+        let (_root, state) = test_state();
+        // The page redirects anyone who is not an administrator, so the test signs in as one.
+        let admin = state
+            .users
+            .create_user("artifacts@example.com", "secret-passphrase", "admin")
+            .unwrap();
+        let token = state.users.issue_token_for(&admin.id).unwrap();
+        let req = axum::http::Request::builder()
+            .uri("/admin/sandbox")
+            .header("Cookie", "lang=en")
+            .header("Authorization", format!("Bearer {token}"))
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let html = body_of(admin_sandbox_settings_page(State(state), req).await).await;
+        assert_inline_scripts_balance(&html, "/admin/sandbox");
+        for marker in [
+            "data-testid='sandbox-artifact-card'",
+            "data-testid='sandbox-artifact-refresh'",
+            "data-testid='sandbox-artifact-status'",
+            // Set from the script, so they appear as attribute values rather than as markup.
+            "'data-testid','sandbox-artifact-download'",
+            "'data-testid','sandbox-artifact-delete'",
+            // The list and the per-file fetch both go through the authenticated wrapper.
+            "'/api/v1/documents/artifacts'",
+            "'/api/v1/documents/artifact/'+encodeURIComponent(name)",
+            "URL.createObjectURL(blob)",
+        ] {
+            assert!(html.contains(marker), "missing {marker}");
+        }
+        let leftover: Vec<&str> = html
+            .match_indices('@')
+            .map(|(index, _)| &html[index..(index + 24).min(html.len())])
+            .filter(|slice| slice.chars().nth(1).is_some_and(|c| c.is_ascii_uppercase()))
+            .collect();
+        assert!(
+            leftover.is_empty(),
+            "unsubstituted placeholders {leftover:?}"
         );
     }
 

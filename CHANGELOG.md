@@ -2,6 +2,45 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.24.0] - 2026-10-04
+
+### Sandbox artifacts had no home, so the route could not exist
+
+`GET /api/v1/documents/artifact/{filename}` is upstream's way to fetch a file a code execution produced.
+RayRAG parsed those files out of the sandbox response — `code_exec::SandboxResult::artifacts`, each with
+its name, MIME type and base64 content — and then **dropped them**. There was nothing to serve, which is
+why the route was still listed as a gap.
+
+Both halves are here now:
+
+* **A store** (`api::artifacts::ArtifactStore`) keeps artifacts per owner, persisted to
+  `uploads/artifacts.json` and mirrored into PostgreSQL like the other state files. It refuses unsafe
+  names (`../x.png`, `dir/x.png`) and types RayRAG does not serve, and caps a single artifact at 16 MB and
+  the collection at 500 entries so a runaway script cannot fill the disk through this path. A refusal is
+  logged: a dropped artifact must not look like a script that produced nothing.
+* **A producer.** The agent code-execution path records what the sandbox reported, owned by the user the
+  canvas run belongs to. The executor has no handle on the application state, so it writes through
+  `ArtifactStore::shared()` — and the API holds *that same instance*, which is why the shared store
+  returns an `Arc`. Two instances over one file would have left the route reading a stale copy: a bug
+  that would only appear in production, where the store is a file.
+* **The route**, with upstream's refusals in upstream's order and upstream's wording: `Invalid filename.`,
+  `invalid file type`, `Artifact not found.` The bytes go out with the stored MIME type and
+  `Content-Disposition: inline; filename="…"` with the name sanitised for the header.
+* **Access** follows upstream's rule as closely as RayRAG's model allows: an artifact belongs to the run's
+  user, and only that user or an administrator can fetch it.
+* Two small routes exist because a surface needs them: `GET /api/v1/documents/artifacts` lists the
+  caller's artifacts (without their bytes) and `DELETE …/artifact/{filename}` removes one. Listing is a
+  RayRAG addition, and it is better than inventing data: the list is exactly what the store holds.
+
+The sandbox settings page carries the **Sandbox artifacts** card: refresh, one row per file with its size,
+and *Download* / *Delete* per row. Downloads go through the page's authenticated `fetch` wrapper and a
+blob URL, because a plain `href` would carry no token and be refused.
+
+**2242 tests pass, 0 failures**, including the store's ownership, size and refusal rules, and the route
+end to end: the bytes come back byte-for-byte, all three refusals carry upstream's wording, deletion is
+visible to the route afterwards, an administrator sees every artifact, and a non-administrator sees only
+their own. The parity ledger drops from **3 gaps to 2**.
+
 ## [0.23.0] - 2026-10-04
 
 ### The embedded search bot's stream

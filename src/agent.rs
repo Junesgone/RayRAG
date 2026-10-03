@@ -7080,7 +7080,21 @@ async fn execute_code_exec_with_provider(
                 Ok(process_result(&result))
             }
             Err(local_error) => match run_remote_sandbox(&code, &language, &arguments).await {
-                Ok(result) => Ok(process_result(&result)),
+                Ok(result) => {
+                    // Artifacts used to be parsed and dropped. They are the sandbox's output, and the
+                    // artifact route can only serve what was kept, so record them for this run's user.
+                    if !result.artifacts.is_empty() {
+                        let owner = input.user_id.to_string();
+                        let kept = crate::api::artifacts::ArtifactStore::shared()
+                            .put_all(&owner, &result.artifacts);
+                        tracing::info!(
+                            collected = result.artifacts.len(),
+                            kept,
+                            "sandbox artifacts collected"
+                        );
+                    }
+                    Ok(process_result(&result))
+                }
                 Err(remote_error) => {
                     let message =
                         format!("**ERROR**: {local_error}; remote fallback: {remote_error}");

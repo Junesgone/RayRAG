@@ -8,6 +8,7 @@ pub mod agent_log;
 pub mod agent_trace;
 pub mod agent_webhook;
 pub mod aimlapi;
+pub mod artifacts;
 pub mod attachments;
 pub mod audio_api;
 pub mod chat_channel_mgr;

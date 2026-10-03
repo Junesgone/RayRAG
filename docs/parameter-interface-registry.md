@@ -886,3 +886,13 @@ RAGFlow 把麦克风放在**聊天输入区**；RayRAG 目前把这个能力放�
 - **响应头**：`text/event-stream; charset=utf-8`、`Cache-Control: no-cache`、`Connection: keep-alive`、`X-Accel-Buffering: no`。
 - **检索复用** `/api/v1/search` 的现有实现（避免第二套打分规则漂移）；回答走 `state.tenant_models.resolve(..., Chat)` → `llm_client().chat_completion()`；**无可用聊天模型时在帧内报错并附带已检索到的引用**，不返回空答案。
 - **UI**：`/search` 页新增 `#askCard`（`data-testid='ask-card|ask-question|ask-send|ask-status|ask-answer|ask-refs'`），逐帧读取流、识别 `data:true` 结束、浏览器不支持流式时回退整体读取；数据集取自页面自身选择器 `searchDocsSelectedKbs()`。
+
+### 0.24.0：沙箱产物（artifact）落盘 + 接口
+
+- **接口**：`GET /api/v1/documents/artifact/{filename}`（上游同名）、`DELETE` 同路径、`GET /api/v1/documents/artifacts`（RayRAG 补充的列表，便于 UI 提供下载按钮）。
+- **拒绝（顺序与文案对齐上游）**：非裸文件名（含 `/`、`\\`、`basename != filename`）→ `102 Invalid filename.`；扩展名不在可服务类型（`.png .jpg .jpeg .svg .pdf .csv .json .html`）→ `102 invalid file type`；不存在或非本人 → `102 Artifact not found.`
+- **成功响应**：原始字节 + 存储的 MIME + `Content-Disposition: inline; filename="<净化后的名字>"`。
+- **归属**：产物属于产生它的运行用户；管理员可见全部（与上游「属于该用户的会话」模型一致的最接近实现）。
+- **存储**：`uploads/artifacts.json`（+ PostgreSQL 镜像）；单文件上限 16 MB、总量 500，占用超限拒绝并记日志（**不能静默丢弃**）。
+- **生产者**：agent 代码执行路径把 `SandboxResult.artifacts` 写入 `ArtifactStore::shared()`（执行器拿不到 AppState）；**API 持有同一个 Arc 实例**，否则会读到陈旧副本（只在文件型存储的生产环境才暴露）。
+- **UI**：沙箱设置页 `#sbArtifactCard`（`data-testid='sandbox-artifact-card|sandbox-artifact-refresh|sandbox-artifact-status|sandbox-artifact-download|sandbox-artifact-delete'`）；下载走带 token 的 fetch + Blob（裸 `<a href>` 不带 token 会被拒）。
