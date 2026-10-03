@@ -13537,6 +13537,7 @@ mod tests {
         }
         let mut files = Vec::new();
         rust_files(std::path::Path::new("src/api"), &mut files);
+        let mut direct_pool_users = Vec::new();
         assert!(
             !files.is_empty(),
             "the source tree must be readable from the test working directory"
@@ -13562,10 +13563,25 @@ mod tests {
                     offenders.push(format!("{}:{}", file.display(), number + 1));
                 }
             }
+            // The second half of the same rule: touching the pool outside a blocking wrapper means the
+            // queries themselves run on a tokio worker, which panics exactly like connecting does.
+            if text.contains(".doc_store") {
+                let wrapped = text.contains("req_store(")
+                    || text.contains("spawn_blocking")
+                    || text.contains("with_store(");
+                if !wrapped {
+                    direct_pool_users.push(file.display().to_string());
+                }
+            }
         }
         assert!(
             offenders.is_empty(),
             "use doc_store.get_conn_blocking() in handlers instead of get_conn(): {offenders:?}"
+        );
+        assert!(
+            direct_pool_users.is_empty(),
+            "these handlers touch the doc store without a blocking wrapper (req_store / spawn_blocking / \
+             with_store), so their queries would run on a tokio worker: {direct_pool_users:?}"
         );
     }
 

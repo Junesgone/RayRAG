@@ -42,6 +42,15 @@ pub struct GraphQuery {
     pub keywords: Option<String>,
 }
 
+/// What the blocking store task returns to the handler.
+struct Outcome {
+    buckets: Vec<(BucketMeta, Vec<Value>, Vec<Value>)>,
+    scanned_rows: usize,
+    total_matching: usize,
+    total_entities: usize,
+    total_relations: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct BucketMeta {
     template_id: String,
@@ -250,163 +259,160 @@ pub async fn document_structure_graph(
         .unwrap_or(Value::Null);
     let configured = configured_templates(&state, &owner, &parser_config);
 
-    // `get_conn_blocking` is the only form a handler may use: the synchronous `get_conn` starts the
-    // driver's own runtime and panics with "Cannot start a runtime from within a runtime" when called
-    // from a tokio worker — which is what the first version of this endpoint did, on the live
-    // deployment, after passing every unit test.
-    let store = match state.doc_store.get_conn_blocking().await {
-        Ok(store) => store,
-        Err(error) => {
-            return api_error_code(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                code::CONNECTION_ERROR,
-                &format!("the document store is not reachable: {error}"),
-            );
-        }
-    };
+    // The synchronous Postgres client may not be used from a tokio worker at all: it starts its own
+    // runtime per call and panics there ("Cannot start a runtime from within a runtime" — first on
+    // connect, then on every query). So the whole store interaction runs on a blocking thread, with the
+    // async helpers driven by that thread's handle.
     let index = crate::structure_compile::doc_store_index_name(&owner);
-    let meta_fields: Vec<&str> = {
-        let mut fields: Vec<&str> = GRAPH_ALL_FIELDS.to_vec();
-        fields.extend([
-            "compile_kwd",
-            "compilation_template_ids",
-            "compilation_template_kind_kwd",
-        ]);
-        fields
-    };
-    let mut scope = Map::new();
-    scope.insert("doc_id".to_string(), json!(document_id.clone()));
-    scope.insert(
-        "knowledge_graph_kwd".to_string(),
-        json!(["entity", "relation"]),
-    );
-    let (rows, total_matching) = match graph_search(
-        store.as_ref(),
-        &index,
-        &dataset_id,
-        &meta_fields,
-        scope,
-        OrderByExpr::default(),
-        BUCKET_SCAN_CAP,
-        Vec::new(),
-        0,
-    )
-    .await
-    {
-        Ok(found) => found,
-        Err(error) => {
-            return api_error_code(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                code::CONNECTION_ERROR,
-                &format!("the structure graph could not be read: {error}"),
-            );
-        }
-    };
+    let scanned = crate::api::dataset_navigation::req_store(&state, {
+        let dataset_id = dataset_id.clone();
+        let document_id = document_id.clone();
+        let index = index.clone();
+        move |store| -> anyhow::Result<Outcome> {
+            tokio::runtime::Handle::current().block_on(async move {
+                let meta_fields: Vec<&str> = {
+                    let mut fields: Vec<&str> = GRAPH_ALL_FIELDS.to_vec();
+                    fields.extend([
+                        "compile_kwd",
+                        "compilation_template_ids",
+                        "compilation_template_kind_kwd",
+                    ]);
+                    fields
+                };
+                let mut scope = Map::new();
+                scope.insert("doc_id".to_string(), json!(document_id.clone()));
+                scope.insert(
+                    "knowledge_graph_kwd".to_string(),
+                    json!(["entity", "relation"]),
+                );
+                let (rows, total_matching) = graph_search(
+                    store,
+                    &index,
+                    &dataset_id,
+                    &meta_fields,
+                    scope,
+                    OrderByExpr::default(),
+                    BUCKET_SCAN_CAP,
+                    Vec::new(),
+                    0,
+                )
+                .await
+                .map_err(|error| anyhow::anyhow!(error))?;
 
-    // Group the rows into buckets first, then project each bucket once. The bucket scope is the list of
-    // row ids in it: a scope of "doc + compile_kwd" would also match the rows that carry a template id
-    // (they keep the same compile key), and each of those would then be counted twice.
-    let mut metas: Vec<BucketMeta> = Vec::new();
-    let mut bucket_rows: HashMap<String, Vec<String>> = HashMap::new();
-    for row in &rows {
-        let (meta, _) = bucket_for_row(row);
-        let ids = bucket_rows.entry(meta.template_id.clone()).or_default();
-        if let Some(id) = row.get("id").and_then(Value::as_str) {
-            ids.push(id.to_string());
-        }
-        if !metas
-            .iter()
-            .any(|known| known.template_id == meta.template_id)
-        {
-            metas.push(meta);
-        }
-    }
-
-    let excluded: HashSet<String> = HashSet::new();
-    let mut buckets: Vec<(BucketMeta, Vec<Value>, Vec<Value>)> = Vec::new();
-    let mut total_entities = 0usize;
-    let mut total_relations = 0usize;
-    for meta in metas {
-        let Some(ids) = bucket_rows
-            .get(&meta.template_id)
-            .filter(|ids| !ids.is_empty())
-        else {
-            continue;
-        };
-        let mut bucket_scope = Map::new();
-        bucket_scope.insert("id".to_string(), json!(ids));
-        match build_bucket(
-            store.as_ref(),
-            &index,
-            &dataset_id,
-            &bucket_scope,
-            &excluded,
-        )
-        .await
-        {
-            Ok((entities, relations)) => {
-                total_entities += entities.len();
-                total_relations += relations.len();
-                // A template that produced nothing is not a graph.
-                if !entities.is_empty() || !relations.is_empty() {
-                    buckets.push((meta, entities, relations));
+                // Group the rows into buckets first, then project each bucket once. The bucket scope is
+                // the list of row ids in it: a scope of "doc + compile_kwd" would also match the rows that
+                // carry a template id (they keep the same compile key), and each of those would then be
+                // counted twice.
+                let mut metas: Vec<BucketMeta> = Vec::new();
+                let mut bucket_rows: HashMap<String, Vec<String>> = HashMap::new();
+                for row in &rows {
+                    let (meta, _) = bucket_for_row(row);
+                    let ids = bucket_rows.entry(meta.template_id.clone()).or_default();
+                    if let Some(id) = row.get("id").and_then(Value::as_str) {
+                        ids.push(id.to_string());
+                    }
+                    if !metas.iter().any(|known| known.template_id == meta.template_id) {
+                        metas.push(meta);
+                    }
                 }
-            }
-            Err(error) => {
-                // One unreadable bucket must not hide the others, and it must not be reported as empty
-                // either: it is named in the log.
-                tracing::warn!(bucket = %meta.template_id, %error, "structure graph bucket failed");
-            }
-        }
-    }
 
-    // RAPTOR summaries are stored as blobs rather than entity rows.
-    let mut raptor_scope = Map::new();
-    raptor_scope.insert("doc_id".to_string(), json!(document_id.clone()));
-    raptor_scope.insert("compile_kwd".to_string(), json!("raptor"));
-    if let Ok((raptor_rows, _)) = graph_search(
-        store.as_ref(),
-        &index,
-        &dataset_id,
-        &["id", "content_with_weight", "compile_kwd"],
-        raptor_scope,
-        OrderByExpr::default(),
-        RAPTOR_ROWS,
-        Vec::new(),
-        0,
-    )
-    .await
-    {
-        let mut entities: Vec<Value> = Vec::new();
-        let mut relations: Vec<Value> = Vec::new();
-        for row in raptor_rows {
-            let Some(payload) = row.get("content_with_weight").and_then(Value::as_str) else {
-                continue;
-            };
-            let Ok(graph) = serde_json::from_str::<Value>(payload) else {
-                continue;
-            };
-            if let Some(found) = graph.get("entities").and_then(Value::as_array) {
-                entities.extend(found.iter().cloned());
-            }
-            if let Some(found) = graph.get("relations").and_then(Value::as_array) {
-                relations.extend(found.iter().cloned());
-            }
+                let excluded: HashSet<String> = HashSet::new();
+                let mut buckets: Vec<(BucketMeta, Vec<Value>, Vec<Value>)> = Vec::new();
+                let mut total_entities = 0usize;
+                let mut total_relations = 0usize;
+                for meta in metas {
+                    let Some(ids) = bucket_rows.get(&meta.template_id).filter(|ids| !ids.is_empty())
+                    else {
+                        continue;
+                    };
+                    let mut bucket_scope = Map::new();
+                    bucket_scope.insert("id".to_string(), json!(ids));
+                    match build_bucket(store, &index, &dataset_id, &bucket_scope, &excluded).await {
+                        Ok((entities, relations)) => {
+                            total_entities += entities.len();
+                            total_relations += relations.len();
+                            // A template that produced nothing is not a graph.
+                            if !entities.is_empty() || !relations.is_empty() {
+                                buckets.push((meta, entities, relations));
+                            }
+                        }
+                        Err(error) => {
+                            // One unreadable bucket must not hide the others, and it must not be reported
+                            // as empty either: it is named in the log.
+                            tracing::warn!(bucket = %meta.template_id, %error, "structure graph bucket failed");
+                        }
+                    }
+                }
+
+                // RAPTOR summaries are stored as blobs rather than entity rows.
+                let mut raptor_scope = Map::new();
+                raptor_scope.insert("doc_id".to_string(), json!(document_id.clone()));
+                raptor_scope.insert("compile_kwd".to_string(), json!("raptor"));
+                if let Ok((raptor_rows, _)) = graph_search(
+                    store,
+                    &index,
+                    &dataset_id,
+                    &["id", "content_with_weight", "compile_kwd"],
+                    raptor_scope,
+                    OrderByExpr::default(),
+                    RAPTOR_ROWS,
+                    Vec::new(),
+                    0,
+                )
+                .await
+                {
+                    let mut entities: Vec<Value> = Vec::new();
+                    let mut relations: Vec<Value> = Vec::new();
+                    for row in raptor_rows {
+                        let Some(payload) = row.get("content_with_weight").and_then(Value::as_str)
+                        else {
+                            continue;
+                        };
+                        let Ok(graph) = serde_json::from_str::<Value>(payload) else {
+                            continue;
+                        };
+                        if let Some(found) = graph.get("entities").and_then(Value::as_array) {
+                            entities.extend(found.iter().cloned());
+                        }
+                        if let Some(found) = graph.get("relations").and_then(Value::as_array) {
+                            relations.extend(found.iter().cloned());
+                        }
+                    }
+                    total_entities += entities.len();
+                    total_relations += relations.len();
+                    if !entities.is_empty() || !relations.is_empty() {
+                        buckets.push((
+                            BucketMeta {
+                                template_id: "raptor".to_string(),
+                                template_name: "RAPTOR Summary".to_string(),
+                                kind: "raptor".to_string(),
+                            },
+                            entities,
+                            relations,
+                        ));
+                    }
+                }
+                Ok(Outcome {
+                    buckets,
+                    scanned_rows: rows.len(),
+                    total_matching,
+                    total_entities,
+                    total_relations,
+                })
+            })
         }
-        total_entities += entities.len();
-        total_relations += relations.len();
-        if !entities.is_empty() || !relations.is_empty() {
-            buckets.push((
-                BucketMeta {
-                    template_id: "raptor".to_string(),
-                    template_name: "RAPTOR Summary".to_string(),
-                    kind: "raptor".to_string(),
-                },
-                entities,
-                relations,
-            ));
-        }
-    }
+    })
+    .await;
+    let Outcome {
+        mut buckets,
+        scanned_rows,
+        total_matching,
+        total_entities,
+        total_relations,
+    } = match scanned {
+        Ok(outcome) => outcome,
+        Err(response) => return response,
+    };
 
     // Configured order first, then whatever else was found, as upstream orders them.
     let configured_order: HashMap<&str, usize> = configured
@@ -472,7 +478,7 @@ pub async fn document_structure_graph(
         })
         .collect();
 
-    let truncated = total_matching > rows.len();
+    let truncated = total_matching > scanned_rows;
     Json(json!({
         "code": 0,
         "data": {
@@ -481,7 +487,7 @@ pub async fn document_structure_graph(
             "returned_entities": returned_entities,
             "returned_relations": returned_relations,
             "templates": templates,
-            "scanned_rows": rows.len(),
+            "scanned_rows": scanned_rows,
             "truncated": truncated,
             // An empty answer says why it is empty and what produces the data, instead of looking like a
             // broken page.
@@ -546,84 +552,76 @@ pub async fn delete_document_structure_graph(
         .map(|dataset| dataset.owner_id.clone())
         .filter(|owner| !owner.is_empty())
         .unwrap_or_else(|| auth.user_id.clone());
-    // Same rule as the read side: the async-safe connection form, or the handler panics on the live
-    // deployment while passing every test.
-    let store = match state.doc_store.get_conn_blocking().await {
-        Ok(store) => store,
-        Err(error) => {
-            return api_error_code(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                code::CONNECTION_ERROR,
-                &format!("the document store is not reachable: {error}"),
-            );
-        }
-    };
+    // Same rule as the read side: the synchronous client may not run on a tokio worker, so every call
+    // goes through the blocking helper.
     let index = crate::structure_compile::doc_store_index_name(&owner);
-    let mut base = Map::new();
-    base.insert("doc_id".to_string(), json!(document_id.clone()));
+    let requested_template = template_id.clone();
+    let outcome = crate::api::dataset_navigation::req_store(&state, {
+        let dataset_id = dataset_id.clone();
+        let document_id = document_id.clone();
+        let index = index.clone();
+        move |store| -> anyhow::Result<usize> {
+            let mut base = Map::new();
+            base.insert("doc_id".to_string(), json!(document_id.clone()));
+            let mut remove = |extra: &[(&str, Value)]| -> anyhow::Result<usize> {
+                let mut condition = base.clone();
+                for (key, value) in extra {
+                    condition.insert((*key).to_string(), value.clone());
+                }
+                store
+                    .delete(&condition, &index, &dataset_id)
+                    .map_err(|error| anyhow::anyhow!(error))
+            };
 
-    let mut delete = |extra: &[(&str, Value)]| -> Result<usize, String> {
-        let mut condition = base.clone();
-        for (key, value) in extra {
-            condition.insert((*key).to_string(), value.clone());
+            // RAPTOR only drops the graph projection, so the summary chunks stay retrievable.
+            if template_id == "raptor" {
+                return remove(&[("compile_kwd", json!("raptor_graph"))]);
+            }
+
+            // A legacy bucket is addressed by its compile key; a real template by its id. Both then lose
+            // the compact graph row and the entity/relation rows, counted together.
+            let scope: (&str, Value) = match template_id.strip_prefix("legacy:") {
+                Some(compile_kwd) => {
+                    let compile_kwd = compile_kwd.trim();
+                    if compile_kwd.is_empty() {
+                        anyhow::bail!("`template_id` is invalid");
+                    }
+                    ("compile_kwd", json!(compile_kwd))
+                }
+                None => ("compilation_template_ids", json!([template_id])),
+            };
+            let mut deleted = 0usize;
+            for kind in [json!("graph"), json!(["entity", "relation"])] {
+                deleted += remove(&[(scope.0, scope.1.clone()), ("knowledge_graph_kwd", kind)])?;
+            }
+            Ok(deleted)
         }
-        store
-            .delete(&condition, &index, &dataset_id)
-            .map_err(|error| error.to_string())
-    };
+    })
+    .await;
 
-    // RAPTOR only drops the graph projection, so the summary chunks stay retrievable.
-    if template_id == "raptor" {
-        return match delete(&[("compile_kwd", json!("raptor_graph"))]) {
-            Ok(deleted) => Json(json!({
-                "code": 0,
-                "data": { "deleted": deleted },
-                "message": format!("deleted {deleted} structure graph rows"),
-            }))
-            .into_response(),
-            Err(error) => api_error_code(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                code::OPERATION_ERROR,
-                &format!("the structure graph could not be deleted: {error}"),
-            ),
-        };
-    }
-
-    // A legacy bucket is addressed by its compile key; a real template by its id. Both then lose the
-    // compact graph row and the entity/relation rows, counted together.
-    let scope: (&str, Value) = match template_id.strip_prefix("legacy:") {
-        Some(compile_kwd) => {
-            let compile_kwd = compile_kwd.trim();
-            if compile_kwd.is_empty() {
-                return api_error_code(
+    match outcome {
+        Ok(deleted) => Json(json!({
+            "code": 0,
+            "data": { "deleted": deleted },
+            "message": format!("deleted {deleted} structure graph rows"),
+        }))
+        .into_response(),
+        // The invalid-template refusal is a caller error, not a store failure.
+        Err(response) => {
+            if requested_template
+                .strip_prefix("legacy:")
+                .is_some_and(|compile_kwd| compile_kwd.trim().is_empty())
+            {
+                api_error_code(
                     StatusCode::OK,
                     code::INVALID_OR_MISSING_DATA,
                     "`template_id` is invalid",
-                );
-            }
-            ("compile_kwd", json!(compile_kwd))
-        }
-        None => ("compilation_template_ids", json!([template_id])),
-    };
-    let mut deleted = 0usize;
-    for kind in [json!("graph"), json!(["entity", "relation"])] {
-        match delete(&[(scope.0, scope.1.clone()), ("knowledge_graph_kwd", kind)]) {
-            Ok(count) => deleted += count,
-            Err(error) => {
-                return api_error_code(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    code::OPERATION_ERROR,
-                    &format!("the structure graph could not be deleted: {error}"),
-                );
+                )
+            } else {
+                response
             }
         }
     }
-    Json(json!({
-        "code": 0,
-        "data": { "deleted": deleted },
-        "message": format!("deleted {deleted} structure graph rows"),
-    }))
-    .into_response()
 }
 
 #[cfg(test)]
