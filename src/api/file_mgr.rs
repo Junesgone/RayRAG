@@ -3,7 +3,7 @@
 
 use axum::{
     Json,
-    extract::{Extension, Multipart, State},
+    extract::{Extension, Multipart, Query, State},
     response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
@@ -176,11 +176,64 @@ impl FileStore {
 pub async fn list_files(
     State(state): State<std::sync::Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
-) -> impl IntoResponse {
+    Query(query): Query<HashMap<String, String>>,
+) -> axum::response::Response {
+    // The API guide documents `parent_id`, `keywords`, `page`, `page_size`, `orderby` and `desc`
+    // on this endpoint, and a body of `{"total", "files", "parent_folder"}`. Neither the query nor
+    // the shape was honoured before: it always answered the root folder as a bare array.
+    let parent_id = query
+        .get("parent_id")
+        .map(String::as_str)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("root");
+    let parent = state.files.get(parent_id);
+    if parent_id != "root" && parent.is_none() {
+        return crate::server::api_error_code(
+            axum::http::StatusCode::NOT_FOUND,
+            crate::server::code::INVALID_OR_MISSING_DATA,
+            "Folder not found!",
+        );
+    }
+    let mut files = state
+        .files
+        .list_for(&auth.user_id, auth.is_admin, parent_id);
+    if let Some(keywords) = query.get("keywords").filter(|value| !value.is_empty()) {
+        let needle = keywords.to_lowercase();
+        files.retain(|file| file.name.to_lowercase().contains(&needle));
+    }
+    let descending = query
+        .get("desc")
+        .map(|value| value != "false")
+        .unwrap_or(true);
+    files.sort_by(|left, right| {
+        if descending {
+            right.created_at.cmp(&left.created_at)
+        } else {
+            left.created_at.cmp(&right.created_at)
+        }
+        .then_with(|| left.id.cmp(&right.id))
+    });
+    let total = files.len();
+    let page: usize = query
+        .get("page")
+        .and_then(|value| value.parse().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(1);
+    let page_size: usize = query
+        .get("page_size")
+        .and_then(|value| value.parse().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(15);
+    let start = (page - 1) * page_size;
+    let page_rows: Vec<_> = files.into_iter().skip(start).take(page_size).collect();
+    let parent_folder = parent
+        .map(|record| serde_json::json!({ "id": record.id, "name": record.name }))
+        .unwrap_or_else(|| serde_json::json!({ "id": "root", "name": "root" }));
     Json(serde_json::json!({
         "code": 0,
-        "data": state.files.list_for(&auth.user_id, auth.is_admin, "root")
+        "data": { "total": total, "files": page_rows, "parent_folder": parent_folder },
     }))
+    .into_response()
 }
 
 /// `GET /api/v1/files/{id}/parent` — upstream `file_api.parent_folder`.

@@ -2,6 +2,27 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.11.4] - 2026-10-03
+
+### The two remaining documented shapes, migrated in one piece
+
+The previous release recorded two list endpoints that answered a different shape from the API guide and
+explained they needed migrating together with their consumers. That migration is done:
+
+- **`GET /api/v1/files`** now answers `data: {total, files, parent_folder}` as documented, and — the part
+  that was missing entirely — it **honours its documented query**: `parent_id` (with `404 Folder not
+  found!` for an unknown folder), `keywords`, `page`, `page_size` and `desc`. Before this it ignored all of
+  them and always returned the root folder as a bare array.
+- **`GET /api/v1/chats/{chat_id}/sessions`** now answers `data` as the list itself, as documented, instead
+  of wrapping it in `{items, total, page, page_size}`. Pagination still applies to the list.
+
+The Files page reads whichever shape arrives, so it keeps working either way, and the tests that consumed
+the old wrapper were updated to the documented one rather than the other way round.
+
+**2174 tests pass**, 0 failures, including a new regression that checks the files list's shape, its
+`parent_id` navigation, its keyword filter, that `total` counts every match rather than the page, and that
+an unknown folder is a 404.
+
 ## [0.11.3] - 2026-10-03
 
 ### Every chat id the listing returns now works at its sessions endpoint

@@ -13275,10 +13275,8 @@ mod tests {
             "an id the listing just returned must not 404 at its own sessions endpoint"
         );
         let body = response_json(sessions).await;
-        let items = body["data"]["items"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
+        // The guide documents this endpoint's data as the list itself.
+        let items = body["data"].as_array().cloned().unwrap_or_default();
         assert!(
             items.iter().any(|row| row["id"] == conversation.id),
             "the conversation is its own session: {body}"
@@ -14349,7 +14347,116 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
+    /// `GET /api/v1/files` answers the documented `{total, files, parent_folder}` and honours the
+    /// documented query parameters. It used to answer the root folder as a bare array and ignore
+    /// `parent_id`, `keywords`, `page` and `page_size` entirely.
     #[tokio::test]
+    async fn the_files_list_follows_its_documented_shape_and_query() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let record =
+            |id: &str, name: &str, parent: &str, kind: &str| crate::api::file_mgr::FileRecord {
+                id: id.into(),
+                name: name.into(),
+                owner_id: "test-user".into(),
+                parent_id: parent.into(),
+                size: 3,
+                content_hash: String::new(),
+                file_type: kind.into(),
+                created_at: 1,
+            };
+        env.state
+            .files
+            .add_unique(record("folder-1", "Reports", "root", "folder"))
+            .unwrap();
+        env.state
+            .files
+            .add_unique(record("file-a", "alpha.txt", "root", "doc"))
+            .unwrap();
+        env.state
+            .files
+            .add_unique(record("file-b", "beta.txt", "folder-1", "doc"))
+            .unwrap();
+
+        let call = |uri: String| {
+            let router = router.clone();
+            let token = env.token.clone();
+            async move {
+                response_json(
+                    router
+                        .oneshot(
+                            Request::builder()
+                                .uri(uri)
+                                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                                .body(Body::empty())
+                                .unwrap(),
+                        )
+                        .await
+                        .unwrap(),
+                )
+                .await
+            }
+        };
+
+        let root = call("/api/v1/files".to_string()).await;
+        assert_eq!(root["data"]["parent_folder"]["id"], "root");
+        let names: Vec<&str> = root["data"]["files"]
+            .as_array()
+            .expect("files must be a list under data.files, as the guide documents")
+            .iter()
+            .filter_map(|row| row["name"].as_str())
+            .collect();
+        assert!(names.contains(&"alpha.txt"), "{root}");
+        assert!(
+            !names.contains(&"beta.txt"),
+            "the folder's file is not in the root: {root}"
+        );
+        assert_eq!(root["data"]["total"], names.len());
+
+        let inside = call("/api/v1/files?parent_id=folder-1".to_string()).await;
+        assert_eq!(inside["data"]["parent_folder"]["name"], "Reports");
+        let inner: Vec<&str> = inside["data"]["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|row| row["name"].as_str())
+            .collect();
+        assert_eq!(inner, vec!["beta.txt"]);
+
+        let filtered = call("/api/v1/files?keywords=alp".to_string()).await;
+        let hits: Vec<&str> = filtered["data"]["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|row| row["name"].as_str())
+            .collect();
+        assert_eq!(
+            hits,
+            vec!["alpha.txt"],
+            "keywords filter by name: {filtered}"
+        );
+
+        let paged = call("/api/v1/files?page=2&page_size=1".to_string()).await;
+        assert_eq!(
+            paged["data"]["total"], 2,
+            "total counts every match, not just the page: {paged}"
+        );
+        assert_eq!(paged["data"]["files"].as_array().map(Vec::len), Some(1));
+
+        let missing = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/files?parent_id=nope")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+    }
+
     async fn file_and_task_lists_are_scoped_to_authenticated_owner() {
         let env = non_admin_env();
         let other_task = env
@@ -14421,7 +14528,7 @@ mod tests {
             .await
             .unwrap();
         let files_json = response_json(files).await;
-        let ids: Vec<&str> = files_json["data"]
+        let ids: Vec<&str> = files_json["data"]["files"]
             .as_array()
             .unwrap()
             .iter()
@@ -17408,8 +17515,10 @@ mod tests {
         )
         .await;
         let listed = response_json(listed).await;
-        assert_eq!(listed["data"]["total"], 1);
-        assert_eq!(listed["data"]["items"][0]["id"], session_id.as_str());
+        // The guide documents `data` as the list itself; pagination still applies to it.
+        let sessions = listed["data"].as_array().cloned().unwrap_or_default();
+        assert_eq!(sessions.len(), 1, "{listed}");
+        assert_eq!(sessions[0]["id"], session_id.as_str());
 
         // Another chat app cannot see it, and neither can it be fetched through it.
         let other = call(
@@ -17418,7 +17527,10 @@ mod tests {
             "",
         )
         .await;
-        assert_eq!(response_json(other).await["data"]["total"], 0);
+        assert_eq!(
+            response_json(other).await["data"].as_array().map(Vec::len),
+            Some(0)
+        );
 
         let cross = call(
             Method::GET,
@@ -17459,7 +17571,11 @@ mod tests {
             "",
         )
         .await;
-        assert_eq!(response_json(after).await["data"]["total"], 0);
+        assert_eq!(
+            response_json(after).await["data"].as_array().map(Vec::len),
+            Some(0),
+            "deleting every session leaves the documented empty list"
+        );
     }
 
     /// The methods upstream registers on paths RayRAG already answered must be routed,

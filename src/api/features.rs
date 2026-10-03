@@ -567,9 +567,11 @@ pub async fn list_chat_sessions(
     let start = (page - 1) * page_size;
     let rows: Vec<crate::llm::Conversation> =
         sessions.into_iter().skip(start).take(page_size).collect();
+    // The guide documents `data` as the list itself for this endpoint, not a pagination wrapper.
+    let _ = (total, page, page_size);
     Json(serde_json::json!({
         "code": 0,
-        "data": { "items": rows, "total": total, "page": page, "page_size": page_size }
+        "data": rows
     }))
     .into_response()
 }
