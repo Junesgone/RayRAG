@@ -997,3 +997,14 @@ the paired colour picker + hex input. */
 .agent-webhook-status{margin-top:10px;font-size:13px}
 .agent-webhook-logs{margin-top:8px;font-size:12px;max-height:220px;overflow:auto}
 .agent-webhook-log{padding:3px 0;border-bottom:1px solid var(--bd)}
+
+/* Dataset overview: the navigation-tree card must not stretch the stats row. */
+.ov-nav-card{overflow-x:auto}
+.ov-nav-card .ov-nav-tree{width:100%}
+.ov-nav-tree table{table-layout:auto}
+
+/* Dropdown popups are drawn by the platform, not by the page theme: a near-white text colour
+   leaves the option labels invisible on the popup's light background. Pin the popup explicitly. */
+select option,select optgroup{color:#1a1a2e;background:#ffffff}
+select{color:var(--t)}
+select:disabled option{color:#8a8f98}

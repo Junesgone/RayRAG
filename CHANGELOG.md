@@ -2,6 +2,16 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.9.4] - 2026-10-02
+
+**用户报告的四个界面缺陷，全部修复：**
+
+- **Languages 一栏出现"乱码"**：那一行把**构造语言按钮的 JavaScript 源码当成文本输出**到了单元格里（所以既显示源码、又根本没有按钮可选）。改为**服务端直接渲染** 11 个语言按钮（`data-lang` + `toggleLang`），源码不再泄漏到页面。
+- **概览页错位**：导航树卡片被插进了**统计行内部**，把 `Total Docs` 挤进表格里（用户截图正是这个现象）。现在导航树有**自己的卡片**，统计行保持完整。
+- **相似度阈值 / 向量权重的滑块与数值框不联动**：数值显示原本是个只读 `<span>`，现在换成真正的 **number 输入框**，并与滑块**双向联动**（拖滑块→数字变；输入数字→滑块动，且自动夹在 min/max 之间）；`loadConfig` 回填也改为写 `.value`（原来写 `textContent`，对输入框无效）。
+- **多个下拉框文字白底白字看不见**：下拉弹出层由**操作系统绘制、不跟随页面主题**，而深色主题的文字色接近纯白 → 弹出层里白底白字。现在为 `select option/optgroup` **显式指定深色字 + 白底**，并为禁用项指定灰色。
+- 测试：全量 **2155 passed / 0 failed**。
+
 ## [0.9.3] - 2026-10-02
 
 - **忘记密码流程落地**（上游 `user_api.py`）：`POST /api/v1/auth/password/forgot/otp`、`…/otp/verify`、`POST /api/v1/auth/password/reset`。
