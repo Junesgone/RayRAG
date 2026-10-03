@@ -4636,6 +4636,54 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/auth/password/reset",
             post(crate::api::password_flow::reset_password),
         )
+        // ── Deprecated v0.24.0 aliases (upstream's backward-compatibility layer) ─────────────
+        // The API guide's "Deprecated API Aliases" table lists these; they stay available so an
+        // older integration keeps working, and each one is the *same handler* as its replacement
+        // rather than a second implementation that could drift.
+        .route(
+            "/api/v1/file/upload",
+            axum::routing::post(crate::api::file_mgr::create_or_upload),
+        )
+        .route(
+            "/api/v1/file/create",
+            axum::routing::post(crate::api::file_mgr::create_folder),
+        )
+        .route("/api/v1/file/list", get(crate::api::file_mgr::list_files))
+        .route(
+            "/api/v1/file/root_folder",
+            get(crate::api::file_mgr::list_files),
+        )
+        .route(
+            "/api/v1/file/parent_folder",
+            get(crate::api::file_mgr::parent_folder_by_query),
+        )
+        .route(
+            "/api/v1/file/all_parent_folder",
+            get(crate::api::file_mgr::file_ancestors_by_query),
+        )
+        .route(
+            "/api/v1/file/rm",
+            axum::routing::post(crate::api::file_mgr::delete_files),
+        )
+        .route(
+            "/api/v1/file/rename",
+            axum::routing::post(crate::api::file_mgr::move_files),
+        )
+        .route(
+            "/api/v1/file/mv",
+            axum::routing::post(crate::api::file_mgr::move_files),
+        )
+        .route(
+            "/api/v1/file/get/{file_id}",
+            get(crate::api::file_mgr::get_file),
+        )
+        // The deprecated OpenAI-shaped chat routes: same handlers as the replacements.
+        .route(
+            "/api/v1/chats_openai/{chat_id}/chat/completions",
+            post(crate::api::openai_proxy::openai_rag_chat_completions),
+        )
+        // Upstream serves this one outside `/api` as well.
+        .route("/v1/system/healthz", get(crate::api::system::healthz))
         // Upstream `agent_api.py` webhook surface.
         .route(
             "/api/v1/agents/{agent_id}/webhook",
@@ -16241,6 +16289,109 @@ mod tests {
                 .is_some_and(|m| m.contains("Supported: vector")),
             "the refusal must list what is supported: {body}"
         );
+    }
+
+    /// The API guide's "Deprecated API Aliases" table promises these old paths keep working.
+    /// Each one routes to the *same* handler as its replacement, so this checks the wiring and
+    /// the argument validation of the two query-parameter forms.
+    #[tokio::test]
+    async fn deprecated_aliases_stay_reachable() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+
+        // Unauthenticated health check, outside `/api` as upstream serves it.
+        let health = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/system/healthz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(health.status(), StatusCode::OK);
+
+        // The query-parameter form of the breadcrumb needs its argument, and says so.
+        let no_arg = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/file/parent_folder")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = response_json(no_arg).await;
+        assert_eq!(body["code"], 102, "{body}");
+        assert!(
+            body["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("file_id")),
+            "the alias must name the missing argument: {body}"
+        );
+
+        let no_arg = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/file/all_parent_folder")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = response_json(no_arg).await;
+        assert_eq!(body["code"], 102, "{body}");
+
+        // The rest are the same handlers under the old names: a 401 here proves the route is
+        // wired (auth runs) rather than being an unrouted 404.
+        for path in [
+            "/api/v1/file/list",
+            "/api/v1/file/root_folder",
+            "/api/v1/file/get/does-not-exist",
+        ] {
+            let response = router
+                .clone()
+                .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_ne!(
+                response.status(),
+                StatusCode::NOT_FOUND,
+                "{path} should be routed (deprecated alias)"
+            );
+        }
+        for path in [
+            "/api/v1/file/upload",
+            "/api/v1/file/create",
+            "/api/v1/file/rm",
+            "/api/v1/file/rename",
+            "/api/v1/file/mv",
+            "/api/v1/chats_openai/some-chat/chat/completions",
+            "/api/v1/chats/some-chat/completions",
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri(path)
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from("{}"))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_ne!(
+                response.status(),
+                StatusCode::NOT_FOUND,
+                "{path} should be routed (deprecated alias)"
+            );
+        }
     }
 
     /// The endpoint probe answers for every capability, and says "not set" instead of failing

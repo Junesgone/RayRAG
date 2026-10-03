@@ -949,3 +949,42 @@ mod tests {
         std::fs::remove_dir_all(root).ok();
     }
 }
+
+/// `GET /api/v1/file/parent_folder?file_id=...` — the deprecated query-parameter form of
+/// [`parent_folder`], which upstream keeps in its backward-compatibility layer. The new path is
+/// `/api/v1/files/{file_id}/parent`; both are served by the same body of work.
+pub async fn parent_folder_by_query(
+    state: State<std::sync::Arc<AppState>>,
+    auth: Extension<AuthContext>,
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    match query.get("file_id").map(String::as_str) {
+        Some(file_id) if !file_id.is_empty() => {
+            parent_folder(state, auth, axum::extract::Path(file_id.to_string())).await
+        }
+        _ => Json(serde_json::json!({
+            "code": 102,
+            "message": "file_id is required"
+        }))
+        .into_response(),
+    }
+}
+
+/// `GET /api/v1/file/all_parent_folder?file_id=...` — the deprecated query-parameter form of
+/// [`file_ancestors`].
+pub async fn file_ancestors_by_query(
+    state: State<std::sync::Arc<AppState>>,
+    auth: Extension<AuthContext>,
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    match query.get("file_id").map(String::as_str) {
+        Some(file_id) if !file_id.is_empty() => {
+            file_ancestors(state, auth, axum::extract::Path(file_id.to_string())).await
+        }
+        _ => Json(serde_json::json!({
+            "code": 102,
+            "message": "file_id is required"
+        }))
+        .into_response(),
+    }
+}

@@ -2,6 +2,13 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.10.0] - 2026-10-02
+
+- **按 API 说明书的「Deprecated API Aliases」表补齐 v0.24.0 兼容路径**（用户要求，用说明书优化 RayRAG）。说明书列出 20 条旧路径→新路径的映射，RayRAG 原本只覆盖 2 条，本版把**目标端点已存在**的那些全部接上：`/api/v1/file/upload`、`/file/create`、`/file/list`、`/file/root_folder`、`/file/parent_folder`、`/file/all_parent_folder`、`/file/rm`、`/file/rename`、`/file/mv`、`/file/get/{file_id}`、`/api/v1/chats_openai/{id}/chat/completions`、`/v1/system/healthz`（上游在 `/api` 之外也提供这一个）。
+- **每条别名都指向与替代端点*同一个*处理函数**，不是第二份实现——否则两边迟早走样。两条"查询参数形态"的旧路径（`file/parent_folder?file_id=`、`file/all_parent_folder?file_id=`）新增了薄适配器：**缺少 `file_id` 时返回 `code 102` 并点名缺哪个参数**，而不是一个莫名其妙的 404。
+- **两条刻意不接**：`POST /api/v1/file/convert` 与 `POST /v1/document/upload_info` 的替代端点（`/api/v1/files/link-to-datasets`、`/api/v1/documents/upload`）在 RayRAG **尚未实现**——把旧路径指到一个不存在的功能上只会制造新的"看起来能用"的假象，故留在未实现清单里。
+- **测试**：新增一条覆盖全部别名的回归（含 `/v1/system/healthz` 无需鉴权、两个查询参数形态缺参必须 `code 102` 且点名参数、其余旧路径必须"已注册"而不是 404）。全量 **2156 passed / 0 failed**。
+
 ## [0.9.10] - 2026-10-02
 
 - **首次登录账号改为 `admin` / `admin` / `admin`（用户名、昵称、密码），不再生成随机密码、也不再因"密码不够 12 位"而拒绝启动**（用户要求）。此前 bootstrap 要求必须设置 `RAYRAG_ADMIN_PASSWORD` 且长度 ≥12，否则**直接启动失败**；现在未配置时就用 `admin`，`RAYRAG_ADMIN_EMAIL` 默认也从 `admin@rayrag.local` 改为 **`admin`**，并新增 `RAYRAG_ADMIN_NICKNAME`（默认 `admin`）三个都可被环境变量覆盖。
