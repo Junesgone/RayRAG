@@ -193,6 +193,8 @@
 | `GOOGLE_OAUTH_TOKEN_URL` | `` | OAuth 换 token 端点覆盖（一般无需设置，默认走各提供商官方端点）。 （模板中默认注释，取消注释即生效） |
 | `BOX_OAUTH_TOKEN_URL` | `` | （模板中默认注释，取消注释即生效） |
 | `RAYRAG_ALLOW_PRIVATE_DB_HOSTS` | `0` | Agent database component: allow `test_db_connection` to reach private/loopback addresses. Off by default (SSRF guard); turn it on when the database really is on your LAN, which is the normal case on a NAS. （模板中默认注释，取消注释即生效） |
+| `RAYRAG_WEBHOOKS_FILE` | `` | --- Agent webhooks --------------------------------------------------------- One JSON document holding each agent's webhook and its delivery history. Default: webhooks.json beside the static directory's parent. （模板中默认注释，取消注释即生效） |
+| `RAYRAG_STATIC_DIR` | `` | Directory holding the web UI and the JSON state files (users.json, uploads/). The CLI flag --static-dir wins over this value; default: web/static. （模板中默认注释，取消注释即生效） |
 <!-- END GENERATED ENV -->
 
 ## 2. HTTP 接口登记表
@@ -298,6 +300,9 @@
 | GET | `/api/v1/models/endpoints/check` | `-` |
 | POST | `/api/v1/datasets/{dataset_id}/index` | `-` |
 | ANY | `/api/v1/datasets/{dataset_id}/{index_type}` | `axum::routing` |
+| GET | `/api/v1/agents/{agent_id}/webhook` | `-` |
+| GET | `/api/v1/agents/{agent_id}/webhook/logs` | `-` |
+| POST | `/api/v1/agents/{agent_id}/webhook/test` | `-` |
 | GET | `/api/v1/users/me/models` | `-` |
 | GET | `/api/v1/agents/prompts` | `-` |
 | GET | `/api/v1/agents/download` | `-` |

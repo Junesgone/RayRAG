@@ -64,13 +64,11 @@ COVERED: dict[str, str] = {
 # Upstream methods on paths RayRAG already answers with other methods. A path-only audit
 # cannot see these: `/users/me` answered 405 for GET until it was wired up.
 KNOWN_METHOD_GAPS: dict[str, str] = {
+    "/agents/<agent_id>/webhook/test": "上游在该路径上注册了 DELETE/GET/HEAD/PATCH/PUT，但语义上是「触发一次投递」，属有副作用的动作；RayRAG 只接受 POST，其余方法按 HTTP 语义返回 405——刻意不为了数字把有副作用的动作挂到 GET/HEAD 上",
 }
 
 KNOWN_MISSING: dict[str, str] = {
     "/agents/<agent_id>/upload": "功能级缺口：画布附件上传（Agent 附件子系统）未实现",
-    "/agents/<agent_id>/webhook": "功能级缺口：Agent Webhook 子系统未实现",
-    "/agents/<agent_id>/webhook/logs": "功能级缺口：同上（Agent Webhook）",
-    "/agents/<agent_id>/webhook/test": "功能级缺口：同上（Agent Webhook）",
     "/agents/attachments/<attachment_id>/download": "功能级缺口：同上（Agent 附件子系统）",
     "/agents/attachments/<attachment_id>/preview": "功能级缺口：同上（Agent 附件子系统）",
     "/auth/password/forgot/captcha": "功能级缺口：忘记密码整体流程（验证码/OTP/重置）未实现",

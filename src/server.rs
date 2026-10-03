@@ -1552,7 +1552,7 @@ pub(crate) fn register_document_upload(
     }))
 }
 
-fn api_error(status: StatusCode, message: &str) -> Response {
+pub(crate) fn api_error(status: StatusCode, message: &str) -> Response {
     (
         status,
         Json(ApiResponse {
@@ -4622,6 +4622,24 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/datasets/{dataset_id}/{index_type}",
             axum::routing::delete(delete_dataset_index),
+        )
+        // Upstream `agent_api.py` webhook surface.
+        .route(
+            "/api/v1/agents/{agent_id}/webhook",
+            get(crate::api::agent_webhook::get_webhook)
+                .post(crate::api::agent_webhook::save_webhook)
+                // PUT/PATCH are the same update upstream allows on this route.
+                .put(crate::api::agent_webhook::save_webhook)
+                .patch(crate::api::agent_webhook::save_webhook)
+                .delete(crate::api::agent_webhook::delete_webhook),
+        )
+        .route(
+            "/api/v1/agents/{agent_id}/webhook/logs",
+            get(crate::api::agent_webhook::webhook_logs),
+        )
+        .route(
+            "/api/v1/agents/{agent_id}/webhook/test",
+            post(crate::api::agent_webhook::test_webhook),
         )
         // Upstream `user_api.py::tenant_info`: the tenant's per-capability default models
         // under RAGFlow's own column names.

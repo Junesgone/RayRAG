@@ -173,6 +173,7 @@ pub mod user_register;
 pub mod vision;
 pub mod web;
 pub mod web_search;
+pub mod webhooks;
 pub mod wikipedia;
 pub mod yahoo_finance;
 pub mod youcom;

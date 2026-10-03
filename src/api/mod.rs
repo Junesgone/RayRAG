@@ -5,6 +5,7 @@
 pub mod admin;
 pub mod agent_log;
 pub mod agent_trace;
+pub mod agent_webhook;
 pub mod aimlapi;
 pub mod chat_channel_mgr;
 pub mod chatapp_mgr;

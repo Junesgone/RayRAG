@@ -2,6 +2,16 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.9.1] - 2026-10-02
+
+- **Agent Webhook 子系统落地**（上游 `agent_api.py` 的三条路径）：`GET/POST/PUT/PATCH/DELETE /api/v1/agents/{id}/webhook`、`GET .../webhook/logs`、`POST .../webhook/test`。
+  - 每个 Agent 一个 webhook，**落盘为 JSON 并原子写入**（`RAYRAG_WEBHOOKS_FILE`，默认在静态目录旁的 `webhooks.json`）；更新时**保留 id**（是同一个 webhook，不是新建）。
+  - **测试投递是真的发出去**：真的 HTTP POST（带 token 时用 Bearer），记录状态码或传输错误与耗时，返回文案分别是 `Delivered: HTTP 200 OK` / `Delivery failed: …`；未注册 webhook 或已停用时**明确拒绝并说明**要先做什么。
+  - 投递历史**每个 Agent 各看各的**，整体**上限 50 条**（避免文件无限增长），空历史时提示用 test 发一条。
+- **账面**：同路径应答 **111 → 114**，未实现 **30 → 27**，不匹配 0。
+- **一处刻意不做**：上游在 `/webhook/test` 上还注册了 `DELETE/GET/HEAD/PATCH/PUT`。该动作**有副作用**（会真的发出投递），因此 RayRAG 只接受 `POST`，其余按 HTTP 语义返回 405——**不为了对齐数字把有副作用的动作挂到 `GET`/`HEAD` 上**；原因写入方法缺口备注。
+- **测试**：新增 3 条存储层测试（更新保留 id 且重开文件仍在、历史按 Agent 过滤且整体封顶、删除如实报告是否删到）。全量 **2151 passed / 0 failed**。
+
 ## [0.9.0] - 2026-10-02
 
 - **补上上一版刻意留下的那一条**：`DELETE /api/v1/datasets/{id}/artifacts/structure` —— 上游只清**结构类**产物，而 RayRAG 原有的 `DELETE /datasets/{id}/artifacts` 会清空**全部**产物页。上一版因为"没摸清产物行的形状"而**拒绝交付半成品**；本版按行上的 `page_type_kwd` 过滤（与列表过滤同一个字段、与 `clear_artifacts` 同一种条件写法），并返回删除条数与说明（0 条时明确写 "No structure artifacts were stored for this dataset."）。
