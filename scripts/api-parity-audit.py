@@ -87,7 +87,6 @@ KNOWN_MISSING: dict[str, str] = {
     "/documents/artifact/<filename>": "功能级缺口：文档产物文件读取未实现",
     "/documents/images/<image_id>": "功能级缺口：文档内图片读取未实现",
     "/documents/upload": "功能级缺口：独立文档上传入口未实现（RayRAG 走 /datasets/{id}/documents）",
-    "/files/link-to-datasets": "功能级缺口：文件关联数据集（file2document 目前为占位实现）",
     "/plugin/tools": "功能级缺口：上游 pluginlib 插件注册表（LLM 工具元数据）未移植；RayRAG 的画布工具目录在 /api/v1/components",
     "/searchbots/ask": "功能级缺口：嵌入问答使用上游自己的 SSE 帧格式（code/message/data 包封），与既有搜索补全的 chat.completion 帧不同，需要单独的流式处理器",
     "/thumbnails": "功能级缺口：缩略图服务未实现",

@@ -67,3 +67,10 @@
   **影响**：按说明书编写的客户端取 `data.docs` 会得到 null。
   **未修的原因**：该端点被 UI（`loadFiles()` 等）与多条测试按数组消费，改结构必须同时改 UI 与测试，
   半迁移比不改更危险。**下一轮作为独立改动处理，本轮不声称已对齐。**
+
+## 2026-10-03 更新（0.10.3）
+
+- `/files/link-to-datasets` 已实现（真实转换，非占位），从 `KNOWN_MISSING` 移除。
+- 实测账本：`upstream=181 rayrgg=308 exact=118 alias=38 covered=2 missing=23 method=1 mismatch=0`。
+- 注：`verify-all.sh` 的 parity 检查会因"KNOWN_MISSING 里的条目已被实现"而失败——这次失败**是账本正确工作的表现**，
+  不是回归；更新账本后通过。
