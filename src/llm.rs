@@ -143,6 +143,13 @@ pub struct ToolChatCompletion {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ChunkReference {
+    /// The document this chunk came from, when the caller knows it. The guide's reference objects
+    /// carry it (`document_id`, `document_name`), and `doc_aggs` is aggregated from the names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document_name: Option<String>,
+
     #[serde(alias = "chunk_id")]
     pub id: String,
     #[serde(alias = "dataset_id")]
@@ -2080,6 +2087,8 @@ mod conversation_store_tests {
         let store = ConvStore::new(path.to_str().unwrap()).unwrap();
         let conversation = store.create_for("owner-1", "Feedback").unwrap();
         let reference = ChunkReference {
+            document_id: None,
+            document_name: None,
             id: "chunk-a".into(),
             kb_id: "kb-a".into(),
             content: "water quality".into(),
@@ -2187,6 +2196,8 @@ mod conversation_store_tests {
                 "Old answer",
                 vec!["old citation".into()],
                 vec![ChunkReference {
+                    document_id: None,
+                    document_name: None,
                     id: "chunk-old".into(),
                     kb_id: "kb-a".into(),
                     content: "old context".into(),
@@ -2238,6 +2249,8 @@ mod conversation_store_tests {
                         answer: "New answer".into(),
                         citations: vec!["new citation".into()],
                         references: vec![ChunkReference {
+                            document_id: None,
+                            document_name: None,
                             id: "chunk-new".into(),
                             kb_id: "kb-a".into(),
                             content: "new context".into(),

@@ -2,6 +2,51 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.11.8] - 2026-10-03
+
+### `POST /api/v1/chat/completions` is the guide's endpoint again
+
+The guide points every newcomer at `POST /api/v1/chat/completions`: three modes, and a stream of
+`{"code":0,"message":"","data":{"answer":…,"reference":…,"final":false,"session_id":…}}` frames ending
+with `{"code":0,"message":"","data":true}`. This project had **that path bound to its OpenAI-shaped
+handler**, so a client written against the guide received `chat.completion.chunk` objects and a `[DONE]`
+sentinel instead. The OpenAI handler keeps serving OpenAI clients — it already has its own path,
+`/v1/chat/completions`.
+
+The endpoint now implements the guide's three modes:
+
+| body | behaviour |
+|---|---|
+| no `chat_id`, no `session_id` | answer with the tenant's default chat model; `session_id` is `""` |
+| `chat_id` only | use that assistant's datasets and model, and **create a session** for it |
+| `chat_id` + `session_id` (or `session_id` alone) | continue that session |
+
+plus the documented body (`messages` or `question`, `stream` defaulting to **true**, `llm_id`,
+`pass_all_history_messages`, `legacy`) and failure (`102 Please input your question.`). `legacy: true`
+returns the whole answer so far and keeps thinking tags literal, as v0.23.0 did; otherwise the tags are
+stripped and signalled with `start_to_think` / `end_to_think`. A failed generation sends an error frame
+instead of a stream that ends in `data: true` over an empty answer.
+
+### Reference chunks now carry document identity
+
+Building the guide's `reference` object exposed a real gap: `ChunkReference` held no document id or name,
+so `doc_aggs` could not be aggregated at all. It now carries both — filled at the retrieval path from the
+chunk's own `doc_id` and the document store — and `reference_payload` builds `chunks` plus `doc_aggs` from
+them. The other 24 construction sites were seeded with `None`, so nothing else changes behaviour.
+
+### A failed generation is no longer dressed as an answer
+
+`generate_chat_answer` turned a failed model call into the *answer text* — `"Error: error sending request
+for url (…)"` — and the response around it still carried business code `0`. A client that checks the code,
+which the guide tells clients to do, read that as a successful answer. The failure now propagates: the
+stream sends an error frame and the non-stream responses carry a business code (`105 Connection error`
+here) with the transport message.
+
+**2181 tests pass**, 0 failures, including a regression for the endpoint's documented contract: a missing or
+blank question is `102 Please input your question.`, an unknown `chat_id` and an unknown `session_id` are
+both refused, a generation that cannot happen reports why rather than answering with an empty success, and
+the stream still ends with the documented terminal frame.
+
 ## [0.11.7] - 2026-10-03
 
 ### The last two id conventions on the chat paths, separated

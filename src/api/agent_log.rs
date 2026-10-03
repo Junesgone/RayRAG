@@ -774,6 +774,8 @@ mod tests {
         assistant.created_at = created_at;
         assistant.thumbup = Some(true);
         assistant.references = vec![ChunkReference {
+            document_id: None,
+            document_name: None,
             id: "chunk-1".into(),
             kb_id: "kb-1".into(),
             content: "retrieval augmented generation".into(),

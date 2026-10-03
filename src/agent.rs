@@ -7826,6 +7826,8 @@ fn domestic_search_outputs(results: &[Value], provider_label: &str) -> Result<Ta
             "url": url
         }));
         references.push(ChunkReference {
+            document_id: None,
+            document_name: None,
             id: id.clone(),
             kb_id: id.clone(),
             content: content.clone(),
@@ -9447,6 +9449,8 @@ fn tavily_search_outputs(results: &[Value]) -> Result<TavilySearchOutput> {
             "url": url
         }));
         references.push(ChunkReference {
+            document_id: None,
+            document_name: None,
             id: id.clone(),
             kb_id: id.clone(),
             content: content.clone(),
@@ -9508,6 +9512,8 @@ fn wikipedia_search_outputs(
             "url": article.url
         }));
         references.push(ChunkReference {
+            document_id: None,
+            document_name: None,
             id: id.clone(),
             kb_id: id.clone(),
             content: content.clone(),
@@ -9607,6 +9613,8 @@ fn google_search_outputs(results: &[Value]) -> Result<TavilySearchOutput> {
             "url": url
         }));
         references.push(ChunkReference {
+            document_id: None,
+            document_name: None,
             id: id.clone(),
             kb_id: id.clone(),
             content: content.clone(),
@@ -9669,6 +9677,8 @@ fn google_scholar_search_outputs(
             "url": publication.pub_url
         }));
         references.push(ChunkReference {
+            document_id: None,
+            document_name: None,
             id: id.clone(),
             kb_id: id.clone(),
             content: content.clone(),
@@ -9735,6 +9745,8 @@ fn github_search_outputs(
             "url": repository.html_url
         }));
         references.push(ChunkReference {
+            document_id: None,
+            document_name: None,
             id: id.clone(),
             kb_id: id.clone(),
             content: content.clone(),
@@ -9805,6 +9817,8 @@ fn arxiv_search_outputs(
             "url": url
         }));
         references.push(ChunkReference {
+            document_id: None,
+            document_name: None,
             id: id.clone(),
             kb_id: id.clone(),
             content: content.clone(),
@@ -9869,6 +9883,8 @@ fn pubmed_search_outputs(
             "url": url
         }));
         references.push(ChunkReference {
+            document_id: None,
+            document_name: None,
             id: id.clone(),
             kb_id: id.clone(),
             content: content.clone(),
@@ -9940,6 +9956,8 @@ fn duckduckgo_search_outputs(results: &[Value]) -> Result<TavilySearchOutput> {
             "url": url
         }));
         references.push(ChunkReference {
+            document_id: None,
+            document_name: None,
             id: id.clone(),
             kb_id: id.clone(),
             content: content.clone(),
@@ -10258,6 +10276,8 @@ fn querit_search_outputs(results: &[Value], full_response: &Value) -> TavilySear
             "url": url
         }));
         references.push(ChunkReference {
+            document_id: None,
+            document_name: None,
             id: id.clone(),
             kb_id: id.clone(),
             content: content.clone(),
@@ -10679,6 +10699,8 @@ fn web_tool_outputs(
             "url": url
         }));
         references.push(ChunkReference {
+            document_id: None,
+            document_name: None,
             id: id.clone(),
             kb_id: id.clone(),
             content: content.clone(),
@@ -16603,6 +16625,8 @@ mod tests {
             last_message: Some("transient".into()),
             provider_calls: 3,
             references: vec![ChunkReference {
+                document_id: None,
+                document_name: None,
                 id: "chunk-1".into(),
                 kb_id: "kb-1".into(),
                 content: "body".into(),
@@ -16741,6 +16765,8 @@ mod tests {
                 })],
                 doc_aggs: vec![json!({"doc_name": "Guide.md", "count": 1})],
                 references: vec![ChunkReference {
+                    document_id: None,
+                    document_name: None,
                     id: "chunk-1".into(),
                     kb_id: "fallback-kb".into(),
                     content: "Rust ownership guide".into(),

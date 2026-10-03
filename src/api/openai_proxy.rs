@@ -499,6 +499,8 @@ mod extra_body_tests {
         meta.insert("year".into(), serde_json::json!("2023"));
         meta.insert("source".into(), serde_json::json!("internal"));
         crate::llm::ChunkReference {
+            document_id: None,
+            document_name: None,
             id: "chunk-1".into(),
             kb_id: "kb-1".into(),
             content: "Some retrieved text".into(),

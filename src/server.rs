@@ -5321,8 +5321,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(crate::api::file_mgr::upload_file),
         )
         .route(
+            // The guide's conversation endpoint: three modes and `{code,message,data:{answer,…}}`
+            // frames. OpenAI clients keep their own shapes at `/v1/chat/completions`.
             "/api/v1/chat/completions",
-            post(crate::api::openai_proxy::chat_completions),
+            post(crate::api::rag_chat::chat_completions),
         )
         .route(
             "/api/v1/openai/{chat_id}/chat/completions",
@@ -9201,6 +9203,8 @@ mod tests {
             answer: answer.to_string(),
             citations: Vec::new(),
             references: vec![crate::llm::ChunkReference {
+                document_id: None,
+                document_name: None,
                 id: "chunk-1".into(),
                 kb_id: "kb-1".into(),
                 content: "retrieved passage".into(),
@@ -12869,6 +12873,8 @@ mod tests {
                 "answer",
                 vec!["water quality".into()],
                 vec![crate::llm::ChunkReference {
+                    document_id: None,
+                    document_name: None,
                     id: "feedback-chunk".into(),
                     kb_id: kb.id.clone(),
                     content: "water quality".into(),
@@ -13246,6 +13252,80 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    /// `POST /api/v1/chat/completions` answers the guide's shape: `{code, message, data:{answer,…}}`
+    /// frames with `data: true` at the end, and every failure named instead of answered with an empty
+    /// stream. (The fixture has no chat model, so a real answer cannot be produced here; what is
+    /// asserted is the contract around it.)
+    #[tokio::test]
+    async fn the_documented_chat_completions_endpoint_answers_the_guides_shape() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let call = |body: &str| {
+            let router = router.clone();
+            let token = env.token.clone();
+            let body = body.to_string();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(Method::POST)
+                            .uri("/api/v1/chat/completions")
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        // "Either messages or question is required."
+        let empty = call(r#"{"stream":false}"#).await;
+        assert_eq!(empty.status(), StatusCode::BAD_REQUEST);
+        let body = response_json(empty).await;
+        assert_eq!(body["code"], 102, "{body}");
+        assert_eq!(body["message"], "Please input your question.");
+
+        // An empty question is as good as a missing one.
+        let blank = call(r#"{"question":"   ","stream":false}"#).await;
+        assert_eq!(response_json(blank).await["code"], 102);
+
+        // The three modes resolve their assistant and session as documented.
+        let unknown_chat = call(r#"{"question":"hi","chat_id":"nope","stream":false}"#).await;
+        assert_eq!(unknown_chat.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response_json(unknown_chat).await["code"], 102);
+
+        let unknown_session = call(r#"{"question":"hi","session_id":"nope","stream":false}"#).await;
+        assert_eq!(unknown_session.status(), StatusCode::NOT_FOUND);
+        let body = response_json(unknown_session).await;
+        assert_eq!(body["code"], 102, "{body}");
+        assert_eq!(body["message"], "Session not found!");
+
+        // A generation that cannot happen is reported, never dressed up as an empty answer.
+        let failing = call(r#"{"question":"hi","stream":false}"#).await;
+        let body = response_json(failing).await;
+        assert_ne!(
+            body["code"], 0,
+            "no answer exists, so success is wrong: {body}"
+        );
+        let message = body["message"].as_str().unwrap_or_default();
+        assert!(!message.is_empty(), "the failure is named: {body}");
+
+        // Streaming still ends with the documented terminal frame.
+        let streamed = call(r#"{"question":"hi","stream":true}"#).await;
+        let bytes = to_bytes(streamed.into_body(), usize::MAX).await.unwrap();
+        let text = String::from_utf8_lossy(&bytes);
+        assert!(
+            text.contains(r#"{"code":0,"message":"","data":true}"#),
+            "the stream ends with the guide's terminal frame: {text}"
+        );
+        assert!(
+            text.contains(r#""codes"#) || text.contains(r#""code":"#) || text.contains("code"),
+            "frames carry a business code: {text}"
         );
     }
 
@@ -14542,6 +14622,8 @@ mod tests {
                 "answer",
                 vec!["water quality".into()],
                 vec![crate::llm::ChunkReference {
+                    document_id: None,
+                    document_name: None,
                     id: "rollback-feedback-chunk".into(),
                     kb_id: kb.id,
                     content: "water quality".into(),

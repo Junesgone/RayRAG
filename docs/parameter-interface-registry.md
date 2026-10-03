@@ -663,3 +663,16 @@ RayRAG 此前让**会话记录**占用同一条路径（GET/POST/DELETE 都是�
 
 **仍未对齐（登记，需单独一轮）**：`POST /api/v1/chat/completions` 在 RayRAG 上绑定的是 **OpenAI 形状**的处理器，
 而说明书要求 `{code,message,data:{answer,reference}}` 形状与三种模式；这是**形状差异**而非改名问题。
+
+### 0.11.8：`POST /api/v1/chat/completions` 恢复为说明书的形状
+
+| 项 | 说明书 | RayRAG |
+|---|---|---|
+| 路径 | `POST /api/v1/chat/completions` | 现已实现（**OpenAI 形状的处理器仍在 `/v1/chat/completions`**，供 OpenAI 客户端使用） |
+| 三种模式 | 无 chat_id/session_id → 租户默认模型；仅 chat_id → 用助手配置并**自动建会话**；有 session_id → 继续该会话 | 全部实现 |
+| body | `messages` 或 `question`、`stream`（**默认 true**）、`llm_id`、`pass_all_history_messages`、`legacy` | 全部接受，另兼容 RayRAG 的 `conversation_id`/`chat_id`/`chat_model`/`kb_ids` |
+| 流帧 | `{"code":0,"message":"","data":{"answer","reference","audio_binary","prompt","created_at","final":false,"id","session_id","chat_id"}}` 结尾 `data:true` | 一致；`legacy:true` → 累积 answer 且保留 `<think>` 字面量，否则剥离标签并给出 `start_to_think`/`end_to_think` |
+| 失败 | `{"code":102,"message":"Please input your question."}` | 一致；生成失败时发**错误帧**，不让流以 `data:true` 掩盖空答案 |
+| reference | `chunks`（含 `document_id`/`document_name`）+ `doc_aggs` | `ChunkReference` **新增 `document_id`/`document_name`**（检索路径从 chunk 的 `doc_id` 与文档库填充），`doc_aggs` 由真实文档名聚合 |
+
+**仍未对齐（登记）**：参考 chunk 仍不含 `image_id`/`positions`/`url`/`doc_type`（RayRAG 目前不产出这些字段）。

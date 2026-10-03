@@ -755,6 +755,59 @@ pub async fn delete_chat(
     }
 }
 
+/// The guide's `reference` object for a chat answer: `chunks` plus `doc_aggs`.
+///
+/// Only fields this project actually holds are emitted: a chunk knows its id, content, dataset and
+/// similarity scores, and — when the caller asked for metadata — the document's metadata. Document
+/// names come from `document_name`, which is filled at retrieval time from the document store.
+pub(crate) fn reference_payload(references: &[crate::llm::ChunkReference]) -> serde_json::Value {
+    let mut chunks = serde_json::Map::new();
+    let mut aggregates: std::collections::BTreeMap<String, serde_json::Value> =
+        std::collections::BTreeMap::new();
+    for (index, reference) in references.iter().enumerate() {
+        let mut chunk = serde_json::json!({
+            "id": reference.id,
+            "content": reference.content,
+            "dataset_id": reference.kb_id,
+            "similarity": reference.similarity,
+            "vector_similarity": reference.vector_similarity,
+            "term_similarity": reference.term_similarity,
+        });
+        if let Some(object) = chunk.as_object_mut() {
+            if let Some(document_id) = &reference.document_id {
+                object.insert("document_id".into(), serde_json::json!(document_id));
+            }
+            if let Some(document_name) = &reference.document_name {
+                object.insert("document_name".into(), serde_json::json!(document_name));
+            }
+            if let Some(metadata) = &reference.document_metadata {
+                object.insert(
+                    "document_metadata".into(),
+                    serde_json::Value::Object(metadata.clone()),
+                );
+            }
+        }
+        chunks.insert(index.to_string(), chunk);
+        if let (Some(name), Some(document_id)) = (&reference.document_name, &reference.document_id)
+        {
+            let entry = aggregates.entry(name.clone()).or_insert_with(|| {
+                serde_json::json!({
+                    "doc_name": name,
+                    "doc_id": document_id,
+                    "count": 0,
+                })
+            });
+            if let Some(count) = entry.get("count").and_then(|value| value.as_u64()) {
+                entry["count"] = serde_json::json!(count + 1);
+            }
+        }
+    }
+    serde_json::json!({
+        "chunks": serde_json::Value::Object(chunks),
+        "doc_aggs": serde_json::Value::Object(aggregates.into_iter().collect()),
+    })
+}
+
 /// `GET /api/v1/conversations/{id}` — one session. This is what `GET /api/v1/chats/{id}` used to
 /// answer; the guide's `GET /api/v1/chats/{chat_id}` fetches a chat *assistant*.
 pub async fn get_conversation(
@@ -773,7 +826,7 @@ pub async fn get_conversation(
 }
 
 /// Resolves a chat assistant the caller may see: their own, an ownerless one, or any when admin.
-fn chat_assistant_for(
+pub(crate) fn chat_assistant_for(
     state: &AppState,
     auth: &AuthContext,
     chat_id: &str,
@@ -2029,6 +2082,13 @@ pub(crate) async fn generate_chat_answer(
     let references: Vec<crate::llm::ChunkReference> = search_results
         .iter()
         .map(|result| crate::llm::ChunkReference {
+            document_id: result.chunk.metadata.get("doc_id").cloned(),
+            document_name: result
+                .chunk
+                .metadata
+                .get("doc_id")
+                .and_then(|doc_id| state.docs.get(doc_id))
+                .map(|document| document.name),
             id: result.chunk.id.clone(),
             document_metadata: result.chunk.metadata.get("doc_id").and_then(|doc_id| {
                 let kb_id = result
@@ -2079,12 +2139,12 @@ pub(crate) async fn generate_chat_answer(
                 usage: None,
             });
         }
+        // A failed call used to become the *answer text* (`"Error: …"`) with a success code around
+        // it, so a client that checks the business code saw a successful empty-ish answer. The
+        // failure is propagated instead; every caller has an error path (an error frame on a
+        // stream, a business code off it).
         llm.rag_chat_completion_with_generation(question, &contexts, history, generation)
-            .await
-            .unwrap_or_else(|error| crate::llm::ChatCompletion {
-                content: format!("Error: {error}"),
-                usage: None,
-            })
+            .await?
     } else {
         crate::llm::ChatCompletion {
             content: format!(
@@ -8287,6 +8347,8 @@ impl crate::agent::WorkflowRetriever for AgentWorkflowRetriever<'_> {
         let references = selected
             .iter()
             .map(|result| crate::llm::ChunkReference {
+                document_id: None,
+                document_name: None,
                 id: result.chunk.id.clone(),
                 kb_id: result
                     .chunk
