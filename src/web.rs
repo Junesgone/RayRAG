@@ -3577,7 +3577,7 @@ function nodeRow(node,depth){
   var wrap=document.createElement('div');
   wrap.style.marginLeft=(depth*16)+'px';
   var head=document.createElement('div');
-  head.style.display='flex';align-items:center;gap:8px;padding='4px 0';
+  head.style.display='flex';head.style.alignItems='center';head.style.gap='8px';head.style.padding='4px 0';
   var toggle=document.createElement('button');
   toggle.type='button';toggle.className='btn ghost';toggle.textContent=node.children_kwd&&node.children_kwd.length?'+':'-';
   toggle.setAttribute('data-testid','dataset-skill-toggle');
@@ -17201,6 +17201,27 @@ connection: close
                 !body.contains("<section class='card' id='dsSkillCard'"),
                 "the skill card markup landed inside a script block"
             );
+        }
+        // A bare CSS declaration in the script (`align-items:center`) is a JS syntax error, and it is
+        // easy to drop a `head.style.` prefix when editing the card. Catch the shape here.
+        for body in &script_bodies {
+            for line in body.lines() {
+                let trimmed = line.trim();
+                let bare_css = [
+                    "align-items:",
+                    "justify-content:",
+                    "flex-wrap:",
+                    "gap:",
+                    "padding:",
+                    "margin:",
+                ]
+                .iter()
+                .any(|property| trimmed.starts_with(property));
+                assert!(
+                    !bare_css,
+                    "a CSS declaration is sitting in the script: {trimmed}"
+                );
+            }
         }
     }
 
