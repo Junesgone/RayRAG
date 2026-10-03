@@ -9,7 +9,7 @@
 //! Upstream *writes* those rows by asking an LLM to compile the corpus into a skill tree. RayRAG
 //! compiles them **from the corpus structure itself**: the heading hierarchy of the indexed chunks,
 //! in document order, with each node carrying the text beneath its heading. That choice is deliberate
-//! and is recorded in `docs/parameter-interface-registry.md`:
+//! and is recorded in the project's internal parameter registry:
 //!
 //! * it needs no model, so a deployment with no chat model still gets a real tree rather than an
 //!   invented one;
