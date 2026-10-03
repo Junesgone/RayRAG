@@ -2,6 +2,62 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.12.0] - 2026-10-03
+
+### The workspace commit family: snapshots, diffs and version history
+
+RAGFlow keeps a snapshot history over its file workspaces, and the API guide documents nine endpoints
+for it — `POST/GET /commits`, `GET /commits/{id}`, `GET /commits/{id}/files`, `GET /commits/diff`,
+`GET /changes`, `GET /commits/{id}/tree`, `GET /commits/{id}/files/{file_id}/content`, and
+`GET /workspace-files/{file_id}/versions`. RayRAG answered **none** of them, and the parity audit could
+not see them either: upstream registers them from a helper with an f-string prefix
+(`f"{prefix}/commits"`), so the literal-path scan skipped the whole family. Both are fixed here.
+
+* **The audit sees them now.** It expands the helper's prefixes from their call sites
+  (`/datasets/<entity_id>`, `/workspaces/<entity_id>`), which moved the ledger from 181 to **195
+  upstream routes** — fourteen routes that had been invisible — and from 311 to 326 of RayRAG's.
+* **All nine endpoints are implemented** in `src/api/workspaces.rs`, with real storage
+  (`workspace_commits.json`, restored at boot like every other store): a commit records the files it
+  touched and the resulting state, the list is paginated, the diff compares two snapshots, `changes`
+  reports what is not committed yet, the tree and the file content are served from the snapshot, and a
+  file's version history spans the snapshots that touched it.
+* **Two scopes, as upstream has.** A `/workspaces/{workspace_id}` scope is a folder in the file store,
+  and its state is the files below it. A `/datasets/{dataset_id}` scope is a knowledge base — upstream
+  writes artifact commits with `folder_id = kb_id` — so its state is the dataset's documents. The two
+  never mix: a commit records which kind of scope it belongs to.
+* **The interface can reach it.** The knowledge-base page gained a *Version history* card: a button
+  lists the snapshots, and *Create snapshot* asks for a message, reads the actual uncommitted changes
+  from `GET /changes`, and commits exactly those — it does not invent a change when nothing has moved.
+
+Measured against the running container (`/api/v1/workspaces/root/commits` and
+`/api/v1/datasets/{id}/commits`), with failures named per the guide:
+
+```
+POST /api/v1/workspaces/root/commits     {"message":"first","files":[{"file_id":"f1","file_name":"a.txt","operation":"add","content":"hello"}]}
+  -> {"code":0,"data":{"id":…,"file_count":1,"parent_id":null,"tree_state":"{…f1…}"}}
+GET  /api/v1/workspaces/root/commits      -> {"total":1,"page":1,"page_size":5,"commits":[…]}
+GET  …/commits/{id}                       -> the commit plus its files[]
+GET  …/commits/{id}/files                 -> [{"operation":"add","old_hash":null,"new_hash":…}]
+GET  …/commits/{id}/tree                  -> the tree as it looked then
+GET  …/commits/{id}/files/f1/content       -> {"content":"hello"}
+GET  …/commits/diff?from=…&to=…           -> [{"operation":"modify","old_hash":…,"new_hash":…}]
+GET  …/changes                            -> what is not committed yet
+GET  /api/v1/workspace-files/f1/versions  -> two entries, newest first
+POST …/commits {}                          -> 400 {"code":101,"message":"required argument are missing: message"}
+GET  /api/v1/workspaces/nope/commits       -> 404 {"code":102,"message":"Could not resolve folder 'nope'"}
+GET  …/commits/does-not-exist              -> 404 {"code":102,"message":"Commit not found in workspace"}
+```
+
+Two smaller things surfaced while verifying it, both fixed: the dataset page's document list had no
+horizontal scroll container, so a wide table pushed the page sideways on a phone width (the
+knowledge-base page's own list has had one for a while), and cleaning up test data in a deployed
+instance means clearing **both** the JSON state file and its PostgreSQL snapshot — the mirror restores a
+deleted file at boot, which is exactly what it is for.
+
+**2187 tests pass, 0 failures**, including an end-to-end test of the family (create → list → get →
+files → tree → content → second commit → diff → versions → the three failure paths) and a
+dataset-scope test whose state comes from the document store.
+
 ## [0.11.9] - 2026-10-03
 
 ### Sidebars now follow the window (reported by the user)

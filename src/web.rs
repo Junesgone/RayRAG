@@ -2375,6 +2375,23 @@ pub async fn kb_detail_page(
     );
     b.push_str(t("Clear", zh));
     b.push_str("</button></div></div>");
+    // The commit (snapshot) family has to be reachable from the interface, not only from the API.
+    b.push_str("<div class='card'><h2>");
+    b.push_str(t("Version history", zh));
+    b.push_str("</h2><div style='display:flex;gap:8px;align-items:center;flex-wrap:wrap'><button class='btn btn-o btn-sm' onclick='commitPanelToggle()'>");
+    b.push_str(t("Show snapshots", zh));
+    b.push_str("</button><button class='btn btn-o btn-sm' onclick='commitCreate()'>");
+    b.push_str(t("Create snapshot", zh));
+    b.push_str(
+        "</button><span id='commitStatus' style='font-size:13px;color:var(--tm)'></span></div>",
+    );
+    b.push_str("<div id='commitPanel' style='display:none;margin-top:12px'><div class='table-wrap'><table><thead><tr><th>");
+    b.push_str(t("Message", zh));
+    b.push_str("</th><th>");
+    b.push_str(t("Files", zh));
+    b.push_str("</th><th>");
+    b.push_str(t("Time", zh));
+    b.push_str("</th></tr></thead><tbody id='commitRows'></tbody></table></div></div></div>");
     b.push_str("<div class='card'><h2>");
     b.push_str(t("Documents", zh));
     b.push_str(" <span id='docCount' style='font-size:13px;color:var(--tm)'></span></h2><div style='display:flex;align-items:center;gap:8px;margin-bottom:8px'><label style='font-size:12px;color:var(--tm)'>");
@@ -2613,6 +2630,33 @@ pub async fn kb_detail_page(
     b.push_str("function toggleDisable(btn){var id=btn.getAttribute('data-id');var on=btn.getAttribute('data-status')==='0';fetch('/api/v1/datasets/'+encodeURIComponent(kbId)+'/documents/batch-update-status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({doc_ids:[id],status:on?1:0})}).then(function(r){return r.json()}).then(function(d){if(d.code!==0){alert(d.message||'HTTP '+d.code);return}loadDocs()})};");
     b.push_str("function schedulePoll(){if(pollTimer)return;pollTimer=setInterval(function(){fetch('/api/v1/datasets/'+kbId+'/documents').then(r=>r.json()).then(function(d){var docs=(d.data&&d.data.docs)||d.data||[];loadDocs();var busy=docs.some(function(x){return x.run==='RUNNING'||x.run==='UNSTARTED'});if(!busy&&pollTimer){clearInterval(pollTimer);pollTimer=null}})},3000)};");
     b.push_str("function uploadDoc(){var files=document.getElementById('fi').files;if(!files||!files.length)return;var btn=document.getElementById('upBtn');var msg=document.getElementById('upMsg');if(btn)btn.disabled=true;var n=0;function next(){if(n>=files.length){if(btn)btn.disabled=false;if(msg)msg.textContent='';loadDocs();schedulePoll();return}var f=files[n++];var fd=new FormData();fd.append('file',f,f.name);if(msg)msg.textContent='上传中 '+(n)+'/'+(files.length)+' …';fetch('/api/v1/datasets/'+kbId+'/documents',{method:'POST',body:fd}).then(r=>r.json()).then(function(){next()}).catch(function(){next()})}next()};");
+    b.push_str(
+        "function commitStatus(text,error){var node=document.getElementById('commitStatus');if(!node)return;node.textContent=text||'';node.style.color=error?'var(--d)':'var(--tm)'}",
+    );
+    b.push_str(
+        "function commitPanelToggle(){var panel=document.getElementById('commitPanel');if(!panel)return;var open=panel.style.display==='none';panel.style.display=open?'block':'none';if(open)commitLoad()}",
+    );
+    b.push_str("function commitRows(list){var host=document.getElementById('commitRows');if(!host)return;host.replaceChildren();(list||[]).forEach(function(commit){var tr=document.createElement('tr');[commit.message,commit.file_count,new Date(commit.create_time||0).toLocaleString()].forEach(function(value){var cell=document.createElement('td');cell.textContent=value==null?'':String(value);tr.appendChild(cell)});host.appendChild(tr)})}");
+    b.push_str("function commitLoad(){commitStatus('");
+    b.push_str(t("Loading...", zh));
+    b.push_str("');fetch('/api/v1/datasets/'+encodeURIComponent(kbId)+'/commits?page=1&page_size=20').then(function(response){return response.json()}).then(function(data){if(!data||data.code!==0){commitStatus((data&&data.message)||'");
+    b.push_str(t("Could not load the history", zh));
+    b.push_str("',true);return}commitRows(data.data&&data.data.commits);commitStatus(((data.data&&data.data.total)||0)+' ");
+    b.push_str(t("snapshot(s)", zh));
+    b.push_str("')}).catch(function(error){commitStatus(String(error),true)})}");
+    b.push_str("function commitCreate(){var message=prompt('");
+    b.push_str(t("Snapshot message:", zh));
+    b.push_str("');if(!message)return;commitStatus('");
+    b.push_str(t("Reading the uncommitted changes...", zh));
+    b.push_str("');fetch('/api/v1/datasets/'+encodeURIComponent(kbId)+'/changes').then(function(response){return response.json()}).then(function(changed){if(!changed||changed.code!==0){commitStatus((changed&&changed.message)||'");
+    b.push_str(t("Could not read the changes", zh));
+    b.push_str("',true);return null}var files=(changed.data||[]).map(function(change){return {file_id:change.file_id,file_name:change.file_name,operation:change.operation}});if(!files.length){commitStatus('");
+    b.push_str(t("Nothing has changed since the last snapshot", zh));
+    b.push_str("');return null}return fetch('/api/v1/datasets/'+encodeURIComponent(kbId)+'/commits',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:message,files:files})}).then(function(response){return response.json()})}).then(function(created){if(!created)return;if(created.code!==0){commitStatus(created.message||'");
+    b.push_str(t("Could not save the snapshot", zh));
+    b.push_str("',true);return}commitStatus('");
+    b.push_str(t("Snapshot saved", zh));
+    b.push_str("');commitLoad()}).catch(function(error){commitStatus(String(error),true)})}");
     b.push_str(SWS_JS);
     b.push_str("swsRegister('cfgPerm',[[\"me\",\"");
     b.push_str(t("Only me", zh));
@@ -2841,7 +2885,9 @@ pub async fn dataset_page(
     b.push_str(t("Done", zh));
     b.push_str("</option><option value='failed'>");
     b.push_str(t("Failed", zh));
-    b.push_str("</option></select></div><div id='dl'>Loading...</div></div></div>");
+    b.push_str(
+        "</option></select></div><div id='dl' style='overflow-x:auto'>Loading...</div></div></div>",
+    );
     // Tab 1: Overview
     b.push_str(
         "<div id='tab1' style='display:none'><div class='st'><div class='sc'><span class='lbl'>",
@@ -10870,6 +10916,12 @@ mod kb_ui_tests {
             docs: Arc::new(DocStore::new(root.path().join("docs.json").to_str().unwrap()).unwrap()),
             document_metadata: Arc::new(DocumentMetadataStore::in_memory()),
             files: Arc::new(FileStore::new(root.path().join("uploads").to_str().unwrap()).unwrap()),
+            workspace_commits: Arc::new(
+                crate::api::workspaces::WorkspaceCommitStore::new(
+                    root.path().join("workspace-commits").to_str().unwrap(),
+                )
+                .unwrap(),
+            ),
             data_sources: None,
             search_apps: None,
             chat_apps: Some(Arc::new(

@@ -47,3 +47,4 @@ pub mod system_settings;
 pub mod tenant_models;
 pub mod tokens;
 pub mod utils;
+pub mod workspaces;

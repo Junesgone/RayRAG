@@ -68,6 +68,7 @@ pub struct AppState {
     /// The registration whitelist shown at `/admin/whitelist` and enforced by `POST /api/v1/users`.
     pub whitelist: Arc<crate::registration_whitelist::WhitelistStore>,
     pub files: Arc<crate::api::file_mgr::FileStore>,
+    pub workspace_commits: Arc<crate::api::workspaces::WorkspaceCommitStore>,
     pub data_sources: Option<Arc<crate::api::data_source_mgr::DataSourceStore>>,
     pub search_apps: Option<Arc<crate::api::searchapp_mgr::SearchAppStore>>,
     pub chat_apps: Option<Arc<crate::api::chatapp_mgr::ChatAppStore>>,
@@ -5197,6 +5198,72 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/files/{file_id}/ancestors",
             get(crate::api::file_mgr::file_ancestors),
         )
+        // The workspace commit family (upstream `file_commit_api.py`): snapshots of a file
+        // workspace, their files, the diff between two, the uncommitted changes, the tree at a
+        // commit, one file's content at a commit, and a file's version history.
+        .route(
+            "/api/v1/workspaces/{workspace_id}/commits",
+            get(crate::api::workspaces::list_commits).post(crate::api::workspaces::create_commit),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/commits/diff",
+            get(crate::api::workspaces::diff_commits),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/changes",
+            get(crate::api::workspaces::uncommitted_changes),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/commits/{commit_id}",
+            get(crate::api::workspaces::get_commit),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/commits/{commit_id}/files",
+            get(crate::api::workspaces::list_commit_files),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/commits/{commit_id}/tree",
+            get(crate::api::workspaces::commit_tree),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/commits/{commit_id}/files/{file_id}/content",
+            get(crate::api::workspaces::commit_file_content),
+        )
+        // The same family under the dataset prefix: RayRAG's dataset scope is the knowledge base
+        // itself, which is how upstream writes artifact commits (`folder_id = kb_id`).
+        .route(
+            "/api/v1/datasets/{dataset_id}/commits",
+            get(crate::api::workspaces::list_dataset_commits)
+                .post(crate::api::workspaces::create_dataset_commit),
+        )
+        .route(
+            "/api/v1/datasets/{dataset_id}/commits/diff",
+            get(crate::api::workspaces::diff_dataset_commits),
+        )
+        .route(
+            "/api/v1/datasets/{dataset_id}/changes",
+            get(crate::api::workspaces::dataset_uncommitted_changes),
+        )
+        .route(
+            "/api/v1/datasets/{dataset_id}/commits/{commit_id}",
+            get(crate::api::workspaces::get_dataset_commit),
+        )
+        .route(
+            "/api/v1/datasets/{dataset_id}/commits/{commit_id}/files",
+            get(crate::api::workspaces::list_dataset_commit_files),
+        )
+        .route(
+            "/api/v1/datasets/{dataset_id}/commits/{commit_id}/tree",
+            get(crate::api::workspaces::dataset_commit_tree),
+        )
+        .route(
+            "/api/v1/datasets/{dataset_id}/commits/{commit_id}/files/{file_id}/content",
+            get(crate::api::workspaces::dataset_commit_file_content),
+        )
+        .route(
+            "/api/v1/workspace-files/{file_id}/versions",
+            get(crate::api::workspaces::file_versions),
+        )
         .route(
             "/api/v1/files/{file_id}",
             axum::routing::get(crate::api::file_mgr::get_file)
@@ -6065,6 +6132,9 @@ pub async fn run(
         "{}/../uploads/",
         static_dir
     ))?);
+    let workspace_commits = Arc::new(crate::api::workspaces::WorkspaceCommitStore::new(
+        &format!("{}/../uploads/", static_dir),
+    )?);
     let data_sources = Some(Arc::new(crate::api::data_source_mgr::DataSourceStore::new(
         &format!("{}/../uploads/", static_dir),
     )?));
@@ -6203,6 +6273,7 @@ pub async fn run(
         model_path: m,
         max_upload_bytes: max_upload_bytes(),
         docs,
+        workspace_commits,
         document_metadata,
         whitelist: Arc::new(crate::registration_whitelist::WhitelistStore::new(
             &whitelist_path,
@@ -6505,6 +6576,12 @@ mod tests {
             files: Arc::new(
                 crate::api::file_mgr::FileStore::new(root.join("uploads").to_str().unwrap())
                     .unwrap(),
+            ),
+            workspace_commits: Arc::new(
+                crate::api::workspaces::WorkspaceCommitStore::new(
+                    root.join("workspace-commits").to_str().unwrap(),
+                )
+                .unwrap(),
             ),
             data_sources: None,
             chat_apps: None,
@@ -7873,6 +7950,12 @@ mod tests {
             files: Arc::new(
                 crate::api::file_mgr::FileStore::new(root.join("uploads").to_str().unwrap())
                     .unwrap(),
+            ),
+            workspace_commits: Arc::new(
+                crate::api::workspaces::WorkspaceCommitStore::new(
+                    root.join("workspace-commits").to_str().unwrap(),
+                )
+                .unwrap(),
             ),
             data_sources: None,
             chat_apps: None,
@@ -13252,6 +13335,255 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    /// The workspace commit family, end to end: a snapshot records what changed, the list is
+    /// paginated, the diff compares two snapshots, `changes` reports what is not committed yet, the
+    /// tree and content are served from the snapshot, and a file's version history spans the
+    /// snapshots that touched it.
+    #[tokio::test]
+    async fn workspace_commits_snapshot_diff_and_serve_content() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let call = |method: Method, uri: String, body: Option<&str>| {
+            let router = router.clone();
+            let token = env.token.clone();
+            let body = body.map(str::to_string);
+            async move {
+                let mut request = Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"));
+                let payload = match body {
+                    Some(body) => {
+                        request = request.header(header::CONTENT_TYPE, "application/json");
+                        Body::from(body)
+                    }
+                    None => Body::empty(),
+                };
+                router
+                    .oneshot(request.body(payload).unwrap())
+                    .await
+                    .unwrap()
+            }
+        };
+
+        // A commit records the change and the resulting state.
+        let created = call(
+            Method::POST,
+            "/api/v1/workspaces/root/commits".into(),
+            Some(r#"{"message":"first","files":[{"file_id":"file-1","file_name":"a.txt","operation":"add","content":"hello"}]}"#),
+        )
+        .await;
+        assert_eq!(created.status(), StatusCode::OK);
+        let body = response_json(created).await;
+        assert_eq!(body["code"], 0, "{body}");
+        let commit_id = body["data"]["id"].as_str().unwrap().to_string();
+        assert_eq!(body["data"]["file_count"], 1);
+        assert!(
+            body["data"]["tree_state"]
+                .as_str()
+                .unwrap()
+                .contains("file-1"),
+            "the snapshot records the file: {body}"
+        );
+        assert!(
+            body["data"]["parent_id"].is_null(),
+            "the first commit has no parent"
+        );
+
+        // Listing is paginated and reports the total.
+        let listed = response_json(
+            call(
+                Method::GET,
+                "/api/v1/workspaces/root/commits?page=1&page_size=5".into(),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(listed["data"]["total"], 1, "{listed}");
+
+        // The commit, its files and its tree.
+        let fetched = response_json(
+            call(
+                Method::GET,
+                format!("/api/v1/workspaces/root/commits/{commit_id}"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            fetched["data"]["files"][0]["file_id"], "file-1",
+            "{fetched}"
+        );
+        let files = response_json(
+            call(
+                Method::GET,
+                format!("/api/v1/workspaces/root/commits/{commit_id}/files"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(files["data"][0]["operation"], "add", "{files}");
+        let tree = response_json(
+            call(
+                Method::GET,
+                format!("/api/v1/workspaces/root/commits/{commit_id}/tree"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(tree["data"]["children"][0]["name"], "a.txt", "{tree}");
+
+        // The snapshot can reproduce the content it was given.
+        let content = response_json(
+            call(
+                Method::GET,
+                format!("/api/v1/workspaces/root/commits/{commit_id}/files/file-1/content"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(content["data"]["content"], "hello", "{content}");
+
+        // A second commit modifies the file: the diff names the change and nothing is left
+        // uncommitted, because the snapshot was taken from the live state.
+        let second = response_json(
+            call(
+                Method::POST,
+                "/api/v1/workspaces/root/commits".into(),
+                Some(r#"{"message":"second","files":[{"file_id":"file-1","file_name":"a.txt","operation":"modify","content":"hello again"}]}"#),
+            )
+            .await,
+        )
+        .await;
+        let second_id = second["data"]["id"].as_str().unwrap().to_string();
+        assert_eq!(
+            second["data"]["parent_id"], commit_id,
+            "a commit records its parent: {second}"
+        );
+        let diff = response_json(
+            call(
+                Method::GET,
+                format!("/api/v1/workspaces/root/commits/diff?from={commit_id}&to={second_id}"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(diff["data"][0]["operation"], "modify", "{diff}");
+        assert_ne!(
+            diff["data"][0]["old_hash"], diff["data"][0]["new_hash"],
+            "{diff}"
+        );
+
+        let versions = response_json(
+            call(
+                Method::GET,
+                "/api/v1/workspace-files/file-1/versions".into(),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            versions["data"].as_array().map(Vec::len),
+            Some(2),
+            "{versions}"
+        );
+        assert_eq!(versions["data"][0]["operation"], "modify", "{versions}");
+        assert_eq!(versions["data"][1]["operation"], "add", "{versions}");
+
+        // Failures are named, per the guide's wording.
+        let missing_message = call(
+            Method::POST,
+            "/api/v1/workspaces/root/commits".into(),
+            Some(r#"{"files":[{"file_id":"x","operation":"add"}]}"#),
+        )
+        .await;
+        assert_eq!(missing_message.status(), StatusCode::BAD_REQUEST);
+        let body = response_json(missing_message).await;
+        assert_eq!(body["code"], 101, "{body}");
+        assert_eq!(body["message"], "required argument are missing: message");
+
+        let unknown_scope = call(Method::GET, "/api/v1/workspaces/nope/commits".into(), None).await;
+        assert_eq!(unknown_scope.status(), StatusCode::NOT_FOUND);
+        let body = response_json(unknown_scope).await;
+        assert_eq!(body["message"], "Could not resolve folder 'nope'");
+
+        let unknown_commit = call(
+            Method::GET,
+            "/api/v1/workspaces/root/commits/does-not-exist".into(),
+            None,
+        )
+        .await;
+        assert_eq!(unknown_commit.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            response_json(unknown_commit).await["message"],
+            "Commit not found in workspace"
+        );
+    }
+
+    /// The same family under the dataset prefix, where the scope's state is its documents.
+    #[tokio::test]
+    async fn dataset_commits_snapshot_documents() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("member-user", "commit-dataset", "")
+            .unwrap();
+        let router = build_router(env.state.clone());
+        let _ = &router;
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri(format!("/api/v1/datasets/{}/commits", kb.id))
+            .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                r#"{"message":"docs","files":[{"file_id":"doc-1","file_name":"doc.txt","operation":"add","content":"body"}]}"#,
+            ))
+            .unwrap();
+        let response = router.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let created = response_json(response).await;
+        assert_eq!(created["code"], 0, "{created}");
+
+        let listed = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/api/v1/datasets/{}/commits", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let listed = response_json(listed).await;
+        assert_eq!(listed["data"]["total"], 1, "{listed}");
+
+        let unknown = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/v1/datasets/nope/commits")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            response_json(unknown).await["message"],
+            "Could not resolve datasets 'nope' to a folder"
         );
     }
 

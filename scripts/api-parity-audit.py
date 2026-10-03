@@ -90,7 +90,6 @@ KNOWN_MISSING: dict[str, str] = {
     "/plugin/tools": "功能级缺口：上游 pluginlib 插件注册表（LLM 工具元数据）未移植；RayRAG 的画布工具目录在 /api/v1/components",
     "/searchbots/ask": "功能级缺口：嵌入问答使用上游自己的 SSE 帧格式（code/message/data 包封），与既有搜索补全的 chat.completion 帧不同，需要单独的流式处理器",
     "/thumbnails": "功能级缺口：缩略图服务未实现",
-    "/workspace-files/<file_id>/versions": "功能级缺口：文件版本历史（FileCommitService）未移植，/api/v1/file/commits 目前为空实现",
 }
 
 
@@ -115,6 +114,28 @@ def upstream_routes(source: Path) -> dict[str, tuple[str, frozenset[str]]]:
             if previous:
                 methods = previous[1] | methods
             routes[match.group(1)] = (path.name, methods)
+    # `file_commit_api.py` registers eight routes from a helper with an f-string prefix
+    # (`f"{prefix}/commits"`), so the literal-path scan above cannot see them. The prefixes come from
+    # its own call sites, and expanding them here is what keeps the ledger honest: without this the
+    # whole workspace-commit family was invisible to the audit while RayRAG answered none of it.
+    commit_api = directory / "file_commit_api.py"
+    if commit_api.is_file():
+        text = commit_api.read_text(encoding="utf-8", errors="replace")
+        prefixes = re.findall(r'_register_commit_routes\(\s*"([^"]+)"', text)
+        suffixes = re.findall(r'@manager\.route\(f"\{prefix\}([^"]*)"(?:(?:\s*,\s*methods\s*=\s*\[([^\]]*)\]))?', text)
+        for prefix in prefixes:
+            for suffix, methods in suffixes:
+                path = prefix.replace("<entity_id>", "<workspace_id>") + suffix
+                parsed = frozenset(
+                    part.strip().strip("\"'").upper()
+                    for part in (methods or '"GET"').split(",")
+                    if part.strip()
+                )
+                previous = routes.get(path)
+                if previous:
+                    parsed = previous[1] | parsed
+                routes[path] = ("file_commit_api.py", parsed)
+
     return routes
 
 

@@ -676,3 +676,29 @@ RayRAG 此前让**会话记录**占用同一条路径（GET/POST/DELETE 都是�
 | reference | `chunks`（含 `document_id`/`document_name`）+ `doc_aggs` | `ChunkReference` **新增 `document_id`/`document_name`**（检索路径从 chunk 的 `doc_id` 与文档库填充），`doc_aggs` 由真实文档名聚合 |
 
 **仍未对齐（登记）**：参考 chunk 仍不含 `image_id`/`positions`/`url`/`doc_type`（RayRAG 目前不产出这些字段）。
+
+### 0.12.0：工作区快照（commit）家族 —— 9 个接口 + 界面入口
+
+上游 `api/apps/restful_apis/file_commit_api.py` 用 **f-string 前缀**注册 8 条路由，静态扫描看不到，
+因此这一族此前既未实现也不在台账里。现已：
+
+| 接口 | 说明 |
+|---|---|
+| `POST /api/v1/workspaces/{workspace_id}/commits` | 建快照；body `{message, files:[{file_id,file_name,operation,content,old_name,new_name}]}`，operation ∈ add/modify/delete/rename |
+| `GET  /api/v1/workspaces/{workspace_id}/commits` | 分页 `{total,page,page_size,commits}`，`order_by=create_time\|file_count`、`desc` |
+| `GET  …/commits/diff?from&to` | 两个快照之间的差异（add/modify/delete/rename + 新旧 hash/location） |
+| `GET  …/changes` | 未提交的变更（与最后一次快照比较） |
+| `GET  …/commits/{commit_id}` | 快照 + `files[]` |
+| `GET  …/commits/{commit_id}/files` | 变更条目 |
+| `GET  …/commits/{commit_id}/tree` | 该快照时的目录树（由扁平 `tree_state` 的 `parent_id` 还原） |
+| `GET  …/commits/{commit_id}/files/{file_id}/content` | 该文件在该快照的内容（请求带 content 时用快照副本，否则读现文件） |
+| `GET  /api/v1/workspace-files/{file_id}/versions` | 单文件版本历史（新→旧：`{commit_id,operation,hash,create_time,message}`） |
+
+**作用域**：`/workspaces/{id}` 的 `id` 是文件库中的文件夹（`root` 或 `file_type=folder` 的记录），其状态是该文件夹（含子文件夹）下的文件；
+`/datasets/{id}` 的 `id` 是知识库，其状态是该库的文档 —— 与上游把 artifact commit 写成 `folder_id = kb_id` 一致。两者互不混用（快照记录 `scope` 字段）。
+
+**错误语义（与上游一致）**：缺 `message`/`files` → `101 required argument are missing: …`；未知作用域 → `102 Could not resolve folder '<id>'` / `102 Could not resolve datasets '<id>' to a folder`；未知快照 → `102 Commit not found in workspace`；快照内无此文件 → `102 File not found in this commit`。
+
+**存储**：`workspace_commits.json`（与其它 store 一样启动时恢复、原子写入）。`hash` 是内容指纹（FNV-1a 16 位十六进制），**不是** sha256 —— 文档中如实标注，用于比较 add/modify/delete。
+
+**界面**：知识库页新增“版本历史”卡片 —— “显示快照”列出来，“创建快照”先读 `GET /changes` 再提交**真实变更**（无变更时提示，不伪造）。
