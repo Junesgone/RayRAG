@@ -4941,7 +4941,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/api/v1/conversations/{conversation_id}",
-            axum::routing::delete(delete_conversation).patch(rename_conversation),
+            axum::routing::get(crate::api::features::get_conversation)
+                .patch(crate::api::features::update_conversation)
+                .delete(crate::api::features::delete_conversation),
         )
         .route(
             "/api/v1/conversations/{conversation_id}/clear",
@@ -5089,10 +5091,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/api/v1/chats/{id}",
+            // The guide's single-item chat verbs are chat *assistants*; sessions have their own
+            // endpoint below, which is where these handlers used to live.
             get(crate::api::features::get_chat)
-                // Upstream registers PUT and PATCH on the same handler.
-                .put(crate::api::features::update_chat)
-                .patch(crate::api::features::update_chat)
+                .put(crate::api::features::replace_chat_assistant)
+                .patch(crate::api::features::patch_chat_assistant)
                 .delete(crate::api::features::delete_chat),
         )
         .route(
@@ -13130,7 +13133,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method(Method::PATCH)
-                    .uri(format!("/api/v1/chats/{}", conversation.id))
+                    .uri(format!("/api/v1/conversations/{}", conversation.id))
                     .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
                     .header(header::CONTENT_TYPE, "application/json")
                     .body(Body::from(r#"{"name":"  Oxygen Session  "}"#))
@@ -13350,15 +13353,104 @@ mod tests {
         .await;
         assert_eq!(missed["data"]["total"], 0, "{missed}");
 
+        // The single-item verbs address the same collection the listing does: an id taken from
+        // `data.chats` must resolve here (it used to be a session id and answered "not found").
+        let one = call(Method::GET, format!("/api/v1/chats/{chat_id}"), "").await;
+        assert_eq!(one["data"]["name"], "Guide Assistant", "{one}");
+        assert_eq!(one["data"]["kb_names"][0], "Docs", "{one}");
+        assert_eq!(one["data"]["description"], "A helpful Assistant", "{one}");
+
+        // PATCH preserves what the body leaves out.
+        let patched = call(
+            Method::PATCH,
+            format!("/api/v1/chats/{chat_id}"),
+            r#"{"description":"Patched"}"#,
+        )
+        .await;
+        assert_eq!(
+            patched["data"]["name"], "Guide Assistant",
+            "PATCH keeps the name: {patched}"
+        );
+        assert_eq!(patched["data"]["description"], "Patched", "{patched}");
+        assert_eq!(
+            patched["data"]["dataset_ids"][0],
+            kb.id.as_str(),
+            "PATCH keeps the datasets: {patched}"
+        );
+
+        // PUT is a full overwrite: fields the body omits reset to their defaults.
+        let replaced = call(
+            Method::PUT,
+            format!("/api/v1/chats/{chat_id}"),
+            r#"{"name":"Renamed Assistant","dataset_ids":[]}"#,
+        )
+        .await;
+        assert_eq!(replaced["data"]["name"], "Renamed Assistant", "{replaced}");
+        assert_eq!(
+            replaced["data"]["description"], "",
+            "PUT resets the omitted description: {replaced}"
+        );
+        assert!(
+            replaced["data"]["dataset_ids"]
+                .as_array()
+                .unwrap()
+                .is_empty(),
+            "PUT resets the omitted datasets: {replaced}"
+        );
+
+        let unknown = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/chats/no-such-assistant")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            response_json(unknown).await["code"],
+            102,
+            "the guide answers a missing assistant with 102"
+        );
+
+        // A second assistant, so the bulk delete has something to remove after the single delete.
+        let second = call(
+            Method::POST,
+            "/api/v1/chats".to_string(),
+            r#"{"name":"Second Assistant"}"#,
+        )
+        .await;
+        let second_id = second["data"]["id"].as_str().unwrap().to_string();
+
+        let deleted_one = call(Method::DELETE, format!("/api/v1/chats/{chat_id}"), "").await;
+        assert_eq!(deleted_one["code"], 0, "{deleted_one}");
+        assert_eq!(
+            deleted_one["data"], true,
+            "the guide documents data: true here"
+        );
+        let remaining = call(Method::GET, "/api/v1/chats".to_string(), "").await;
+        assert_eq!(remaining["data"]["total"], 1, "{remaining}");
+        assert_eq!(
+            remaining["data"]["chats"][0]["id"],
+            second_id.as_str(),
+            "the other assistant survives: {remaining}"
+        );
+
         let deleted = call(
             Method::DELETE,
             "/api/v1/chats".to_string(),
-            &format!(r#"{{"ids":["{chat_id}"]}}"#),
+            &format!(r#"{{"ids":["{second_id}"]}}"#),
         )
         .await;
         assert_eq!(deleted["code"], 0, "{deleted}");
         let after = call(Method::GET, "/api/v1/chats".to_string(), "").await;
-        assert_eq!(after["data"]["total"], 0, "the assistant is gone: {after}");
+        assert_eq!(
+            after["data"]["total"], 0,
+            "the assistants are gone: {after}"
+        );
     }
 
     #[tokio::test]
@@ -13387,7 +13479,7 @@ mod tests {
         for request in [
             Request::builder()
                 .method(Method::PATCH)
-                .uri(format!("/api/v1/chats/{}", conversation.id))
+                .uri(format!("/api/v1/conversations/{}", conversation.id))
                 .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(r#"{"name":"Stolen"}"#))

@@ -558,7 +558,200 @@ fn list_chat_assistants(
 }
 
 /// GET /api/v1/chats/{id} — get one owned session.
-pub async fn get_chat(
+/// `PUT` / `PATCH /api/v1/chats/{chat_id}` — update a chat assistant.
+///
+/// The guide distinguishes the two verbs: `PUT` is a full overwrite in which omitted fields reset
+/// to their defaults, `PATCH` deep-merges and preserves what the body does not mention.
+async fn apply_chat_assistant_update(
+    state: &AppState,
+    auth: &AuthContext,
+    chat_id: &str,
+    body: ChatAssistantRequest,
+    replace: bool,
+) -> axum::response::Response {
+    let Some(existing) = chat_assistant_for(state, auth, chat_id) else {
+        return crate::server::api_error_code(
+            axum::http::StatusCode::NOT_FOUND,
+            crate::server::code::INVALID_OR_MISSING_DATA,
+            "no authorization",
+        );
+    };
+    if let Some(name) = body.name.as_ref().map(|name| name.trim().to_string())
+        && name.is_empty()
+    {
+        return crate::server::api_error_code(
+            axum::http::StatusCode::BAD_REQUEST,
+            crate::server::code::INVALID_ARGUMENT,
+            "Field: <name> - Message: <String should have at least 1 character> - Value: <>",
+        );
+    }
+    let name = body
+        .name
+        .map(|name| name.trim().to_string())
+        .unwrap_or_else(|| {
+            if replace {
+                String::new()
+            } else {
+                existing.name.clone()
+            }
+        });
+    if name.is_empty() {
+        return crate::server::api_error_code(
+            axum::http::StatusCode::BAD_REQUEST,
+            crate::server::code::INVALID_ARGUMENT,
+            "name is required",
+        );
+    }
+    let Some(store) = &state.chat_apps else {
+        return crate::server::api_error_code(
+            axum::http::StatusCode::NOT_IMPLEMENTED,
+            crate::server::code::OPERATION_ERROR,
+            "chat assistants are disabled on this deployment",
+        );
+    };
+    if store
+        .list()
+        .iter()
+        .any(|app| app.id != chat_id && app.name.eq_ignore_ascii_case(&name))
+    {
+        return crate::server::api_error_code(
+            axum::http::StatusCode::BAD_REQUEST,
+            crate::server::code::INVALID_OR_MISSING_DATA,
+            "duplicated chat name",
+        );
+    }
+    let dataset_ids = if !body.dataset_ids.is_empty() {
+        body.dataset_ids
+    } else if !body.kb_ids.is_empty() {
+        body.kb_ids
+    } else if replace {
+        Vec::new()
+    } else {
+        existing.kb_ids.clone()
+    };
+    if !dataset_ids.is_empty() && !all_kbs_accessible(state, &dataset_ids, auth) {
+        return crate::server::api_error_code(
+            axum::http::StatusCode::BAD_REQUEST,
+            crate::server::code::INVALID_OR_MISSING_DATA,
+            "One or more knowledge bases are not accessible",
+        );
+    }
+    let merge = |incoming: Option<serde_json::Value>, current: Option<serde_json::Value>| {
+        if replace {
+            return incoming;
+        }
+        match (current, incoming) {
+            (Some(serde_json::Value::Object(mut base)), Some(serde_json::Value::Object(extra))) => {
+                base.extend(extra);
+                Some(serde_json::Value::Object(base))
+            }
+            (_, Some(value)) => Some(value),
+            (current, None) => current,
+        }
+    };
+    let updated = crate::api::chatapp_mgr::ChatApp {
+        id: existing.id.clone(),
+        name,
+        description: if replace {
+            body.description.unwrap_or_default()
+        } else {
+            body.description.unwrap_or(existing.description)
+        },
+        icon: if replace {
+            body.icon.unwrap_or_default()
+        } else {
+            body.icon.unwrap_or(existing.icon)
+        },
+        tenant_id: existing.tenant_id.clone(),
+        kb_ids: dataset_ids,
+        llm_id: if replace {
+            body.llm_id
+        } else {
+            body.llm_id.or(existing.llm_id)
+        },
+        llm_setting: merge(body.llm_setting, existing.llm_setting),
+        prompt_config: merge(body.prompt_config, existing.prompt_config),
+        rerank_id: if replace {
+            body.rerank_id
+        } else {
+            body.rerank_id.or(existing.rerank_id)
+        },
+        top_k: if replace {
+            body.top_k
+        } else {
+            body.top_k.or(existing.top_k)
+        },
+        created_at: existing.created_at,
+    };
+    if let Err(error) = store.insert(updated.clone()) {
+        let message = format!("could not persist the assistant: {error}");
+        return crate::server::api_error_code(
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            crate::server::code::OPERATION_ERROR,
+            &message,
+        );
+    }
+    Json(serde_json::json!({ "code": 0, "data": chat_assistant_view(state, &updated) }))
+        .into_response()
+}
+
+/// `PUT /api/v1/chats/{chat_id}` — full overwrite; omitted fields reset to their defaults.
+pub async fn replace_chat_assistant(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(chat_id): Path<String>,
+    Json(body): Json<ChatAssistantRequest>,
+) -> axum::response::Response {
+    apply_chat_assistant_update(&state, &auth, &chat_id, body, true).await
+}
+
+/// `PATCH /api/v1/chats/{chat_id}` — partial update; nested settings are deep-merged.
+pub async fn patch_chat_assistant(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(chat_id): Path<String>,
+    Json(body): Json<ChatAssistantRequest>,
+) -> axum::response::Response {
+    apply_chat_assistant_update(&state, &auth, &chat_id, body, false).await
+}
+
+/// `DELETE /api/v1/chats/{chat_id}` — delete one chat assistant.
+pub async fn delete_chat(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(chat_id): Path<String>,
+) -> axum::response::Response {
+    let Some(app) = chat_assistant_for(&state, &auth, &chat_id) else {
+        return crate::server::api_error_code(
+            axum::http::StatusCode::NOT_FOUND,
+            crate::server::code::INVALID_OR_MISSING_DATA,
+            "no authorization",
+        );
+    };
+    let Some(store) = &state.chat_apps else {
+        return crate::server::api_error_code(
+            axum::http::StatusCode::NOT_IMPLEMENTED,
+            crate::server::code::OPERATION_ERROR,
+            "chat assistants are disabled on this deployment",
+        );
+    };
+    match store.remove(&app.id) {
+        // The guide documents `data: true` for this delete.
+        Ok(_) => Json(serde_json::json!({ "code": 0, "data": true })).into_response(),
+        Err(error) => {
+            let message = format!("could not delete the assistant: {error}");
+            crate::server::api_error_code(
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                crate::server::code::OPERATION_ERROR,
+                &message,
+            )
+        }
+    }
+}
+
+/// `GET /api/v1/conversations/{id}` — one session. This is what `GET /api/v1/chats/{id}` used to
+/// answer; the guide's `GET /api/v1/chats/{chat_id}` fetches a chat *assistant*.
+pub async fn get_conversation(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
     Path(session_id): Path<String>,
@@ -573,8 +766,62 @@ pub async fn get_chat(
     }
 }
 
+/// Resolves a chat assistant the caller may see: their own, an ownerless one, or any when admin.
+fn chat_assistant_for(
+    state: &AppState,
+    auth: &AuthContext,
+    chat_id: &str,
+) -> Option<crate::api::chatapp_mgr::ChatApp> {
+    let app = state.chat_apps.as_ref()?.get(chat_id)?;
+    if app.tenant_id == auth.user_id || app.tenant_id.is_empty() || auth.is_admin {
+        Some(app)
+    } else {
+        None
+    }
+}
+
+/// One assistant in the guide's shape, including the dataset names beside the ids.
+fn chat_assistant_view(
+    state: &AppState,
+    app: &crate::api::chatapp_mgr::ChatApp,
+) -> serde_json::Value {
+    let mut view = serde_json::to_value(app).unwrap_or_default();
+    crate::api::compat::enrich_chats(&mut view);
+    let names: Vec<String> = app
+        .kb_ids
+        .iter()
+        .filter_map(|id| state.kbs.get(id))
+        .map(|kb| kb.name)
+        .collect();
+    if let Some(object) = view.as_object_mut() {
+        object.insert("kb_names".to_string(), serde_json::json!(names));
+    }
+    view
+}
+
+/// `GET /api/v1/chats/{chat_id}` — one chat assistant.
+pub async fn get_chat(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(chat_id): Path<String>,
+) -> axum::response::Response {
+    match chat_assistant_for(&state, &auth, &chat_id) {
+        Some(app) => {
+            Json(serde_json::json!({ "code": 0, "data": chat_assistant_view(&state, &app) }))
+                .into_response()
+        }
+        // The guide answers a missing or unowned assistant with business code 102.
+        None => crate::server::api_error_code(
+            axum::http::StatusCode::NOT_FOUND,
+            crate::server::code::INVALID_OR_MISSING_DATA,
+            "no authorization",
+        ),
+    }
+}
+
 /// PATCH /api/v1/chats/{id} — rename one owned session.
-pub async fn update_chat(
+/// `PATCH /api/v1/conversations/{id}` — rename a session.
+pub async fn update_conversation(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
     Path(session_id): Path<String>,
@@ -598,7 +845,8 @@ pub async fn update_chat(
 }
 
 /// DELETE /api/v1/chats/{id} — delete one owned session.
-pub async fn delete_chat(
+/// `DELETE /api/v1/conversations/{id}` — delete one session.
+pub async fn delete_conversation(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
     Path(session_id): Path<String>,

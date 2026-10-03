@@ -2,6 +2,32 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.11.6] - 2026-10-03
+
+### The single-item chat verbs, one level below the listing
+
+0.11.5 made `GET/POST/DELETE /api/v1/chats` mean chat assistants. The verbs on
+`/api/v1/chats/{id}` were still answering RayRAG's **sessions**, so an id taken from the new listing
+answered `404 Chat not found` at its own detail endpoint — the mirror image of the bug the previous
+release fixed.
+
+`GET`, `PUT`, `PATCH` and `DELETE` on `/api/v1/chats/{chat_id}` now address assistants, and the guide's
+two update verbs are honoured as the guide describes them:
+
+| verb | behaviour |
+|---|---|
+| `GET` | the assistant, with `dataset_ids`, `kb_names`, `llm_id`, `llm_setting`, `prompt_config`; a missing or unowned one answers business code `102` |
+| `PATCH` | partial update; nested `llm_setting` / `prompt_config` are deep-merged and everything the body omits is preserved |
+| `PUT` | full overwrite; fields the body omits reset to their defaults |
+| `DELETE` | `{"code": 0, "data": true}`, as documented |
+
+Session detail operations moved to `/api/v1/conversations/{id}`, which now serves `GET` (fetch),
+`PATCH` (rename) and `DELETE` alongside the create and bulk-delete on the collection.
+
+**2175 tests pass**, 0 failures. The assistant regression now walks the whole documented lifecycle:
+create, list, fetch one, patch one field and check the rest survived, replace it and check the omitted
+fields reset, refuse an unknown id with `102`, delete one, then bulk-delete the rest.
+
 ## [0.11.5] - 2026-10-03
 
 ### `/api/v1/chats` now means what the guide means: chat assistants

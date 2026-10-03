@@ -638,3 +638,16 @@ RayRAG 此前让**会话记录**占用同一条路径（GET/POST/DELETE 都是�
 
 **仍未对齐（登记）**：`/api/v1/chats/{id}/completions` 的路径参数在 RayRAG 里是**会话 id**（说明书是助手 id）；
 `/api/v1/chatapps*` 是 RayRAG 自己的助手管理路径，与说明书路径并存。
+
+### 0.11.6 补充：`/api/v1/chats/{chat_id}` 单条动词
+
+| 端点 | 语义 |
+|---|---|
+| `GET /api/v1/chats/{chat_id}` | 取单个**助手**（含 `dataset_ids`/`kb_names`）；缺失或无权 → 业务码 **102 `no authorization`** |
+| `PATCH /api/v1/chats/{chat_id}` | **部分更新**：`llm_setting`/`prompt_config` 深合并，未提及字段保留 |
+| `PUT /api/v1/chats/{chat_id}` | **整体覆盖**：body 未提及的字段**重置为默认值**（说明书的 PUT/PATCH 差异） |
+| `DELETE /api/v1/chats/{chat_id}` | `{"code":0,"data":true}` |
+| `GET/PATCH/DELETE /api/v1/conversations/{id}` | 会话的取一条 / 改名 / 删除（原 `/api/v1/chats/{id}` 的行为） |
+
+**仍未对齐**：`/api/v1/chats/{id}/completions` 的路径参数在 RayRAG 是会话 id、说明书是助手 id；
+`/api/v1/chats/{id}/messages/...` 与 `/api/v1/chats/{id}/sessions/...` 同样存在两种 id 口径，需一并定夺。
