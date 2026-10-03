@@ -2,6 +2,14 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.10.1] - 2026-10-02
+
+- **按 API 说明书的「Error codes」章节落实业务错误码契约**（说明书第二处落地）。说明书明确：**HTTP 状态码与响应体里的业务码是两件事，必须分别检查**。此前 RayRAG 的 `api_error` 把业务码直接等于 HTTP 码（400/403/404…），而另一些地方（我最近写的端点）又返回 **HTTP 200 + body code 102**——**两种都是错的**：只看状态码的调用方会把失败当成功，只看 body code 的调用方拿不到 101/102/108/109 这些上游定义的码。
+- **新增契约构造器**：`api_error_code(status, code, message)` 与 `invalid_argument`(101) / `invalid_or_missing`(102) / `no_permission`(108) / `unauthenticated`(109) / `conflict`(409)，并按说明书给出 `code` 常量表（0/101/102/103/105/106/108/109）。
+- **已迁移**：产物（artifacts）与导航（navigation）两条路径的"数据缺失/无效"响应从 **HTTP 200 + code 102** 改为**HTTP 400 + code 102**（说明书里 400 就该是 400）。对应回归断言也改为同时校验两个信号。
+- **未迁移的如实标注**：历史端点仍在用 `api_error`（业务码=HTTP 码），已在内部登记表里写明"逐个迁移中，未迁移的不会被伪装成已迁移"。
+- **测试**：新增一条契约回归（五个构造器必须成对返回说明书里的 HTTP 状态与业务码，且错误必须自带说明文字）。全量 **2157 passed / 0 failed**。
+
 ## [0.10.0] - 2026-10-02
 
 - **按 API 说明书的「Deprecated API Aliases」表补齐 v0.24.0 兼容路径**（用户要求，用说明书优化 RayRAG）。说明书列出 20 条旧路径→新路径的映射，RayRAG 原本只覆盖 2 条，本版把**目标端点已存在**的那些全部接上：`/api/v1/file/upload`、`/file/create`、`/file/list`、`/file/root_folder`、`/file/parent_folder`、`/file/all_parent_folder`、`/file/rm`、`/file/rename`、`/file/mv`、`/file/get/{file_id}`、`/api/v1/chats_openai/{id}/chat/completions`、`/v1/system/healthz`（上游在 `/api` 之外也提供这一个）。

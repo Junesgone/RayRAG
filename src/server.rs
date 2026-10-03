@@ -1552,6 +1552,65 @@ pub(crate) fn register_document_upload(
     }))
 }
 
+/// RAGFlow's business codes — the API guide's "Response body codes" table. The HTTP status and
+/// the body code are separate signals, and callers are told to check both: a `400` can carry
+/// `101` (bad argument), `102` (missing/invalid data) or `103` (operation error), a `401` carries
+/// `109`, a `403` carries `108`, and a duplicate is `409` in both places.
+pub(crate) mod code {
+    pub const SUCCESS: i32 = 0;
+    pub const INVALID_ARGUMENT: i32 = 101;
+    pub const INVALID_OR_MISSING_DATA: i32 = 102;
+    pub const OPERATION_ERROR: i32 = 103;
+    pub const CONNECTION_ERROR: i32 = 105;
+    pub const STILL_RUNNING: i32 = 106;
+    pub const NO_PERMISSION: i32 = 108;
+    pub const UNAUTHENTICATED: i32 = 109;
+}
+
+/// An error whose HTTP status and business code are chosen separately, so a caller that only
+/// reads the status and a caller that only reads the body code agree on what happened.
+pub(crate) fn api_error_code(status: StatusCode, business_code: i32, message: &str) -> Response {
+    (
+        status,
+        Json(ApiResponse {
+            code: business_code,
+            message: message.into(),
+            data: None,
+        }),
+    )
+        .into_response()
+}
+
+/// `101` — the request was understood but an argument is wrong or absent.
+pub(crate) fn invalid_argument(message: &str) -> Response {
+    api_error_code(StatusCode::BAD_REQUEST, code::INVALID_ARGUMENT, message)
+}
+
+/// `102` — the thing being addressed does not exist, or is not owned by the caller. Upstream uses
+/// this for "You don't own the dataset …" and for missing rows.
+pub(crate) fn invalid_or_missing(message: &str) -> Response {
+    api_error_code(
+        StatusCode::BAD_REQUEST,
+        code::INVALID_OR_MISSING_DATA,
+        message,
+    )
+}
+
+/// `108` — the caller may not perform this operation.
+pub(crate) fn no_permission(message: &str) -> Response {
+    api_error_code(StatusCode::FORBIDDEN, code::NO_PERMISSION, message)
+}
+
+/// `109` — not authenticated (or the token expired).
+pub(crate) fn unauthenticated(message: &str) -> Response {
+    api_error_code(StatusCode::UNAUTHORIZED, code::UNAUTHENTICATED, message)
+}
+
+/// `409` — the request conflicts with existing state, e.g. a duplicate name.
+pub(crate) fn conflict(message: &str) -> Response {
+    api_error_code(StatusCode::CONFLICT, 409, message)
+}
+
 pub(crate) fn api_error(status: StatusCode, message: &str) -> Response {
     (
         status,
@@ -16291,6 +16350,52 @@ mod tests {
         );
     }
 
+    /// The API guide's business-code table, made checkable: each error constructor must pair the
+    /// documented HTTP status with the documented body code, because callers are told to check
+    /// both and a mismatch makes one of those two checks wrong.
+    #[tokio::test]
+    async fn error_contract_pairs_status_with_business_code() {
+        let cases: [(axum::response::Response, StatusCode, i32); 5] = [
+            (
+                crate::server::invalid_argument("bad argument"),
+                StatusCode::BAD_REQUEST,
+                crate::server::code::INVALID_ARGUMENT,
+            ),
+            (
+                crate::server::invalid_or_missing("missing"),
+                StatusCode::BAD_REQUEST,
+                crate::server::code::INVALID_OR_MISSING_DATA,
+            ),
+            (
+                crate::server::no_permission("not allowed"),
+                StatusCode::FORBIDDEN,
+                crate::server::code::NO_PERMISSION,
+            ),
+            (
+                crate::server::unauthenticated("sign in"),
+                StatusCode::UNAUTHORIZED,
+                crate::server::code::UNAUTHENTICATED,
+            ),
+            (
+                crate::server::conflict("duplicate"),
+                StatusCode::CONFLICT,
+                409,
+            ),
+        ];
+        for (response, expected_status, expected_code) in cases {
+            assert_eq!(response.status(), expected_status);
+            let body = response_json(response).await;
+            assert_eq!(
+                body["code"], expected_code,
+                "body code must match the documented table for HTTP {expected_status}"
+            );
+            assert!(
+                body["message"].as_str().is_some_and(|m| !m.is_empty()),
+                "an error must explain itself: {body}"
+            );
+        }
+    }
+
     /// The API guide's "Deprecated API Aliases" table promises these old paths keep working.
     /// Each one routes to the *same* handler as its replacement, so this checks the wiring and
     /// the argument validation of the two query-parameter forms.
@@ -16452,8 +16557,9 @@ mod tests {
             .await
             .unwrap();
         // The test environment has no embedding/chat model configured, so the handler must say
-        // which one is missing instead of returning a success with nothing generated.
-        assert_eq!(response.status(), StatusCode::OK);
+        // which one is missing instead of returning a success with nothing generated. The API
+        // guide separates the two signals, so both are asserted: HTTP 400 with body code 102.
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let body = response_json(response).await;
         assert_eq!(body["code"], 102, "{body}");
         let message = body["message"].as_str().unwrap_or_default();

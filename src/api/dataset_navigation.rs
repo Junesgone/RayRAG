@@ -122,7 +122,7 @@ fn store_error(error: &anyhow::Error) -> Response {
 }
 
 fn data_error(message: &str) -> Response {
-    Json(serde_json::json!({ "code": 102, "message": message })).into_response()
+    crate::server::invalid_or_missing(message)
 }
 
 /// What a navigation read selects, filtered here rather than in the store.

@@ -96,7 +96,7 @@ fn store_error(error: &anyhow::Error) -> Response {
 }
 
 fn invalid_ids(message: &str) -> Response {
-    Json(serde_json::json!({ "code": 102, "message": message })).into_response()
+    crate::server::invalid_or_missing(message)
 }
 
 /// `HEAD /api/v1/datasets/{id}/artifacts` — upstream `has_any_wiki`.
