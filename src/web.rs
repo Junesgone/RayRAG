@@ -7945,12 +7945,12 @@ sbArtifactLoad();
         ("@SIZE@", t("Size", zh).to_string()),
         ("@DOWNLOAD@", t("Download", zh).to_string()),
         ("@DELETE@", t("Delete", zh).to_string()),
-        ("@COUNT@", t("Artifacts:", zh).to_string()),
-        ("@EMPTY@", t("No artifacts yet. Run the Code component and its output files appear here.", zh).to_string()),
-        ("@DOWNLOADED@", t("Downloaded", zh).to_string()),
-        ("@DELETED@", t("Deleted", zh).to_string()),
-        ("@FETCH_FAILED@", t("Could not load the artifacts.", zh).to_string()),
-        ("@DELETE_FAILED@", t("Could not delete it.", zh).to_string()),
+        ("@COUNT@", json_script_string(t("Artifacts:", zh))),
+        ("@EMPTY@", json_script_string(t("No artifacts yet. Run the Code component and its output files appear here.", zh))),
+        ("@DOWNLOADED@", json_script_string(t("Downloaded", zh))),
+        ("@DELETED@", json_script_string(t("Deleted", zh))),
+        ("@FETCH_FAILED@", json_script_string(t("Could not load the artifacts.", zh))),
+        ("@DELETE_FAILED@", json_script_string(t("Could not delete it.", zh))),
     ]
     .iter()
     .fold(artifact_template.to_string(), |html, (token, value)| {
