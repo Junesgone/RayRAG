@@ -1,0 +1,54 @@
+//! API modules — RESTful endpoint handlers for RayRAG.
+//!
+//! Each module replaces a RAGFlow API component.
+
+pub mod admin;
+pub mod admin_whitelist;
+pub mod agent_log;
+pub mod agent_trace;
+pub mod agent_webhook;
+pub mod aimlapi;
+pub mod attachments;
+pub mod audio_api;
+pub mod chat_channel_mgr;
+pub mod chatapp_mgr;
+pub mod chunks;
+pub mod common;
+pub mod compat;
+pub mod compilation_templates;
+pub mod connector;
+pub mod data_source_mgr;
+pub mod dataset_artifacts;
+pub mod dataset_navigation;
+pub mod dataset_tags;
+pub mod db;
+pub mod doc_assets;
+pub mod document;
+pub mod document_metadata;
+pub mod evaluation;
+pub mod features;
+pub mod file_link;
+pub mod file_mgr;
+pub mod ingestion;
+pub mod joint_services;
+pub mod langfuse;
+pub mod mcp_mgr;
+pub mod metadata_config;
+pub mod model_catalog;
+pub mod oauth_web;
+pub mod openai_proxy;
+pub mod password_flow;
+pub mod rag_chat;
+pub mod runtime_config;
+pub mod sandbox_admin;
+pub mod search;
+pub mod searchapp_mgr;
+pub mod setup;
+pub mod skill_index;
+pub mod structure_graph_common;
+pub mod system;
+pub mod system_settings;
+pub mod tenant_models;
+pub mod tokens;
+pub mod utils;
+pub mod workspaces;
