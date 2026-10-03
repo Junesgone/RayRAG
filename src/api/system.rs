@@ -1079,12 +1079,32 @@ pub async fn list_models(
 /// when configuring a provider. `domestic` marks the mainland-friendly factories, which is the
 /// distinction a user in China needs when picking one.
 pub async fn list_factories(State(state): State<Arc<AppState>>) -> Response {
+    // "Configured" means a credential is present. Reporting a factory as configured because a row
+    // exists would claim a provider is usable when its key is missing — and the wizard seeds rows for
+    // many factories, so on a deployment with no cloud keys this flag read `true` for sixty of them.
     let configured: std::collections::HashSet<String> = state
         .providers
         .list_configured()
         .into_iter()
+        .filter(|provider| {
+            provider
+                .api_key
+                .as_deref()
+                .is_some_and(|key| !key.trim().is_empty())
+        })
         .flat_map(|provider| [provider.id.clone(), provider.name.clone()])
         .collect();
+    // Instances are reported separately, so a factory can be shown as present-but-keyless.
+    let instances: std::collections::HashMap<String, usize> = state
+        .providers
+        .list_configured()
+        .into_iter()
+        .fold(std::collections::HashMap::new(), |mut counts, provider| {
+            for key in [provider.id, provider.name] {
+                *counts.entry(key).or_insert(0) += 1;
+            }
+            counts
+        });
     let factories: Vec<serde_json::Value> = crate::providers::PROVIDER_PRESETS
         .iter()
         .map(|preset| {
@@ -1109,6 +1129,11 @@ pub async fn list_factories(State(state): State<Arc<AppState>>) -> Response {
                 "tags": tags.join(","),
                 "status": if is_configured { "1" } else { "0" },
                 "configured": is_configured,
+                "instances": instances
+                    .get(preset.id)
+                    .or_else(|| instances.get(preset.name))
+                    .copied()
+                    .unwrap_or(0),
                 "domestic": preset.domestic,
                 "model_count": crate::providers::factory_full_model_names(preset.id, preset.name).len(),
                 "api_key_env": preset.api_key_env,

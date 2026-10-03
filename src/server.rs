@@ -13533,13 +13533,28 @@ mod tests {
         assert!(zhipu["model_count"].as_u64().unwrap() > 0, "{zhipu}");
         // `configured` follows the provider store, so the assertion is relative to that store rather
         // than to an assumption about the fixture.
-        let configured_ids: std::collections::HashSet<String> = env
-            .state
-            .providers
-            .list_configured()
-            .into_iter()
-            .flat_map(|provider| [provider.id, provider.name])
+        let stored = env.state.providers.list_configured();
+        let configured_ids: std::collections::HashSet<String> = stored
+            .iter()
+            .filter(|provider| {
+                provider
+                    .api_key
+                    .as_deref()
+                    .is_some_and(|key| !key.trim().is_empty())
+            })
+            .flat_map(|provider| [provider.id.clone(), provider.name.clone()])
             .collect();
+        // The rule itself: a provider row without a key must not make a factory look ready.
+        assert!(
+            stored
+                .iter()
+                .filter(|provider| provider
+                    .api_key
+                    .as_deref()
+                    .is_none_or(|key| key.trim().is_empty()))
+                .all(|provider| !configured_ids.contains(&provider.name)),
+            "a keyless provider row made a factory look configured"
+        );
         assert_eq!(
             zhipu["configured"],
             configured_ids.contains("ZHIPU-AI"),
