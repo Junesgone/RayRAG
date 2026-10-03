@@ -780,6 +780,7 @@ mod tests {
             similarity: Some(0.9),
             vector_similarity: None,
             term_similarity: None,
+            document_metadata: None,
         }];
         Conversation {
             id: id.into(),

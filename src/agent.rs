@@ -7832,6 +7832,7 @@ fn domestic_search_outputs(results: &[Value], provider_label: &str) -> Result<Ta
             similarity: Some(1.0),
             vector_similarity: None,
             term_similarity: None,
+            document_metadata: None,
         });
         formalized.push(format!(
             "\nID: {}\n├── Title: {}\n├── URL: {}\n└── Content:\n{}",
@@ -9452,6 +9453,7 @@ fn tavily_search_outputs(results: &[Value]) -> Result<TavilySearchOutput> {
             similarity: Some(similarity),
             vector_similarity: None,
             term_similarity: None,
+            document_metadata: None,
         });
         formalized.push(format!(
             "\nID: {}\n├── Title: {}\n├── URL: {}\n└── Content:\n{}",
@@ -9512,6 +9514,7 @@ fn wikipedia_search_outputs(
             similarity: Some(1.0),
             vector_similarity: None,
             term_similarity: None,
+            document_metadata: None,
         });
         formalized.push(format!(
             "\nID: {}\n├── Title: {}\n├── URL: {}\n└── Content:\n{}",
@@ -9610,6 +9613,7 @@ fn google_search_outputs(results: &[Value]) -> Result<TavilySearchOutput> {
             similarity: Some(1.0),
             vector_similarity: None,
             term_similarity: None,
+            document_metadata: None,
         });
         formalized.push(format!(
             "\nID: {}\n├── Title: {}\n├── URL: {}\n└── Content:\n{}",
@@ -9671,6 +9675,7 @@ fn google_scholar_search_outputs(
             similarity: Some(1.0),
             vector_similarity: None,
             term_similarity: None,
+            document_metadata: None,
         });
         formalized.push(format!(
             "\nID: {}\n├── Title: {}\n├── URL: {}\n└── Content:\n{}",
@@ -9736,6 +9741,7 @@ fn github_search_outputs(
             similarity: Some(1.0),
             vector_similarity: None,
             term_similarity: None,
+            document_metadata: None,
         });
         formalized.push(format!(
             "\nID: {}\n├── Title: {}\n├── URL: {}\n└── Content:\n{}",
@@ -9805,6 +9811,7 @@ fn arxiv_search_outputs(
             similarity: Some(1.0),
             vector_similarity: None,
             term_similarity: None,
+            document_metadata: None,
         });
         formalized.push(format!(
             "\nID: {}\n├── Title: {}\n├── URL: {}\n└── Content:\n{}",
@@ -9868,6 +9875,7 @@ fn pubmed_search_outputs(
             similarity: Some(1.0),
             vector_similarity: None,
             term_similarity: None,
+            document_metadata: None,
         });
         formalized.push(format!(
             "\nID: {}\n├── Title: {}\n├── URL: {}\n└── Content:\n{}",
@@ -9938,6 +9946,7 @@ fn duckduckgo_search_outputs(results: &[Value]) -> Result<TavilySearchOutput> {
             similarity: Some(1.0),
             vector_similarity: None,
             term_similarity: None,
+            document_metadata: None,
         });
         formalized.push(format!(
             "\nID: {}\n├── Title: {}\n├── URL: {}\n└── Content:\n{}",
@@ -10255,6 +10264,7 @@ fn querit_search_outputs(results: &[Value], full_response: &Value) -> TavilySear
             similarity: Some(1.0_f32),
             vector_similarity: None,
             term_similarity: None,
+            document_metadata: None,
         });
         formalized.push(format!(
             "\nID: {}\n├── Title: {}\n├── URL: {}\n└── Content:\n{}",
@@ -10675,6 +10685,7 @@ fn web_tool_outputs(
             similarity: Some(1.0_f32),
             vector_similarity: None,
             term_similarity: None,
+            document_metadata: None,
         });
         formalized.push(format!(
             "\nID: {}\n├── Title: {}\n├── URL: {}\n└── Content:\n{}",
@@ -16598,6 +16609,7 @@ mod tests {
                 similarity: None,
                 vector_similarity: None,
                 term_similarity: None,
+                document_metadata: None,
             }],
             ..CanvasRuntime::default()
         };
@@ -16735,6 +16747,7 @@ mod tests {
                     similarity: Some(0.91),
                     vector_similarity: Some(0.88),
                     term_similarity: Some(0.73),
+                    document_metadata: None,
                 }],
             })
         }

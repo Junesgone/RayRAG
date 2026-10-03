@@ -2,6 +2,15 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.10.2] - 2026-10-02
+
+- **按 API 说明书落实 OpenAI 兼容接口的 `extra_body`**（说明书第三处落地）。说明书在 `POST /api/v1/openai/{chat_id}/chat/completions` 下定义三个键，此前 RayRAG **一个都没解析**：`extra_body` 里的内容被 `#[serde(flatten)]` 静默吞掉，调用方写了等于没写。
+  - **`reference`**：`false` 时不再返回 `references` —— 之前无论调用方要不要引用都硬塞一个 `references` 数组。
+  - **`reference_metadata.include` + `fields`**：为每个引用附带 `document_metadata`；`fields` 是白名单，**省略=全部键，空数组=一个都不要**（说明书把这两种极端都写明了），已按此实现并测试。为此 `ChunkReference` 新增可选字段 `document_metadata`，只在被请求时填充。
+  - **`metadata_condition`**：作为**真正的检索过滤**（而不是只过滤引用列表）。过滤发生在上下文组装之前——只过滤引用会让被排除的文档继续影响答案，却对调用方不可见，那是最坏的一种"看似生效"。过滤条数记入日志（`metadata_condition filtered retrieval results`），不静默丢弃。运算符复用 `metadata_filter` 的既有实现，语义与检索接口一致。
+- **测试**：新增 2 条契约回归（白名单两端行为、`metadata_condition` 确实编译成真实过滤条件）。全量 **2159 passed / 0 failed**。
+- **未验证部分如实说明**：答案生成链路仍受本机 chat 端点不可达（`LLM_API_BASE=http://172.29.0.1:8088` 无监听）限制，因此"带 `extra_body` 的完整答案+引用"未取得端到端实机证据；本轮实机验证的是**参数已被真正解析**（错误类型校验返回 422，说明字段进入了契约而非被忽略）。
+
 ## [0.10.1] - 2026-10-02
 
 - **按 API 说明书的「Error codes」章节落实业务错误码契约**（说明书第二处落地）。说明书明确：**HTTP 状态码与响应体里的业务码是两件事，必须分别检查**。此前 RayRAG 的 `api_error` 把业务码直接等于 HTTP 码（400/403/404…），而另一些地方（我最近写的端点）又返回 **HTTP 200 + body code 102**——**两种都是错的**：只看状态码的调用方会把失败当成功，只看 body code 的调用方拿不到 101/102/108/109 这些上游定义的码。

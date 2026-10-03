@@ -9140,6 +9140,7 @@ mod tests {
                 similarity: Some(0.75),
                 vector_similarity: Some(0.8),
                 term_similarity: Some(0.2),
+                document_metadata: None,
             }],
             settings: None,
             duration_ms: 1200,
@@ -12783,6 +12784,7 @@ mod tests {
                     similarity: Some(0.9),
                     vector_similarity: Some(0.8),
                     term_similarity: Some(0.7),
+                    document_metadata: None,
                 }],
             )
             .unwrap()
@@ -14127,6 +14129,7 @@ mod tests {
                     similarity: Some(1.0),
                     vector_similarity: Some(1.0),
                     term_similarity: Some(1.0),
+                    document_metadata: None,
                 }],
             )
             .unwrap()

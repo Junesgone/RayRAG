@@ -221,6 +221,9 @@ pub(crate) struct ChatGenerationRequest<'a> {
     pub(crate) embedding_model: Option<&'a str>,
     pub(crate) history: &'a [crate::llm::ChatMessage],
     pub(crate) generation: crate::generation_params::GenerationParamsPatch,
+    /// `extra_body.metadata_condition`: metadata filter applied to retrieval results before they
+    /// reach the model or the citations.
+    pub(crate) metadata_condition: Option<serde_json::Value>,
 }
 
 /// POST /api/v1/chats — create new chat session
@@ -781,6 +784,7 @@ pub async fn search_complete(
                 embedding_model: None,
                 history: &[],
                 generation,
+                metadata_condition: None,
             },
             None,
         )
@@ -828,6 +832,7 @@ pub async fn search_complete(
                 embedding_model: None,
                 history: &[],
                 generation,
+                metadata_condition: None,
             },
             Some(on_chunk),
         )
@@ -1053,6 +1058,7 @@ pub async fn chat_complete(
                     embedding_model: embedding_model2.as_deref(),
                     history: &history2,
                     generation: gen2,
+                    metadata_condition: None,
                 },
                 Some(on_chunk),
             )
@@ -1112,6 +1118,7 @@ pub async fn chat_complete(
             embedding_model: embedding_model.as_deref(),
             history: &history.messages,
             generation: body.generation,
+            metadata_condition: None,
         },
         None,
     )
@@ -1218,6 +1225,8 @@ async fn regenerate_owned_message(
             embedding_model: embedding_model.as_deref(),
             history: &target.history,
             generation: crate::generation_params::GenerationParamsPatch::default(),
+
+            metadata_condition: None,
         },
         None,
     )
@@ -1275,6 +1284,7 @@ pub(crate) async fn generate_chat_answer(
         embedding_model,
         history,
         generation,
+        metadata_condition,
     } = request;
     let tenant_id = kb_ids
         .first()
@@ -1322,6 +1332,44 @@ pub(crate) async fn generate_chat_answer(
             }
         }
     };
+    // `extra_body.metadata_condition` filters retrieval results the way the retrieval API's own
+    // condition does. It runs before the context is built: filtering only the citations would let a
+    // filtered-out document still shape the answer while staying invisible to the caller.
+    let search_results: Vec<_> = match metadata_condition.as_ref() {
+        Some(condition) => {
+            let metas = state.document_metadata.flattened(kb_ids);
+            let logic = condition
+                .get("logic")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("and");
+            let allowed: std::collections::BTreeSet<String> = crate::metadata_filter::meta_filter(
+                &metas,
+                &crate::metadata_filter::convert_conditions(Some(condition)),
+                logic,
+            )
+            .into_iter()
+            .collect();
+            let before = search_results.len();
+            let kept: Vec<_> = search_results
+                .into_iter()
+                .filter(|result| {
+                    result
+                        .chunk
+                        .metadata
+                        .get("doc_id")
+                        .is_some_and(|doc_id| allowed.contains(doc_id))
+                })
+                .collect();
+            tracing::info!(
+                target: "api::chat",
+                before,
+                after = kept.len(),
+                "metadata_condition filtered retrieval results"
+            );
+            kept
+        }
+        None => search_results,
+    };
     let mut contexts: Vec<String> = search_results
         .iter()
         .map(|result| result.chunk.content.clone())
@@ -1337,6 +1385,15 @@ pub(crate) async fn generate_chat_answer(
         .iter()
         .map(|result| crate::llm::ChunkReference {
             id: result.chunk.id.clone(),
+            document_metadata: result.chunk.metadata.get("doc_id").and_then(|doc_id| {
+                let kb_id = result
+                    .chunk
+                    .metadata
+                    .get("kb_id")
+                    .cloned()
+                    .unwrap_or_default();
+                state.document_metadata.get(doc_id, &kb_id)
+            }),
             kb_id: result
                 .chunk
                 .metadata
@@ -7589,6 +7646,7 @@ impl crate::agent::WorkflowRetriever for AgentWorkflowRetriever<'_> {
                 similarity: Some(result.score),
                 vector_similarity: Some(result.vector_score),
                 term_similarity: Some(result.term_score),
+                document_metadata: None,
             })
             .collect();
         let doc_aggs = crate::search::aggregate_documents(&aggregate_candidates)

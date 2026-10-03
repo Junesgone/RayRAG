@@ -466,6 +466,8 @@ pub async fn chatbot_completions(
                 embedding_model: None,
                 history: &[],
                 generation,
+
+                metadata_condition: None,
             },
             Some(on_chunk),
         )

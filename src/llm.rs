@@ -155,6 +155,11 @@ pub struct ChunkReference {
     pub vector_similarity: Option<f32>,
     #[serde(default)]
     pub term_similarity: Option<f32>,
+    /// The metadata of the document this chunk belongs to, when the caller asked for it.
+    /// `extra_body.reference_metadata` in the OpenAI-compatible API is what populates it, so it is
+    /// absent unless requested rather than always carried around.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document_metadata: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Clone)]
@@ -2081,6 +2086,7 @@ mod conversation_store_tests {
             similarity: Some(0.9),
             vector_similarity: Some(0.8),
             term_similarity: Some(0.7),
+            document_metadata: None,
         };
         let message_id = store
             .append_exchange_with_references(
@@ -2187,6 +2193,7 @@ mod conversation_store_tests {
                     similarity: Some(0.5),
                     vector_similarity: Some(0.5),
                     term_similarity: None,
+                    document_metadata: None,
                 }],
             )
             .unwrap()
@@ -2237,6 +2244,7 @@ mod conversation_store_tests {
                             similarity: Some(0.9),
                             vector_similarity: Some(0.9),
                             term_similarity: None,
+                            document_metadata: None,
                         }],
                         kb_ids: vec!["kb-a".into()],
                         chat_model: Some("chat-a".into()),
