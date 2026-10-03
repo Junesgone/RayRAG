@@ -3,6 +3,7 @@
 //! Each module replaces a RAGFlow API component.
 
 pub mod admin;
+pub mod admin_whitelist;
 pub mod agent_log;
 pub mod agent_trace;
 pub mod agent_webhook;

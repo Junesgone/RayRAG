@@ -2533,8 +2533,11 @@ pub async fn kb_detail_page(
         "</table><div style='margin-top:16px'><button class='btn btn-p' data-testid='ds-settings-basic-save-btn' onclick='saveConfig()'>",
     );
     b.push_str(t("Save", zh));
-    b.push_str("</button> <span id='cfgMsg' style='font-size:12px;color:var(--tm)'></span></div></div></div>");
-    builtin_pipeline_intro(&mut b, zh);
+    b.push_str("</button> <span id='cfgMsg' style='font-size:12px;color:var(--tm)'></span>");
+    // The built-in pipeline guidance belongs to the tab that chooses a chunk method. Emitting it
+    // after the tab's closing tags painted it on every tab, so the Artifacts and file-list views
+    // carried a pipeline explainer that has nothing to do with them.
+    b.push_str("</div></div></div>");
     // Tab 2：测试（检索测试面板）
     b.push_str("<div id='tab2' style='display:none'>");
     b.push_str("<div class='card'><h2>");
@@ -2599,8 +2602,8 @@ pub async fn kb_detail_page(
     b.push_str("function badge(run){run=run||'UNSTARTED';if(run==='DONE')return '<span class=\\\"badge bs\\\">DONE</span>';if(run==='RUNNING')return '<span class=\\\"badge bi\\\">RUNNING</span>';if(run==='FAILED')return '<span class=\\\"badge bw\\\" style=\\\"color:var(--d)\\\">FAILED</span>';return '<span class=\\\"badge bw\\\">'+(run||'UNSTARTED')+'</span>'};");
     b.push_str("function statusCell(dd){var pct=Math.max(0,Math.min(100,Math.round((dd.progress||0)*100)));var bar='<div class=\\\"progress-bar\\\" style=\\\"width:110px;height:6px;margin-top:3px\\\"><div class=\\\"fill\\\" style=\\\"width:'+pct+'%\\\"></div></div><span style=\\\"font-size:10px;color:var(--tm)\\\">'+pct+'%</span>';return badge(dd.run)+bar};");
     b.push_str("function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;')};");
-    b.push_str("function loadDocs(){fetch('/api/v1/datasets/'+kbId+'/documents').then(r=>r.json()).then(function(d){var docs=d.data||[];document.getElementById('docCount').textContent='('+docs.length+')';var f=document.getElementById('docFilter').value;var shown=docs.filter(function(x){if(f==='enabled')return !isDocDisabled(x.id);if(f==='disabled')return isDocDisabled(x.id);if(f==='running')return x.run==='RUNNING'||x.run==='UNSTARTED';if(f==='done')return x.run==='DONE';if(f==='failed')return x.run==='FAILED';return true});if(!shown.length){document.getElementById('dl').innerHTML='<p style=color:var(--tm);text-align:center;padding:30px>暂无文档</p>';updateBatchBar();return}var h='<table><thead><tr><th><input type=checkbox onclick=docSelAll(this.checked)></th><th>名称</th><th>解析状态</th><th>块数</th><th>大小</th><th>更新时间</th><th style=width:240px>操作</th></tr></thead><tbody>';shown.forEach(function(dd){var dis=isDocDisabled(dd.id);var nm=esc(dd.name);h+='<tr class='+(dis?'dis':'')+' style='+(dis?'opacity:.45':'')+'><td><input type=checkbox class=docCk value='+dd.id+' data-name='+nm+' '+(dis?'disabled':'')+'></td><td style=font-weight:500>'+nm+'</td><td style=min-width:150px>'+statusCell(dd)+(dis?' <span class=\\\"badge bw\\\">已禁用</span>':'')+'</td><td>'+(dd.chunk_count||0)+'</td><td>'+fmtSize(dd.size)+'</td><td style=color:var(--tm);font-size:12px>'+fmtTime(dd.created_at)+'</td><td><button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" data-name=\\\"'+nm+'\\\" onclick=\\\"renameDoc(this)\\\" title=\\\"Rename\\\">✏️</button> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\"  <a class=\\\"btn btn-o btn-sm\\\" href=\\\"/api/v1/datasets/'+kbId+'/documents/'+dd.id+'/download\\\" title=\\\"Download\\\" download>⬇️</a> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" onclick=\\\"reparseDoc(this)\\\">重新解析</button> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" onclick=\\\"toggleDisable(this)\\\">'+(dis?'启用':'禁用')+'</button> <button class=\\\"btn btn-d btn-sm\\\" data-id=\\\"'+dd.id+'\\\" onclick=\\\"delDoc(this)\\\">删除</button></td></tr>'});h+='</tbody></table>';document.getElementById('dl').innerHTML=h;updateBatchBar()})};");
-    b.push_str("function updateBatchBar(){var n=document.querySelectorAll('.docCk:checked').length;var bar=document.getElementById('batchBar');if(bar){bar.style.display=n?'block':'none';var sc=document.getElementById('selCount');if(sc)sc.textContent=n+' selected'}};function docSelAll(on){document.querySelectorAll('.docCk').forEach(function(x){if(!x.disabled)x.checked=on});updateBatchBar()};function emptyAllDocs(){if(!confirm('删除该知识库的全部文档？'))return;fetch('/api/v1/datasets/'+kbId+'/documents').then(r=>r.json()).then(function(d){var docs=d.data||[];if(!docs.length){alert('暂无文档');return}var n=0;function next(){if(n>=docs.length){loadDocs();return}var id=docs[n++].id;fetch('/api/v1/datasets/'+kbId+'/documents/'+id,{method:'DELETE'}).then(function(){next()}).catch(function(){next()})}next()})};document.addEventListener('change',function(e){if(e.target&&e.target.classList&&e.target.classList.contains('docCk'))updateBatchBar()});");
+    b.push_str("function loadDocs(){fetch('/api/v1/datasets/'+kbId+'/documents').then(r=>r.json()).then(function(d){var docs=(d.data&&d.data.docs)||d.data||[];document.getElementById('docCount').textContent='('+docs.length+')';var f=document.getElementById('docFilter').value;var shown=docs.filter(function(x){if(f==='enabled')return !isDocDisabled(x.id);if(f==='disabled')return isDocDisabled(x.id);if(f==='running')return x.run==='RUNNING'||x.run==='UNSTARTED';if(f==='done')return x.run==='DONE';if(f==='failed')return x.run==='FAILED';return true});if(!shown.length){document.getElementById('dl').innerHTML='<p style=color:var(--tm);text-align:center;padding:30px>暂无文档</p>';updateBatchBar();return}var h='<table><thead><tr><th><input type=checkbox onclick=docSelAll(this.checked)></th><th>名称</th><th>解析状态</th><th>块数</th><th>大小</th><th>更新时间</th><th style=width:240px>操作</th></tr></thead><tbody>';shown.forEach(function(dd){var dis=isDocDisabled(dd.id);var nm=esc(dd.name);h+='<tr class='+(dis?'dis':'')+' style='+(dis?'opacity:.45':'')+'><td><input type=checkbox class=docCk value='+dd.id+' data-name='+nm+' '+(dis?'disabled':'')+'></td><td style=font-weight:500>'+nm+'</td><td style=min-width:150px>'+statusCell(dd)+(dis?' <span class=\\\"badge bw\\\">已禁用</span>':'')+'</td><td>'+(dd.chunk_count||0)+'</td><td>'+fmtSize(dd.size)+'</td><td style=color:var(--tm);font-size:12px>'+fmtTime(dd.created_at)+'</td><td><button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" data-name=\\\"'+nm+'\\\" onclick=\\\"renameDoc(this)\\\" title=\\\"Rename\\\">✏️</button> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\"  <a class=\\\"btn btn-o btn-sm\\\" href=\\\"/api/v1/datasets/'+kbId+'/documents/'+dd.id+'/download\\\" title=\\\"Download\\\" download>⬇️</a> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" onclick=\\\"reparseDoc(this)\\\">重新解析</button> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" onclick=\\\"toggleDisable(this)\\\">'+(dis?'启用':'禁用')+'</button> <button class=\\\"btn btn-d btn-sm\\\" data-id=\\\"'+dd.id+'\\\" onclick=\\\"delDoc(this)\\\">删除</button></td></tr>'});h+='</tbody></table>';document.getElementById('dl').innerHTML=h;updateBatchBar()})};");
+    b.push_str("function updateBatchBar(){var n=document.querySelectorAll('.docCk:checked').length;var bar=document.getElementById('batchBar');if(bar){bar.style.display=n?'block':'none';var sc=document.getElementById('selCount');if(sc)sc.textContent=n+' selected'}};function docSelAll(on){document.querySelectorAll('.docCk').forEach(function(x){if(!x.disabled)x.checked=on});updateBatchBar()};function emptyAllDocs(){if(!confirm('删除该知识库的全部文档？'))return;fetch('/api/v1/datasets/'+kbId+'/documents').then(r=>r.json()).then(function(d){var docs=(d.data&&d.data.docs)||d.data||[];if(!docs.length){alert('暂无文档');return}var n=0;function next(){if(n>=docs.length){loadDocs();return}var id=docs[n++].id;fetch('/api/v1/datasets/'+kbId+'/documents/'+id,{method:'DELETE'}).then(function(){next()}).catch(function(){next()})}next()})};document.addEventListener('change',function(e){if(e.target&&e.target.classList&&e.target.classList.contains('docCk'))updateBatchBar()});");
     b.push_str("function selIds(){var ids=[];document.querySelectorAll('.docCk:checked').forEach(function(x){ids.push(x.value)});return ids};function batchParse(){var ids=selIds();if(!ids.length){alert('请先选择文档');return}if(!confirm('重新解析选中的 '+ids.length+' 个文档？'))return;var n=0;function next(){if(n>=ids.length){loadDocs();schedulePoll();return}var id=ids[n++];fetch('/api/v1/datasets/'+kbId+'/documents/'+id+'/reparse',{method:'POST'}).then(function(){next()}).catch(function(){next()})}next()};");
     b.push_str("function batchDisable(on){var ids=selIds();if(!ids.length){alert('请先选择文档');return}ids.forEach(function(id){setDocDisabled(id,on)});loadDocs()};");
     b.push_str("function batchDelete(){var ids=selIds();if(!ids.length){alert('请先选择文档');return}if(!confirm('删除选中的 '+ids.length+' 个文档？'))return;var n=0;function next(){if(n>=ids.length){loadDocs();return}var id=ids[n++];fetch('/api/v1/datasets/'+kbId+'/documents/'+id,{method:'DELETE'}).then(function(){next()}).catch(function(){next()})}next()};");
@@ -2608,7 +2611,7 @@ pub async fn kb_detail_page(
     b.push_str("function reparseDoc(btn){var id=btn.getAttribute('data-id');if(!confirm('重新解析该文档？'))return;fetch('/api/v1/datasets/'+kbId+'/documents/'+id+'/reparse',{method:'POST'}).then(function(){loadDocs();schedulePoll()})};");
     b.push_str("function delDoc(btn){var id=btn.getAttribute('data-id');if(!confirm('删除该文档？'))return;fetch('/api/v1/datasets/'+kbId+'/documents/'+id,{method:'DELETE'}).then(function(){loadDocs()})};");
     b.push_str("function toggleDisable(btn){var id=btn.getAttribute('data-id');var on=btn.getAttribute('data-status')==='0';fetch('/api/v1/datasets/'+encodeURIComponent(kbId)+'/documents/batch-update-status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({doc_ids:[id],status:on?1:0})}).then(function(r){return r.json()}).then(function(d){if(d.code!==0){alert(d.message||'HTTP '+d.code);return}loadDocs()})};");
-    b.push_str("function schedulePoll(){if(pollTimer)return;pollTimer=setInterval(function(){fetch('/api/v1/datasets/'+kbId+'/documents').then(r=>r.json()).then(function(d){var docs=d.data||[];loadDocs();var busy=docs.some(function(x){return x.run==='RUNNING'||x.run==='UNSTARTED'});if(!busy&&pollTimer){clearInterval(pollTimer);pollTimer=null}})},3000)};");
+    b.push_str("function schedulePoll(){if(pollTimer)return;pollTimer=setInterval(function(){fetch('/api/v1/datasets/'+kbId+'/documents').then(r=>r.json()).then(function(d){var docs=(d.data&&d.data.docs)||d.data||[];loadDocs();var busy=docs.some(function(x){return x.run==='RUNNING'||x.run==='UNSTARTED'});if(!busy&&pollTimer){clearInterval(pollTimer);pollTimer=null}})},3000)};");
     b.push_str("function uploadDoc(){var files=document.getElementById('fi').files;if(!files||!files.length)return;var btn=document.getElementById('upBtn');var msg=document.getElementById('upMsg');if(btn)btn.disabled=true;var n=0;function next(){if(n>=files.length){if(btn)btn.disabled=false;if(msg)msg.textContent='';loadDocs();schedulePoll();return}var f=files[n++];var fd=new FormData();fd.append('file',f,f.name);if(msg)msg.textContent='上传中 '+(n)+'/'+(files.length)+' …';fetch('/api/v1/datasets/'+kbId+'/documents',{method:'POST',body:fd}).then(r=>r.json()).then(function(){next()}).catch(function(){next()})}next()};");
     b.push_str(SWS_JS);
     b.push_str("swsRegister('cfgPerm',[[\"me\",\"");
@@ -2877,7 +2880,7 @@ pub async fn dataset_page(
     b.push_str(t("Logs", zh));
     b.push_str("</h2><div class='st' style='margin-bottom:12px'><div class='sc'><span class='lbl'>File</span><select id='logFile' onchange='filterLogs()' style='max-width:260px'><option value=''>All files</option></select></div></div>");
     b.push_str("<table style='width:100%'><thead><tr><th style='text-align:left'>Document</th><th style='text-align:left'>Status</th><th style='text-align:left'>Chunks</th><th style='text-align:left'>Progress</th></tr></thead><tbody id='logBody'></tbody></table>");
-    b.push_str("<script>function badge(run){run=run||'UNSTARTED';if(run==='DONE')return '<span class=\\\"badge bs\\\">DONE</span>';if(run==='RUNNING')return '<span class=\\\"badge bi\\\">RUNNING</span>';if(run==='FAILED')return '<span class=\\\"badge bw\\\" style=\\\"color:var(--d)\\\">FAILED</span>';return '<span class=\\\"badge bw\\\">'+(run||'UNSTARTED')+'</span>'};;function filterLogs(){var f=document.getElementById('logFile').value;var rows=document.querySelectorAll('#logBody tr');rows.forEach(function(r){r.style.display=(!f||r.getAttribute('data-f')===f)?'':'none'})};function loadLogs(){fetch('/api/v1/datasets/'+kbId+'/documents').then(function(r){return r.json()}).then(function(d){var docs=d.data||[];var sel=document.getElementById('logFile');var cur=sel.value;sel.innerHTML='<option value=\"\">All files</option>';var seen={};var h='';docs.forEach(function(dd){var nm=dd.name||'?';if(!seen[nm]){seen[nm]=1;sel.innerHTML+='<option value=\"'+nm.replace(/'/g,'&#39;')+'\">'+nm+'</option>'}});sel.value=cur;docs.forEach(function(dd){var nm=dd.name||\'?\';var st=dd.run||dd.status||'UNSTARTED';var ch=dd.chunk_count!=null?dd.chunk_count:0;var pg=Math.max(0,Math.min(100,Math.round((dd.progress||0)*100)));h+='<tr data-f=\"'+nm.replace(/'/g,'&#39;')+'\"><td>'+nm+'</td><td>'+badge(st)+'</td><td>'+ch+'</td><td><div style=\"width:110px;height:6px;background:var(--bd)\"><div style=\"height:6px;width:'+pg+'%;background:var(--p)\"></div></div></td></tr>'});document.getElementById('logBody').innerHTML=h;filterLogs()})};loadLogs();</script></div></div>");
+    b.push_str("<script>function badge(run){run=run||'UNSTARTED';if(run==='DONE')return '<span class=\\\"badge bs\\\">DONE</span>';if(run==='RUNNING')return '<span class=\\\"badge bi\\\">RUNNING</span>';if(run==='FAILED')return '<span class=\\\"badge bw\\\" style=\\\"color:var(--d)\\\">FAILED</span>';return '<span class=\\\"badge bw\\\">'+(run||'UNSTARTED')+'</span>'};;function filterLogs(){var f=document.getElementById('logFile').value;var rows=document.querySelectorAll('#logBody tr');rows.forEach(function(r){r.style.display=(!f||r.getAttribute('data-f')===f)?'':'none'})};function loadLogs(){fetch('/api/v1/datasets/'+kbId+'/documents').then(function(r){return r.json()}).then(function(d){var docs=(d.data&&d.data.docs)||d.data||[];var sel=document.getElementById('logFile');var cur=sel.value;sel.innerHTML='<option value=\"\">All files</option>';var seen={};var h='';docs.forEach(function(dd){var nm=dd.name||'?';if(!seen[nm]){seen[nm]=1;sel.innerHTML+='<option value=\"'+nm.replace(/'/g,'&#39;')+'\">'+nm+'</option>'}});sel.value=cur;docs.forEach(function(dd){var nm=dd.name||\'?\';var st=dd.run||dd.status||'UNSTARTED';var ch=dd.chunk_count!=null?dd.chunk_count:0;var pg=Math.max(0,Math.min(100,Math.round((dd.progress||0)*100)));h+='<tr data-f=\"'+nm.replace(/'/g,'&#39;')+'\"><td>'+nm+'</td><td>'+badge(st)+'</td><td>'+ch+'</td><td><div style=\"width:110px;height:6px;background:var(--bd)\"><div style=\"height:6px;width:'+pg+'%;background:var(--p)\"></div></div></td></tr>'});document.getElementById('logBody').innerHTML=h;filterLogs()})};loadLogs();</script></div></div>");
     // Close the overview (tab1) panel that hosts the merged Logs section so the
     // remaining panels stay siblings instead of nesting inside the hidden tab1.
     b.push_str("</div>");
@@ -3326,7 +3329,7 @@ function normalizeDefaultModelStoredValues(){MODEL_FIELDS.forEach(function(field
     b.push_str("function badge(run){run=run||'UNSTARTED';if(run==='DONE')return '<span class=\\\"badge bs\\\">DONE</span>';if(run==='RUNNING')return '<span class=\\\"badge bi\\\">RUNNING</span>';if(run==='FAILED')return '<span class=\\\"badge bw\\\" style=\\\"color:var(--d)\\\">FAILED</span>';return '<span class=\\\"badge bw\\\">'+(run||'UNSTARTED')+'</span>'};");
     b.push_str("function statusCell(dd){var pct=Math.max(0,Math.min(100,Math.round((dd.progress||0)*100)));var bar='<div class=\\\"progress-bar\\\" style=\\\"width:110px;height:6px;margin-top:3px\\\"><div class=\\\"fill\\\" style=\\\"width:'+pct+'%\\\"></div></div><span style=\\\"font-size:10px;color:var(--tm)\\\">'+pct+'%</span>';return badge(dd.run)+bar};");
     b.push_str("function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;')};");
-    b.push_str("function loadDocs(){fetch('/api/v1/datasets/'+kbId+'/documents').then(function(r){return r.json()}).then(function(d){var docs=d.data||[];document.getElementById('docCount').textContent='('+docs.length+')';var f=document.getElementById('docFilter').value;var shown=docs.filter(function(x){if(f==='enabled')return x.status!=='0';if(f==='disabled')return x.status==='0';if(f==='running')return x.run==='RUNNING'||x.run==='UNSTARTED';if(f==='done')return x.run==='DONE';if(f==='failed')return x.run==='FAILED';return true});if(!shown.length){document.getElementById('dl').innerHTML='<p style=color:var(--tm);text-align:center;padding:30px>暂无文档</p>';updateBatchBar();return}var h='<table><thead><tr><th><input type=checkbox id=\\\"docSelAll\\\" data-testid=\\\"doc-select-all\\\" aria-label=\\\"Select all\\\" onclick=\\\"docSelAll(this.checked)\\\"></th><th>名称</th><th>上传时间</th><th style=min-width:150px>状态</th><th>块数</th><th>大小</th><th style=width:240px>操作</th></tr></thead><tbody>';shown.forEach(function(dd){var dis=dd.status==='0';var nm=esc(dd.name);h+='<tr class='+(dis?'dis':'')+' data-run=\\\"'+dd.run+'\\\" data-status=\\\"'+dd.status+'\\\" style='+(dis?'opacity:.45':'')+'><td><input type=checkbox class=docCk value='+dd.id+' data-name=\\\"'+nm+'\\\" data-testid=\\\"doc-select-row\\\" aria-label=\\\"Select row\\\"></td><td style=font-weight:500>'+nm+'</td><td style=color:var(--tm);font-size:12px>'+fmtTime(dd.created_at)+'</td><td>'+statusCell(dd)+(dis?' <span class=\\\"badge bw\\\">已禁用</span>':'')+'</td><td data-chunks='+(dd.chunk_count||0)+'>'+(dd.chunk_count||0)+'</td><td>'+fmtSize(dd.size)+'</td><td><a class=\\\"btn btn-o btn-sm\\\" href=\\\"/documents/'+kbId+'/'+dd.id+'\\\">查看</a> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" data-doc-id=\\\"'+dd.id+'\\\" data-testid=\\\"dataset-file-result\\\" onclick=\\\"openDataflowResult(this)\\\" title=\\\"View result\\\">📋</button> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" data-name=\\\"'+nm+'\\\" onclick=\\\"renameDoc(this)\\\" title=\\\"Rename\\\">✏️</button> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\"  <a class=\\\"btn btn-o btn-sm\\\" href=\\\"/api/v1/datasets/'+kbId+'/documents/'+dd.id+'/download\\\" title=\\\"Download\\\" download>⬇️</a> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" onclick=\\\"reparseDoc(this)\\\">重新解析</button> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" data-status=\\\"'+dd.status+'\\\" onclick=\\\"toggleDisable(this)\\\">'+(dis?'启用':'禁用')+'</button> <button class=\\\"btn btn-d btn-sm\\\" data-id=\\\"'+dd.id+'\\\" onclick=\\\"delDoc(this)\\\">删除</button></td></tr>'});h+='</tbody></table>';document.getElementById('dl').innerHTML=h;updateBatchBar();updateOverview(docs)})};");
+    b.push_str("function loadDocs(){fetch('/api/v1/datasets/'+kbId+'/documents').then(function(r){return r.json()}).then(function(d){var docs=(d.data&&d.data.docs)||d.data||[];document.getElementById('docCount').textContent='('+docs.length+')';var f=document.getElementById('docFilter').value;var shown=docs.filter(function(x){if(f==='enabled')return x.status!=='0';if(f==='disabled')return x.status==='0';if(f==='running')return x.run==='RUNNING'||x.run==='UNSTARTED';if(f==='done')return x.run==='DONE';if(f==='failed')return x.run==='FAILED';return true});if(!shown.length){document.getElementById('dl').innerHTML='<p style=color:var(--tm);text-align:center;padding:30px>暂无文档</p>';updateBatchBar();return}var h='<table><thead><tr><th><input type=checkbox id=\\\"docSelAll\\\" data-testid=\\\"doc-select-all\\\" aria-label=\\\"Select all\\\" onclick=\\\"docSelAll(this.checked)\\\"></th><th>名称</th><th>上传时间</th><th style=min-width:150px>状态</th><th>块数</th><th>大小</th><th style=width:240px>操作</th></tr></thead><tbody>';shown.forEach(function(dd){var dis=dd.status==='0';var nm=esc(dd.name);h+='<tr class='+(dis?'dis':'')+' data-run=\\\"'+dd.run+'\\\" data-status=\\\"'+dd.status+'\\\" style='+(dis?'opacity:.45':'')+'><td><input type=checkbox class=docCk value='+dd.id+' data-name=\\\"'+nm+'\\\" data-testid=\\\"doc-select-row\\\" aria-label=\\\"Select row\\\"></td><td style=font-weight:500>'+nm+'</td><td style=color:var(--tm);font-size:12px>'+fmtTime(dd.created_at)+'</td><td>'+statusCell(dd)+(dis?' <span class=\\\"badge bw\\\">已禁用</span>':'')+'</td><td data-chunks='+(dd.chunk_count||0)+'>'+(dd.chunk_count||0)+'</td><td>'+fmtSize(dd.size)+'</td><td><a class=\\\"btn btn-o btn-sm\\\" href=\\\"/documents/'+kbId+'/'+dd.id+'\\\">查看</a> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" data-doc-id=\\\"'+dd.id+'\\\" data-testid=\\\"dataset-file-result\\\" onclick=\\\"openDataflowResult(this)\\\" title=\\\"View result\\\">📋</button> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" data-name=\\\"'+nm+'\\\" onclick=\\\"renameDoc(this)\\\" title=\\\"Rename\\\">✏️</button> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\"  <a class=\\\"btn btn-o btn-sm\\\" href=\\\"/api/v1/datasets/'+kbId+'/documents/'+dd.id+'/download\\\" title=\\\"Download\\\" download>⬇️</a> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" onclick=\\\"reparseDoc(this)\\\">重新解析</button> <button class=\\\"btn btn-o btn-sm\\\" data-id=\\\"'+dd.id+'\\\" data-status=\\\"'+dd.status+'\\\" onclick=\\\"toggleDisable(this)\\\">'+(dis?'启用':'禁用')+'</button> <button class=\\\"btn btn-d btn-sm\\\" data-id=\\\"'+dd.id+'\\\" onclick=\\\"delDoc(this)\\\">删除</button></td></tr>'});h+='</tbody></table>';document.getElementById('dl').innerHTML=h;updateBatchBar();updateOverview(docs)})};");
     b.push_str("function openDataflowResult(btn){var docId=btn.getAttribute('data-id');fetch('/api/v1/datasets/'+kbId+'/ingestions?page=0&page_size=0&log_type=file').then(function(r){return r.json()}).then(function(d){var logs=((d.data||{}).logs)||[];var match=logs.find(function(row){return row.document_id===docId});if(!match){alert('No ingestion log yet');return}location.href='/dataflow-result?id='+encodeURIComponent(match.id)+'&knowledgeId='+encodeURIComponent(kbId)+'&doc_id='+encodeURIComponent(docId)+'&is_read_only=false&type=dataflow'})};");
     b.push_str("const BULK_TEXT=");
     b.push_str(
@@ -3379,9 +3382,9 @@ function normalizeDefaultModelStoredValues(){MODEL_FIELDS.forEach(function(field
     b.push_str("function reparseDoc(btn){var id=btn.getAttribute('data-id');if(!confirm('重新解析该文档？'))return;fetch('/api/v1/datasets/'+kbId+'/documents/'+id+'/reparse',{method:'POST'}).then(function(){loadDocs();schedulePoll()})};");
     b.push_str("function delDoc(btn){var id=btn.getAttribute('data-id');if(!confirm('删除该文档？'))return;fetch('/api/v1/datasets/'+kbId+'/documents/'+id,{method:'DELETE'}).then(function(){loadDocs()})};");
     b.push_str("function toggleDisable(btn){var id=btn.getAttribute('data-id');var on=btn.getAttribute('data-status')==='0';fetch('/api/v1/datasets/'+encodeURIComponent(kbId)+'/documents/batch-update-status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({doc_ids:[id],status:on?1:0})}).then(function(r){return r.json()}).then(function(d){if(d.code!==0){alert(d.message||'HTTP '+d.code);return}loadDocs()})};");
-    b.push_str("function schedulePoll(){if(pollTimer)return;pollTimer=setInterval(function(){fetch('/api/v1/datasets/'+kbId+'/documents').then(function(r){return r.json()}).then(function(d){var docs=d.data||[];loadDocs();var busy=docs.some(function(x){return x.run==='RUNNING'||x.run==='UNSTARTED'});if(!busy&&pollTimer){clearInterval(pollTimer);pollTimer=null}})},3000)};");
+    b.push_str("function schedulePoll(){if(pollTimer)return;pollTimer=setInterval(function(){fetch('/api/v1/datasets/'+kbId+'/documents').then(function(r){return r.json()}).then(function(d){var docs=(d.data&&d.data.docs)||d.data||[];loadDocs();var busy=docs.some(function(x){return x.run==='RUNNING'||x.run==='UNSTARTED'});if(!busy&&pollTimer){clearInterval(pollTimer);pollTimer=null}})},3000)};");
     b.push_str("function uploadDoc(){var files=document.getElementById('fi').files;if(!files||!files.length)return;var btn=document.getElementById('upBtn');var msg=document.getElementById('upMsg');if(btn)btn.disabled=true;var n=0;function next(){if(n>=files.length){if(btn)btn.disabled=false;if(msg)msg.textContent='';loadDocs();schedulePoll();return}var f=files[n++];var fd=new FormData();fd.append('file',f,f.name);if(msg)msg.textContent='上传中 '+(n)+'/'+(files.length)+' …';fetch('/api/v1/datasets/'+kbId+'/documents',{method:'POST',body:fd}).then(function(r){return r.json()}).then(function(){next()}).catch(function(){next()})}next()};");
-    b.push_str("function clearAll(){if(!confirm('Delete ALL documents in this dataset?'))return;fetch('/api/v1/datasets/'+kbId+'/documents').then(function(r){return r.json()}).then(function(d){var docs=d.data||[];if(!docs.length){loadDocs();return}var n=0;function next(){if(n>=docs.length){loadDocs();return}var id=docs[n++].id;fetch('/api/v1/datasets/'+kbId+'/documents/'+id,{method:'DELETE'}).then(function(){next()})}next()})};");
+    b.push_str("function clearAll(){if(!confirm('Delete ALL documents in this dataset?'))return;fetch('/api/v1/datasets/'+kbId+'/documents').then(function(r){return r.json()}).then(function(d){var docs=(d.data&&d.data.docs)||d.data||[];if(!docs.length){loadDocs();return}var n=0;function next(){if(n>=docs.length){loadDocs();return}var id=docs[n++].id;fetch('/api/v1/datasets/'+kbId+'/documents/'+id,{method:'DELETE'}).then(function(){next()})}next()})};");
     b.push_str("function updateOverview(docs){var done=0,run=0,fail=0,other=0;docs.forEach(function(x){if(x.run==='DONE')done++;else if(x.run==='RUNNING'||x.run==='UNSTARTED')run++;else if(x.run==='FAILED')fail++;else other++});var total=docs.length||1;function set(id,bar,v){var e=document.getElementById(id);if(e)e.textContent=v;var b=document.getElementById(bar);if(b)b.style.width=Math.round(v/total*100)+'%'};set('ovDone','ovDoneBar',done);set('ovRun','ovRunBar',run);set('ovFail','ovFailBar',fail);var act=document.getElementById('actList');if(act){var h='';docs.slice(0,10).forEach(function(x){h+='<tr><td>'+esc(x.name)+'</td><td>'+badge(x.run)+'</td><td>'+(x.chunk_count||0)+'</td><td style=color:var(--tm);font-size:12px>'+fmtTime(x.updated_at)+'</td></tr>'});act.innerHTML=h||'<tr><td colspan=4 style=color:var(--tm);text-align:center>暂无活动</td></tr>'}};");
     b.push_str("// Upstream `TestingForm` helpers: the operator set (`SwitchOperatorOptions`),
 // the request body the form watches, the conditional rerank `top_k`, the manual
@@ -3464,7 +3467,7 @@ pub async fn chat_page(
     b.push_str(&cards);
     b.push_str("</div>");
     b.push_str("<div class='modal-overlay' id='newChatModal'><div class='modal'><h2>New Chat</h2><p style='color:var(--tm);margin-bottom:12px'>Start a new conversation with RayRAG.</p><input id='chatName' placeholder='Name' style='width:100%;margin-bottom:8px'><select id='chatKbs' multiple style='width:100%;min-height:90px;margin-bottom:16px'><option value=''>Loading knowledge bases…</option></select><div style='display:flex;gap:8px'><button class='btn btn-p' onclick='createChat()'>Create & Start</button><button class='btn btn-o' onclick='document.getElementById(\"newChatModal\").classList.remove(\"show\")'>Cancel</button></div></div></div>");
-    b.push_str("<script>function renConv(id){var nn=prompt('Rename conversation:');if(!nn)return;fetch('/api/v1/conversations/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nn})}).then(r=>r.json()).then(function(d){if(d.code===0){location.reload()}else{alert(d.message||'Error')}})};function delConv(id){if(!confirm('Delete this conversation?'))return;fetch('/api/v1/conversations/'+id,{method:'DELETE'}).then(function(){location.reload()})};function shareConv(id){var u=location.origin+'/chat/'+id;navigator.clipboard.writeText(u).then(function(){alert('Link copied: '+u)}).catch(function(){prompt('Share link:',u)})};function newChat(){var sel=document.getElementById('chatKbs');sel.innerHTML='<option value=\'\'>Loading…</option>';fetch('/api/v1/datasets').then(function(r){return r.json()}).then(function(d){var kbs=d.data||[];if(!kbs.length){sel.innerHTML='<option value=\'\'>No knowledge bases</option>';return}sel.innerHTML=kbs.map(function(k){return '<option value=\''+k.id+'\'>'+k.name+'</option>'}).join('')}).catch(function(){sel.innerHTML='<option value=\'\'>Load failed</option>'});document.getElementById('newChatModal').classList.add('show')};function createChat(){var n=document.getElementById('chatName').value||'New Chat';var kbs=[];[...document.querySelectorAll('#chatKbs option:checked')].forEach(function(o){if(o.value)kbs.push(o.value)});fetch('/api/v1/chats',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:n,kb_ids:kbs})}).then(r=>r.json()).then(d=>{var id=d.data?d.data.id:d.id;location.href='/chat/'+id})}</script>");
+    b.push_str("<script>function renConv(id){var nn=prompt('Rename conversation:');if(!nn)return;fetch('/api/v1/conversations/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nn})}).then(r=>r.json()).then(function(d){if(d.code===0){location.reload()}else{alert(d.message||'Error')}})};function delConv(id){if(!confirm('Delete this conversation?'))return;fetch('/api/v1/conversations/'+id,{method:'DELETE'}).then(function(){location.reload()})};function shareConv(id){var u=location.origin+'/chat/'+id;navigator.clipboard.writeText(u).then(function(){alert('Link copied: '+u)}).catch(function(){prompt('Share link:',u)})};function newChat(){var sel=document.getElementById('chatKbs');sel.innerHTML='<option value=\"\">Loading…</option>';fetch('/api/v1/datasets').then(function(r){return r.json()}).then(function(d){var kbs=d.data||[];if(!kbs.length){sel.innerHTML='<option value=\"\">No knowledge bases</option>';return}sel.innerHTML=kbs.map(function(k){return '<option value=\"'+k.id+'\">'+k.name+'</option>'}).join('')}).catch(function(){sel.innerHTML='<option value=\"\">Load failed</option>'});document.getElementById('newChatModal').classList.add('show')};function createChat(){var n=document.getElementById('chatName').value||'New Chat';var kbs=[];[...document.querySelectorAll('#chatKbs option:checked')].forEach(function(o){if(o.value)kbs.push(o.value)});fetch('/api/v1/chats',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:n,kb_ids:kbs})}).then(r=>r.json()).then(d=>{var id=d.data?d.data.id:d.id;location.href='/chat/'+id})}</script>");
     Html(layout(t("Chat", zh), &b, zh))
 }
 
@@ -7018,12 +7021,18 @@ pub fn admin_request_email(
 enum AdminConsoleSection {
     Services,
     Users,
+    Whitelist,
+    Roles,
+    Monitoring,
     SandboxSettings,
 }
 
-const ADMIN_CONSOLE_SECTIONS: [AdminConsoleSection; 3] = [
+const ADMIN_CONSOLE_SECTIONS: [AdminConsoleSection; 6] = [
     AdminConsoleSection::Services,
     AdminConsoleSection::Users,
+    AdminConsoleSection::Whitelist,
+    AdminConsoleSection::Roles,
+    AdminConsoleSection::Monitoring,
     AdminConsoleSection::SandboxSettings,
 ];
 
@@ -7032,6 +7041,9 @@ impl AdminConsoleSection {
         match self {
             Self::Services => "/services",
             Self::Users => "/users",
+            Self::Whitelist => "/whitelist",
+            Self::Roles => "/roles",
+            Self::Monitoring => "/monitoring",
             Self::SandboxSettings => "/sandbox-settings",
         }
     }
@@ -7041,6 +7053,9 @@ impl AdminConsoleSection {
         match self {
             Self::Services => "Service status",
             Self::Users => "User management",
+            Self::Whitelist => "Registration whitelist",
+            Self::Roles => "Roles",
+            Self::Monitoring => "Monitoring",
             Self::SandboxSettings => "Sandbox settings",
         }
     }
@@ -7054,6 +7069,9 @@ impl AdminConsoleSection {
             Self::Users => {
                 "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M10 15H6a4 4 0 0 0-4 4v2'/><path d='m14.305 16.53.923-.382'/><path d='m15.228 13.852-.923-.383'/><path d='m16.852 12.228-.383-.923'/><path d='m16.852 17.772-.383.924'/><path d='m19.148 12.228.383-.923'/><path d='m19.53 18.696-.382-.924'/><path d='m20.772 13.852.924-.383'/><path d='m20.772 16.148.924.383'/><circle cx='18' cy='15' r='3'/><circle cx='9' cy='7' r='4'/></svg>"
             }
+            Self::Whitelist => Self::Users.icon(),
+            Self::Roles => Self::Users.icon(),
+            Self::Monitoring => Self::Services.icon(),
             Self::SandboxSettings => {
                 "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z'/></svg>"
             }
@@ -7169,6 +7187,105 @@ pub async fn admin_page(
 /// table (`admin.id` / `admin.name` / `admin.serviceType` / `admin.host` /
 /// `admin.port` / `admin.status` / `admin.actions`) with the service-type
 /// filter and the details dialog.
+/// `pages/admin/whitelist.tsx` at `/admin/whitelist`: who may register.
+pub async fn admin_whitelist_page(
+    State(state): State<Arc<AppState>>,
+    req: axum::http::Request<axum::body::Body>,
+) -> Response {
+    let zh = detect_lang(req.headers());
+    if !request_admin(&state, req.headers()) {
+        return Redirect::temporary("/admin").into_response();
+    }
+    let mut b = String::with_capacity(8192);
+    b.push_str(r#"<div class='admin-panel' data-testid='admin-whitelist-panel'><div class='admin-panel-head'><h2 class='admin-panel-title'>Registration whitelist</h2></div>"#);
+    b.push_str(r#"<p class='admin-note'>While the whitelist is off, anyone may register - that is the default. Turning it on limits registration to the addresses and @domains listed here.</p>"#);
+    b.push_str(r#"<div class='admin-toolbar'><label class='admin-filter'><input type='checkbox' id='wlEnabled' data-testid='admin-whitelist-enabled' onchange='wlToggle()'> <span>Enforce the whitelist</span></label>"#);
+    b.push_str(r#"<input class='admin-input' id='wlEmail' data-testid='admin-whitelist-input' placeholder='someone@example.com or @example.com'>"#);
+    b.push_str(r#"<button class='btn btn-p' type='button' data-testid='admin-whitelist-add' onclick='wlAdd()'>Add</button>"#);
+    b.push_str(r#"<span class='admin-status' id='wlStatus' data-testid='admin-whitelist-status'></span></div>"#);
+    b.push_str(r#"<table class='admin-table'><thead><tr><th>Email or domain</th><th></th></tr></thead><tbody id='wlRows' data-testid='admin-whitelist-rows'></tbody></table></div>"#);
+    b.push_str(r#"<script>
+function wlStatus(message,isError){var box=document.getElementById('wlStatus');if(!box)return;box.textContent=String(message);box.classList.toggle('admin-error',!!isError)}
+function wlRender(data){var body=document.getElementById('wlRows');if(!body)return;body.replaceChildren();var list=data.entries||[];if(!list.length){var tr=document.createElement('tr');var td=document.createElement('td');td.colSpan=2;td.className='admin-empty';td.textContent='No entries.';tr.appendChild(td);body.appendChild(tr);return}
+list.forEach(function(entry){var tr=document.createElement('tr');var name=document.createElement('td');name.textContent=entry;tr.appendChild(name);var actions=document.createElement('td');var button=document.createElement('button');button.type='button';button.className='btn btn-o';button.textContent='Remove';button.addEventListener('click',function(){wlRemove(entry)});actions.appendChild(button);tr.appendChild(actions);body.appendChild(tr)})}
+function wlLoad(){fetch('/api/v1/admin/whitelist').then(function(r){return r.json()}).then(function(d){if(d.code!==0){wlStatus(d.message||'Load failed',true);return}var data=d.data||{};var toggle=document.getElementById('wlEnabled');if(toggle)toggle.checked=!!data.enabled;wlRender(data);wlStatus(data.enabled?'Enforcing: only listed addresses may register.':'Off: anyone may register.')}).catch(function(){wlStatus('Load failed',true)})}
+function wlSend(method,payload){return fetch('/api/v1/admin/whitelist',{method:method,headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(function(r){return r.json()})}
+function wlToggle(){var toggle=document.getElementById('wlEnabled');var enabled=!!(toggle&&toggle.checked);wlSend('PUT',{enabled:enabled}).then(function(d){if(d.code!==0){wlStatus(d.message||'Update failed',true);return}wlRender(d.data||{});wlStatus(enabled?'Enforcing: only listed addresses may register.':'Off: anyone may register.')}).catch(function(){wlStatus('Update failed',true)})}
+function wlAdd(){var input=document.getElementById('wlEmail');var value=String((input&&input.value)||'').trim();if(!value){wlStatus('Enter an email or @domain first.',true);return}wlSend('POST',{email:value}).then(function(d){if(d.code!==0){wlStatus(d.message||'Add failed',true);return}if(input)input.value='';wlRender(d.data||{});wlStatus(d.message==='already listed'?'That entry was already listed.':'Added '+value+'.')}).catch(function(){wlStatus('Add failed',true)})}
+function wlRemove(entry){wlSend('DELETE',{ids:[entry]}).then(function(d){if(d.code!==0){wlStatus(d.message||'Remove failed',true);return}wlRender(d.data||{});wlStatus('Removed '+entry+'.')}).catch(function(){wlStatus('Remove failed',true)})}
+wlLoad();
+</script>"#);
+    Html(layout_plain(
+        "Registration whitelist",
+        &admin_console_shell(AdminConsoleSection::Whitelist, &b, zh),
+        zh,
+    ))
+    .into_response()
+}
+
+/// `pages/admin/roles.tsx` at `/admin/roles`: the role each account holds.
+pub async fn admin_roles_page(
+    State(state): State<Arc<AppState>>,
+    req: axum::http::Request<axum::body::Body>,
+) -> Response {
+    let zh = detect_lang(req.headers());
+    if !request_admin(&state, req.headers()) {
+        return Redirect::temporary("/admin").into_response();
+    }
+    let mut b = String::with_capacity(8192);
+    b.push_str(r#"<div class='admin-panel' data-testid='admin-roles-panel'><div class='admin-panel-head'><h2 class='admin-panel-title'>Roles</h2></div>"#);
+    b.push_str(r#"<p class='admin-note'>Administrators manage services, users and the registration whitelist. Everyone else keeps their own datasets and assistants.</p>"#);
+    b.push_str(
+        r#"<span class='admin-status' id='roleStatus' data-testid='admin-roles-status'></span>"#,
+    );
+    b.push_str(r#"<table class='admin-table'><thead><tr><th>User</th><th>Email</th><th>Role</th><th></th></tr></thead><tbody id='roleRows' data-testid='admin-roles-rows'></tbody></table></div>"#);
+    b.push_str(r#"<script>
+function roleStatus(message,isError){var box=document.getElementById('roleStatus');if(!box)return;box.textContent=String(message);box.classList.toggle('admin-error',!!isError)}
+function roleRender(users){var body=document.getElementById('roleRows');if(!body)return;body.replaceChildren();if(!users.length){var tr=document.createElement('tr');var td=document.createElement('td');td.colSpan=4;td.className='admin-empty';td.textContent='No users.';tr.appendChild(td);body.appendChild(tr);return}
+users.forEach(function(user){var email=String(user.email||user.username||'');var isAdmin=String(user.role||'')==='admin';var tr=document.createElement('tr');var nickname=document.createElement('td');nickname.textContent=String(user.nickname||user.username||'');tr.appendChild(nickname);var mail=document.createElement('td');mail.textContent=email;tr.appendChild(mail);var role=document.createElement('td');role.textContent=isAdmin?'admin':'normal';tr.appendChild(role);var actions=document.createElement('td');var button=document.createElement('button');button.type='button';button.className='btn btn-o';button.textContent=isAdmin?'Revoke admin':'Grant admin';button.addEventListener('click',function(){roleSet(email,isAdmin)});actions.appendChild(button);tr.appendChild(actions);body.appendChild(tr)})}
+function roleLoad(){fetch('/api/v1/admin/users').then(function(r){return r.json()}).then(function(d){if(d.code!==0){roleStatus(d.message||'Load failed',true);return}var data=d.data||{};roleRender(data.users||data||[])}).catch(function(){roleStatus('Load failed',true)})}
+function roleSet(email,isAdmin){fetch('/api/v1/admin/users/'+encodeURIComponent(email)+'/admin',{method:isAdmin?'DELETE':'PUT'}).then(function(r){return r.json()}).then(function(d){if(d.code!==0){roleStatus(d.message||'Update failed',true);return}roleStatus((isAdmin?'Revoked admin from ':'Granted admin to ')+email+'.');roleLoad()}).catch(function(){roleStatus('Update failed',true)})}
+roleLoad();
+</script>"#);
+    Html(layout_plain(
+        "Roles",
+        &admin_console_shell(AdminConsoleSection::Roles, &b, zh),
+        zh,
+    ))
+    .into_response()
+}
+
+/// `pages/admin/monitoring.tsx` at `/admin/monitoring`: what the host and the services are doing.
+pub async fn admin_monitoring_page(
+    State(state): State<Arc<AppState>>,
+    req: axum::http::Request<axum::body::Body>,
+) -> Response {
+    let zh = detect_lang(req.headers());
+    if !request_admin(&state, req.headers()) {
+        return Redirect::temporary("/admin").into_response();
+    }
+    let mut b = String::with_capacity(8192);
+    b.push_str(r#"<div class='admin-panel' data-testid='admin-monitoring-panel'><div class='admin-panel-head'><h2 class='admin-panel-title'>Monitoring</h2></div>"#);
+    b.push_str(r#"<p class='admin-note'>Host resources, the databases RayRAG depends on, and the running version.</p>"#);
+    b.push_str(r#"<div class='admin-metrics' id='monMetrics' data-testid='admin-monitoring-metrics'></div>"#);
+    b.push_str(r#"<span class='admin-status' id='monStatus' data-testid='admin-monitoring-status'></span>"#);
+    b.push_str(r#"<table class='admin-table'><thead><tr><th>Service</th><th>State</th><th></th></tr></thead><tbody id='monServices' data-testid='admin-monitoring-services'></tbody></table></div>"#);
+    b.push_str(r#"<script>
+function monStatus(message,isError){var box=document.getElementById('monStatus');if(!box)return;box.textContent=String(message);box.classList.toggle('admin-error',!!isError)}
+function monMetric(label,value){var card=document.createElement('div');card.className='admin-metric';var name=document.createElement('span');name.className='admin-metric-label';name.textContent=label;var body=document.createElement('span');body.className='admin-metric-value';body.textContent=String(value);card.appendChild(name);card.appendChild(body);return card}
+function monRenderMetrics(data){var host=document.getElementById('monMetrics');if(!host)return;host.replaceChildren();Object.keys(data||{}).forEach(function(key){var value=data[key];if(value===null||value===undefined||typeof value==='object')return;host.appendChild(monMetric(key,value))})}
+function monLoad(){fetch('/api/v1/system/status').then(function(r){return r.json()}).then(function(d){var data=(d&&d.data)||d||{};monRenderMetrics(data.metrics||data);monStatus('Version '+(data.version||'unknown'))}).catch(function(){monStatus('Status unavailable',true)});
+fetch('/api/v1/admin/services').then(function(r){return r.json()}).then(function(d){var body=document.getElementById('monServices');if(!body)return;body.replaceChildren();var list=(d&&d.data&&(d.data.services||d.data))||[];list.forEach(function(service){var tr=document.createElement('tr');var name=document.createElement('td');name.textContent=String(service.name||service.id||'');tr.appendChild(name);var state=document.createElement('td');state.textContent=String(service.status||service.state||'');tr.appendChild(state);var actions=document.createElement('td');var link=document.createElement('a');link.className='admin-link';link.href='/admin/services/'+encodeURIComponent(String(service.id||service.name||''));link.textContent='Details';actions.appendChild(link);tr.appendChild(actions);body.appendChild(tr)})}).catch(function(){monStatus('Service list unavailable',true)})}
+monLoad();
+</script>"#);
+    Html(layout_plain(
+        "Monitoring",
+        &admin_console_shell(AdminConsoleSection::Monitoring, &b, zh),
+        zh,
+    ))
+    .into_response()
+}
+
 pub async fn admin_services_page(
     State(state): State<Arc<AppState>>,
     req: axum::http::Request<axum::body::Body>,
@@ -10779,6 +10896,8 @@ mod kb_ui_tests {
             channels: Arc::new(ChannelRegistry::new()),
             document_commit_lock: Arc::new(std::sync::Mutex::new(())),
             memory_commit_lock: Arc::new(std::sync::Mutex::new(())),
+
+            whitelist: Arc::new(crate::registration_whitelist::WhitelistStore::in_memory()),
         });
         (root, state)
     }

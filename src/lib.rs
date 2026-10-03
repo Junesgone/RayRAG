@@ -145,6 +145,7 @@ pub mod qa;
 pub mod querit;
 pub mod qweather;
 pub mod raptor;
+pub mod registration_whitelist;
 pub mod rerank;
 pub mod resources;
 pub mod resume;

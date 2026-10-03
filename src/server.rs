@@ -65,6 +65,8 @@ pub struct AppState {
     /// running server serves. Without it those engines had no data path at all.
     pub doc_store: Arc<crate::doc_store::DocStorePool>,
     pub document_metadata: Arc<crate::api::document_metadata::DocumentMetadataStore>,
+    /// The registration whitelist shown at `/admin/whitelist` and enforced by `POST /api/v1/users`.
+    pub whitelist: Arc<crate::registration_whitelist::WhitelistStore>,
     pub files: Arc<crate::api::file_mgr::FileStore>,
     pub data_sources: Option<Arc<crate::api::data_source_mgr::DataSourceStore>>,
     pub search_apps: Option<Arc<crate::api::searchapp_mgr::SearchAppStore>>,
@@ -233,6 +235,15 @@ async fn user_add(
         return ret_code_response(
             upstream::OPERATING_ERROR,
             &upstream::duplicate_email_message(email),
+        );
+    }
+
+    // `/admin/whitelist` decides who may sign up. A disabled whitelist admits everyone, which is
+    // the default; enabling it is what makes the list binding.
+    if !state.whitelist.allows(email) {
+        return ret_code_response(
+            upstream::OPERATING_ERROR,
+            "This email is not on the registration whitelist. Ask an administrator to add it at /admin/whitelist.",
         );
     }
 
@@ -4536,6 +4547,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/admin/users/{user_id}",
             get(crate::web::admin_user_detail_page),
         )
+        .route("/admin/whitelist", get(crate::web::admin_whitelist_page))
+        .route("/admin/roles", get(crate::web::admin_roles_page))
+        .route("/admin/monitoring", get(crate::web::admin_monitoring_page))
         .route(
             "/admin/sandbox-settings",
             get(crate::web::admin_sandbox_settings_page),
@@ -4962,6 +4976,13 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/admin/users/{username}/activate",
             axum::routing::put(crate::api::admin::alter_user_activate_status),
+        )
+        .route(
+            "/api/v1/admin/whitelist",
+            get(crate::api::admin_whitelist::get_whitelist)
+                .post(crate::api::admin_whitelist::add_entry)
+                .put(crate::api::admin_whitelist::set_enabled)
+                .delete(crate::api::admin_whitelist::remove_entries),
         )
         .route(
             "/api/v1/admin/users/{username}/admin",
@@ -5988,6 +6009,8 @@ pub async fn run(
     let memory_messages_path = format!("{}/../memory_messages.json", static_dir);
     let skill_index_path = format!("{}/../skill_index.json", static_dir);
     let system_settings_path = format!("{}/../system_settings.json", static_dir);
+    let whitelist_path = std::env::var("RAYRAG_WHITELIST_FILE")
+        .unwrap_or_else(|_| format!("{static_dir}/../registration-whitelist.json"));
     let api_tokens_path = format!("{}/../api_tokens.json", static_dir);
     let ingestion_logs_path = format!("{}/../ingestion_logs.json", static_dir);
     let agent_traces_path = format!("{}/../agent_traces.json", static_dir);
@@ -6152,6 +6175,9 @@ pub async fn run(
         max_upload_bytes: max_upload_bytes(),
         docs,
         document_metadata,
+        whitelist: Arc::new(crate::registration_whitelist::WhitelistStore::new(
+            &whitelist_path,
+        )?),
         files,
         data_sources,
         search_apps,
@@ -6486,6 +6512,8 @@ mod tests {
             channels: Arc::new(crate::channels::ChannelRegistry::new()),
             document_commit_lock: Arc::new(std::sync::Mutex::new(())),
             memory_commit_lock: Arc::new(std::sync::Mutex::new(())),
+
+            whitelist: Arc::new(crate::registration_whitelist::WhitelistStore::in_memory()),
         });
         TestEnv { root, state, token }
     }
@@ -7852,6 +7880,8 @@ mod tests {
             channels: Arc::new(crate::channels::ChannelRegistry::new()),
             document_commit_lock: Arc::new(std::sync::Mutex::new(())),
             memory_commit_lock: Arc::new(std::sync::Mutex::new(())),
+
+            whitelist: Arc::new(crate::registration_whitelist::WhitelistStore::in_memory()),
         });
         TestEnv { root, state, token }
     }
@@ -13679,7 +13709,7 @@ mod tests {
             .await
             .unwrap();
         let list_body = response_json(list).await;
-        let listed = list_body["data"]
+        let listed = list_body["data"]["docs"]
             .as_array()
             .unwrap()
             .iter()
@@ -14560,7 +14590,10 @@ mod tests {
             .unwrap();
         let payload = to_bytes(listed.into_body(), 256 * 1024).await.unwrap();
         let listed: serde_json::Value = serde_json::from_slice(&payload).unwrap();
-        assert_eq!(listed["data"][0]["status"], "1");
+        assert_eq!(
+            listed["data"]["docs"][0]["status"], "1",
+            "documents are listed under data.docs, as the API guide documents: {listed}"
+        );
 
         // Disable one document, then the other, and watch each answer.
         let disabled = router
