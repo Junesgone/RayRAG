@@ -569,9 +569,11 @@ pub async fn list_chat_sessions(
         sessions.into_iter().skip(start).take(page_size).collect();
     // The guide documents `data` as the list itself for this endpoint, not a pagination wrapper.
     let _ = (total, page, page_size);
+    let mut data = serde_json::to_value(rows).unwrap_or_default();
+    crate::api::compat::enrich_sessions(&mut data);
     Json(serde_json::json!({
         "code": 0,
-        "data": rows
+        "data": data
     }))
     .into_response()
 }

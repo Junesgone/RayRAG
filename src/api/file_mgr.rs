@@ -229,9 +229,11 @@ pub async fn list_files(
     let parent_folder = parent
         .map(|record| serde_json::json!({ "id": record.id, "name": record.name }))
         .unwrap_or_else(|| serde_json::json!({ "id": "root", "name": "root" }));
+    let mut files_json = serde_json::json!(page_rows);
+    crate::api::compat::enrich_files(&mut files_json);
     Json(serde_json::json!({
         "code": 0,
-        "data": { "total": total, "files": page_rows, "parent_folder": parent_folder },
+        "data": { "total": total, "files": files_json, "parent_folder": parent_folder },
     }))
     .into_response()
 }

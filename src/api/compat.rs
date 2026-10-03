@@ -125,6 +125,26 @@ pub fn enrich_agents(value: &mut Value) {
     });
 }
 
+/// `GET /api/v1/files` — one file record.
+pub fn enrich_files(value: &mut Value) {
+    enrich(value, |object| {
+        // `file_type` holds exactly what the guide calls `type` ("doc" / "folder").
+        alias(object, "file_type", "type");
+        alias(object, "created_at", "create_time");
+        alias(object, "owner_id", "created_by");
+    });
+}
+
+/// `GET /api/v1/chats/{chat_id}/sessions` — one session.
+pub fn enrich_sessions(value: &mut Value) {
+    enrich(value, |object| {
+        // A session created under a chat assistant records that assistant in `app_id`.
+        alias(object, "app_id", "chat_id");
+        alias(object, "created_at", "create_time");
+        alias(object, "updated_at", "update_time");
+    });
+}
+
 /// `GET /api/v1/searches`.
 pub fn enrich_search_apps(value: &mut Value) {
     enrich(value, |object| {
@@ -181,6 +201,27 @@ mod tests {
         assert_eq!(chat["dataset_ids"], json!(["kb-1", "kb-2"]));
         assert_eq!(chat["create_time"], 1729232406637_u64);
         assert_eq!(chat["update_time"], 1729232406638_u64);
+    }
+
+    #[test]
+    fn files_and_sessions_gain_the_documented_names() {
+        let mut file =
+            json!({"id": "f-1", "name": "a.txt", "file_type": "doc", "created_at": 7_u64});
+        enrich_files(&mut file);
+        assert_eq!(file["file_type"], "doc", "the original stays");
+        assert_eq!(file["type"], "doc");
+        assert_eq!(file["create_time"], 7_u64);
+
+        let mut session =
+            json!({"id": "s-1", "app_id": "chat-1", "created_at": 1_u64, "updated_at": 2_u64});
+        enrich_sessions(&mut session);
+        assert_eq!(session["chat_id"], "chat-1");
+        assert_eq!(session["create_time"], 1_u64);
+        assert_eq!(session["update_time"], 2_u64);
+        // An orphan session has no assistant, and nothing is invented for it.
+        let mut orphan = json!({"id": "s-2"});
+        enrich_sessions(&mut orphan);
+        assert!(orphan.get("chat_id").is_none());
     }
 
     #[test]

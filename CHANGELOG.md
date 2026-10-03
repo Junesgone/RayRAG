@@ -19,7 +19,12 @@ explained they needed migrating together with their consumers. That migration is
 The Files page reads whichever shape arrives, so it keeps working either way, and the tests that consumed
 the old wrapper were updated to the documented one rather than the other way round.
 
-**2174 tests pass**, 0 failures, including a new regression that checks the files list's shape, its
+The audit from 0.11.2 also picked up two more names the guide uses: a file record's `type` (the project
+stored `file_type`, with the same values) and a session's `chat_id` plus `create_time`/`update_time`. They
+are now filled in the same additive way; a session with no assistant keeps `chat_id` absent rather than
+inventing one.
+
+**2175 tests pass**, 0 failures, including a new regression that checks the files list's shape, its
 `parent_id` navigation, its keyword filter, that `total` counts every match rather than the page, and that
 an unknown folder is a 404.
 
