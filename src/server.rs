@@ -13516,6 +13516,59 @@ mod tests {
         );
     }
 
+    /// The synchronous doc-store connector must not be called from a request handler: it starts the
+    /// driver's own runtime and panics with "Cannot start a runtime from within a runtime". The
+    /// in-memory store used by every other test does not panic, so the suite passed while the live
+    /// deployment failed — this scan is the guard that turns that into a test failure.
+    #[test]
+    fn handlers_may_not_use_the_synchronous_doc_store_connector() {
+        fn rust_files(dir: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    rust_files(&path, found);
+                } else if path.extension().is_some_and(|extension| extension == "rs") {
+                    found.push(path);
+                }
+            }
+        }
+        let mut files = Vec::new();
+        rust_files(std::path::Path::new("src/api"), &mut files);
+        assert!(
+            !files.is_empty(),
+            "the source tree must be readable from the test working directory"
+        );
+        let mut offenders = Vec::new();
+        for file in files {
+            // The documented blocking wrappers: both call the synchronous form inside
+            // `spawn_blocking`, which is safe by construction.
+            if file.ends_with("src/api/dataset_navigation.rs")
+                || file.ends_with("src/api/dataset_artifacts.rs")
+            {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&file) else {
+                continue;
+            };
+            for (number, line) in text.lines().enumerate() {
+                let trimmed = line.trim_start();
+                if trimmed.starts_with("//") || trimmed.starts_with("///") {
+                    continue;
+                }
+                if line.contains(".doc_store.get_conn()") || line.contains("pool.get_conn()") {
+                    offenders.push(format!("{}:{}", file.display(), number + 1));
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "use doc_store.get_conn_blocking() in handlers instead of get_conn(): {offenders:?}"
+        );
+    }
+
     /// The document-level structure graph. The assembly helpers and the compiler had no caller for a
     /// while, so this test is the one that exercises the route end to end: real rows in the shared doc
     /// store come back grouped by the template that produced them, with the legacy bucket kept and the

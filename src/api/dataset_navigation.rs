@@ -89,7 +89,7 @@ fn nav_item(row: &Value) -> Value {
 }
 
 /// Run one nav query on a blocking thread.
-async fn req_store<T, F>(state: &Arc<AppState>, work: F) -> Result<T, Response>
+pub(crate) async fn req_store<T, F>(state: &Arc<AppState>, work: F) -> Result<T, Response>
 where
     F: FnOnce(&dyn DocStore) -> anyhow::Result<T> + Send + 'static,
     T: Send + 'static,

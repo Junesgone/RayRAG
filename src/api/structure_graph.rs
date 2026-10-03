@@ -250,24 +250,21 @@ pub async fn document_structure_graph(
         .unwrap_or(Value::Null);
     let configured = configured_templates(&state, &owner, &parser_config);
 
-    let store = match state.doc_store.get_conn() {
+    // `get_conn_blocking` is the only form a handler may use: the synchronous `get_conn` starts the
+    // driver's own runtime and panics with "Cannot start a runtime from within a runtime" when called
+    // from a tokio worker — which is what the first version of this endpoint did, on the live
+    // deployment, after passing every unit test.
+    let store = match state.doc_store.get_conn_blocking().await {
         Ok(store) => store,
         Err(error) => {
             return api_error_code(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                code::OPERATION_ERROR,
+                code::CONNECTION_ERROR,
                 &format!("the document store is not reachable: {error}"),
             );
         }
     };
     let index = crate::structure_compile::doc_store_index_name(&owner);
-    let mut scope = Map::new();
-    scope.insert("doc_id".to_string(), json!(document_id.clone()));
-    scope.insert(
-        "knowledge_graph_kwd".to_string(),
-        json!(["entity", "relation"]),
-    );
-
     let meta_fields: Vec<&str> = {
         let mut fields: Vec<&str> = GRAPH_ALL_FIELDS.to_vec();
         fields.extend([
@@ -277,7 +274,13 @@ pub async fn document_structure_graph(
         ]);
         fields
     };
-    let scanned = graph_search(
+    let mut scope = Map::new();
+    scope.insert("doc_id".to_string(), json!(document_id.clone()));
+    scope.insert(
+        "knowledge_graph_kwd".to_string(),
+        json!(["entity", "relation"]),
+    );
+    let (rows, total_matching) = match graph_search(
         store.as_ref(),
         &index,
         &dataset_id,
@@ -288,9 +291,8 @@ pub async fn document_structure_graph(
         Vec::new(),
         0,
     )
-    .await;
-
-    let (rows, total_matching) = match scanned {
+    .await
+    {
         Ok(found) => found,
         Err(error) => {
             return api_error_code(
@@ -352,20 +354,16 @@ pub async fn document_structure_graph(
             }
             Err(error) => {
                 // One unreadable bucket must not hide the others, and it must not be reported as empty
-                // either: it is named in the notes.
+                // either: it is named in the log.
                 tracing::warn!(bucket = %meta.template_id, %error, "structure graph bucket failed");
-                buckets.push((meta, Vec::new(), Vec::new()));
             }
         }
     }
 
     // RAPTOR summaries are stored as blobs rather than entity rows.
-    let raptor_scope = {
-        let mut condition = Map::new();
-        condition.insert("doc_id".to_string(), json!(document_id.clone()));
-        condition.insert("compile_kwd".to_string(), json!("raptor"));
-        condition
-    };
+    let mut raptor_scope = Map::new();
+    raptor_scope.insert("doc_id".to_string(), json!(document_id.clone()));
+    raptor_scope.insert("compile_kwd".to_string(), json!("raptor"));
     if let Ok((raptor_rows, _)) = graph_search(
         store.as_ref(),
         &index,
@@ -548,12 +546,14 @@ pub async fn delete_document_structure_graph(
         .map(|dataset| dataset.owner_id.clone())
         .filter(|owner| !owner.is_empty())
         .unwrap_or_else(|| auth.user_id.clone());
-    let store = match state.doc_store.get_conn() {
+    // Same rule as the read side: the async-safe connection form, or the handler panics on the live
+    // deployment while passing every test.
+    let store = match state.doc_store.get_conn_blocking().await {
         Ok(store) => store,
         Err(error) => {
             return api_error_code(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                code::OPERATION_ERROR,
+                code::CONNECTION_ERROR,
                 &format!("the document store is not reachable: {error}"),
             );
         }
