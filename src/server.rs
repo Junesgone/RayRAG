@@ -4173,7 +4173,7 @@ fn public_api_path(path: &str) -> bool {
     // Patterns may contain one dynamic segment (`{channel}`, `{account_id}`):
     // the middleware sees the concrete request path, so placeholders are matched
     // segment-wise instead of as literals.
-    const PATTERNS: [&str; 15] = [
+    const PATTERNS: [&str; 19] = [
         "/api/v1/auth/login",
         // Upstream mounts the admin console login on the unauthenticated group
         // (`internal/router/router.go`): it is how the console obtains a token.
@@ -4200,6 +4200,14 @@ fn public_api_path(path: &str) -> bool {
         "/api/v1/auth/login/channels",
         "/api/v1/auth/login/{channel}",
         "/api/v1/auth/oauth/{channel}/callback",
+        // The password-reset flow runs before anyone has a token — that is the whole point of it.
+        // Upstream mounts `user_api.forget_get_captcha`, `forget_send_otp` and `reset_password` on the
+        // unauthenticated group; RayRAG had them behind the bearer middleware, so a user who had
+        // forgotten their password could not reach the endpoints meant for exactly that situation.
+        "/api/v1/auth/password/forgot/captcha",
+        "/api/v1/auth/password/forgot/otp",
+        "/api/v1/auth/password/forgot/otp/verify",
+        "/api/v1/auth/password/reset",
     ];
     const CHANNEL_PATTERNS: [&str; 2] = [
         // Chat channel inbound endpoints: platform webhook callbacks must not
@@ -4729,6 +4737,13 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             axum::routing::delete(delete_dataset_index),
         )
         // Upstream `user_api.py` password reset flow (`forgot/otp`, `otp/verify`, `reset`).
+        .route(
+            // Upstream registers this as POST; its own docstring says GET, and a browser fetching an
+            // image sends GET, so both verbs answer the same handler.
+            "/api/v1/auth/password/forgot/captcha",
+            get(crate::api::password_flow::forgot_captcha)
+                .post(crate::api::password_flow::forgot_captcha),
+        )
         .route(
             "/api/v1/auth/password/forgot/otp",
             post(crate::api::password_flow::request_otp),
@@ -6542,6 +6557,11 @@ mod tests {
             "/api/v1/system/config",
             "/api/v1/auth/login/channels",
             "/api/v1/chatbots/abc/info",
+            // Pre-login by definition: these must never require the token they exist to recover from.
+            "/api/v1/auth/password/forgot/captcha",
+            "/api/v1/auth/password/forgot/otp",
+            "/api/v1/auth/password/forgot/otp/verify",
+            "/api/v1/auth/password/reset",
         ] {
             assert!(super::public_api_path(path), "{path} must stay public");
         }
@@ -13486,6 +13506,142 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    /// The reset flow's front door: the image is a real PNG, and no reset code leaves the server until
+    /// the answer comes back. Upstream has both halves; RayRAG had only the OTP half, which let anyone
+    /// request codes for arbitrary addresses in a loop.
+    #[tokio::test]
+    async fn a_reset_code_needs_the_captcha_first() {
+        let env = test_env();
+        let email = "captcha-flow@example.com";
+
+        // The image endpoint, as a browser would call it.
+        let image = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!(
+                        "/api/v1/auth/password/forgot/captcha?email={email}"
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(image.status(), StatusCode::OK);
+        assert_eq!(
+            image.headers().get(header::CONTENT_TYPE).unwrap(),
+            "image/png"
+        );
+        assert_eq!(image.headers().get("x-captcha-ttl").unwrap(), "60");
+        let bytes = to_bytes(image.into_body(), 1 << 20).await.unwrap();
+        assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n", "the body is not a PNG");
+        let decoded = image::load_from_memory(&bytes).unwrap().to_rgb8();
+        assert_eq!(
+            decoded.dimensions(),
+            (crate::captcha::IMAGE_WIDTH, crate::captcha::IMAGE_HEIGHT)
+        );
+
+        // The same question can be asked with POST, which is what upstream registers.
+        let posted = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!(
+                        "/api/v1/auth/password/forgot/captcha?email={email}"
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(posted.status(), StatusCode::OK);
+        assert_eq!(
+            posted.headers().get(header::CONTENT_TYPE).unwrap(),
+            "image/png"
+        );
+
+        // Without an address there is nothing to attach the answer to.
+        let no_email = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/v1/auth/password/forgot/captcha")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(no_email.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            response_json(no_email).await["message"]
+                .as_str()
+                .unwrap()
+                .contains("email"),
+            "the refusal must say what is missing"
+        );
+
+        let otp = |captcha: Option<&'static str>| {
+            let router = build_router(env.state.clone());
+            async move {
+                let mut body = serde_json::json!({ "email": "captcha-flow@example.com" });
+                if let Some(answer) = captcha {
+                    body["captcha"] = serde_json::json!(answer);
+                }
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(Method::POST)
+                            .uri("/api/v1/auth/password/forgot/otp")
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(body.to_string()))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        // No answer: refused, and told how to get one.
+        let missing = response_json(otp(None).await).await;
+        assert_eq!(
+            missing["code"],
+            crate::server::code::INVALID_OR_MISSING_DATA,
+            "{missing}"
+        );
+        assert!(
+            missing["message"].as_str().unwrap().contains("captcha"),
+            "{missing}"
+        );
+
+        // A wrong answer is refused too, and does not consume the question.
+        let wrong = response_json(otp(Some("ZZZZ")).await).await;
+        assert_eq!(
+            wrong["code"],
+            crate::server::code::INVALID_OR_MISSING_DATA,
+            "{wrong}"
+        );
+
+        // The right answer is the one the store issued for that address. A test cannot read the image,
+        // so it asks the store — the same call the endpoint makes.
+        let issued = crate::captcha::CaptchaStore::shared().issue(email);
+        let accepted =
+            response_json(otp(Some(Box::leak(issued.clone().into_boxed_str()))).await).await;
+        assert_eq!(accepted["code"], 0, "{accepted}");
+        assert_eq!(accepted["data"]["email"], email, "{accepted}");
+        assert!(
+            accepted["data"]["expires_in_seconds"].as_u64().unwrap() > 0,
+            "{accepted}"
+        );
+
+        // And it is spent: a second request with the same answer is refused.
+        let replayed = response_json(otp(Some(Box::leak(issued.into_boxed_str()))).await).await;
+        assert_eq!(
+            replayed["code"],
+            crate::server::code::INVALID_OR_MISSING_DATA,
+            "a captcha answer must not be reusable: {replayed}"
         );
     }
 

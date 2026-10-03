@@ -7907,6 +7907,137 @@ function authNotice(text,error){var node=document.getElementById('error');if(!no
 // shows `message.registerDisabled` instead.
 function register(){var n=document.getElementById('nickname').value.trim();var e=document.getElementById('remail').value.trim();var p=document.getElementById('rpassword').value;authNotice('',true);if(!authRegisterErrors())return;fetch('/api/v1/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nickname:n,email:e,password:p})}).then(function(response){return response.json()}).then(function(d){if(d.code===0){authNotice(AUTH_REGISTERED,false);authFlipped=false;setActiveFace(true);document.getElementById('email').value=e}else if(String(d.message||'').indexOf('registration is disabled')>=0){authNotice(AUTH_REGISTER_DISABLED,true)}else{authNotice(d.message,true)}}).catch(function(error){authNotice(error.message,true)})}function loginWithChannel(channel){if(!channel)return;location.href='/api/v1/auth/login/'+encodeURIComponent(channel)}
 function loadAuthChannels(){fetch('/api/v1/auth/login/channels').then(function(response){return response.json()}).then(function(d){var list=(d.data||[]);var host=document.getElementById('authChannels');if(!host||!list.length)return;host.hidden=false;host.innerHTML=list.map(function(item){return \"<button type=\\'button\\' class=\\'btn btn-o auth-channel auth-channel-btn\\' data-channel=\\'\"+(item.channel||'')+\"\\'>Sign in with \"+(item.display_name||item.channel)+'</button>'}).join('');Array.prototype.forEach.call(host.querySelectorAll('.auth-channel-btn'),function(button){button.addEventListener('click',function(){loginWithChannel(button.dataset.channel)})})}).catch(function(){})}(function(){var saved=localStorage.getItem('rayrag_email');if(saved){document.getElementById('email').value=saved;document.getElementById('remember').checked=true}})();loadAuthChannels()</script>");
+    // The password-reset flow as a self-contained card: it needed a surface, because the captcha and the
+    // OTP endpoints had none. The HTML and its script are one template with `@TOKEN@` placeholders that
+    // are substituted by `replace`, not by `format!` — the script is full of braces, and every one of
+    // them would have had to be doubled.
+    let reset_card_template = r##"<div class='card' id='resetCard' data-testid='reset-card' style='margin-top:18px'>
+<h3 style='margin:0 0 6px'>@TITLE@</h3>
+<p style='color:var(--t2);font-size:13px;margin:0 0 12px'>@HINT@</p>
+<label for='resetEmail' style='display:block;font-size:13px;margin-bottom:4px'>@EMAIL_LABEL@</label>
+<input id='resetEmail' data-testid='reset-email' type='email' autocomplete='email' placeholder='you@example.com' style='width:100%;margin-bottom:10px'>
+<div style='display:flex;align-items:center;gap:10px;margin-bottom:10px'>
+<img id='resetCaptchaImage' data-testid='reset-captcha-image' alt='@CAPTCHA_ALT@' width='150' height='60' style='border-radius:6px;border:1px solid var(--line);cursor:pointer' title='@RELOAD_HINT@'>
+<button type='button' id='resetReload' data-testid='reset-reload' class='btn ghost'>@RELOAD@</button>
+</div>
+<label for='resetCaptcha' style='display:block;font-size:13px;margin-bottom:4px'>@CAPTCHA_LABEL@</label>
+<input id='resetCaptcha' data-testid='reset-captcha' autocomplete='off' maxlength='8' style='width:100%;margin-bottom:10px;text-transform:uppercase'>
+<button type='button' id='resetSend' data-testid='reset-send' class='btn' style='width:100%'>@SEND@</button>
+<div id='resetStep2' style='display:none;margin-top:14px'>
+<label for='resetCode' style='display:block;font-size:13px;margin-bottom:4px'>@CODE_LABEL@</label>
+<input id='resetCode' data-testid='reset-code' autocomplete='one-time-code' style='width:100%;margin-bottom:10px'>
+<label for='resetNewPassword' style='display:block;font-size:13px;margin-bottom:4px'>@NEW_PASSWORD_LABEL@</label>
+<input id='resetNewPassword' data-testid='reset-new-password' type='password' autocomplete='new-password' style='width:100%;margin-bottom:10px'>
+<button type='button' id='resetSubmit' data-testid='reset-submit' class='btn' style='width:100%'>@SUBMIT@</button>
+</div>
+<div id='resetStatus' data-testid='reset-status' role='status' aria-live='polite' style='font-size:13px;margin-top:10px;color:var(--t2)'></div>
+</div>
+<script>
+(function(){
+  var status=document.getElementById('resetStatus');
+  function say(text,error){status.textContent=text;status.style.color=error?'#c0392b':'var(--t2)';}
+  function email(){return (document.getElementById('resetEmail').value||'').trim();}
+  function loadCaptcha(){
+    var address=email();
+    if(!address){say(@EMAIL_REQUIRED@,true);return;}
+    // Asking for the image is what issues the answer the reset code requires.
+    document.getElementById('resetCaptchaImage').src='/api/v1/auth/password/forgot/captcha?email='+encodeURIComponent(address)+'&t='+Date.now();
+    document.getElementById('resetCaptcha').value='';
+    say(@CAPTCHA_READY@);
+  }
+  function send(){
+    var address=email(),answer=(document.getElementById('resetCaptcha').value||'').trim();
+    if(!address){say(@EMAIL_REQUIRED@,true);return;}
+    if(!answer){say(@CAPTCHA_REQUIRED@,true);return;}
+    say(@SENDING@);
+    fetch('/api/v1/auth/password/forgot/otp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:address,captcha:answer})})
+      .then(function(r){return r.json();})
+      .then(function(body){
+        if(body.code!==0){say(body.message||@FAILED@,true);loadCaptcha();return;}
+        var how=(body.data&&body.data.delivered_by)?(' ('+body.data.delivered_by+')'):'';
+        say(@SENT@+how);
+        document.getElementById('resetStep2').style.display='block';
+      })
+      .catch(function(){say(@FAILED@,true);});
+  }
+  function submit(){
+    var address=email(),code=(document.getElementById('resetCode').value||'').trim();
+    var next=document.getElementById('resetNewPassword').value||'';
+    if(!address||!code||!next){say(@FIELDS_REQUIRED@,true);return;}
+    say(@SUBMITTING@);
+    fetch('/api/v1/auth/password/reset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:address,code:code,new_password:next})})
+      .then(function(r){return r.json();})
+      .then(function(body){
+        if(body.code!==0){say(body.message||@FAILED@,true);return;}
+        say(@RESET_DONE@);
+        document.getElementById('resetStep2').style.display='none';
+        document.getElementById('resetNewPassword').value='';
+      })
+      .catch(function(){say(@FAILED@,true);});
+  }
+  document.getElementById('resetCaptchaImage').addEventListener('click',loadCaptcha);
+  document.getElementById('resetReload').addEventListener('click',loadCaptcha);
+  document.getElementById('resetSend').addEventListener('click',send);
+  document.getElementById('resetSubmit').addEventListener('click',submit);
+  document.getElementById('resetEmail').addEventListener('blur',function(){if(email())loadCaptcha();});
+})();
+</script>"##;
+    let reset_card = [
+        ("@TITLE@", t("Reset password", zh).to_string()),
+        (
+            "@HINT@",
+            t(
+                "Forgot your password? Answer the image, then set a new one.",
+                zh,
+            )
+            .to_string(),
+        ),
+        ("@EMAIL_LABEL@", email_label.to_string()),
+        ("@CAPTCHA_ALT@", t("Captcha image", zh).to_string()),
+        (
+            "@RELOAD_HINT@",
+            t("Click to refresh the captcha", zh).to_string(),
+        ),
+        ("@RELOAD@", t("Refresh captcha", zh).to_string()),
+        ("@CAPTCHA_LABEL@", t("Captcha", zh).to_string()),
+        ("@SEND@", t("Send reset code", zh).to_string()),
+        ("@CODE_LABEL@", t("Reset code", zh).to_string()),
+        ("@NEW_PASSWORD_LABEL@", t("New password", zh).to_string()),
+        ("@SUBMIT@", t("Reset password", zh).to_string()),
+        (
+            "@EMAIL_REQUIRED@",
+            json_script_string(t("Please input email", zh)),
+        ),
+        (
+            "@CAPTCHA_READY@",
+            json_script_string(t("Captcha loaded. Type the characters shown.", zh)),
+        ),
+        (
+            "@CAPTCHA_REQUIRED@",
+            json_script_string(t("Please input the captcha", zh)),
+        ),
+        ("@SENDING@", json_script_string(t("Sending…", zh))),
+        ("@SENT@", json_script_string(t("Reset code requested.", zh))),
+        (
+            "@FIELDS_REQUIRED@",
+            json_script_string(t(
+                "Email, the reset code and a new password are required.",
+                zh,
+            )),
+        ),
+        ("@SUBMITTING@", json_script_string(t("Resetting…", zh))),
+        (
+            "@RESET_DONE@",
+            json_script_string(t("Password reset. You can sign in now.", zh)),
+        ),
+        ("@FAILED@", json_script_string(t("The request failed.", zh))),
+    ]
+    .iter()
+    .fold(reset_card_template.to_string(), |html, (token, value)| {
+        html.replace(token, value)
+    });
+    b.push_str(&reset_card);
+
     Html(layout_plain(if zh { "登录" } else { "Sign in" }, &b, zh))
 }
 
@@ -12643,6 +12774,50 @@ connection: close
         assert_eq!(bare[0].display_name, "Jumpcloud");
         assert_eq!(bare[0].icon, "sso");
         assert!(crate::oauth_config::parse("not-json").is_empty());
+    }
+
+    /// The reset flow needs a surface, not only endpoints: the captcha image, the answer box, the
+    /// code and the new password. The placeholders are checked too, because a template substituted
+    /// with the wrong token set would render `@TITLE@` to the user.
+    #[tokio::test]
+    async fn the_reset_card_offers_the_whole_flow_without_leftover_placeholders() {
+        for lang in ["en", "zh"] {
+            let req = axum::http::Request::builder()
+                .uri("/login")
+                .header("Cookie", format!("lang={lang}"))
+                .body(axum::body::Body::empty())
+                .unwrap();
+            let html = body_of(login_page(req).await).await;
+            assert_inline_scripts_balance(&html, "/login");
+            for marker in [
+                "id='resetCard'",
+                "data-testid='reset-card'",
+                "data-testid='reset-email'",
+                "data-testid='reset-captcha-image'",
+                "data-testid='reset-captcha'",
+                "data-testid='reset-reload'",
+                "data-testid='reset-send'",
+                "data-testid='reset-code'",
+                "data-testid='reset-new-password'",
+                "data-testid='reset-submit'",
+                "data-testid='reset-status'",
+                // The image is fetched from the endpoint that issues the answer.
+                "'/api/v1/auth/password/forgot/captcha?email='+encodeURIComponent(address)",
+                "'/api/v1/auth/password/forgot/otp'",
+                "'/api/v1/auth/password/reset'",
+            ] {
+                assert!(html.contains(marker), "{lang}: missing {marker}");
+            }
+            let leftover: Vec<&str> = html
+                .match_indices('@')
+                .map(|(index, _)| &html[index..(index + 20).min(html.len())])
+                .filter(|slice| slice.chars().nth(1).is_some_and(|c| c.is_ascii_uppercase()))
+                .collect();
+            assert!(
+                leftover.is_empty(),
+                "{lang}: unsubstituted placeholders {leftover:?}"
+            );
+        }
     }
 
     /// Upstream `login-next/bg.tsx` (BgSvg) + `components/spotlight.tsx` and the

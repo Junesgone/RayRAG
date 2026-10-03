@@ -72,6 +72,7 @@ pub mod benchmark;
 pub mod bing;
 pub mod bocha;
 pub mod book;
+pub mod captcha;
 pub mod channels;
 pub mod chat;
 pub mod chunk;
