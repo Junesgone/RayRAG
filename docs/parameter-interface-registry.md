@@ -800,3 +800,24 @@ RAGFlow 把麦克风放在**聊天输入区**；RayRAG 目前把这个能力放�
 - **维度不一致** → `cos_sim: 0.0`，并同时给出 `vector_dim` 与 `stored_vector_dim`。
 
 **界面**：数据集配置页新增「Embedding check」按钮，运行后打印平均/最小/最大相似度、比较了多少块、以及实际模型名（含 code 10 结论）。
+
+### 0.18.0：连接器实例族（connectors）
+
+此前 `/api/v1/connectors` 返回**硬编码的三个假连接器**、`create` 只回显不落库（用户「新增」后刷新即消失），并缺 4 条文档化接口。现由**单一持久化、按属主隔离**的存储承载：
+
+| 接口 | 行为 |
+|---|---|
+| `POST /api/v1/connectors` | 校验名称与类型（类型取自 `ConnectorRegistry::kinds()`，不是第二份清单），落库 |
+| `GET /api/v1/connectors/{id}` | 实例详情；否则 `404 / 102 Connector not found.` |
+| `PATCH` / `DELETE /api/v1/connectors/{id}` | 改名/启停/改配置，或连同历史一起删除 |
+| `GET /api/v1/connectors/{id}/logs` | 历史（最新在前） |
+| `POST /api/v1/connectors/{id}/test` | **真正构建连接器并列举来源** |
+| `POST /api/v1/connectors/{id}/rebuild` | 报告来源当前提供什么，并**声明没有写入任何文档** |
+
+- **拒绝语义**：未知类型 → `101` 且**列出已知类型**；请求体非法 → `400/101`（不是 axum 的纯文本 rejection）；不存在 → `404/102`。
+- **`rebuild` 不谎报**：`{"scanned": N, "imported": 0}` + 消息说明「导入是解析流水线的职责」。
+- **`test` 真实探测**：经注册表构建 → 加载凭据 → 统一超时内列举；结果写入 `last_test` 与历史。
+- **历史上限**：保留 2000 行、单次返回 ≤500 行。
+- **配置键**：`url` 为来源位置（`LocalConnector` 以 url 为根目录），`path` 为其友好别名；子目录用 `target`。
+- **权限**：写动词（create/patch/delete/test/rebuild）保持**管理写** → 非管理员 `403`；读（list/get/logs）按属主隔离。
+- **界面**：数据源设置页新增「Connectors」卡片（逐行 Test/Rebuild/Logs/Delete + 从注册表渲染类型的新建表单）。

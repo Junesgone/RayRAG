@@ -6270,6 +6270,52 @@ pub async fn datasources_page(
     b.push_str(&data_source_add_modal(&schema, zh));
     let info_json = serde_json::to_string(&crate::data_source::form_fields::source_info_for_ui())
         .unwrap_or_else(|_| "{}".to_string());
+    // The upstream-compatible connector family (`/api/v1/connectors`, the four endpoints an external
+    // client calls): a card that lists those instances with a real probe, a rebuild, a history view and
+    // delete, plus a create form whose type list comes from the connector registry itself.
+    let connector_types: Vec<serde_json::Value> = crate::connectors::ConnectorRegistry::kinds()
+        .into_iter()
+        .map(|info| serde_json::json!({ "kind": info.kind, "label": info.label }))
+        .collect();
+    let connector_types_json =
+        serde_json::to_string(&connector_types).unwrap_or_else(|_| "[]".to_string());
+    let connector_card_js = format!(
+        r#"<section class='card' id='connectorCard' data-testid='connector-card'><h2>{title}</h2><p style='color:var(--tm);font-size:13px'>{hint}</p><div style='display:flex;gap:8px;align-items:center;flex-wrap:wrap'><input id='connectorName' data-testid='connector-name' placeholder='{name_ph}' style='max-width:200px'><select id='connectorType' data-testid='connector-type'></select><input id='connectorUrl' data-testid='connector-url' placeholder='{url_ph}' style='max-width:260px'><button class='btn btn-o btn-sm' data-testid='connector-create' onclick='connectorCreate()'>{add}</button><span id='connectorStatus' data-testid='connector-status' style='font-size:13px;color:var(--tm)'></span></div><div class='table-wrap' style='margin-top:12px'><table data-testid='connector-table'><thead><tr><th>{th_name}</th><th>{th_type}</th><th>{th_state}</th><th>{th_actions}</th></tr></thead><tbody id='connectorRows'></tbody></table></div><pre id='connectorLogs' data-testid='connector-logs' style='display:none;max-height:220px;overflow:auto;font-size:12px;margin-top:10px'></pre></section>"#,
+        title = t("Connectors", zh),
+        hint = t(
+            "External sources reachable through the upstream connector API. Test really connects and lists the source; rebuild reports what the source offers.",
+            zh,
+        ),
+        name_ph = t("Name", zh),
+        url_ph = t("Location (path or url)", zh),
+        add = t("Add", zh),
+        th_name = t("Name", zh),
+        th_type = t("Type", zh),
+        th_state = t("State", zh),
+        th_actions = t("Actions", zh),
+    );
+    b.push_str(&connector_card_js);
+    let connector_script = format!(
+        r#"<script>var CONNECTOR_TYPES={types};function connectorStatus(text,error){{var node=document.getElementById('connectorStatus');if(!node)return;node.textContent=text||'';node.style.color=error?'var(--d)':'var(--tm)'}}function connectorFillTypes(){{var select=document.getElementById('connectorType');if(!select||select.options.length)return;CONNECTOR_TYPES.forEach(function(entry){{var option=document.createElement('option');option.value=entry.kind;option.textContent=entry.label+' ('+entry.kind+')';select.appendChild(option)}})}}function connectorCall(url,options){{return fetch(url,options).then(function(response){{return response.json()}})}}function connectorCreate(){{var name=(document.getElementById('connectorName')||{{}}).value||'';var type=(document.getElementById('connectorType')||{{}}).value||'';var url=(document.getElementById('connectorUrl')||{{}}).value||'';if(!name.trim()){{connectorStatus('{name_required}',true);return}}connectorStatus('{working}');connectorCall('/api/v1/connectors',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{name:name,source_type:type,config:{{url:url}}}})}}).then(function(data){{if(!data||data.code!==0){{connectorStatus((data&&data.message)||'{failed}',true);return}}document.getElementById('connectorName').value='';document.getElementById('connectorUrl').value='';connectorStatus('{created}');connectorLoad()}}).catch(function(error){{connectorStatus(String(error),true)}})}}function connectorLoad(){{connectorFillTypes();var host=document.getElementById('connectorRows');if(!host)return;connectorCall('/api/v1/connectors').then(function(data){{host.replaceChildren();var list=(data&&data.data)||[];if(!list.length){{var row=document.createElement('tr');var cell=document.createElement('td');cell.colSpan=4;cell.textContent='{empty}';row.appendChild(cell);host.appendChild(row);return}}list.forEach(function(item){{var row=document.createElement('tr');[item.name,item.source_type,(item.enabled?'{on}':'{off}')].forEach(function(value){{var cell=document.createElement('td');cell.textContent=value;row.appendChild(cell)}});var actionCell=document.createElement('td');[['{test}','test'],['{rebuild}','rebuild'],['{logs}','logs'],['{remove}','delete']].forEach(function(pair){{var button=document.createElement('button');button.type='button';button.className='btn btn-o btn-sm';button.textContent=pair[0];button.setAttribute('data-testid','connector-'+pair[1]+'-'+item.id);button.onclick=function(){{connectorAction(item.id,pair[1])}};actionCell.appendChild(button)}});row.appendChild(actionCell);host.appendChild(row)}})}})}}function connectorAction(id,action){{if(action==='delete'){{if(!confirm('{confirm_delete}'))return;connectorCall('/api/v1/connectors/'+encodeURIComponent(id),{{method:'DELETE'}}).then(function(){{connectorLoad()}});return}}if(action==='logs'){{connectorCall('/api/v1/connectors/'+encodeURIComponent(id)+'/logs').then(function(data){{var node=document.getElementById('connectorLogs');var lines=((data&&data.data&&data.data.logs)||[]).map(function(line){{return line.at+' ['+line.level+'] '+line.event+': '+line.message}});node.textContent=lines.join('\n')||'{no_logs}';node.style.display='block'}});return}}connectorStatus(action==='test'?'{testing}':'{rebuilding}');connectorCall('/api/v1/connectors/'+encodeURIComponent(id)+'/'+action,{{method:'POST',headers:{{'Content-Type':'application/json'}},body:'{{}}'}}).then(function(data){{if(!data||data.code!==0){{connectorStatus((data&&data.message)||'{failed}',true);return}}connectorStatus((data.data&&data.data.message)||(data.message||'{done}'))}}).catch(function(error){{connectorStatus(String(error),true)}})}}if(document.readyState!=='loading')connectorLoad();else document.addEventListener('DOMContentLoaded',connectorLoad);</script>"#,
+        types = connector_types_json,
+        name_required = t("Type a name first", zh),
+        working = t("Working...", zh),
+        failed = t("The request failed", zh),
+        created = t("Added", zh),
+        empty = t("No connectors yet", zh),
+        on = t("enabled", zh),
+        off = t("disabled", zh),
+        test = t("Test", zh),
+        rebuild = t("Rebuild", zh),
+        logs = t("Logs", zh),
+        remove = t("Delete", zh),
+        confirm_delete = t("Delete this connector?", zh),
+        no_logs = t("No history yet", zh),
+        testing = t("Testing...", zh),
+        rebuilding = t("Rebuilding...", zh),
+        done = t("Done", zh),
+    );
+    b.push_str(&connector_script);
     b.push_str(&data_source_list_section(&info_json));
     let page = if in_user_settings {
         user_setting_layout(
@@ -11045,6 +11091,12 @@ mod kb_ui_tests {
             metadata_config: Arc::new(
                 crate::api::metadata_config::MetadataConfigStore::new(
                     root.path().join("metadata-config.json").to_str().unwrap(),
+                )
+                .unwrap(),
+            ),
+            connectors: Arc::new(
+                crate::api::connector::ConnectorStore::new(
+                    root.path().join("connectors.json").to_str().unwrap(),
                 )
                 .unwrap(),
             ),

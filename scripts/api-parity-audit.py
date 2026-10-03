@@ -69,10 +69,6 @@ KNOWN_METHOD_GAPS: dict[str, str] = {
 
 KNOWN_MISSING: dict[str, str] = {
     "/auth/password/forgot/captcha": "功能级缺口：忘记密码整体流程（验证码/OTP/重置）未实现",
-    "/connectors/<connector_id>": "功能级缺口：连接器实例面（RayRAG 的数据源在 /api/v1/data_sources/*，语义不同，未做别名）",
-    "/connectors/<connector_id>/logs": "功能级缺口：同上（连接器实例面）",
-    "/connectors/<connector_id>/rebuild": "功能级缺口：同上（连接器实例面）",
-    "/connectors/<connector_id>/test": "功能级缺口：同上（连接器实例面）",
     "/datasets/<dataset_id>/documents/<document_id>/structure/graph": "功能级缺口：逐文档结构图（编译产物按文档/模板存储）未实现；RayRAG 的 GraphRAG 产物按数据集存储",
     "/datasets/<dataset_id>/skills": "功能级缺口：数据集 Skills 面未实现（Skills 索引仅有全局 /api/v1/skills/*）",
     "/datasets/<dataset_id>/skills/<path:skill_kwd>": "功能级缺口：同上（Skills 面未实现）",

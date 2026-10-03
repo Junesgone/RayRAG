@@ -71,6 +71,7 @@ pub struct AppState {
     pub workspace_commits: Arc<crate::api::workspaces::WorkspaceCommitStore>,
     pub attachments: Arc<crate::api::attachments::AttachmentStore>,
     pub metadata_config: Arc<crate::api::metadata_config::MetadataConfigStore>,
+    pub connectors: Arc<crate::api::connector::ConnectorStore>,
     pub data_sources: Option<Arc<crate::api::data_source_mgr::DataSourceStore>>,
     pub search_apps: Option<Arc<crate::api::searchapp_mgr::SearchAppStore>>,
     pub chat_apps: Option<Arc<crate::api::chatapp_mgr::ChatAppStore>>,
@@ -5911,6 +5912,26 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(crate::api::connector::list_connectors)
                 .post(crate::api::connector::create_connector),
         )
+        // One connector instance: its detail, its history, a real probe, and a rebuild that reports
+        // what the source offers instead of claiming documents were written.
+        .route(
+            "/api/v1/connectors/{connector_id}",
+            get(crate::api::connector::get_connector)
+                .patch(crate::api::connector::patch_connector)
+                .delete(crate::api::connector::delete_connector),
+        )
+        .route(
+            "/api/v1/connectors/{connector_id}/logs",
+            get(crate::api::connector::connector_logs),
+        )
+        .route(
+            "/api/v1/connectors/{connector_id}/test",
+            axum::routing::post(crate::api::connector::test_connector),
+        )
+        .route(
+            "/api/v1/connectors/{connector_id}/rebuild",
+            axum::routing::post(crate::api::connector::rebuild_connector),
+        )
         .route("/api/v1/mcp/tools", get(crate::api::connector::mcp_tools))
         .route(
             "/api/v1/mcp/servers",
@@ -6215,6 +6236,10 @@ pub async fn run(
     let metadata_config = Arc::new(crate::api::metadata_config::MetadataConfigStore::new(
         &format!("{}/../uploads/metadata_config.json", static_dir),
     )?);
+    let connectors = Arc::new(crate::api::connector::ConnectorStore::new(&format!(
+        "{}/../uploads/connectors.json",
+        static_dir
+    ))?);
     let data_sources = Some(Arc::new(crate::api::data_source_mgr::DataSourceStore::new(
         &format!("{}/../uploads/", static_dir),
     )?));
@@ -6356,6 +6381,7 @@ pub async fn run(
         workspace_commits,
         attachments,
         metadata_config,
+        connectors,
         document_metadata,
         whitelist: Arc::new(crate::registration_whitelist::WhitelistStore::new(
             &whitelist_path,
@@ -6674,6 +6700,12 @@ mod tests {
             metadata_config: Arc::new(
                 crate::api::metadata_config::MetadataConfigStore::new(
                     root.join("metadata-config.json").to_str().unwrap(),
+                )
+                .unwrap(),
+            ),
+            connectors: Arc::new(
+                crate::api::connector::ConnectorStore::new(
+                    root.join("connectors.json").to_str().unwrap(),
                 )
                 .unwrap(),
             ),
@@ -8060,6 +8092,12 @@ mod tests {
             metadata_config: Arc::new(
                 crate::api::metadata_config::MetadataConfigStore::new(
                     root.join("metadata-config.json").to_str().unwrap(),
+                )
+                .unwrap(),
+            ),
+            connectors: Arc::new(
+                crate::api::connector::ConnectorStore::new(
+                    root.join("connectors.json").to_str().unwrap(),
                 )
                 .unwrap(),
             ),
@@ -13444,6 +13482,220 @@ mod tests {
         );
     }
 
+    /// The connector family used to answer from a hard-coded list and echo `create` without storing
+    /// anything. This walks the real thing: create, read back, probe a real directory, read the log,
+    /// rebuild, patch, delete — and the refusals.
+    #[tokio::test]
+    async fn connectors_are_stored_probed_and_refused_honestly() {
+        let env = test_env();
+        // A directory with two files, so `test` and `rebuild` have something real to list.
+        let source = env.root.join("connector-source");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("one.txt"), b"one").unwrap();
+        std::fs::write(source.join("two.txt"), b"two").unwrap();
+
+        let call = |method: Method, uri: String, body: Option<String>| {
+            let router = build_router(env.state.clone());
+            let token = env.token.clone();
+            async move {
+                let mut request = Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"));
+                let payload = match body {
+                    Some(body) => {
+                        request = request.header(header::CONTENT_TYPE, "application/json");
+                        Body::from(body)
+                    }
+                    None => Body::empty(),
+                };
+                router
+                    .oneshot(request.body(payload).unwrap())
+                    .await
+                    .unwrap()
+            }
+        };
+
+        // The list starts empty: no invented connectors.
+        let empty = response_json(call(Method::GET, "/api/v1/connectors".into(), None).await).await;
+        assert_eq!(empty["code"], 0, "{empty}");
+        assert_eq!(empty["data"].as_array().unwrap().len(), 0, "{empty}");
+
+        // An unknown type is refused by name, with the known types listed.
+        let bad_type = response_json(
+            call(
+                Method::POST,
+                "/api/v1/connectors".into(),
+                Some(r#"{"name":"x","source_type":"not-a-real-source"}"#.into()),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(bad_type["code"], 101, "{bad_type}");
+        assert!(
+            bad_type["message"]
+                .as_str()
+                .unwrap()
+                .contains("Unknown connector type 'not-a-real-source'"),
+            "{bad_type}"
+        );
+        assert!(
+            bad_type["message"].as_str().unwrap().contains("local"),
+            "{bad_type}"
+        );
+
+        // A nameless connector is refused too.
+        let no_name = response_json(
+            call(
+                Method::POST,
+                "/api/v1/connectors".into(),
+                Some(r#"{"name":"   ","source_type":"local"}"#.into()),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(no_name["code"], 101, "{no_name}");
+        assert_eq!(no_name["message"], "Connector name is required.");
+
+        // A real one is stored and comes back from the list.
+        let created = response_json(
+            call(
+                Method::POST,
+                "/api/v1/connectors".into(),
+                Some(format!(
+                    r#"{{"name":"local files","source_type":"local","config":{{"path":"{}"}}}}"#,
+                    source.display()
+                )),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(created["code"], 0, "{created}");
+        let id = created["data"]["id"].as_str().unwrap().to_string();
+        assert!(!id.is_empty());
+        assert_eq!(created["data"]["owner_id"], "test-user", "{created}");
+        let listed =
+            response_json(call(Method::GET, "/api/v1/connectors".into(), None).await).await;
+        assert_eq!(listed["data"].as_array().unwrap().len(), 1, "{listed}");
+        assert_eq!(listed["total"], 1, "{listed}");
+
+        // Detail.
+        let detail =
+            response_json(call(Method::GET, format!("/api/v1/connectors/{id}"), None).await).await;
+        assert_eq!(detail["code"], 0, "{detail}");
+        assert_eq!(detail["data"]["name"], "local files", "{detail}");
+
+        // A probe that really lists the directory.
+        let tested = response_json(
+            call(
+                Method::POST,
+                format!("/api/v1/connectors/{id}/test"),
+                Some("{}".into()),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(tested["code"], 0, "{tested}");
+        assert_eq!(tested["data"]["ok"], true, "{tested}");
+        assert_eq!(tested["data"]["files"], 2, "{tested}");
+
+        // Rebuild reports what the source offers and says plainly that it wrote nothing.
+        let rebuilt = response_json(
+            call(
+                Method::POST,
+                format!("/api/v1/connectors/{id}/rebuild"),
+                Some("{}".into()),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(rebuilt["code"], 0, "{rebuilt}");
+        assert_eq!(rebuilt["data"]["scanned"], 2, "{rebuilt}");
+        assert_eq!(rebuilt["data"]["imported"], 0, "{rebuilt}");
+        assert!(
+            rebuilt["message"]
+                .as_str()
+                .unwrap()
+                .contains("no document was written"),
+            "{rebuilt}"
+        );
+
+        // The history records the create, the test and the rebuild, newest first.
+        let logs =
+            response_json(call(Method::GET, format!("/api/v1/connectors/{id}/logs"), None).await)
+                .await;
+        assert_eq!(logs["code"], 0, "{logs}");
+        let events: Vec<&str> = logs["data"]["logs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|line| line["event"].as_str().unwrap())
+            .collect();
+        assert_eq!(events, vec!["rebuild", "test", "created"], "{logs}");
+        assert_eq!(logs["data"]["total"], 3, "{logs}");
+
+        // A disabled connector is not rebuilt, and says why.
+        let patched = response_json(
+            call(
+                Method::PATCH,
+                format!("/api/v1/connectors/{id}"),
+                Some(r#"{"enabled":false}"#.into()),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(patched["data"]["enabled"], false, "{patched}");
+        let disabled = response_json(
+            call(
+                Method::POST,
+                format!("/api/v1/connectors/{id}/rebuild"),
+                Some("{}".into()),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(disabled["code"], 102, "{disabled}");
+        assert!(
+            disabled["message"].as_str().unwrap().contains("disabled"),
+            "{disabled}"
+        );
+
+        // Unknown ids answer the same way for detail, log, test and rebuild.
+        for (method, uri, body) in [
+            (Method::GET, "/api/v1/connectors/nope".to_string(), None),
+            (
+                Method::GET,
+                "/api/v1/connectors/nope/logs".to_string(),
+                None,
+            ),
+            (
+                Method::POST,
+                "/api/v1/connectors/nope/test".to_string(),
+                Some("{}".to_string()),
+            ),
+            (
+                Method::POST,
+                "/api/v1/connectors/nope/rebuild".to_string(),
+                Some("{}".to_string()),
+            ),
+        ] {
+            let response = call(method, uri.clone(), body).await;
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{uri}");
+            assert_eq!(
+                response_json(response).await["message"],
+                "Connector not found."
+            );
+        }
+
+        // Deleting removes it, and a second delete is a refusal rather than a silent success.
+        let deleted =
+            response_json(call(Method::DELETE, format!("/api/v1/connectors/{id}"), None).await)
+                .await;
+        assert_eq!(deleted["data"], true, "{deleted}");
+        let again = call(Method::DELETE, format!("/api/v1/connectors/{id}"), None).await;
+        assert_eq!(again.status(), StatusCode::NOT_FOUND);
+    }
+
     /// The embedding check: it insists on `embd_id`, it refuses a dataset the caller cannot read, and
     /// with nothing embedded it says so rather than reporting a similarity of zero as a result.
     #[tokio::test]
@@ -16380,6 +16632,16 @@ mod tests {
                 r#"{"id":"x","name":"x","source_type":"file","enabled":true,"config":{}}"#,
             ),
             (Method::POST, "/api/v1/plugins/ocr/toggle", "{}"),
+            // The connector family's write verbs are management writes too: probing a source and
+            // rebuilding it reach outside the deployment, so they are not a normal user's to trigger.
+            (Method::POST, "/api/v1/connectors/x/test", "{}"),
+            (Method::POST, "/api/v1/connectors/x/rebuild", "{}"),
+            (
+                Method::PATCH,
+                "/api/v1/connectors/x",
+                r#"{"enabled":false}"#,
+            ),
+            (Method::DELETE, "/api/v1/connectors/x", "{}"),
         ] {
             let response = router
                 .clone()

@@ -2,6 +2,51 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.18.0] - 2026-10-03
+
+### The connector family becomes real: instances, history, a probe and a rebuild
+
+The connector endpoints answered from a **hard-coded array of three invented connectors**
+(`local`/`file`, `web`, `database`) and `create` echoed its body without storing anything — a user could
+"add" a data source and find it gone on reload. Four documented endpoints were missing entirely. All of
+it is now backed by one persisted, owner-scoped store:
+
+| endpoint | behaviour |
+|---|---|
+| `POST /api/v1/connectors` | validates the name and the type against the connector registry, then stores the instance |
+| `GET /api/v1/connectors/{id}` | the instance, `404`/`102 Connector not found.` otherwise |
+| `PATCH` / `DELETE /api/v1/connectors/{id}` | update name/enabled/config, or remove it with its history |
+| `GET /api/v1/connectors/{id}/logs` | the instance's history, newest first |
+| `POST /api/v1/connectors/{id}/test` | **really builds the connector and lists the source** |
+| `POST /api/v1/connectors/{id}/rebuild` | reports what the source offers, and says it wrote nothing |
+
+The refusals are the point of several of these. `create` names the unknown type **and lists the known
+ones**, because a connector type comes from `ConnectorRegistry::kinds()` rather than a second list that
+could drift; a malformed body is answered as a business code (`400`/`101`) instead of axum's plain-text
+rejection; and **`rebuild` never claims to have imported anything** — it reports
+`{"scanned": N, "imported": 0}` and says in the message that importing is the parse pipeline's job.
+Saying "rebuilt 12 documents" while writing nothing is exactly the silent lie this project keeps
+removing.
+
+`test` probes for real: it builds the connector through the registry, loads credentials and lists the
+source under the deployment's command timeout, then records the outcome as the instance's `last_test`
+**and** as a history line. A source with no builder says so rather than reporting success. The history
+is bounded (2000 lines kept, 500 returned per request) so a connector someone retries in a loop cannot
+grow without end.
+
+Configuration is read under both the upstream and the friendly key: `url` is the source location and
+`path` is accepted as its alias, because `LocalConnector` reads its root directory from `url` and a user
+who typed a path should not be told "root directory URL is required".
+
+The data-source settings page gained a **Connectors** card that lists the instances with Test, Rebuild,
+Logs and Delete per row, plus a create form whose type list is rendered from the registry.
+
+**2221 tests pass, 0 failures**, including the owner scoping, the bounded history, the registry-derived
+type list, both configuration key spellings, and a router test that walks create → read → probe a real
+two-file directory → rebuild → history → patch → delete → refusals. The write verbs keep the
+management-write guard they always had: a non-admin still gets `403`. The parity ledger moved from 11 to
+**7** remaining gaps (195 upstream routes, 341 of ours, 141 exact).
+
 ## [0.17.0] - 2026-10-03
 
 ### The embedding check: do this dataset's stored vectors still agree with its model?
