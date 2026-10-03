@@ -180,6 +180,8 @@ input,textarea,select{width:100%;padding:10px 14px;border:1px solid var(--bd);bo
    viewport); the grid item is allowed to shrink and the card scrolls instead. */
 .ds-content{min-width:0}
 .ds-content>.card{overflow-x:auto}
+@media(max-width:600px){/* Phone widths: the configuration tabs are label/field tables whose 220px label column plus inputs is wider than a narrow card, which pushed the page sideways. Stacking the cells keeps every field reachable without a horizontal scrollbar. */.ds-content table.cfg-form,.ds-content table.cfg-form tbody,.ds-content table.cfg-form tr,.ds-content table.cfg-form td{display:block;width:auto!important;max-width:100%;box-sizing:border-box}.ds-content table.cfg-form td:first-child{padding-bottom:2px}.ds-content table.cfg-form input,.ds-content table.cfg-form select,.ds-content table.cfg-form textarea{max-width:100%!important}}
+
 /* Dataset tag tabs (upstream `tag-tabs.tsx` + `tag-word-cloud.tsx`): a
    Segmented Cloud/Table switch, a CSS word cloud sized by tag counts and a
    table with rename/delete actions. */

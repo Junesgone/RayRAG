@@ -2,6 +2,39 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.11.9] - 2026-10-03
+
+### Every page, at a desktop and a phone width, audited for what a user would notice
+
+A new audit (`scripts/ui-traversal/responsive-cdp.mjs`) walks the app's known routes plus deep links to
+real records — 34 pages — at 1280px and 480px, and records per page: HTTP status, **page errors**,
+horizontal overflow, elements wider than the viewport outside a scroll container, and whether the page
+uses card containers at all. It found three things a passing test suite had not:
+
+- **`/search` threw `TypeError: (list || []).forEach is not a function`.** It still assumed the
+  documents endpoint answers a bare array; since 0.11.x it answers the documented
+  `{docs, total_datasets}`, so the page broke on a shape change that its own tests could not see. It now
+  accepts both.
+- **`/kbs/{id}` threw `ReferenceError: dsTagLoad is not defined`.** The knowledge-base page renders the
+  tag-set tab and calls `dsTagLoad()`, but the tag script lived only in the dataset page's inline
+  JavaScript — a copy of the markup without its script. The script is now one shared block
+  (`DS_TAG_SCRIPT`) that both pages push.
+- **`/dataset/configuration/{id}` overflowed a 480px viewport by 148px.** The configuration tabs are
+  label/field tables with a 220px label column, which with their inputs is wider than a narrow card. A
+  `@media (max-width:600px)` rule now stacks those cells, so every field stays reachable without a
+  horizontal scrollbar.
+
+The search page also had a silently failing call: it asked for metadata keys without `dataset_ids`, so
+the endpoint answered `102 Lack of dataset_ids in query parameters` and the code ignored the business
+code, leaving the key list empty. It now scopes the request to the selected datasets and honours the code.
+
+Two mistakes of my own were caught on the way, both by tests that exist for exactly this: an edit that
+landed **inside** a Rust string literal (injecting `b.push_str(...)` as literal page text, which the
+rendered-page assertion rejected), and a stray `}` in the stylesheet (rejected by the stylesheet parser
+test).
+
+**2181 tests pass**, 0 failures.
+
 ## [0.11.8] - 2026-10-03
 
 ### `POST /api/v1/chat/completions` is the guide's endpoint again
