@@ -782,10 +782,13 @@ impl UserSettingSection {
     }
 }
 
+/// Sidebar order, as the user sees it: Model providers first, then Data sources, Chat channels,
+/// MCP, Team, Profile and API. (It previously led with Data sources, and Model providers — the
+/// page most people open first — was third.)
 const USER_SETTING_SECTIONS: [UserSettingSection; 7] = [
+    UserSettingSection::Model,
     UserSettingSection::DataSource,
     UserSettingSection::ChatChannel,
-    UserSettingSection::Model,
     UserSettingSection::Mcp,
     UserSettingSection::Team,
     UserSettingSection::Profile,
@@ -18489,10 +18492,13 @@ connection: close
         assert!(html.contains("data-testid='settings-entrypoint'"));
         assert!(html.contains("data-testid='user-setting-layout'"));
         let mut cursor = 0;
+        // The order the user asked for: Model providers leads, then data sources, chat
+        // channels, MCP, team, profile and API. The assertion follows the rendered order, so a
+        // future reshuffle has to be deliberate.
         for key in [
+            "/model",
             "/data-source",
             "/chat-channel",
-            "/model",
             "/mcp",
             "/team",
             "/profile",

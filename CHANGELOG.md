@@ -2,6 +2,14 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.9.5] - 2026-10-02
+
+**用户报告的两处设置界面问题：**
+
+- **user-setting 左侧栏顺序按用户要求排列**：**Model providers → Data sources → Chat channels → MCP → Team → Profile → API**（原来 Data sources 在最前、Model providers 排第三）。对应测试断言也改为跟随这个顺序。
+- **容器日志不再"固定写死某个模型"**：启动日志现在明确写出**值来自哪里**（`source=EMBED_MODEL` / `source=LLM_MODEL`），并且**没有了内置的默认提供商与默认模型**——原先 `LLM_API_BASE` 缺省会指向第三方 `api.minimaxi.com`、`LLM_MODEL` 缺省为 `MiniMax-M3`，意味着**全新安装可能在用户从未选择的情况下把请求发给第三方**。现在必须由用户指定端点与模型；未配置时打印中性的引导（"尚未配置：请在 .env 设置…或完成首次引导的模型步骤"），**不出现任何具体模型名**。API key 仍可留空（本地 llama.cpp / Ollama 这类服务通常不需要）。
+- 测试：全量 **2155 passed / 0 failed**。
+
 ## [0.9.4] - 2026-10-02
 
 **用户报告的四个界面缺陷，全部修复：**

@@ -5906,18 +5906,39 @@ pub async fn run(
         &format!("{}/../uploads/", static_dir),
     )?));
 
-    let llm = std::env::var("LLM_API_KEY")
-        .ok()
-        .or_else(|| std::env::var("EMBED_API_KEY").ok())
-        .map(|key| {
-            Arc::new(LlmClient::new(LlmConfig {
-                api_base: std::env::var("LLM_API_BASE")
-                    .unwrap_or_else(|_| "https://api.minimaxi.com/v1".into()),
-                api_key: key,
-                model: std::env::var("LLM_MODEL").unwrap_or_else(|_| "MiniMax-M3".into()),
+    // No baked-in provider and no baked-in model: RayRAG talks to a chat endpoint only when the
+    // operator asked for one. Defaulting to a third party (and to a specific model) meant a fresh
+    // install could send requests to a service the user never chose, and the startup log would name
+    // a model that was not their setting.
+    // The endpoint and the model name must come from the operator; the key stays optional because
+    // a model server on the local network (llama.cpp, Ollama, vLLM) often needs no key at all.
+    let llm = match (
+        std::env::var("LLM_API_BASE").ok(),
+        std::env::var("LLM_MODEL").ok(),
+    ) {
+        (Some(api_base), Some(model))
+            if !api_base.trim().is_empty() && !model.trim().is_empty() =>
+        {
+            let api_key = std::env::var("LLM_API_KEY").unwrap_or_default();
+            tracing::info!(
+                model = %model,
+                source = "LLM_MODEL",
+                "Chat model configured from your settings"
+            );
+            Some(Arc::new(LlmClient::new(LlmConfig {
+                api_base,
+                api_key,
+                model,
                 ..LlmConfig::default()
-            }))
-        });
+            })))
+        }
+        _ => {
+            tracing::info!(
+                "Chat model not configured yet: set LLM_API_BASE, LLM_API_KEY and LLM_MODEL in your .env, or finish the first-run guide in the web UI (Models step). Running without a chat model."
+            );
+            None
+        }
+    };
 
     let engine = if std::path::Path::new(&i).exists() {
         Arc::new(RwLock::new(SearchEngine::from_file(&i)?))
@@ -5950,15 +5971,19 @@ pub async fn run(
         (Some(api_base), Some(api_key), Some(model))
             if !api_base.is_empty() && !model.is_empty() =>
         {
-            tracing::info!(model = %model, "Embedding model configured");
+            tracing::info!(
+                model = %model,
+                source = "EMBED_MODEL",
+                "Embedding model configured from your settings"
+            );
             tracing::debug!(api_base = %api_base, "Embedding endpoint");
             Some(Arc::new(crate::embed::openai_compatible_embedder(
                 &api_base, &api_key, &model,
             )))
         }
         _ => {
-            tracing::warn!(
-                "Embedding disabled: set EMBED_API_BASE, EMBED_API_KEY, and EMBED_MODEL"
+            tracing::info!(
+                "Embedding model not configured yet: set EMBED_API_BASE, EMBED_API_KEY and EMBED_MODEL in your .env, or finish the first-run guide in the web UI (Models step). Running without an embedding model."
             );
             None
         }
