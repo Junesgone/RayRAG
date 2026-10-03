@@ -795,6 +795,105 @@ const USER_SETTING_SECTIONS: [UserSettingSection; 7] = [
     UserSettingSection::Api,
 ];
 
+/// Upstream's built-in chunk methods with the descriptions RAGFlow itself shows under
+/// "Built-in pipeline introduction" (`web/src/locales/en.ts`, `knowledgeConfiguration.*`).
+const BUILTIN_CHUNK_METHODS: [(&str, &str); 12] = [
+    (
+        "General (naive)",
+        "<p>Supported file formats are <b>MD, MDX, DOCX, XLSX, XLS, PPTX, PDF, TXT, JPEG, JPG, PNG, TIF, GIF, CSV, JSON, EML, HTML</b>.</p>\
+         <p>Chunks the file naively: a vision detection model splits the text into smaller segments, and adjacent\
+         segments are combined until the token count exceeds the configured chunk token number, at which point a\
+         chunk is created.</p>",
+    ),
+    (
+        "Book",
+        "<p>Supported file formats are <b>DOCX</b>, <b>PDF</b>, <b>TXT</b>.</p>\
+         <p>For each book in PDF, set the <i>page ranges</i> to remove unwanted information and reduce analysis time.</p>",
+    ),
+    (
+        "Email",
+        "<p>Supported file formats are <b>EML</b> and <b>MSG</b>.</p>\
+         <p>Parses email files, extracting header fields (From, To, CC, Subject, Date), the body content and attachments.</p>",
+    ),
+    (
+        "Laws",
+        "<p>Supported file formats are <b>DOCX</b>, <b>PDF</b>, <b>TXT</b>.</p>\
+         <p>Legal documents follow a rigorous writing format, so text features are used to find split points. The chunk\
+         granularity matches an 'ARTICLE', and all upper-level text is included in the chunk.</p>",
+    ),
+    (
+        "Manual",
+        "<p>Only <b>PDF</b> is supported.</p>\
+         <p>Assumes a hierarchical section structure and uses the lowest section titles as the chunking unit, so figures\
+         and tables in the same section are not separated. This can result in larger chunks.</p>",
+    ),
+    (
+        "One",
+        "<p>Supported file formats are <b>DOCX, XLSX, XLS, PDF, TXT</b>.</p>\
+         <p>Treats each document in its entirety as a single chunk. Use it when the LLM should summarise the whole\
+         document and can handle that much context.</p>",
+    ),
+    (
+        "Paper",
+        "<p>Only <b>PDF</b> is supported.</p>\
+         <p>Papers are split by section (abstract, 1.1, 1.2, ...), which lets the LLM summarise a paper more effectively,\
+         at the cost of a larger context. Consider reducing 'topN' during a conversation.</p>",
+    ),
+    (
+        "Picture",
+        "<p>Image files are supported.</p>\
+         <p>An OCR model extracts text from the image; if that text is deemed insufficient, a specified visual LLM\
+         describes the image instead.</p>",
+    ),
+    (
+        "Presentation",
+        "<p>Supported file formats are <b>PDF</b>, <b>PPTX</b>.</p>\
+         <p>Every slide page is treated as a chunk with its thumbnail stored. This method is applied automatically to\
+         uploaded PPT files.</p>",
+    ),
+    (
+        "Q&A",
+        "<p>Supports <b>XLSX</b> and <b>CSV/TXT</b>.</p>\
+         <p>XLSX files should hold two columns without headers — question first, answer second; multiple sheets are fine.\
+         CSV/TXT files must be UTF-8 encoded with TAB as the delimiter between question and answer.</p>",
+    ),
+    (
+        "Table",
+        "<p>Supported file formats are <b>XLSX</b> and <b>CSV/TXT</b>.</p>\
+         <p>For CSV/TXT the column delimiter must be <b>TAB</b>, the first row must be column headers, and headers should\
+         be meaningful terms — juxtaposing synonyms with a slash and enumerating values in brackets helps, for example\
+         'Gender/Sex (male, female)'.</p>",
+    ),
+    (
+        "Tag",
+        "<p>A dataset using the 'Tag' method acts as a tag set: other datasets use it to tag their chunks, and queries to\
+         those datasets are tagged with the same set. A tag set is <b>NOT</b> part of the RAG process itself.</p>\
+         <p>Each chunk is an independent description–tag pair. Supported formats are <b>XLSX</b> and <b>CSV/TXT</b>.</p>",
+    ),
+];
+
+/// Upstream's fixed "Built-in pipeline introduction" column on the dataset Configuration page.
+fn builtin_pipeline_intro(b: &mut String, zh: bool) {
+    b.push_str(
+        "<section class='card builtin-pipeline-intro' data-testid='builtin-pipeline-intro'><h2>",
+    );
+    b.push_str(t("Built-in pipeline introduction", zh));
+    b.push_str("</h2><p class='st-desc'>");
+    b.push_str(t(
+        "What each built-in chunk method does and which file formats it accepts.",
+        zh,
+    ));
+    b.push_str("</p>");
+    for (name, description) in BUILTIN_CHUNK_METHODS {
+        b.push_str("<details class='bp-item'><summary>");
+        b.push_str(name);
+        b.push_str("</summary><div class='bp-desc'>");
+        b.push_str(description);
+        b.push_str("</div></details>");
+    }
+    b.push_str("</section>");
+}
+
 /// RAGFlow's `/user-setting` subtree keeps the global header and renders one
 /// responsive 64/303 px settings sidebar around every child route. User data
 /// is filled through the authenticated self API so the HTML never interpolates
@@ -2414,6 +2513,7 @@ pub async fn kb_detail_page(
     );
     b.push_str(t("Save", zh));
     b.push_str("</button> <span id='cfgMsg' style='font-size:12px;color:var(--tm)'></span></div></div></div>");
+    builtin_pipeline_intro(&mut b, zh);
     // Tab 2：测试（检索测试面板）
     b.push_str("<div id='tab2' style='display:none'>");
     b.push_str("<div class='card'><h2>");
@@ -3098,6 +3198,7 @@ pub async fn dataset_page(
     );
     b.push_str(t("Save", zh));
     b.push_str("</button> <span id='cfgMsg' style='font-size:12px;color:var(--tm)'></span></div></div></div>");
+    builtin_pipeline_intro(&mut b, zh);
     // Tab 4: Knowledge Graph
     b.push_str("<div id='tab4' style='display:none'><div class='card'><h2>");
     b.push_str(t("Knowledge Graph", zh));

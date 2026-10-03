@@ -2,6 +2,12 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.9.6] - 2026-10-02
+
+- **数据集 Configuration 页新增固定的「Built-in pipeline introduction / 内置流水线说明」栏目**（用户要求）。栏目逐个列出上游的 12 种内置分块方法（General/naive、Book、Email、Laws、Manual、One、Paper、Picture、Presentation、Q&A、Table、Tag），**说明文字取自 RAGFlow 自身的 `knowledgeConfiguration` 文案**（`web/src/locales/en.ts`，由 `category-panel.tsx` 的 `DescriptionKeyMap` 映射），包含各自支持的**文件格式**与分块行为要点，以可折叠条目呈现。
+- 该栏目同时出现在两个渲染该配置表的页面（数据集配置页与数据集设置页），不会因页面不同而内容不一致。
+- 测试：全量 **2155 passed / 0 failed**。
+
 ## [0.9.5] - 2026-10-02
 
 **用户报告的两处设置界面问题：**

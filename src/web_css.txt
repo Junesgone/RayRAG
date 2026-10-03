@@ -1008,3 +1008,12 @@ the paired colour picker + hex input. */
 select option,select optgroup{color:#1a1a2e;background:#ffffff}
 select{color:var(--t)}
 select:disabled option{color:#8a8f98}
+
+/* Dataset configuration: the fixed "Built-in pipeline introduction" column. */
+.builtin-pipeline-intro{margin-top:16px}
+.builtin-pipeline-intro .st-desc{margin:0 0 10px;font-size:12px;color:var(--t2)}
+.bp-item{border-bottom:1px solid var(--bd);padding:6px 0}
+.bp-item summary{cursor:pointer;font-size:13px;font-weight:500}
+.bp-desc{font-size:12px;color:var(--t2);padding:6px 0 2px}
+.bp-desc p{margin:0 0 6px}
+.bp-desc ul,.bp-desc ol{margin:0 0 6px;padding-left:18px}
