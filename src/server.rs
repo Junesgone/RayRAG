@@ -4940,6 +4940,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .delete(crate::api::features::bulk_delete_conversations),
         )
         .route(
+            "/api/v1/conversations/{conversation_id}/completions",
+            axum::routing::post(crate::api::features::complete_conversation),
+        )
+        .route(
             "/api/v1/conversations/{conversation_id}",
             axum::routing::get(crate::api::features::get_conversation)
                 .patch(crate::api::features::update_conversation)
@@ -5099,24 +5103,26 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .delete(crate::api::features::delete_chat),
         )
         .route(
+            // The guide's path parameter here is the chat assistant; the session-scoped
+            // completion this used to be lives at the conversations endpoint below.
             "/api/v1/chats/{id}/completions",
-            post(crate::api::features::chat_complete),
+            post(crate::api::features::complete_chat_assistant),
         )
         .route(
             "/api/v1/chats/{chat_id}/sessions/{session_id}/messages/{message_id}/feedback",
             put(crate::chunk_feedback::update_message_feedback),
         )
         .route(
-            "/api/v1/chats/{session_id}/messages/{message_id}/feedback",
+            "/api/v1/conversations/{session_id}/messages/{message_id}/feedback",
             put(crate::chunk_feedback::update_session_message_feedback),
         )
         .route(
-            "/api/v1/chats/{session_id}/messages/{message_id}",
+            "/api/v1/conversations/{session_id}/messages/{message_id}",
             post(crate::api::features::regenerate_chat_message)
                 .delete(crate::api::features::delete_chat_message),
         )
         .route(
-            "/api/v1/chats/{session_id}/messages/{message_id}/regenerate",
+            "/api/v1/conversations/{session_id}/messages/{message_id}/regenerate",
             post(crate::api::features::regenerate_chat_message),
         )
         // Upstream `chat_api` mounts the session collection and one session per chat app.
@@ -12876,7 +12882,7 @@ mod tests {
             .unwrap();
         let router = build_router(env.state.clone());
         let uri = format!(
-            "/api/v1/chats/{}/messages/{}/feedback",
+            "/api/v1/conversations/{}/messages/{}/feedback",
             conversation.id, message_id
         );
         let compatible_uri = format!(
@@ -12969,7 +12975,7 @@ mod tests {
                 Request::builder()
                     .method(Method::PUT)
                     .uri(format!(
-                        "/api/v1/chats/{}/messages/{}/feedback",
+                        "/api/v1/conversations/{}/messages/{}/feedback",
                         conversation.id, message_id
                     ))
                     .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
@@ -13004,7 +13010,10 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method(Method::POST)
-                    .uri(format!("/api/v1/chats/{}/completions", conversation.id))
+                    .uri(format!(
+                        "/api/v1/conversations/{}/completions",
+                        conversation.id
+                    ))
                     .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
                     .header(header::CONTENT_TYPE, "application/json")
                     .body(Body::from(
@@ -13048,7 +13057,10 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method(Method::POST)
-                    .uri(format!("/api/v1/chats/{}/completions", conversation.id))
+                    .uri(format!(
+                        "/api/v1/conversations/{}/completions",
+                        conversation.id
+                    ))
                     .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
                     .header(header::CONTENT_TYPE, "application/json")
                     .body(Body::from(r#"{"question":"hello","temperature":1.01}"#))
@@ -13152,7 +13164,10 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method(Method::POST)
-                    .uri(format!("/api/v1/chats/{}/completions", conversation.id))
+                    .uri(format!(
+                        "/api/v1/conversations/{}/completions",
+                        conversation.id
+                    ))
                     .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
                     .header(header::CONTENT_TYPE, "application/json")
                     .body(Body::from(r#"{"question":"How is oxygen?"}"#))
@@ -13184,7 +13199,7 @@ mod tests {
                 Request::builder()
                     .method(Method::POST)
                     .uri(format!(
-                        "/api/v1/chats/{}/messages/{}/regenerate",
+                        "/api/v1/conversations/{}/messages/{}/regenerate",
                         conversation.id, message_id
                     ))
                     .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
@@ -13216,7 +13231,7 @@ mod tests {
                 Request::builder()
                     .method(Method::DELETE)
                     .uri(format!(
-                        "/api/v1/chats/{}/messages/{}",
+                        "/api/v1/conversations/{}/messages/{}",
                         conversation.id, message_id
                     ))
                     .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
@@ -13231,6 +13246,106 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    /// `POST /api/v1/chats/{chat_id}/completions` takes the **assistant** the guide says it does:
+    /// an unknown assistant is refused, an unknown `session_id` is refused, and a request with no
+    /// session creates one bound to that assistant. (The answer itself needs a chat model, which the
+    /// fixture does not have, so only the resolution is asserted here.)
+    #[tokio::test]
+    async fn assistant_completions_resolve_the_assistant_and_its_session() {
+        let env = test_env();
+        let root = std::env::temp_dir().join(format!("rayrag-complete-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut state = (*env.state).clone();
+        let apps =
+            Arc::new(crate::api::chatapp_mgr::ChatAppStore::new(root.to_str().unwrap()).unwrap());
+        apps.insert(crate::api::chatapp_mgr::ChatApp {
+            id: "assistant-1".into(),
+            name: "Assistant".into(),
+            description: String::new(),
+            icon: String::new(),
+            tenant_id: "test-user".into(),
+            kb_ids: Vec::new(),
+            llm_id: None,
+            llm_setting: None,
+            prompt_config: None,
+            rerank_id: None,
+            top_k: None,
+            created_at: 1,
+        })
+        .unwrap();
+        state.chat_apps = Some(apps.clone());
+        let router = build_router(Arc::new(state));
+        let call = |uri: String, body: &str| {
+            let router = router.clone();
+            let token = env.token.clone();
+            let body = body.to_string();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(Method::POST)
+                            .uri(uri)
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        // An unknown assistant is business code 102, not a session lookup.
+        let unknown = call(
+            "/api/v1/chats/no-such-assistant/completions".to_string(),
+            r#"{"question":"hi","stream":false}"#,
+        )
+        .await;
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response_json(unknown).await["code"], 102);
+
+        // An unknown session under a real assistant is refused too.
+        let bad_session = call(
+            "/api/v1/chats/assistant-1/completions".to_string(),
+            r#"{"question":"hi","session_id":"nope","stream":false}"#,
+        )
+        .await;
+        assert_eq!(bad_session.status(), StatusCode::NOT_FOUND);
+        let body = response_json(bad_session).await;
+        assert_eq!(body["code"], 102, "{body}");
+        assert_eq!(body["message"], "Session not found!");
+
+        // With no session, one is created and bound to the assistant before the answer is attempted.
+        let _ = call(
+            "/api/v1/chats/assistant-1/completions".to_string(),
+            r#"{"question":"first question","stream":false}"#,
+        )
+        .await;
+        let sessions = apps.list().len();
+        assert_eq!(sessions, 1, "the assistant itself is untouched");
+        let bound = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/chats/assistant-1/sessions")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let listed = response_json(bound).await;
+        let rows = listed["data"].as_array().cloned().unwrap_or_default();
+        assert_eq!(
+            rows.len(),
+            1,
+            "a session was created for the assistant: {listed}"
+        );
+        assert!(
+            rows[0]["kb_ids"].is_array(),
+            "the session carries its datasets: {listed}"
         );
     }
 
@@ -13487,7 +13602,7 @@ mod tests {
             Request::builder()
                 .method(Method::POST)
                 .uri(format!(
-                    "/api/v1/chats/{}/messages/{}/regenerate",
+                    "/api/v1/conversations/{}/messages/{}/regenerate",
                     conversation.id, message_id
                 ))
                 .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
@@ -13497,7 +13612,7 @@ mod tests {
             Request::builder()
                 .method(Method::DELETE)
                 .uri(format!(
-                    "/api/v1/chats/{}/messages/{}",
+                    "/api/v1/conversations/{}/messages/{}",
                     conversation.id, message_id
                 ))
                 .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
@@ -14447,7 +14562,7 @@ mod tests {
                 Request::builder()
                     .method(Method::PUT)
                     .uri(format!(
-                        "/api/v1/chats/{}/messages/{}/feedback",
+                        "/api/v1/conversations/{}/messages/{}/feedback",
                         conversation.id, message_id
                     ))
                     .header(header::AUTHORIZATION, format!("Bearer {}", env.token))

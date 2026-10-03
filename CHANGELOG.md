@@ -2,6 +2,35 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.11.7] - 2026-10-03
+
+### The last two id conventions on the chat paths, separated
+
+0.11.5 and 0.11.6 aligned the chat-assistant collection and its single-item verbs. Two paths still carried
+RayRAG's session id where the guide documents an assistant id:
+
+- **`POST /api/v1/chats/{chat_id}/completions`** now takes the **assistant**. It resolves the assistant
+  (business code `102` when unknown), then follows the guide's rule: with `session_id` it continues that
+  session (`102 Session not found!` when it does not exist), and with **no** `session_id` it **creates one
+  bound to that assistant**, seeded from the assistant's own `dataset_ids` and `llm_id`.
+- The session-scoped verbs moved to the endpoint that names them: `POST /api/v1/conversations/{id}/completions`
+  and `DELETE`/`POST /api/v1/conversations/{id}/messages/{msg_id}` (+ `/regenerate`, `/feedback`).
+
+The request body also accepts the guide's names: `session_id` (this project's `conversation_id`) and
+`chat_id` (this project's `app_id`), so a client written against the guide does not have to translate.
+
+The Chat page was moved onto the new endpoints and re-checked in the browser (0 page errors).
+
+### Recorded, not quietly left
+
+`POST /api/v1/chat/completions` — the endpoint the guide points newcomers at, with its three modes and its
+`{code, message, data:{answer, reference}}` stream — is currently bound to the OpenAI-shaped handler in this
+project. That is a **shape** difference, not a naming one, and it needs its own change rather than a rename,
+so this release records it instead of half-touching it.
+
+**2176 tests pass**, 0 failures, including a regression that proves an unknown assistant and an unknown
+session are both refused with `102`, and that a request without a session creates one bound to the assistant.
+
 ## [0.11.6] - 2026-10-03
 
 ### The single-item chat verbs, one level below the listing

@@ -651,3 +651,15 @@ RayRAG 此前让**会话记录**占用同一条路径（GET/POST/DELETE 都是�
 
 **仍未对齐**：`/api/v1/chats/{id}/completions` 的路径参数在 RayRAG 是会话 id、说明书是助手 id；
 `/api/v1/chats/{id}/messages/...` 与 `/api/v1/chats/{id}/sessions/...` 同样存在两种 id 口径，需一并定夺。
+
+### 0.11.7 补充：完成路径与会话动词
+
+| 端点 | 语义 | 说明 |
+|---|---|---|
+| `POST /api/v1/chats/{chat_id}/completions` | 路径参数＝**助手** | 助手不存在 → **102**；`session_id` 不存在 → **102 `Session not found!`**；**无 session_id → 自动建会话**（用助手自己的 `dataset_ids`/`llm_id`，并把会话绑定到该助手） |
+| `POST /api/v1/conversations/{id}/completions` | 会话内回答 | 原 `/api/v1/chats/{session_id}/completions` 的行为 |
+| `DELETE/POST /api/v1/conversations/{id}/messages/{msg_id}`（`/regenerate`、`/feedback`） | 会话消息动词 | 原挂在 `/api/v1/chats/{session_id}/messages/...` |
+| 请求体别名 | `session_id`←`conversation_id`、`chat_id`←`app_id` | 说明书客户端可直接使用说明书的字段名 |
+
+**仍未对齐（登记，需单独一轮）**：`POST /api/v1/chat/completions` 在 RayRAG 上绑定的是 **OpenAI 形状**的处理器，
+而说明书要求 `{code,message,data:{answer,reference}}` 形状与三种模式；这是**形状差异**而非改名问题。

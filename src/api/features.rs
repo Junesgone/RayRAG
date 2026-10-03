@@ -134,6 +134,9 @@ impl Drop for AgentRunLease {
 #[derive(Deserialize)]
 pub struct ChatRequest {
     pub conversation_id: Option<String>,
+    /// The guide's name for `conversation_id`.
+    #[serde(default)]
+    pub session_id: Option<String>,
     pub question: String,
     pub kb_ids: Option<Vec<String>>,
     #[serde(default)]
@@ -145,6 +148,9 @@ pub struct ChatRequest {
     /// Bind the new conversation to a chat app (RAGFlow 0.26.4 /chats model).
     #[serde(default)]
     pub app_id: Option<String>,
+    /// The guide's name for `app_id`: the chat assistant this request belongs to.
+    #[serde(default)]
+    pub chat_id: Option<String>,
     #[serde(flatten)]
     pub generation: crate::generation_params::GenerationParamsPatch,
     #[serde(default)]
@@ -1522,11 +1528,115 @@ fn extract_json_object(text: &str) -> Option<serde_json::Value> {
 }
 
 /// POST /api/v1/chats/{id}/completions — RAG chat completion
-pub async fn chat_complete(
+/// `POST /api/v1/conversations/{id}/completions` — answer inside one session.
+///
+/// This is what `POST /api/v1/chats/{id}/completions` used to do. The guide's path parameter there
+/// is a chat *assistant*, so the two meanings are separated rather than guessed.
+pub async fn complete_conversation(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
     Path(session_id): Path<String>,
     Json(body): Json<ChatRequest>,
+) -> axum::response::Response {
+    complete_session(&state, &auth, session_id, body).await
+}
+
+/// `POST /api/v1/chats/{chat_id}/completions` — the guide's deprecated alias for
+/// `POST /api/v1/chat/completions`.
+///
+/// The path parameter is the **chat assistant**. With no `session_id` the guide says a new session is
+/// created from that assistant's configuration; with one, that session is continued.
+pub async fn complete_chat_assistant(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(chat_id): Path<String>,
+    Json(body): Json<ChatRequest>,
+) -> axum::response::Response {
+    let Some(app) = chat_assistant_for(&state, &auth, &chat_id) else {
+        return crate::server::api_error_code(
+            axum::http::StatusCode::NOT_FOUND,
+            crate::server::code::INVALID_OR_MISSING_DATA,
+            "no authorization",
+        );
+    };
+    // The guide accepts the session as `session_id` or as this project's `conversation_id`.
+    let requested = body
+        .session_id
+        .clone()
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            body.conversation_id
+                .clone()
+                .filter(|value| !value.is_empty())
+        });
+    let session_id = match requested {
+        Some(session_id) => {
+            if state
+                .conversations
+                .get_for(&session_id, &auth.user_id)
+                .is_none()
+            {
+                return crate::server::api_error_code(
+                    axum::http::StatusCode::NOT_FOUND,
+                    crate::server::code::INVALID_OR_MISSING_DATA,
+                    "Session not found!",
+                );
+            }
+            session_id
+        }
+        None => {
+            // "With chat_id but no session_id: use that chat's configuration and automatically
+            // create a new session."
+            let name = if body.question.trim().is_empty() {
+                app.name.clone()
+            } else {
+                body.question.chars().take(64).collect()
+            };
+            let kb_ids = if app.kb_ids.is_empty() {
+                body.kb_ids.clone().unwrap_or_default()
+            } else {
+                app.kb_ids.clone()
+            };
+            let tenant_id = if app.tenant_id.is_empty() {
+                auth.user_id.clone()
+            } else {
+                app.tenant_id.clone()
+            };
+            let created = state.conversations.create_for_tenant_settings(
+                &auth.user_id,
+                &tenant_id,
+                &name,
+                kb_ids,
+                body.chat_model.clone().or_else(|| app.llm_id.clone()),
+                body.embedding_model.clone(),
+            );
+            match created.and_then(|session| {
+                state
+                    .conversations
+                    .set_app_id(&session.id, &app.id)
+                    .map(|_| session.id)
+            }) {
+                Ok(session_id) => session_id,
+                Err(error) => {
+                    let message = format!("Could not start a session for this assistant: {error}");
+                    return crate::server::api_error_code(
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        crate::server::code::OPERATION_ERROR,
+                        &message,
+                    );
+                }
+            }
+        }
+    };
+    complete_session(&state, &auth, session_id, body).await
+}
+
+/// The shared body of both completion entry points: answer inside the resolved session.
+async fn complete_session(
+    state: &Arc<AppState>,
+    auth: &AuthContext,
+    session_id: String,
+    body: ChatRequest,
 ) -> axum::response::Response {
     let Some(history) = state.conversations.get_for(&session_id, &auth.user_id) else {
         return (
