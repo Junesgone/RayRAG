@@ -2,6 +2,39 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.11.5] - 2026-10-03
+
+### `/api/v1/chats` now means what the guide means: chat assistants
+
+The guide defines `/api/v1/chats` as the **chat assistant** collection, with sessions under
+`/api/v1/chats/{chat_id}/sessions`. RayRAG had its **session** records on that path for every verb, so the
+two collections shared one URL. The consequences were not cosmetic:
+
+- a guide client that created an assistant with `POST /api/v1/chats` never saw it in `GET /api/v1/chats`;
+- the ids that listing returned 404'd at their own `/sessions` endpoint (fixed for the symptom in 0.11.3,
+  whose note said the collection semantics were still not aligned — this is that).
+
+All three verbs on the path now speak about assistants, and sessions moved to the endpoint that names them:
+
+| endpoint | meaning |
+|---|---|
+| `GET /api/v1/chats` | assistants, `data: {chats, total}`, with `dataset_ids`, `kb_names`, `llm_id`, `llm_setting`, `prompt_config`, `rerank_id`, `top_k`, plus the documented `id` / `name` / `keywords` / `page` / `page_size` / `desc` filters |
+| `POST /api/v1/chats` | create an assistant; empty name answers business code `101`, a duplicate answers `102 duplicated chat name` |
+| `DELETE /api/v1/chats` | delete assistants by `ids`, `delete_all`, or the legacy `chat_id` |
+| `POST` / `DELETE /api/v1/conversations` | create and bulk-delete **sessions** (what the old chats path did) |
+
+A partial delete is reported — `102` with the per-id `errors` — rather than answering success over ids that
+were not removed. The Chat page creates its sessions through the new endpoint, so the UI keeps working.
+
+Still not aligned, and now written down where it can be found: the path parameter of
+`/api/v1/chats/{id}/completions` is a session id in RayRAG and an assistant id in the guide, and RayRAG's own
+assistant-management path `/api/v1/chatapps*` remains alongside the documented one.
+
+**2175 tests pass**, 0 failures, including a regression that walks the documented lifecycle: create an
+assistant with `dataset_ids`, see `kb_names` and `create_time` in the reply, be refused a duplicate with
+`102` and an empty name with `101`, find it in `{chats, total}`, resolve its id at `/sessions`, filter it by
+`keywords`, delete it, and see the listing empty afterwards.
+
 ## [0.11.4] - 2026-10-03
 
 ### The two remaining documented shapes, migrated in one piece

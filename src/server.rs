@@ -4933,6 +4933,13 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(dataset_scoped_retrieval),
         )
         .route(
+            "/api/v1/conversations",
+            axum::routing::post(crate::api::features::create_conversation)
+                // The list's "delete selected", "delete all" (ids/delete_all/chat_id bodies) and
+                // legacy single delete, all of sessions.
+                .delete(crate::api::features::bulk_delete_conversations),
+        )
+        .route(
             "/api/v1/conversations/{conversation_id}",
             axum::routing::delete(delete_conversation).patch(rename_conversation),
         )
@@ -5076,10 +5083,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/chats",
             get(crate::api::features::list_chats)
-                .post(crate::api::features::create_chat)
-                // Upstream `chat_api.bulk_delete_chats`: the list's "delete selected",
-                // "delete all" (ids/delete_all/chat_id bodies) and legacy single delete.
-                .delete(crate::api::features::bulk_delete_chats),
+                .post(crate::api::features::create_chat_assistant)
+                // The guide's `DELETE /api/v1/chats` deletes chat assistants.
+                .delete(crate::api::features::bulk_delete_chat_assistants),
         )
         .route(
             "/api/v1/chats/{id}",
@@ -9592,7 +9598,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/api/v1/chats")
+                    .uri("/api/v1/conversations")
                     .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
                     .header(header::CONTENT_TYPE, "application/json")
                     .body(Body::from(
@@ -9630,7 +9636,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/api/v1/chats")
+                    .uri("/api/v1/conversations")
                     .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
                     .header(header::CONTENT_TYPE, "application/json")
                     .body(Body::from(
@@ -12810,7 +12816,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method(Method::POST)
-                    .uri("/api/v1/chats")
+                    .uri("/api/v1/conversations")
                     .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
                     .header(header::CONTENT_TYPE, "application/json")
                     .body(Body::from(body.to_string()))
@@ -13225,62 +13231,134 @@ mod tests {
         );
     }
 
-    /// Every id `GET /api/v1/chats` lists must work at the sessions endpoint. It did not: the
-    /// list answers with conversation records while the sessions handler looked only in the chat
-    /// app store, so a client following the listing got "Chat not found" for each entry.
+    /// `GET /api/v1/chats` lists **chat assistants**, as the guide says, in `{chats, total}` with
+    /// `dataset_ids` and `kb_names`; `POST` creates one, a duplicate name is refused with the
+    /// documented code, and `DELETE` removes it. The same path used to create and list *sessions*,
+    /// so a guide client's assistant was invisible in the listing and its id 404'd at `/sessions`.
     #[tokio::test]
-    async fn a_chat_id_from_the_listing_resolves_at_its_sessions_endpoint() {
-        let env = non_admin_env();
-        // The fixture's user is `member-user`; `create` would make an ownerless record that the
-        // listing filters out.
-        let conversation = env
-            .state
-            .conversations
-            .create_for("member-user", "Listed chat")
-            .expect("conversation");
-        let router = build_router(env.state.clone());
-        let listed = response_json(
-            router
-                .clone()
-                .oneshot(
-                    Request::builder()
-                        .uri("/api/v1/chats")
-                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
-                        .body(Body::empty())
+    async fn the_chat_collection_is_the_assistants_the_guide_documents() {
+        let env = test_env();
+        let kb = env.state.kbs.create_for("test-user", "Docs", "d").unwrap();
+        // `test_env` builds the router without the chat-assistant store, and this test is about
+        // that store, so the state is rebuilt with one (AppState is a clone of Arc fields).
+        let root = std::env::temp_dir().join(format!("rayrag-chats-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut state = (*env.state).clone();
+        state.chat_apps = Some(Arc::new(
+            crate::api::chatapp_mgr::ChatAppStore::new(root.to_str().unwrap()).unwrap(),
+        ));
+        let router = build_router(Arc::new(state));
+        let call = |method: Method, uri: String, body: &str| {
+            let router = router.clone();
+            let token = env.token.clone();
+            let body = body.to_string();
+            async move {
+                let mut builder = Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"));
+                if !body.is_empty() {
+                    builder = builder.header(header::CONTENT_TYPE, "application/json");
+                }
+                response_json(
+                    router
+                        .oneshot(builder.body(Body::from(body)).unwrap())
+                        .await
                         .unwrap(),
                 )
                 .await
-                .unwrap(),
+            }
+        };
+
+        let created = call(
+            Method::POST,
+            "/api/v1/chats".to_string(),
+            &format!(
+                r#"{{"name":"Guide Assistant","description":"A helpful Assistant","dataset_ids":["{}"]}}"#,
+                kb.id
+            ),
         )
         .await;
-        let rows = listed["data"].as_array().cloned().unwrap_or_default();
+        assert_eq!(created["code"], 0, "{created}");
+        let chat_id = created["data"]["id"].as_str().unwrap().to_string();
+        assert_eq!(
+            created["data"]["dataset_ids"][0],
+            kb.id.as_str(),
+            "{created}"
+        );
+        assert_eq!(
+            created["data"]["kb_names"][0], "Docs",
+            "the guide shows dataset names beside the ids: {created}"
+        );
         assert!(
-            rows.iter().any(|row| row["id"] == conversation.id),
-            "the created conversation is listed: {listed}"
+            created["data"]["create_time"].is_u64(),
+            "the documented timestamp is present: {created}"
         );
 
+        let duplicate = call(
+            Method::POST,
+            "/api/v1/chats".to_string(),
+            r#"{"name":"guide assistant"}"#,
+        )
+        .await;
+        assert_eq!(duplicate["code"], 102, "{duplicate}");
+        assert_eq!(duplicate["message"], "duplicated chat name");
+
+        let unnamed = call(Method::POST, "/api/v1/chats".to_string(), r#"{"name":""}"#).await;
+        assert_eq!(
+            unnamed["code"], 101,
+            "the guide answers an empty name with 101"
+        );
+
+        let listed = call(Method::GET, "/api/v1/chats".to_string(), "").await;
+        assert_eq!(listed["data"]["total"], 1, "{listed}");
+        assert_eq!(
+            listed["data"]["chats"][0]["id"],
+            chat_id.as_str(),
+            "{listed}"
+        );
+        assert_eq!(
+            listed["data"]["chats"][0]["dataset_ids"][0],
+            kb.id.as_str(),
+            "the listing carries the assistant's datasets: {listed}"
+        );
+
+        // An id the listing just returned must resolve at its own sessions endpoint.
         let sessions = router
+            .clone()
             .oneshot(
                 Request::builder()
-                    .uri(format!("/api/v1/chats/{}/sessions", conversation.id))
+                    .uri(format!("/api/v1/chats/{chat_id}/sessions"))
                     .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
                     .body(Body::empty())
                     .unwrap(),
             )
             .await
             .unwrap();
+        assert_eq!(sessions.status(), StatusCode::OK, "the listed id resolves");
+
+        let filtered = call(Method::GET, "/api/v1/chats?keywords=guide".to_string(), "").await;
         assert_eq!(
-            sessions.status(),
-            StatusCode::OK,
-            "an id the listing just returned must not 404 at its own sessions endpoint"
+            filtered["data"]["total"], 1,
+            "keywords match the name: {filtered}"
         );
-        let body = response_json(sessions).await;
-        // The guide documents this endpoint's data as the list itself.
-        let items = body["data"].as_array().cloned().unwrap_or_default();
-        assert!(
-            items.iter().any(|row| row["id"] == conversation.id),
-            "the conversation is its own session: {body}"
-        );
+        let missed = call(
+            Method::GET,
+            "/api/v1/chats?keywords=nothing".to_string(),
+            "",
+        )
+        .await;
+        assert_eq!(missed["data"]["total"], 0, "{missed}");
+
+        let deleted = call(
+            Method::DELETE,
+            "/api/v1/chats".to_string(),
+            &format!(r#"{{"ids":["{chat_id}"]}}"#),
+        )
+        .await;
+        assert_eq!(deleted["code"], 0, "{deleted}");
+        let after = call(Method::GET, "/api/v1/chats".to_string(), "").await;
+        assert_eq!(after["data"]["total"], 0, "the assistant is gone: {after}");
     }
 
     #[tokio::test]
@@ -17770,13 +17848,13 @@ mod tests {
         assert_eq!(deleted["data"]["success_count"], 1);
         assert_eq!(deleted["data"]["errors"].as_array().unwrap().len(), 1);
 
-        // `DELETE /chats` with no selection and no flag answers the empty object.
+        // `DELETE /conversations` with no selection and no flag answers the empty object.
         let empty = router
             .clone()
             .oneshot(
                 Request::builder()
                     .method(Method::DELETE)
-                    .uri("/api/v1/chats")
+                    .uri("/api/v1/conversations")
                     .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
                     .header(header::CONTENT_TYPE, "application/json")
                     .body(Body::from("{}"))

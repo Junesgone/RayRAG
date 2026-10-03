@@ -618,3 +618,23 @@
 
 构造器：`api_error_code(status, code, message)`，以及 `invalid_argument` / `invalid_or_missing` / `no_permission` / `unauthenticated` / `conflict`。
 **迁移状态**：新写的端点（产物、导航、webhook、密码流程、索引维护）已按此表返回；历史端点仍在用 `api_error`（业务码=HTTP 码），逐个迁移中——**未迁移的不会被伪装成已迁移**。
+
+## 聊天助手 vs 会话（0.11.5 起语义分离）
+
+说明书把 `/api/v1/chats` 定义为**聊天助手（chat assistant）**集合，会话在 `/api/v1/chats/{chat_id}/sessions`。
+RayRAG 此前让**会话记录**占用同一条路径（GET/POST/DELETE 都是会话），导致：
+说明书客户端 `POST /api/v1/chats` 建的助手根本不出现在列表里；列表返回的 id 在 `/sessions` 上 404。
+
+现在：
+
+| 路径 | 语义（说明书一致） | RayRAG 存储 |
+|---|---|---|
+| `GET /api/v1/chats` | 助手列表，`data:{chats,total}`，含 `dataset_ids`/`kb_names`/`llm_id`/`llm_setting`/`prompt_config`/`rerank_id`/`top_k` | `chat_apps` |
+| `POST /api/v1/chats` | 建助手，body `name`/`description`/`icon`/`dataset_ids`/`llm_id`/`llm_setting`/`prompt_config`/`rerank_id`/`top_k`；空名 → `101`；重名 → `102 duplicated chat name` | `chat_apps` |
+| `DELETE /api/v1/chats` | 删助手，body `ids` / `delete_all` / 兼容 `chat_id`；**部分失败返回 102 并列出 errors，不静默成功** | `chat_apps` |
+| `POST /api/v1/conversations` | 建**会话**（原 `POST /api/v1/chats` 的行为） | `conversations` |
+| `DELETE /api/v1/conversations` | 批量删会话（原 `DELETE /api/v1/chats` 的行为） | `conversations` |
+| `GET /api/v1/chats/{id}/sessions` | 该助手的会话列表（`data` 为数组） | 助手 store + 会话回退 |
+
+**仍未对齐（登记）**：`/api/v1/chats/{id}/completions` 的路径参数在 RayRAG 里是**会话 id**（说明书是助手 id）；
+`/api/v1/chatapps*` 是 RayRAG 自己的助手管理路径，与说明书路径并存。

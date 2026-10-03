@@ -227,7 +227,12 @@ pub(crate) struct ChatGenerationRequest<'a> {
 }
 
 /// POST /api/v1/chats — create new chat session
-pub async fn create_chat(
+/// `POST /api/v1/conversations` — create a session.
+///
+/// This is what `POST /api/v1/chats` used to do. The guide's `POST /api/v1/chats` creates a chat
+/// *assistant*, so creating a *session* there meant the same path built two different things and
+/// neither listing agreed with it.
+pub async fn create_conversation(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
     Json(body): Json<ChatRequest>,
@@ -279,15 +284,277 @@ pub async fn create_chat(
     }
 }
 
-/// GET /api/v1/chats — list the authenticated user's sessions.
+/// `GET /api/v1/chats` — lists the chat assistants accessible to the authenticated user.
 pub async fn list_chats(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
-) -> impl IntoResponse {
-    let mut data =
-        serde_json::to_value(state.conversations.list_for(&auth.user_id)).unwrap_or_default();
-    crate::api::compat::enrich_chats(&mut data);
-    Json(serde_json::json!({ "code": 0, "data": data }))
+    Query(query): Query<HashMap<String, String>>,
+) -> axum::response::Response {
+    list_chat_assistants(&state, &auth, &query)
+}
+
+/// `DELETE /api/v1/chats` — deletes chat assistants by `ids`, or every assistant the caller owns
+/// with `delete_all`. The guide bills this as deleting chat assistants, so it deletes those and not
+/// the sessions that used to share the path.
+pub async fn bulk_delete_chat_assistants(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Json(body): Json<serde_json::Value>,
+) -> axum::response::Response {
+    let Some(store) = &state.chat_apps else {
+        return crate::server::api_error_code(
+            axum::http::StatusCode::NOT_IMPLEMENTED,
+            crate::server::code::OPERATION_ERROR,
+            "chat assistants are disabled on this deployment",
+        );
+    };
+    let owned = |app: &crate::api::chatapp_mgr::ChatApp| {
+        app.tenant_id == auth.user_id || app.tenant_id.is_empty() || auth.is_admin
+    };
+    let mut ids: Vec<String> = body
+        .get("ids")
+        .and_then(|value| value.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str())
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    if ids.is_empty() {
+        if body.get("delete_all").and_then(|value| value.as_bool()) == Some(true) {
+            ids = store
+                .list()
+                .into_iter()
+                .filter(owned)
+                .map(|app| app.id)
+                .collect();
+        } else if let Some(chat_id) = body.get("chat_id").and_then(|value| value.as_str()) {
+            ids.push(chat_id.to_string());
+        }
+    }
+    let mut errors = Vec::new();
+    for id in &ids {
+        match store.get(id) {
+            Some(app) if owned(&app) => {
+                if let Err(error) = store.remove(id) {
+                    errors.push(format!("{id}: {error}"));
+                }
+            }
+            Some(_) => errors.push(format!("No authorization for chat {id}")),
+            None => errors.push(format!("No such chat {id}")),
+        }
+    }
+    if !errors.is_empty() {
+        // A partial failure is reported, not silently answered with success.
+        return Json(serde_json::json!({
+            "code": 102,
+            "message": format!("Failed to delete {} of {} chats", errors.len(), ids.len()),
+            "data": { "errors": errors },
+        }))
+        .into_response();
+    }
+    Json(serde_json::json!({ "code": 0 })).into_response()
+}
+
+/// Body of the guide's `POST /api/v1/chats`, which creates a chat assistant.
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct ChatAssistantRequest {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub icon: Option<String>,
+    /// The guide's name for the datasets bound to the assistant.
+    #[serde(default)]
+    pub dataset_ids: Vec<String>,
+    /// RayRAG's own name for the same field; accepted so existing callers keep working.
+    #[serde(default)]
+    pub kb_ids: Vec<String>,
+    #[serde(default)]
+    pub llm_id: Option<String>,
+    #[serde(default)]
+    pub llm_setting: Option<serde_json::Value>,
+    #[serde(default)]
+    pub prompt_config: Option<serde_json::Value>,
+    #[serde(default)]
+    pub rerank_id: Option<String>,
+    #[serde(default)]
+    pub top_k: Option<u32>,
+}
+
+/// `POST /api/v1/chats` — creates a chat assistant and answers the documented object.
+pub async fn create_chat_assistant(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Json(body): Json<ChatAssistantRequest>,
+) -> axum::response::Response {
+    let name = body.name.unwrap_or_default().trim().to_string();
+    if name.is_empty() {
+        // The guide answers an empty name with business code 101.
+        return crate::server::api_error_code(
+            axum::http::StatusCode::BAD_REQUEST,
+            crate::server::code::INVALID_ARGUMENT,
+            "Field: <name> - Message: <String should have at least 1 character> - Value: <>",
+        );
+    }
+    let Some(store) = &state.chat_apps else {
+        return crate::server::api_error_code(
+            axum::http::StatusCode::NOT_IMPLEMENTED,
+            crate::server::code::OPERATION_ERROR,
+            "chat assistants are disabled on this deployment",
+        );
+    };
+    let kb_ids = if body.dataset_ids.is_empty() {
+        body.kb_ids
+    } else {
+        body.dataset_ids
+    };
+    if !kb_ids.is_empty() && !all_kbs_accessible(&state, &kb_ids, &auth) {
+        return crate::server::api_error_code(
+            axum::http::StatusCode::BAD_REQUEST,
+            crate::server::code::INVALID_OR_MISSING_DATA,
+            "One or more knowledge bases are not accessible",
+        );
+    }
+    if store
+        .list()
+        .iter()
+        .any(|app| app.name.eq_ignore_ascii_case(&name))
+    {
+        return crate::server::api_error_code(
+            axum::http::StatusCode::BAD_REQUEST,
+            crate::server::code::INVALID_OR_MISSING_DATA,
+            "duplicated chat name",
+        );
+    }
+    let app = crate::api::chatapp_mgr::ChatApp {
+        id: uuid::Uuid::new_v4().to_string(),
+        name,
+        description: body.description.unwrap_or_default().trim().to_string(),
+        icon: body.icon.unwrap_or_default().trim().to_string(),
+        tenant_id: auth.user_id.clone(),
+        kb_ids,
+        llm_id: body.llm_id,
+        llm_setting: body.llm_setting,
+        prompt_config: body.prompt_config,
+        rerank_id: body.rerank_id,
+        top_k: body.top_k,
+        created_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as u64)
+            .unwrap_or(0),
+    };
+    let mut chat = serde_json::to_value(&app).unwrap_or_default();
+    if let Err(error) = store.insert(app) {
+        let message = format!("could not persist the assistant: {error}");
+        return crate::server::api_error_code(
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            crate::server::code::OPERATION_ERROR,
+            &message,
+        );
+    }
+    crate::api::compat::enrich_chats(&mut chat);
+    let names: Vec<String> = chat
+        .get("dataset_ids")
+        .and_then(|value| value.as_array())
+        .map(|ids| {
+            ids.iter()
+                .filter_map(|id| id.as_str())
+                .filter_map(|id| state.kbs.get(id))
+                .map(|kb| kb.name)
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Some(object) = chat.as_object_mut() {
+        object.insert("kb_names".to_string(), serde_json::json!(names));
+    }
+    Json(serde_json::json!({ "code": 0, "data": chat })).into_response()
+}
+
+/// `GET /api/v1/chats` — the guide lists **chat assistants** here, as `{chats, total}`, each with
+/// `dataset_ids`, `kb_names`, `llm_id`, `llm_setting` and `prompt_config`.
+///
+/// This used to answer with RayRAG's *session* records, while an assistant created through the
+/// guide's `POST /api/v1/chats` went somewhere the listing never looked. Two collections shared one
+/// path: a guide client's assistant never appeared, and the ids the listing returned 404'd at
+/// `/sessions`. Sessions have their own endpoint (`/api/v1/conversations`); this one now reads the
+/// assistant store.
+fn list_chat_assistants(
+    state: &AppState,
+    auth: &AuthContext,
+    query: &std::collections::HashMap<String, String>,
+) -> axum::response::Response {
+    let Some(store) = &state.chat_apps else {
+        return Json(serde_json::json!({ "code": 0, "data": { "chats": [], "total": 0 } }))
+            .into_response();
+    };
+    let mut apps: Vec<_> = store
+        .list()
+        .into_iter()
+        .filter(|app| app.tenant_id == auth.user_id || app.tenant_id.is_empty() || auth.is_admin)
+        .collect();
+    // The guide's filters: exact `id` / `name` take precedence over the fuzzy `keywords`.
+    if let Some(id) = query.get("id").filter(|value| !value.is_empty()) {
+        apps.retain(|app| app.id == *id);
+    } else if let Some(name) = query.get("name").filter(|value| !value.is_empty()) {
+        apps.retain(|app| app.name == *name);
+    } else if let Some(keywords) = query.get("keywords").filter(|value| !value.is_empty()) {
+        let needle = keywords.to_lowercase();
+        apps.retain(|app| app.name.to_lowercase().contains(&needle));
+    }
+    let descending = query
+        .get("desc")
+        .map(|value| value != "false")
+        .unwrap_or(true);
+    apps.sort_by(|left, right| {
+        if descending {
+            right.created_at.cmp(&left.created_at)
+        } else {
+            left.created_at.cmp(&right.created_at)
+        }
+        .then_with(|| left.id.cmp(&right.id))
+    });
+    let total = apps.len();
+    let page: usize = query
+        .get("page")
+        .and_then(|value| value.parse().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(1);
+    let page_size: usize = query
+        .get("page_size")
+        .and_then(|value| value.parse().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(30)
+        .min(100);
+    let start = (page - 1) * page_size;
+    let rows: Vec<_> = apps.into_iter().skip(start).take(page_size).collect();
+    let mut chats = serde_json::to_value(rows).unwrap_or_default();
+    crate::api::compat::enrich_chats(&mut chats);
+    // `kb_names` is the dataset names beside the ids, as the guide's example shows.
+    if let Some(items) = chats.as_array_mut() {
+        for item in items.iter_mut() {
+            let names: Vec<String> = item
+                .get("dataset_ids")
+                .and_then(|value| value.as_array())
+                .map(|ids| {
+                    ids.iter()
+                        .filter_map(|id| id.as_str())
+                        .filter_map(|id| state.kbs.get(id))
+                        .map(|kb| kb.name)
+                        .collect()
+                })
+                .unwrap_or_default();
+            if let Some(object) = item.as_object_mut() {
+                object.insert("kb_names".to_string(), serde_json::json!(names));
+            }
+        }
+    }
+    Json(serde_json::json!({ "code": 0, "data": { "chats": chats, "total": total } }))
+        .into_response()
 }
 
 /// GET /api/v1/chats/{id} — get one owned session.
@@ -362,13 +629,14 @@ pub async fn delete_chat(
     }
 }
 
-/// `DELETE /api/v1/chats` — upstream `chat_api.bulk_delete_chats`.
+/// `DELETE /api/v1/conversations` — bulk delete sessions (upstream `chat_api.bulk_delete_chats`,
+/// which the guide registers on the chat-assistant path; RayRAG's sessions have their own).
 ///
 /// Three accepted bodies, exactly as upstream: `{"ids": [...]}` for a selection,
 /// `{"delete_all": true}` for everything, and the legacy `{"chat_id": "..."}` for one.
 /// Upstream answers `{}` when there is nothing to do and `{success_count, errors}`
 /// otherwise; both are reproduced here.
-pub async fn bulk_delete_chats(
+pub async fn bulk_delete_conversations(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
     Json(body): Json<serde_json::Value>,
