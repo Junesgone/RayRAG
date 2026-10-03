@@ -5971,10 +5971,17 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/chat-channels/{id}/runtime",
             get(crate::api::chat_channel_mgr::get_chat_channel_runtime),
         )
-        .route("/api/v1/plugins", get(crate::api::connector::list_plugins))
+        .route(
+            "/api/v1/plugins",
+            get(crate::api::plugin_tools::list_plugins),
+        )
+        .route(
+            "/api/v1/plugin/tools",
+            get(crate::api::plugin_tools::plugin_tools),
+        )
         .route(
             "/api/v1/plugins/{id}/toggle",
-            post(crate::api::connector::toggle_plugin),
+            post(crate::api::plugin_tools::toggle_plugin),
         )
         .route(
             "/api/v1/system",
@@ -13479,6 +13486,139 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    /// The tool catalogue and the capability report: both used to answer from invented data, so this
+    /// checks that the listing is the registry's own and that the report describes this deployment.
+    #[tokio::test]
+    async fn tools_and_capabilities_describe_the_running_deployment() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "catalogue-kb", "")
+            .unwrap();
+        let call = |method: Method, uri: &str| {
+            let router = build_router(env.state.clone());
+            let token = env.token.clone();
+            let uri = uri.to_string();
+            async move {
+                let request = Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap();
+                router.oneshot(request).await.unwrap()
+            }
+        };
+        let get = |uri: &str| call(Method::GET, uri);
+
+        // The plugin tool listing is in the shape upstream's get_metadata() returns.
+        let tools = response_json(get("/api/v1/plugin/tools").await).await;
+        assert_eq!(tools["code"], 0, "{tools}");
+        let list = tools["data"].as_array().unwrap();
+        assert!(!list.is_empty(), "{tools}");
+        assert!(
+            list.iter().all(|tool| tool["type"] == "function"),
+            "{tools}"
+        );
+        let names: Vec<&str> = list
+            .iter()
+            .map(|tool| tool["function"]["name"].as_str().unwrap())
+            .collect();
+        assert!(names.contains(&"ragflow_retrieval"), "{names:?}");
+        assert!(
+            list.iter()
+                .all(|tool| tool["function"]["parameters"]["type"] == "object"),
+            "{tools}"
+        );
+
+        // The retrieval tool's description carries the caller's datasets, so a model is told which ids
+        // exist instead of having to guess one.
+        let retrieval = list
+            .iter()
+            .find(|tool| tool["function"]["name"] == "ragflow_retrieval")
+            .unwrap();
+        assert!(
+            retrieval["function"]["description"]
+                .as_str()
+                .unwrap()
+                .contains(&kb.id),
+            "{retrieval}"
+        );
+
+        // The MCP listing is the same catalogue, not the two invented tools it used to answer with.
+        let mcp = response_json(get("/api/v1/mcp/tools").await).await;
+        let mcp_names: Vec<&str> = mcp["data"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap())
+            .collect();
+        assert!(mcp_names.contains(&"ragflow_retrieval"), "{mcp_names:?}");
+        assert!(
+            !mcp_names.contains(&"search_knowledge") || names.contains(&"search_knowledge"),
+            "{mcp}"
+        );
+
+        // The capability report describes this deployment, and says where each line is configured.
+        let plugins = response_json(get("/api/v1/plugins").await).await;
+        assert_eq!(plugins["code"], 0, "{plugins}");
+        let capabilities = plugins["data"]["capabilities"].as_array().unwrap();
+        let ids: Vec<&str> = capabilities
+            .iter()
+            .map(|entry| entry["id"].as_str().unwrap())
+            .collect();
+        for expected in ["llm", "embedding", "rerank", "vision", "ocr", "tts", "asr"] {
+            assert!(ids.contains(&expected), "missing {expected}: {ids:?}");
+        }
+        assert!(
+            capabilities.iter().all(|entry| entry["configured_by"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())),
+            "{plugins}"
+        );
+        // The built-in reader means OCR is always available, whatever the environment says.
+        let ocr = capabilities
+            .iter()
+            .find(|entry| entry["id"] == "ocr")
+            .unwrap();
+        assert_eq!(ocr["available"], true, "{ocr}");
+        // A capability without an endpoint explains itself rather than reporting a bare false.
+        for entry in capabilities
+            .iter()
+            .filter(|entry| entry["available"] == false)
+        {
+            assert!(
+                entry["detail"]
+                    .as_str()
+                    .is_some_and(|value| !value.is_empty()),
+                "an unavailable capability must say why: {entry}"
+            );
+        }
+        assert_eq!(plugins["data"]["total"], capabilities.len(), "{plugins}");
+
+        // Toggling says why it cannot, instead of the old success message for a no-op.
+        let toggled = response_json(call(Method::POST, "/api/v1/plugins/ocr/toggle").await).await;
+        assert_eq!(toggled["code"], 103, "{toggled}");
+        assert!(
+            toggled["message"]
+                .as_str()
+                .unwrap()
+                .contains("not toggled at runtime"),
+            "{toggled}"
+        );
+        let unknown = response_json(call(Method::POST, "/api/v1/plugins/nope/toggle").await).await;
+        assert_eq!(unknown["code"], 102, "{unknown}");
+        assert!(
+            unknown["message"]
+                .as_str()
+                .unwrap()
+                .contains("Unknown capability 'nope'"),
+            "{unknown}"
         );
     }
 

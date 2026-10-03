@@ -9784,6 +9784,29 @@ async function saveEditInstanceModel(){var modal=document.getElementById('editIn
 document.addEventListener('keydown',function(event){if(event.key==='Escape'){closeProviderInstanceModal();closeDeleteModelInstance();closeEditInstanceModel()}});piMsRegister('pcmTypes',PI_MODEL_TYPE_OPTIONS,[]);piMsRegister('eimTypes',PI_MODEL_TYPE_OPTIONS,[]);pcmApplyLabels();piMsApplyLabels('pcmTypes');piMsApplyLabels('eimTypes');var eimTitle=document.getElementById('editInstanceModelTitle');if(eimTitle)eimTitle.textContent=PI_PICKER_LABELS.editCustomModelTitle;var eimCancel=document.getElementById('editInstanceModelCancel');if(eimCancel)eimCancel.textContent=PI_PICKER_LABELS.cancel;var eimConfirm=document.getElementById('editInstanceModelOk');if(eimConfirm)eimConfirm.textContent=PI_PICKER_LABELS.confirm;loadAddedModels();
 </script>"#,
     );
+    // Capabilities (`GET /api/v1/plugins`): what this deployment can actually do, read from the running
+    // state. It replaced a fixed list naming capabilities the deployment may not have had at all.
+    let capability_card = format!(
+        r#"<section class='card' id='capabilityCard' data-testid='capability-card'><h2>{title}</h2><p style='color:var(--tm);font-size:13px'>{hint}</p><div class='table-wrap'><table data-testid='capability-table'><thead><tr><th>{th_name}</th><th>{th_state}</th><th>{th_model}</th><th>{th_where}</th></tr></thead><tbody id='capabilityRows'><tr><td colspan='4'>{loading}</td></tr></tbody></table></div><p id='capabilityNote' data-testid='capability-note' style='font-size:13px;color:var(--tm);margin-top:8px'></p></section>"#,
+        title = t("Capabilities", zh),
+        hint = t(
+            "What this deployment is configured to do, read from the running state rather than from a fixed list.",
+            zh,
+        ),
+        th_name = t("Capability", zh),
+        th_state = t("State", zh),
+        th_model = t("Model", zh),
+        th_where = t("Configured by", zh),
+        loading = t("Loading...", zh),
+    );
+    b.push_str(&capability_card);
+    let capability_script = format!(
+        r#"<script>function capabilityLoad(){{var host=document.getElementById('capabilityRows');if(!host)return;fetch('/api/v1/plugins').then(function(r){{return r.json()}}).then(function(data){{var list=(data&&data.data&&data.data.capabilities)||[];var note=document.getElementById('capabilityNote');host.replaceChildren();if(!list.length){{var row=document.createElement('tr');var cell=document.createElement('td');cell.colSpan=4;cell.textContent='{empty}';row.appendChild(cell);host.appendChild(row);return}}list.forEach(function(item){{var row=document.createElement('tr');var name=document.createElement('td');name.textContent=item.name;var state=document.createElement('td');state.textContent=item.available?'{yes}':'{no}';state.style.color=item.available?'var(--tx)':'var(--d)';var model=document.createElement('td');model.textContent=item.model||'-';var where=document.createElement('td');where.textContent=item.configured_by||'';row.appendChild(name);row.appendChild(state);row.appendChild(model);row.appendChild(where);host.appendChild(row)}});if(note){{var missing=list.filter(function(item){{return !item.available&&item.detail}}).map(function(item){{return item.name+': '+item.detail}});note.textContent=missing.join(' ');note.style.color=missing.length?'var(--d)':'var(--tm)'}}}}).catch(function(error){{var note=document.getElementById('capabilityNote');if(note){{note.textContent=String(error);note.style.color='var(--d)'}}}})}}if(document.readyState!=='loading')capabilityLoad();else document.addEventListener('DOMContentLoaded',capabilityLoad);</script>"#,
+        empty = t("Nothing to report", zh),
+        yes = t("available", zh),
+        no = t("unavailable", zh),
+    );
+    b.push_str(&capability_script);
     // Speech (`chat/audio/speech` + `chat/audio/transcription`): a card that reaches both endpoints,
     // so the feature has a button and its failures are visible text rather than a silent no-op.
     b.push_str("<section class='card' id='speechCard' data-testid='speech-card'><h2>");

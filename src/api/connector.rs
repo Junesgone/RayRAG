@@ -15,6 +15,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::server::{AppState, AuthContext, api_error_code, code};
 
+pub(crate) fn require_admin_response(auth: &AuthContext) -> Option<Response> {
+    require_admin(auth)
+}
+
 fn require_admin(auth: &AuthContext) -> Option<Response> {
     (!auth.is_admin).then(|| {
         (
@@ -684,27 +688,32 @@ pub struct McpTool {
     pub parameters: serde_json::Value,
 }
 
-/// GET /api/v1/mcp/tools — MCP tools listing
-pub async fn mcp_tools() -> impl IntoResponse {
+/// GET /api/v1/mcp/tools — the MCP tool listing, built from the registry.
+///
+/// This used to answer with two invented tools (`search_knowledge`, `list_datasets`) that no code could
+/// execute, while `mcp_server` held the real catalogue. Both this listing and
+/// `GET /api/v1/plugin/tools` now read that one registry.
+pub async fn mcp_tools(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+) -> Response {
+    let tools = crate::api::plugin_tools::catalogue(&state, &auth);
     Json(serde_json::json!({
         "code": 0,
         "data": McpServer {
             name: "RayRAG MCP".into(),
-            version: "0.1.0".into(),
-            tools: vec![
-                McpTool {
-                    name: "search_knowledge".into(),
-                    description: "Search RayRAG knowledge base with vector similarity".into(),
-                    parameters: serde_json::json!({"type":"object","properties":{"query":{"type":"string"},"top_k":{"type":"integer","default":10}}}),
-                },
-                McpTool {
-                    name: "list_datasets".into(),
-                    description: "List available knowledge bases".into(),
-                    parameters: serde_json::json!({"type":"object"}),
-                },
-            ],
-        }
+            version: env!("CARGO_PKG_VERSION").into(),
+            tools: tools
+                .into_iter()
+                .map(|tool| McpTool {
+                    name: tool.function.name,
+                    description: tool.function.description,
+                    parameters: tool.function.parameters,
+                })
+                .collect(),
+        },
     }))
+    .into_response()
 }
 
 // ── Bot / Slack Integration ────────────────────────────────────
@@ -759,28 +768,6 @@ pub struct Plugin {
     pub name: String,
     pub version: String,
     pub enabled: bool,
-}
-
-/// GET /api/v1/plugins — list plugins
-pub async fn list_plugins() -> impl IntoResponse {
-    Json(serde_json::json!({
-        "code": 0,
-        "data": [
-            {"id":"ocr","name":"PaddleOCR","version":"1.0","enabled":true},
-            {"id":"rerank","name":"mxbai-rerank","version":"1.0","enabled":true},
-        ]
-    }))
-}
-
-/// POST /api/v1/plugins/{id}/toggle — toggle plugin
-pub async fn toggle_plugin(
-    Extension(auth): Extension<AuthContext>,
-    Path(id): Path<String>,
-) -> Response {
-    if let Some(response) = require_admin(&auth) {
-        return response;
-    }
-    Json(serde_json::json!({"code":0,"message":format!("Plugin {} toggled",id)})).into_response()
 }
 
 // ── MCP SSE Server surface (mcp/server/server.py) ─────────────────────────

@@ -39,6 +39,7 @@ pub mod model_catalog;
 pub mod oauth_web;
 pub mod openai_proxy;
 pub mod password_flow;
+pub mod plugin_tools;
 pub mod rag_chat;
 pub mod runtime_config;
 pub mod sandbox_admin;

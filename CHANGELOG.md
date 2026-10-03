@@ -2,6 +2,46 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.19.0] - 2026-10-03
+
+### One real tool catalogue, and a capability report that describes this deployment
+
+Three surfaces answered from invented data:
+
+* `GET /api/v1/mcp/tools` returned two hard-coded tools — `search_knowledge`, `list_datasets` — that no
+  code in the deployment could execute, while `mcp_server::ToolRegistry` held the real catalogue;
+* `GET /api/v1/plugins` returned a fixed list naming `PaddleOCR` and `mxbai-rerank` whatever the
+  deployment was actually configured with;
+* `POST /api/v1/plugins/{id}/toggle` answered `"Plugin X toggled"` for an operation that changed
+  nothing at all.
+
+All three now read one source of truth. `GET /api/v1/plugin/tools` (previously missing) and
+`/api/v1/mcp/tools` both build from `ToolRegistry`, enriched with **the caller's own datasets** — the
+retrieval tool is told which dataset ids exist, because a model cannot pass an id it has never seen.
+`GET /api/v1/plugins` reports, per capability, whether this deployment has it and which model provides
+it, read from the running state:
+
+```json
+{"id":"embedding","name":"Embedding","available":true,"model":"Qwen3-Embedding-4B-Q4_K_M.gguf",
+ "configured_by":"EMBED_API_BASE / EMBED_MODEL"}
+```
+
+Every line says **where a deployment changes it**, and a capability that is *absent* carries the reason
+rather than a bare `false` — a distinction the test suite enforces by failing on any unavailable
+capability without a `detail`. (It failed on the first run for exactly that reason: `llm` and
+`embedding` reported `false` with nothing to act on, so both gained one.)
+
+`toggle` now answers `103` with the reason — these capabilities are provider-backed and configured
+through the wizard or the environment, so a runtime switch would be a claim the deployment cannot
+honour — and names the capability when the id is unknown.
+
+The model page gained a **Capabilities** card that renders the report with the missing capabilities
+explained underneath.
+
+**2218 tests pass, 0 failures**, including the catalogue being the registry's own, the live dataset
+listing reaching the retrieval tool, both listings agreeing, and the toggle and unknown-id refusals. The
+parity ledger moved from 7 to **6** remaining gaps (195 upstream routes, 342 of ours, 142 exact).
+
 ## [0.18.0] - 2026-10-03
 
 ### The connector family becomes real: instances, history, a probe and a rebuild

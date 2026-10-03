@@ -821,3 +821,17 @@ RAGFlow 把麦克风放在**聊天输入区**；RayRAG 目前把这个能力放�
 - **配置键**：`url` 为来源位置（`LocalConnector` 以 url 为根目录），`path` 为其友好别名；子目录用 `target`。
 - **权限**：写动词（create/patch/delete/test/rebuild）保持**管理写** → 非管理员 `403`；读（list/get/logs）按属主隔离。
 - **界面**：数据源设置页新增「Connectors」卡片（逐行 Test/Rebuild/Logs/Delete + 从注册表渲染类型的新建表单）。
+
+### 0.19.0：工具目录与能力报告（去假数据）
+
+| 接口 | 行为 |
+|---|---|
+| `GET /api/v1/plugin/tools` | 返回本部署提供给 LLM 的工具（OpenAI function 形状：`{type:"function", function:{name, description, parameters}}`），来源为 `mcp_server::ToolRegistry` |
+| `GET /api/v1/mcp/tools` | **同一个目录**（此前返回两个无法执行的硬编码工具 `search_knowledge` / `list_datasets`） |
+| `GET /api/v1/plugins` | 逐项能力报告：`{id, name, available, model?, configured_by, detail?}`，取自运行状态 |
+| `POST /api/v1/plugins/{id}/toggle` | **拒绝并说明原因**（`103`）：这些能力由部署配置提供，不可运行时切换；未知 id → `102 Unknown capability '<id>'. Known: …` |
+
+- **单一来源**：工具目录来自注册表，并用**调用者自己的数据集**充实 retrieval 工具的描述 —— 模型不可能传入它从未见过的 dataset id。
+- **能力报告**：`llm` / `embedding` / `rerank` / `vision` / `ocr` / `tts` / `asr`；每行都给出**配置位置**（`LLM_API_BASE / LLM_MODEL` 等）；**不可用项必须带 `detail` 说明原因**（测试强制）。
+- **不再谎报成功**：`toggle` 原返回 `"Plugin X toggled"` 而什么都没做，现改为明确拒绝 + 原因。
+- **界面**：模型页新增「Capabilities」卡片，渲染该报告并把缺失项的原因列在下方。
