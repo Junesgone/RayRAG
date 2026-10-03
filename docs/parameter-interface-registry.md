@@ -289,6 +289,10 @@
 | GET | `/api/v1/datasets/{dataset_id}/artifacts` | `-` |
 | POST | `/api/v1/datasets/{dataset_id}/artifacts/compile` | `-` |
 | GET | `/api/v1/datasets/{dataset_id}/artifacts/topics` | `-` |
+| GET | `/api/v1/datasets/{dataset_id}/artifacts/structure` | `-` |
+| GET | `/api/v1/datasets/{dataset_id}/artifacts/graph` | `-` |
+| GET | `/api/v1/datasets/{dataset_id}/artifacts/alteration` | `-` |
+| GET | `/api/v1/datasets/{dataset_id}/artifacts/{page_type}` | `-` |
 | GET | `/api/v1/datasets/{dataset_id}/artifacts/{page_type}/{slug}` | `-` |
 | GET | `/api/v1/datasets/{dataset_id}/navigation` | `-` |
 | GET | `/api/v1/models/endpoints/check` | `-` |

@@ -64,6 +64,7 @@ COVERED: dict[str, str] = {
 # Upstream methods on paths RayRAG already answers with other methods. A path-only audit
 # cannot see these: `/users/me` answered 405 for GET until it was wired up.
 KNOWN_METHOD_GAPS: dict[str, str] = {
+    "/datasets/<dataset_id>/artifacts/structure": "DELETE 只清结构类产物：现有的 `DELETE /datasets/{id}/artifacts` 会清空全部产物页，按 page_type 过滤删除需要先摸清产物行的存储形状（本轮查证中发现 search_existing_pages 返回的不是 Vec，未在预算内改对，故不交付半成品）",
 }
 
 KNOWN_MISSING: dict[str, str] = {
@@ -83,9 +84,6 @@ KNOWN_MISSING: dict[str, str] = {
     "/connectors/<connector_id>/logs": "功能级缺口：同上（连接器实例面）",
     "/connectors/<connector_id>/rebuild": "功能级缺口：同上（连接器实例面）",
     "/connectors/<connector_id>/test": "功能级缺口：同上（连接器实例面）",
-    "/datasets/<dataset_id>/artifacts/alteration": "功能级缺口：同上（产物引擎未接线）",
-    "/datasets/<dataset_id>/artifacts/graph": "功能级缺口：同上（产物引擎未接线）",
-    "/datasets/<dataset_id>/artifacts/structure": "功能级缺口：同上（产物引擎未接线）",
     "/datasets/<dataset_id>/documents/<document_id>/metadata/config": "功能级缺口：文档级元数据配置未实现",
     "/datasets/<dataset_id>/documents/<document_id>/structure/graph": "功能级缺口：逐文档结构图（编译产物按文档/模板存储）未实现；RayRAG 的 GraphRAG 产物按数据集存储",
     "/datasets/<dataset_id>/embedding/check": "功能级缺口：换模型重嵌入相似度校验未实现",

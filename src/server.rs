@@ -4570,6 +4570,24 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/datasets/{dataset_id}/artifacts/topics",
             get(crate::api::dataset_artifacts::list_artifact_topics),
         )
+        // Upstream declares these three as literal routes rather than one parameterised path.
+        .route(
+            "/api/v1/datasets/{dataset_id}/artifacts/structure",
+            get(crate::api::dataset_artifacts::list_structure_artifacts),
+        )
+        .route(
+            "/api/v1/datasets/{dataset_id}/artifacts/graph",
+            get(crate::api::dataset_artifacts::list_graph_artifacts),
+        )
+        .route(
+            "/api/v1/datasets/{dataset_id}/artifacts/alteration",
+            get(crate::api::dataset_artifacts::list_alteration_artifacts),
+        )
+        // Upstream also exposes the listing by path: `/artifacts/{page_type}`.
+        .route(
+            "/api/v1/datasets/{dataset_id}/artifacts/{page_type}",
+            get(crate::api::dataset_artifacts::list_artifacts_by_type),
+        )
         .route(
             "/api/v1/datasets/{dataset_id}/artifacts/{page_type}/{slug}",
             get(crate::api::dataset_artifacts::get_artifact_page)

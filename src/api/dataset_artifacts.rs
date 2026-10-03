@@ -124,6 +124,74 @@ pub async fn has_any_wiki(
     }
 }
 
+/// `GET /api/v1/datasets/{id}/artifacts/{page_type}` — upstream's path-shaped variant of the
+/// same listing (`structure`, `graph`, `alteration`, `wiki`, …).
+///
+/// It reuses [`list_artifacts`] verbatim with the path segment folded into the query, so the two
+/// forms cannot drift apart. An unknown page type is reported with the types that do exist
+/// rather than answering an empty list, which would look like "this dataset has none".
+pub async fn list_artifacts_by_type(
+    state: State<Arc<AppState>>,
+    auth: axum::extract::Extension<AuthContext>,
+    Path((kb_id, page_type)): Path<(String, String)>,
+    Query(mut query): Query<HashMap<String, String>>,
+) -> Response {
+    let requested = page_type.trim().to_lowercase();
+    if !matches!(
+        requested.as_str(),
+        "structure" | "graph" | "alteration" | "wiki" | "topic" | "summary"
+    ) {
+        return invalid_ids(&format!(
+            "Unknown artifact page type '{page_type}'. Supported: structure, graph, alteration, wiki, topic, summary."
+        ));
+    }
+    query.insert("page_type".to_string(), requested);
+    list_artifacts(state, auth, Path(kb_id), Query(query)).await
+}
+
+/// Shared body of the literal `/artifacts/<type>` routes upstream declares one by one.
+async fn list_literal_artifact_type(
+    state: State<Arc<AppState>>,
+    auth: axum::extract::Extension<AuthContext>,
+    kb_id: String,
+    page_type: &str,
+    query: HashMap<String, String>,
+) -> Response {
+    let mut query = query;
+    query.insert("page_type".to_string(), page_type.to_string());
+    list_artifacts(state, auth, Path(kb_id), Query(query)).await
+}
+
+/// `GET /api/v1/datasets/{id}/artifacts/structure` — upstream literal route.
+pub async fn list_structure_artifacts(
+    state: State<Arc<AppState>>,
+    auth: axum::extract::Extension<AuthContext>,
+    Path(kb_id): Path<String>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
+    list_literal_artifact_type(state, auth, kb_id, "structure", query).await
+}
+
+/// `GET /api/v1/datasets/{id}/artifacts/graph` — upstream literal route.
+pub async fn list_graph_artifacts(
+    state: State<Arc<AppState>>,
+    auth: axum::extract::Extension<AuthContext>,
+    Path(kb_id): Path<String>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
+    list_literal_artifact_type(state, auth, kb_id, "graph", query).await
+}
+
+/// `GET /api/v1/datasets/{id}/artifacts/alteration` — upstream literal route.
+pub async fn list_alteration_artifacts(
+    state: State<Arc<AppState>>,
+    auth: axum::extract::Extension<AuthContext>,
+    Path(kb_id): Path<String>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
+    list_literal_artifact_type(state, auth, kb_id, "alteration", query).await
+}
+
 /// `GET /api/v1/datasets/{id}/artifacts` — upstream `list_wiki_pages`.
 ///
 /// `{"total": n, "items": [{"slug", "title", "page_type"}]}`, ordered by page type then

@@ -5,12 +5,12 @@
 
 ## 现状
 
-- 上游路由：**181**；RayRAG `/api/v1` 路由：**285**
-- 同名应答（exact）：**108**
+- 上游路由：**181**；RayRAG `/api/v1` 路由：**289**
+- 同名应答（exact）：**111**
 - 别名应答（alias，上游拼写已注册但走 RayRAG 自己的命名）：**38**
 - 形状不同但已被应答（covered）：**2**
-- 尚未实现（missing，已登记）：**33**
-- 路径已有但方法缺失（method）：**0**
+- 尚未实现（missing，已登记）：**30**
+- 路径已有但方法缺失（method）：**1**
 - 未登记的缺口（mismatch，`--check` 视为失败）：**0**
 
 ## 未实现清单（按上游文件分组）
@@ -31,9 +31,6 @@
 | `/connectors/<connector_id>/logs` | `connector_api.py` | 功能级缺口：同上（连接器实例面） |
 | `/connectors/<connector_id>/rebuild` | `connector_api.py` | 功能级缺口：同上（连接器实例面） |
 | `/connectors/<connector_id>/test` | `connector_api.py` | 功能级缺口：同上（连接器实例面） |
-| `/datasets/<dataset_id>/artifacts/alteration` | `dataset_api.py` | 功能级缺口：同上（产物引擎未接线） |
-| `/datasets/<dataset_id>/artifacts/graph` | `dataset_api.py` | 功能级缺口：同上（产物引擎未接线） |
-| `/datasets/<dataset_id>/artifacts/structure` | `dataset_api.py` | 功能级缺口：同上（产物引擎未接线） |
 | `/datasets/<dataset_id>/embedding/check` | `dataset_api.py` | 功能级缺口：换模型重嵌入相似度校验未实现 |
 | `/datasets/<dataset_id>/metadata/config` | `dataset_api.py` | 功能级缺口：数据集自动元数据配置未实现 |
 | `/datasets/<dataset_id>/skills` | `dataset_api.py` | 功能级缺口：数据集 Skills 面未实现（Skills 索引仅有全局 /api/v1/skills/*） |
@@ -66,4 +63,4 @@
 
 | 上游路径 | 来源与缺失方法 |
 | --- | --- |
-| — | — |
+| `/datasets/<dataset_id>/artifacts/structure` | dataset_api.py [DELETE] |

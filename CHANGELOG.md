@@ -2,6 +2,13 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.8.9] - 2026-10-02
+
+- **产物读取面对齐上游的三条字面路径**：`GET /api/v1/datasets/{id}/artifacts/{structure,graph,alteration}`。三条路径都复用同一份列表逻辑（把路径段折进查询），**两个形状不可能各走各的**；未知产物类型会**列出支持的类型**，而不是回一个空列表让人误以为"这个数据集没有"。
+- **账面**：同路径应答 **108 → 111**，未实现 **33 → 30**，不匹配 0。
+- **一处**没有交付**（记在账本里，不藏）**：上游对 `/artifacts/structure` 还有 `DELETE`（只清结构类产物）。RayRAG 现有的 `DELETE /datasets/{id}/artifacts` 会清空**全部**产物页；要按 `page_type` 过滤删除，需要先摸清产物行在存储里的真实形状——本轮查证时发现 `search_existing_pages` 的返回并不是我假设的 `Vec`，**在预算内没能改对，就没有把半成品塞进去**，而是在方法缺口里写明原因与下一步。**一个"看起来实现了但删错东西"的接口比没有更糟。**
+- **测试**：全量 **2147 passed / 0 failed**；登记表 **353 条路由**。
+
 ## [0.8.8] - 2026-10-02
 
 - **索引维护接口对齐上游**：新增 `GET / POST / DELETE /api/v1/datasets/{id}/index` 与 `DELETE /api/v1/datasets/{id}/{index_type}`。RayRAG 本来就有这两项能力（内部修复巡检用的 `vector_mirror`），但**上游路径下取不到**。现在：
