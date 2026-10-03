@@ -36,7 +36,7 @@ client would have to invent a label and print it next to real numbers.
 The dataset configuration tab gained an **Embedding check** button that runs it and prints the average,
 the range, how many chunks were compared and which model answered — including the code 10 verdict.
 
-**2215 tests pass, 0 failures**, including the cosine edge cases (identical, orthogonal, opposite,
+**2210 tests pass, 0 failures**, including the cosine edge cases (identical, orthogonal, opposite,
 mismatched widths), the sampling being reproducible and in range, the threshold, the alias resolving to
 the configured model, and a router test that walks all three refusals. The parity ledger moved from 12
 to **11** remaining gaps (195 upstream routes, 337 of ours, 137 exact).
