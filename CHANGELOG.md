@@ -2,6 +2,40 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.20.0] - 2026-10-03
+
+### The last four invented lists
+
+A scan for handlers that answer with a literal array — the check that found the connector family and the
+tool catalogue — turned up four more. Each now reads the source that actually knows the answer:
+
+| endpoint | used to answer | now reads |
+|---|---|---|
+| `GET /api/v1/llm/factories` | three fixed entries (`OpenAI`, `MiniMax`, `Qwen`) | the provider catalogue, one row per factory |
+| `GET /api/v1/channels` | two fixed rows (`feishu`, `webchat`) | the channel configuration the runtime uses |
+| `GET /api/v1/bots` | two fixed rows (`slack-local`, `discord-local`) | the configured channels that carry a callback |
+| `GET /api/v1/file/commits` | a hard-coded empty array | the workspace commit store |
+
+The factory list now reports each factory's **real capabilities** as tags (`LLM`, `TEXT EMBEDDING`,
+`RERANK`, `IMAGE2TEXT`, `TTS`, `SPEECH2TEXT`, `OCR`), its model count, the environment variable its key
+comes from, whether **this deployment** has it configured, and a `domestic` flag for the
+mainland-friendly factories — the distinction a user in China picks by. It cannot disagree with the
+provider surface any more, because both read `PROVIDER_PRESETS`.
+
+`channels` and `bots` are derived rather than enumerated: a channel appears when a message sent to it
+would be handled, and a **bot is a configured channel that carries a `callback_url`** — which is what
+makes it a bot rather than a channel. An empty list therefore comes with the sentence explaining where
+channels come from, instead of looking like a broken page.
+
+`file/commits` reports "no commits" only when the store is empty. It gained
+`WorkspaceCommitStore::recent(limit)` — a per-scope listing cannot answer a deployment-wide question, and
+an empty array cannot answer it either.
+
+**2220 tests pass, 0 failures**, including one test that ties each of the four answers to its source (the
+factory count against `preset_count()`, `configured` against the provider store, a written commit
+appearing in the listing) so a literal cannot quietly return. The parity ledger is unchanged at
+**6** gaps, because these four endpoints already existed — they were just not telling the truth.
+
 ## [0.19.0] - 2026-10-03
 
 ### One real tool catalogue, and a capability report that describes this deployment

@@ -1072,15 +1072,57 @@ pub async fn list_models(
 // ── LLM App Management ─────────────────────────────────────────
 
 /// GET /api/v1/llm/factories — list LLM factories
-pub async fn list_factories() -> impl IntoResponse {
+/// `GET /api/v1/factories` — the model factories this deployment can use.
+///
+/// This answered with three hard-coded entries (`OpenAI`, `MiniMax`, `Qwen`). It now reads the same
+/// catalogue the model-provider surface uses, so the list cannot disagree with what a user is offered
+/// when configuring a provider. `domestic` marks the mainland-friendly factories, which is the
+/// distinction a user in China needs when picking one.
+pub async fn list_factories(State(state): State<Arc<AppState>>) -> Response {
+    let configured: std::collections::HashSet<String> = state
+        .providers
+        .list_configured()
+        .into_iter()
+        .flat_map(|provider| [provider.id.clone(), provider.name.clone()])
+        .collect();
+    let factories: Vec<serde_json::Value> = crate::providers::PROVIDER_PRESETS
+        .iter()
+        .map(|preset| {
+            let tags: Vec<&str> = preset
+                .kinds
+                .iter()
+                .map(|kind| match kind {
+                    crate::providers::ProviderKind::Chat => "LLM",
+                    crate::providers::ProviderKind::Embedding => "TEXT EMBEDDING",
+                    crate::providers::ProviderKind::Rerank => "RERANK",
+                    crate::providers::ProviderKind::ImageToText => "IMAGE2TEXT",
+                    crate::providers::ProviderKind::TextToSpeech => "TTS",
+                    crate::providers::ProviderKind::SpeechToText => "SPEECH2TEXT",
+                    crate::providers::ProviderKind::Ocr => "OCR",
+                })
+                .collect();
+            let is_configured = configured.contains(preset.id) || configured.contains(preset.name);
+            serde_json::json!({
+                "name": preset.name,
+                "id": preset.id,
+                "logo": "",
+                "tags": tags.join(","),
+                "status": if is_configured { "1" } else { "0" },
+                "configured": is_configured,
+                "domestic": preset.domestic,
+                "model_count": crate::providers::factory_full_model_names(preset.id, preset.name).len(),
+                "api_key_env": preset.api_key_env,
+                "base_url": preset.base_url,
+            })
+        })
+        .collect();
     Json(serde_json::json!({
         "code": 0,
-        "data": [
-            {"name":"OpenAI","logo":"","tags":"LLM,TEXT EMBEDDING,SPEECH2TEXT,MODERATION","status":"1"},
-            {"name":"MiniMax","logo":"","tags":"LLM,TEXT EMBEDDING","status":"1"},
-            {"name":"Qwen","logo":"","tags":"LLM","status":"1"},
-        ]
+        "data": factories,
+        "total": factories.len(),
+        "message": "success",
     }))
+    .into_response()
 }
 
 /// GET /api/v1/llm/my_llms — list user's configured LLMs
@@ -1331,8 +1373,29 @@ pub async fn related_questions(
 // ── File Commit / Versioning ───────────────────────────────────
 
 /// GET /api/v1/file/commits — list file versions
-pub async fn list_commits() -> impl IntoResponse {
-    Json(serde_json::json!({"code":0,"data":[]}))
+/// `GET /api/v1/commits` — the deployment's recent workspace commits.
+///
+/// It answered a hard-coded empty array, which reports "no commits" even when commits exist. It now
+/// reads the commit store the workspace surface writes to.
+pub async fn list_commits(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<CommitQuery>,
+) -> Response {
+    let limit = query.limit.unwrap_or(30);
+    let commits = state.workspace_commits.recent(limit);
+    Json(serde_json::json!({
+        "code": 0,
+        "data": commits,
+        "total": commits.len(),
+        "message": "success",
+    }))
+    .into_response()
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+pub struct CommitQuery {
+    #[serde(default)]
+    pub limit: Option<usize>,
 }
 
 // ── File 2 Document Conversion ─────────────────────────────────

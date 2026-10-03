@@ -158,6 +158,17 @@ impl WorkspaceCommitStore {
     }
 
     /// `(commits, total)` for one scope, newest first unless `desc` is false.
+    /// The most recent commits across every scope, newest first.
+    ///
+    /// `/api/v1/commits` needs a deployment-wide view; per-scope listing cannot answer it, and
+    /// answering with a hard-coded empty array would report "no commits" while commits exist.
+    pub fn recent(&self, limit: usize) -> Vec<WorkspaceCommit> {
+        let mut commits: Vec<WorkspaceCommit> = self.commits.read().unwrap().clone();
+        commits.sort_by(|left, right| right.create_time.cmp(&left.create_time));
+        commits.truncate(limit.clamp(1, 500));
+        commits
+    }
+
     pub fn list(
         &self,
         scope_id: &str,

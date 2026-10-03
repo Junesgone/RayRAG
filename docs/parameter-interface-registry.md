@@ -837,3 +837,19 @@ RAGFlow 把麦克风放在**聊天输入区**；RayRAG 目前把这个能力放�
 - **`available` 的语义是「已配置」而非「当前可达」**：响应内含 `note` 明确说明，计数字段名为 `configured`，界面用词也是 *configured*（本机 rerank 端点已配置但服务已停，若读成「rerank 可用」就是错的）。
 - **不再谎报成功**：`toggle` 原返回 `"Plugin X toggled"` 而什么都没做，现改为明确拒绝 + 原因。
 - **界面**：模型页新增「Capabilities」卡片，渲染该报告并把缺失项的原因列在下方。
+
+### 0.20.0：四处「字面量列表」改为读真实来源
+
+用「扫描返回字面量数组的 handler」这一检查（发现连接器族与工具目录的同一方法）又找到四处：
+
+| 接口 | 原返回 | 现读取 |
+|---|---|---|
+| `GET /api/v1/llm/factories` | 固定三项（`OpenAI`/`MiniMax`/`Qwen`） | 提供商目录（每个 factory 一行） |
+| `GET /api/v1/channels` | 固定两行（`feishu`/`webchat`） | 运行时所用的渠道配置 |
+| `GET /api/v1/bots` | 固定两行（`slack-local`/`discord-local`） | 配置中带 `callback_url` 的渠道（这才是「机器人」） |
+| `GET /api/v1/file/commits` | 硬编码空数组 | workspace 提交存储（新增 `recent(limit)`） |
+
+- **factory 行**：`{name, id, logo, tags, status, configured, domestic, model_count, api_key_env, base_url}`；`tags` 由 `ProviderKind` 映射（`LLM`/`TEXT EMBEDDING`/`RERANK`/`IMAGE2TEXT`/`TTS`/`SPEECH2TEXT`/`OCR`）；`domestic` 标记**中国大陆友好**的厂商（用户在此网络环境下正是按这个挑）。与提供商页面同源（`PROVIDER_PRESETS`），不可能互相矛盾。
+- **channels / bots**：空列表会带 `note` 说明来源（`RAYRAG_CHANNELS_CONFIG` 或各渠道环境变量），不会看起来像页面坏了。
+- **bots 的定义**：配置中带 `callback_url` 的渠道 —— 否则它只是渠道。
+- **commits**：只有存储为空才报「没有提交」。

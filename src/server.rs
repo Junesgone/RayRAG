@@ -13489,6 +13489,122 @@ mod tests {
         );
     }
 
+    /// Four lists that used to be literals in the handlers: the factories come from the provider
+    /// catalogue, the channels and bots from the channel configuration, and the commits from the commit
+    /// store. Each assertion ties the answer to its source, so a literal cannot quietly return.
+    #[tokio::test]
+    async fn the_remaining_lists_follow_their_real_sources() {
+        let env = test_env();
+        let get = |uri: &str| {
+            let router = build_router(env.state.clone());
+            let token = env.token.clone();
+            let uri = uri.to_string();
+            async move {
+                let request = Request::builder()
+                    .method(Method::GET)
+                    .uri(uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap();
+                router.oneshot(request).await.unwrap()
+            }
+        };
+
+        // Factories: the whole catalogue, with the capabilities each one offers.
+        let factories = response_json(get("/api/v1/llm/factories").await).await;
+        assert_eq!(factories["code"], 0, "{factories}");
+        let rows = factories["data"].as_array().unwrap();
+        assert!(
+            rows.len() >= crate::providers::preset_count(),
+            "the catalogue has {} presets but the answer has {}",
+            crate::providers::preset_count(),
+            rows.len()
+        );
+        let names: Vec<&str> = rows
+            .iter()
+            .map(|row| row["name"].as_str().unwrap())
+            .collect();
+        for expected in ["OpenAI", "ZHIPU-AI", "DeepSeek"] {
+            assert!(names.contains(&expected), "missing {expected}");
+        }
+        // The tags are the real capabilities, not a fixed string.
+        let zhipu = rows.iter().find(|row| row["name"] == "ZHIPU-AI").unwrap();
+        assert!(zhipu["tags"].as_str().unwrap().contains("LLM"), "{zhipu}");
+        assert!(zhipu["model_count"].as_u64().unwrap() > 0, "{zhipu}");
+        // `configured` follows the provider store, so the assertion is relative to that store rather
+        // than to an assumption about the fixture.
+        let configured_ids: std::collections::HashSet<String> = env
+            .state
+            .providers
+            .list_configured()
+            .into_iter()
+            .flat_map(|provider| [provider.id, provider.name])
+            .collect();
+        assert_eq!(
+            zhipu["configured"],
+            configured_ids.contains("ZHIPU-AI"),
+            "{zhipu} vs {configured_ids:?}"
+        );
+        assert_eq!(
+            zhipu["status"] == "1",
+            configured_ids.contains("ZHIPU-AI"),
+            "{zhipu}"
+        );
+        // And the China-friendly flag survives, because that is what a user here picks by.
+        assert!(
+            rows.iter().any(|row| row["domestic"] == true),
+            "no mainland-friendly factory is marked: {factories}"
+        );
+
+        // Channels: empty when nothing is configured, with the reason.
+        let channels = response_json(get("/api/v1/channels").await).await;
+        assert_eq!(channels["code"], 0, "{channels}");
+        assert!(
+            channels["note"]
+                .as_str()
+                .unwrap()
+                .contains("RAYRAG_CHANNELS_CONFIG"),
+            "{channels}"
+        );
+        assert_eq!(
+            channels["total"],
+            channels["data"].as_array().unwrap().len(),
+            "{channels}"
+        );
+
+        // Bots: a bot is a configured channel with a callback, so with no configuration there is none.
+        let bots = response_json(get("/api/v1/bots").await).await;
+        assert_eq!(bots["code"], 0, "{bots}");
+        assert_eq!(
+            bots["total"], 0,
+            "no channel is configured in this fixture: {bots}"
+        );
+
+        // Commits: read from the store, so a commit written there appears here.
+        let empty = response_json(get("/api/v1/file/commits").await).await;
+        assert_eq!(empty["code"], 0, "{empty}");
+        assert_eq!(empty["data"].as_array().unwrap().len(), 0, "{empty}");
+        let commit = crate::api::workspaces::WorkspaceCommit {
+            id: "commit-1".into(),
+            folder_id: "kb-1".into(),
+            scope: "kb-1".into(),
+            parent_id: None,
+            message: "first commit".into(),
+            author_id: "test-user".into(),
+            file_count: 1,
+            tree_state: String::new(),
+            create_time: 1_700_000_000_000,
+        };
+        env.state
+            .workspace_commits
+            .insert(commit, Vec::new())
+            .unwrap();
+        let listed = response_json(get("/api/v1/file/commits").await).await;
+        assert_eq!(listed["data"].as_array().unwrap().len(), 1, "{listed}");
+        assert_eq!(listed["data"][0]["message"], "first commit", "{listed}");
+        assert_eq!(listed["total"], 1, "{listed}");
+    }
+
     /// The tool catalogue and the capability report: both used to answer from invented data, so this
     /// checks that the listing is the registry's own and that the report describes this deployment.
     #[tokio::test]

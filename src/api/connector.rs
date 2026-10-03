@@ -728,14 +728,38 @@ pub struct BotChannel {
 }
 
 /// GET /api/v1/bots — list bot integrations
-pub async fn list_bots() -> impl IntoResponse {
+/// `GET /api/v1/bots` — the bots wired to this deployment.
+///
+/// It used to answer with two invented rows (`slack-local`, `discord-local`). A bot here is a channel
+/// that carries an outbound callback, which is what makes it a bot rather than a plain channel — so the
+/// list is derived from the same configuration and cannot disagree with it.
+pub async fn list_bots() -> Response {
+    let configured = crate::channels::channels_config_from_env();
+    let rows: Vec<serde_json::Value> = configured
+        .as_object()
+        .map(|channels| {
+            channels
+                .iter()
+                .filter_map(|(id, config)| {
+                    let callback = config.get("callback_url").and_then(|value| value.as_str())?;
+                    Some(serde_json::json!({
+                        "id": format!("{id}-local"),
+                        "platform": id,
+                        "name": format!("{} Bot", channel_display_name(id)),
+                        "enabled": config.get("enabled").and_then(|value| value.as_bool()).unwrap_or(true),
+                        "webhook_url": callback,
+                    }))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     Json(serde_json::json!({
         "code": 0,
-        "data": [
-            {"id":"slack-local","platform":"slack","name":"Slack Bot","enabled":false,"webhook_url":null},
-            {"id":"discord-local","platform":"discord","name":"Discord Bot","enabled":false,"webhook_url":null},
-        ]
+        "data": rows,
+        "total": rows.len(),
+        "note": "A bot is a configured channel with an outbound callback_url.",
     }))
+    .into_response()
 }
 
 // ── Chat Channel Management ────────────────────────────────────
@@ -750,14 +774,52 @@ pub struct ChatChannel {
 }
 
 /// GET /api/v1/channels — list chat channels
-pub async fn list_channels() -> impl IntoResponse {
+/// `GET /api/v1/channels` — the chat channels this deployment is configured with.
+///
+/// It used to answer with two invented rows (`feishu`, `webchat`) whatever the deployment had. The
+/// source is now `channels_config_from_env()`, the same configuration the channel runtime reads, so a
+/// channel appears here exactly when a message sent to it would be handled.
+pub async fn list_channels() -> Response {
+    let configured = crate::channels::channels_config_from_env();
+    let rows: Vec<serde_json::Value> = configured
+        .as_object()
+        .map(|channels| {
+            channels
+                .iter()
+                .map(|(id, config)| {
+                    let enabled = config
+                        .get("enabled")
+                        .and_then(|value| value.as_bool())
+                        .unwrap_or(true);
+                    serde_json::json!({
+                        "id": id,
+                        "name": channel_display_name(id),
+                        "channel_type": id,
+                        "enabled": enabled,
+                        "config": config,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     Json(serde_json::json!({
         "code": 0,
-        "data": [
-            {"id":"feishu","name":"Feishu","channel_type":"feishu","enabled":true,"config":{}},
-            {"id":"webchat","name":"Web Chat","channel_type":"web","enabled":true,"config":{}},
-        ]
+        "data": rows,
+        "total": rows.len(),
+        // A channel that is not configured cannot appear, so an empty list has a plain explanation
+        // rather than looking like a broken page.
+        "note": "Channels come from RAYRAG_CHANNELS_CONFIG or the per-channel environment variables.",
     }))
+    .into_response()
+}
+
+/// A display name for a channel id, capitalised rather than invented.
+fn channel_display_name(id: &str) -> String {
+    let mut chars = id.chars();
+    match chars.next() {
+        Some(first) => format!("{}{}", first.to_uppercase(), chars.as_str()),
+        None => id.to_string(),
+    }
 }
 
 // ── Plugin System ──────────────────────────────────────────────
