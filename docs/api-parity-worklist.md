@@ -58,3 +58,12 @@
 | 上游路径 | 来源与缺失方法 |
 | --- | --- |
 | `/agents/<agent_id>/webhook/test` | agent_api.py [DELETE,GET,HEAD,PATCH,PUT] |
+
+## 已知响应结构偏差（不得当作已完成）
+
+- `GET /api/v1/datasets/{dataset_id}/documents`：说明书写 **`data: {"docs": [...], "total_datasets": n}`**，
+  RayRAG 目前返回 **`data: [...]`（裸数组）**。实机确认（2026-10-03，0.10.3）：
+  `{"code":0,"data":[{"id":…,"name":"link2.txt",…}]}`。
+  **影响**：按说明书编写的客户端取 `data.docs` 会得到 null。
+  **未修的原因**：该端点被 UI（`loadFiles()` 等）与多条测试按数组消费，改结构必须同时改 UI 与测试，
+  半迁移比不改更危险。**下一轮作为独立改动处理，本轮不声称已对齐。**
