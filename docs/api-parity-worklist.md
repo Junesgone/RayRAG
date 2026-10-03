@@ -5,11 +5,11 @@
 
 ## 现状
 
-- 上游路由：**181**；RayRAG `/api/v1` 路由：**292**
-- 同名应答（exact）：**114**
+- 上游路由：**181**；RayRAG `/api/v1` 路由：**295**
+- 同名应答（exact）：**117**
 - 别名应答（alias，上游拼写已注册但走 RayRAG 自己的命名）：**38**
 - 形状不同但已被应答（covered）：**2**
-- 尚未实现（missing，已登记）：**27**
+- 尚未实现（missing，已登记）：**24**
 - 路径已有但方法缺失（method）：**1**
 - 未登记的缺口（mismatch，`--check` 视为失败）：**0**
 
@@ -41,9 +41,6 @@
 | `/workspace-files/<file_id>/versions` | `file_commit_api.py` | 功能级缺口：文件版本历史（FileCommitService）未移植，/api/v1/file/commits 目前为空实现 |
 | `/plugin/tools` | `plugin_api.py` | 功能级缺口：上游 pluginlib 插件注册表（LLM 工具元数据）未移植；RayRAG 的画布工具目录在 /api/v1/components |
 | `/auth/password/forgot/captcha` | `user_api.py` | 功能级缺口：忘记密码整体流程（验证码/OTP/重置）未实现 |
-| `/auth/password/forgot/otp` | `user_api.py` | 功能级缺口：同上（忘记密码流程） |
-| `/auth/password/forgot/otp/verify` | `user_api.py` | 功能级缺口：同上（忘记密码流程） |
-| `/auth/password/reset` | `user_api.py` | 功能级缺口：同上（忘记密码流程） |
 
 ## 别名对照（上游拼写 → RayRAG 路由）
 

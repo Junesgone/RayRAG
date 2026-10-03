@@ -195,6 +195,8 @@
 | `RAYRAG_ALLOW_PRIVATE_DB_HOSTS` | `0` | Agent database component: allow `test_db_connection` to reach private/loopback addresses. Off by default (SSRF guard); turn it on when the database really is on your LAN, which is the normal case on a NAS. （模板中默认注释，取消注释即生效） |
 | `RAYRAG_WEBHOOKS_FILE` | `` | --- Agent webhooks --------------------------------------------------------- One JSON document holding each agent's webhook and its delivery history. Default: webhooks.json beside the static directory's parent. （模板中默认注释，取消注释即生效） |
 | `RAYRAG_STATIC_DIR` | `` | Directory holding the web UI and the JSON state files (users.json, uploads/). The CLI flag --static-dir wins over this value; default: web/static. （模板中默认注释，取消注释即生效） |
+| `RAYRAG_PASSWORD_RESET_FILE` | `` | --- Password reset --------------------------------------------------------- One-time reset codes are stored here. Default: password_reset.json beside the static directory's parent. （模板中默认注释，取消注释即生效） |
+| `EMAIL_SMTP_HOST` | `` | SMTP host used for outgoing mail (password-reset codes). When it is empty RayRAG does not send mail: the reset code is written to the server log instead, and the API reports delivered_by=server_log rather than claiming an email was sent. （模板中默认注释，取消注释即生效） |
 <!-- END GENERATED ENV -->
 
 ## 2. HTTP 接口登记表
@@ -300,6 +302,9 @@
 | GET | `/api/v1/models/endpoints/check` | `-` |
 | POST | `/api/v1/datasets/{dataset_id}/index` | `-` |
 | ANY | `/api/v1/datasets/{dataset_id}/{index_type}` | `axum::routing` |
+| POST | `/api/v1/auth/password/forgot/otp` | `-` |
+| POST | `/api/v1/auth/password/forgot/otp/verify` | `-` |
+| POST | `/api/v1/auth/password/reset` | `-` |
 | GET | `/api/v1/agents/{agent_id}/webhook` | `-` |
 | GET | `/api/v1/agents/{agent_id}/webhook/logs` | `-` |
 | POST | `/api/v1/agents/{agent_id}/webhook/test` | `-` |

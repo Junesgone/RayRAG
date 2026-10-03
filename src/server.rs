@@ -4623,6 +4623,19 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/datasets/{dataset_id}/{index_type}",
             axum::routing::delete(delete_dataset_index),
         )
+        // Upstream `user_api.py` password reset flow (`forgot/otp`, `otp/verify`, `reset`).
+        .route(
+            "/api/v1/auth/password/forgot/otp",
+            post(crate::api::password_flow::request_otp),
+        )
+        .route(
+            "/api/v1/auth/password/forgot/otp/verify",
+            post(crate::api::password_flow::verify_otp),
+        )
+        .route(
+            "/api/v1/auth/password/reset",
+            post(crate::api::password_flow::reset_password),
+        )
         // Upstream `agent_api.py` webhook surface.
         .route(
             "/api/v1/agents/{agent_id}/webhook",

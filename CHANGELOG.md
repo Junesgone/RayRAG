@@ -2,6 +2,15 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.9.3] - 2026-10-02
+
+- **忘记密码流程落地**（上游 `user_api.py`）：`POST /api/v1/auth/password/forgot/otp`、`…/otp/verify`、`POST /api/v1/auth/password/reset`。
+  - **一次性验证码**：10 分钟有效、**单次使用**（重置后立即失效）、**最多 5 次错误尝试**（超出即作废），验证码替换旧码；错误分别提示"没申请过/已过期/尝试过多/还剩几次"，**每一种失败都有自己的说法**。
+  - **不枚举账号**：请求验证码的响应与地址是否存在无关。
+  - **没有邮件服务器时不撒谎**：RayRAG 目前不发送邮件，因此验证码**写入服务端日志**，响应里 `delivered_by` 明确写 `server_log`，文案是"请向管理员索取"——而不是"请查收邮箱"。配置 `EMAIL_SMTP_HOST` 后 `delivered_by` 变为 `email`。
+- **账面**：同路径应答 **114 → 117**，未实现 **27 → 24**，不匹配 0。
+- **测试**：新增 4 条存储层测试（单次使用、错误尝试倒数并作废、未知地址如实报告、新码替换旧码）。全量 **2155 passed / 0 failed**。
+
 ## [0.9.2] - 2026-10-02
 
 - **Agent 页面新增 Webhook 面板**：上一版把 webhook 接口做好了，但页面上没有入口（本阶段同类问题的第 5 次）。Agent 详情页现在有：URL 输入框、Enabled 勾选、**Save webhook / Send test delivery / Show delivery log / Remove** 四个按钮，以及状态行与投递日志区。

@@ -30,6 +30,7 @@ pub mod mcp_mgr;
 pub mod model_catalog;
 pub mod oauth_web;
 pub mod openai_proxy;
+pub mod password_flow;
 pub mod runtime_config;
 pub mod sandbox_admin;
 pub mod search;

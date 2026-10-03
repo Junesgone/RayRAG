@@ -132,6 +132,7 @@ pub mod one;
 pub mod paper;
 pub mod parser;
 pub mod parser_config;
+pub mod password_reset;
 pub mod password_transport;
 pub mod persistence;
 pub mod pipeline;
