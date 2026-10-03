@@ -70,7 +70,7 @@ pub const GRAPH_ALL_FIELDS: [&str; 11] = [
 /// `graph_search`: one raw-row search. Returns `(rows, total)` where `total`
 /// is the full match count (not the returned slice). Rows keep response order,
 /// mirroring the upstream `field_map.values()` iteration order.
-pub async fn graph_search(
+pub fn graph_search(
     store: &dyn DocStore,
     index_name: &str,
     kb_id: &str,
@@ -386,7 +386,7 @@ pub fn row_has_enabled_source(row: &DocRow, excluded_doc_ids: &HashSet<String>) 
 /// returned whole; large ones are sampled: top-`GRAPH_TOP_ENTITIES` entities by
 /// `mention_count_int`, the relations sourced from them, and those relations'
 /// target entities.
-pub async fn build_bucket(
+pub fn build_bucket(
     store: &dyn DocStore,
     index_name: &str,
     kb_id: &str,
@@ -404,8 +404,7 @@ pub async fn build_bucket(
         1,
         Vec::new(),
         0,
-    )
-    .await?;
+    )?;
 
     if total < GRAPH_FULL_THRESHOLD {
         let (rows, _) = graph_search(
@@ -418,8 +417,7 @@ pub async fn build_bucket(
             total.max(1),
             Vec::new(),
             0,
-        )
-        .await?;
+        )?;
         let mut entities: Vec<Value> = Vec::new();
         let mut relations: Vec<Value> = Vec::new();
         for row in &rows {
@@ -461,8 +459,7 @@ pub async fn build_bucket(
             GRAPH_TOP_ENTITIES,
             Vec::new(),
             entity_offset,
-        )
-        .await?;
+        )?;
         entity_total = Some(total);
         if rows.is_empty() {
             break;
@@ -516,8 +513,7 @@ pub async fn build_bucket(
             GRAPH_EXPANSION_CAP,
             Vec::new(),
             0,
-        )
-        .await?;
+        )?;
         for row in &rows {
             if !row_has_enabled_source(row, excluded_doc_ids) {
                 continue;
@@ -555,8 +551,7 @@ pub async fn build_bucket(
             GRAPH_EXPANSION_CAP,
             Vec::new(),
             0,
-        )
-        .await?;
+        )?;
         set_t = rows
             .iter()
             .filter(|row| row_has_enabled_source(row, excluded_doc_ids))
@@ -695,8 +690,7 @@ pub async fn keyword_subgraph(
             GRAPH_KEYWORD_CANDIDATES,
             Vec::new(),
             0,
-        )
-        .await?;
+        )?;
         candidates = valid_top_nodes(&rows, excluded_doc_ids);
     }
     if !text_query.is_empty() && candidates.is_empty() {
@@ -729,8 +723,7 @@ pub async fn keyword_subgraph(
             GRAPH_KEYWORD_CANDIDATES,
             vec![text_expr],
             0,
-        )
-        .await?;
+        )?;
         candidates = valid_top_nodes(&rows, excluded_doc_ids)
             .into_iter()
             .filter(|(_, node)| name_matches_query(node, &text_query))
@@ -788,8 +781,7 @@ pub async fn keyword_subgraph(
             GRAPH_KEYWORD_KNN_CANDIDATES,
             vec![match_expr],
             0,
-        )
-        .await?;
+        )?;
         candidates = valid_top_nodes(&rows, excluded_doc_ids);
     }
 
@@ -862,8 +854,7 @@ pub async fn keyword_subgraph(
                     GRAPH_EXPANSION_CAP,
                     Vec::new(),
                     0,
-                )
-                .await?;
+                )?;
                 for row in &rows {
                     if !row_has_enabled_source(row, excluded_doc_ids) {
                         continue;
@@ -939,8 +930,7 @@ pub async fn keyword_subgraph(
                         GRAPH_EXPANSION_CAP - relations.len(),
                         Vec::new(),
                         0,
-                    )
-                    .await?;
+                    )?;
                     for row in &rows {
                         if !row_has_enabled_source(row, excluded_doc_ids) {
                             continue;
@@ -998,8 +988,7 @@ pub async fn keyword_subgraph(
                 GRAPH_EXPANSION_CAP,
                 Vec::new(),
                 0,
-            )
-            .await?;
+            )?;
             for row in &rows {
                 if row_has_enabled_source(row, excluded_doc_ids)
                     && let Some(node) = project_entity(row)
@@ -1035,8 +1024,7 @@ pub async fn keyword_subgraph(
             GRAPH_EXPANSION_CAP,
             Vec::new(),
             0,
-        )
-        .await?;
+        )?;
         for row in &rows {
             if row_has_enabled_source(row, excluded_doc_ids)
                 && let Some(node) = project_entity(row)
@@ -1408,9 +1396,8 @@ mod tests {
         ]);
         let mut scope = DocRow::new();
         scope.insert("compilation_template_ids".to_string(), json!("t1"));
-        let (entities, relations) = build_bucket(&store, "index", "kb", &scope, &HashSet::new())
-            .await
-            .unwrap();
+        let (entities, relations) =
+            build_bucket(&store, "index", "kb", &scope, &HashSet::new()).unwrap();
         assert_eq!(entities.len(), 2);
         assert_eq!(entities[0]["mention_count"], json!(3));
         assert_eq!(relations.len(), 1);
@@ -1429,9 +1416,8 @@ mod tests {
         let store = MiniStore::with_rows(rows);
         let mut scope = DocRow::new();
         scope.insert("compilation_template_ids".to_string(), json!("t1"));
-        let (entities, relations) = build_bucket(&store, "index", "kb", &scope, &HashSet::new())
-            .await
-            .unwrap();
+        let (entities, relations) =
+            build_bucket(&store, "index", "kb", &scope, &HashSet::new()).unwrap();
         assert_eq!(relations.len(), 1);
         assert_eq!(relations[0]["from"], json!("entity-1029"));
         assert_eq!(relations[0]["to"], json!("hub-target"));

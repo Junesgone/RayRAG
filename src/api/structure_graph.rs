@@ -269,7 +269,7 @@ pub async fn document_structure_graph(
         let document_id = document_id.clone();
         let index = index.clone();
         move |store| -> anyhow::Result<Outcome> {
-            tokio::runtime::Handle::current().block_on(async move {
+            {
                 let meta_fields: Vec<&str> = {
                     let mut fields: Vec<&str> = GRAPH_ALL_FIELDS.to_vec();
                     fields.extend([
@@ -296,7 +296,6 @@ pub async fn document_structure_graph(
                     Vec::new(),
                     0,
                 )
-                .await
                 .map_err(|error| anyhow::anyhow!(error))?;
 
                 // Group the rows into buckets first, then project each bucket once. The bucket scope is
@@ -327,7 +326,7 @@ pub async fn document_structure_graph(
                     };
                     let mut bucket_scope = Map::new();
                     bucket_scope.insert("id".to_string(), json!(ids));
-                    match build_bucket(store, &index, &dataset_id, &bucket_scope, &excluded).await {
+                    match build_bucket(store, &index, &dataset_id, &bucket_scope, &excluded) {
                         Ok((entities, relations)) => {
                             total_entities += entities.len();
                             total_relations += relations.len();
@@ -359,7 +358,6 @@ pub async fn document_structure_graph(
                     Vec::new(),
                     0,
                 )
-                .await
                 {
                     let mut entities: Vec<Value> = Vec::new();
                     let mut relations: Vec<Value> = Vec::new();
@@ -399,7 +397,7 @@ pub async fn document_structure_graph(
                     total_entities,
                     total_relations,
                 })
-            })
+            }
         }
     })
     .await;
