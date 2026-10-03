@@ -12,6 +12,7 @@ pub mod chat_channel_mgr;
 pub mod chatapp_mgr;
 pub mod chunks;
 pub mod common;
+pub mod compat;
 pub mod compilation_templates;
 pub mod connector;
 pub mod data_source_mgr;

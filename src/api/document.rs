@@ -308,10 +308,9 @@ pub async fn list_docs(
     // A bare array looks equivalent but breaks every client written against the guide, which reads
     // `data.docs` and would silently get null.
     let total = docs.len();
-    Json(serde_json::json!({
-        "code": 0,
-        "data": { "docs": docs, "total_datasets": total },
-    }))
+    let mut data = serde_json::json!({ "docs": docs, "total_datasets": total });
+    crate::api::compat::enrich_documents(&mut data["docs"]);
+    Json(serde_json::json!({ "code": 0, "data": data }))
 }
 
 /// GET /api/v1/datasets/{kb_id}/documents/{doc_id} — get doc status

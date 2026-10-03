@@ -683,27 +683,6 @@ pub(crate) fn kb_reranker_for(
 
 // ── Knowledge bases ─────────────────────────────────────────────
 
-/// The API guide names the document count `document_count`; the struct field this project grew is
-/// `doc_count`. Both are emitted so a client written against the guide finds the documented name
-/// while every existing caller keeps working.
-pub(crate) fn with_documented_dataset_counts(value: serde_json::Value) -> serde_json::Value {
-    match value {
-        serde_json::Value::Array(items) => serde_json::Value::Array(
-            items
-                .into_iter()
-                .map(with_documented_dataset_counts)
-                .collect(),
-        ),
-        serde_json::Value::Object(mut object) => {
-            if let Some(count) = object.get("doc_count").cloned() {
-                object.insert("document_count".to_string(), count);
-            }
-            serde_json::Value::Object(object)
-        }
-        other => other,
-    }
-}
-
 async fn list_datasets(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -711,14 +690,16 @@ async fn list_datasets(
     Json(ApiResponse {
         code: 0,
         message: "ok".into(),
-        data: Some(with_documented_dataset_counts(
-            serde_json::to_value(state.kbs.list_accessible(
+        data: Some({
+            let mut value = serde_json::to_value(state.kbs.list_accessible(
                 &auth.user_id,
                 auth.is_admin,
                 |tenant_id, user_id| state.tenants.is_member(tenant_id, user_id),
             ))
-            .unwrap_or_default(),
-        )),
+            .unwrap_or_default();
+            crate::api::compat::enrich_datasets(&mut value);
+            value
+        }),
     })
 }
 

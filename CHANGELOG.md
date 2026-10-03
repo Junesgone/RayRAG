@@ -2,6 +2,45 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.11.2] - 2026-10-03
+
+### The API guide's field names, added systematically
+
+`document_count` in the last release was found by accident. To stop relying on accidents, there is now
+`scripts/api-field-audit.py`: it holds the field names the guide documents for each object — dataset,
+document, chunk, chat, session, file, agent, memory, search app, retrieval — fetches real responses from a
+running instance, and reports every documented key that is absent. It reports rather than fixes, so the
+mapping stays a human decision, and an object with no rows is listed as "no data" instead of a false alarm.
+
+Its first run found that the differences were systematic, not isolated:
+
+| the guide says | RayRAG stored |
+|---|---|
+| `embedding_model` | `embd_id` |
+| `dataset_ids` | `kb_ids` |
+| `created_by`, `tenant_id` | `owner_id` |
+| `create_time`, `update_time` | `created_at`, `updated_at` |
+| `location` | `storage_name` |
+| `title` (agents) | `name` |
+| `parser_config` (object) | `parser_config` (JSON **string**) |
+
+`api::compat` now adds the documented name beside the original one on every list and detail endpoint, and
+parses `parser_config` into the object the guide documents (lifting `chunk_method` out as the sibling field
+the guide has). **Everything is additive** — the original keys stay, so no existing caller changes
+behaviour.
+
+Two rules kept this honest:
+
+- a documented name is only filled from a field that already holds that fact; a real value is never
+  overwritten, and nothing is invented to make a payload look complete;
+- where the project genuinely has no value, the field is `null` — which is what the guide's own examples
+  show for those fields — rather than a plausible-looking placeholder.
+
+The audit is a report, not a gate, so it is deliberately **not** wired into `verify-all` yet: the remaining
+gaps it lists (chat `llm_id`/`llm_setting`/`prompt_config` and friends, which this project keeps in its own
+model tables) need a decision each, not a rename.
+
+**2173 tests pass**, 0 failures, including six new compat regressions.
 ## [0.11.1] - 2026-10-03
 
 ### The Files page is grouped by dataset

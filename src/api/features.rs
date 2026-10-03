@@ -284,7 +284,10 @@ pub async fn list_chats(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
 ) -> impl IntoResponse {
-    Json(serde_json::json!({ "code": 0, "data": state.conversations.list_for(&auth.user_id) }))
+    let mut data =
+        serde_json::to_value(state.conversations.list_for(&auth.user_id)).unwrap_or_default();
+    crate::api::compat::enrich_chats(&mut data);
+    Json(serde_json::json!({ "code": 0, "data": data }))
 }
 
 /// GET /api/v1/chats/{id} — get one owned session.
@@ -7072,7 +7075,14 @@ pub async fn list_agents(
         &query,
     ) {
         Ok((canvas, total)) => {
-            let canvas: Vec<_> = canvas.into_iter().map(agent_canvas_view).collect();
+            let mut canvas = serde_json::to_value(
+                canvas
+                    .into_iter()
+                    .map(agent_canvas_view)
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap_or_default();
+            crate::api::compat::enrich_agents(&mut canvas);
             Json(serde_json::json!({ "code": 0, "data": { "canvas": canvas, "total": total } }))
                 .into_response()
         }

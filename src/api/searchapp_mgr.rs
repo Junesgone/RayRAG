@@ -297,7 +297,9 @@ pub async fn list_search_apps(
         .into_iter()
         .filter(|a| a.owner_id == auth.user_id || auth.is_admin)
         .collect();
-    json(serde_json::json!({"code": 0, "data": visible}))
+    let mut data = serde_json::to_value(visible).unwrap_or_default();
+    crate::api::compat::enrich_search_apps(&mut data);
+    json(serde_json::json!({"code": 0, "data": data}))
 }
 
 /// `GET /api/v1/searches/{search_id}` — upstream `search_api.detail`.
