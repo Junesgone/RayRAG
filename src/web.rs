@@ -9709,6 +9709,46 @@ async function saveEditInstanceModel(){var modal=document.getElementById('editIn
 document.addEventListener('keydown',function(event){if(event.key==='Escape'){closeProviderInstanceModal();closeDeleteModelInstance();closeEditInstanceModel()}});piMsRegister('pcmTypes',PI_MODEL_TYPE_OPTIONS,[]);piMsRegister('eimTypes',PI_MODEL_TYPE_OPTIONS,[]);pcmApplyLabels();piMsApplyLabels('pcmTypes');piMsApplyLabels('eimTypes');var eimTitle=document.getElementById('editInstanceModelTitle');if(eimTitle)eimTitle.textContent=PI_PICKER_LABELS.editCustomModelTitle;var eimCancel=document.getElementById('editInstanceModelCancel');if(eimCancel)eimCancel.textContent=PI_PICKER_LABELS.cancel;var eimConfirm=document.getElementById('editInstanceModelOk');if(eimConfirm)eimConfirm.textContent=PI_PICKER_LABELS.confirm;loadAddedModels();
 </script>"#,
     );
+    // Speech (`chat/audio/speech` + `chat/audio/transcription`): a card that reaches both endpoints,
+    // so the feature has a button and its failures are visible text rather than a silent no-op.
+    b.push_str("<section class='card' id='speechCard' data-testid='speech-card'><h2>");
+    b.push_str(t("Speech", zh));
+    b.push_str("</h2><p style='color:var(--tm);font-size:13px'>");
+    b.push_str(t(
+        "Text to speech and speech to text, using the RAYRAG_TTS_* and RAYRAG_ASR_* endpoints. An unconfigured deployment says which model is missing.",
+        zh,
+    ));
+    b.push_str("</p><label style='display:block;font-size:13px;margin-top:8px'>");
+    b.push_str(t("Text to read aloud", zh));
+    b.push_str("</label><textarea id='speechText' rows='3' style='width:100%' placeholder='");
+    b.push_str(t("Type something to hear it", zh));
+    b.push_str("'></textarea><div style='display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px'><button class='btn btn-o btn-sm' data-testid='speech-say' onclick='speechSay()'>🔊 ");
+    b.push_str(t("Speak", zh));
+    b.push_str("</button><span id='speechStatus' data-testid='speech-status' style='font-size:13px;color:var(--tm)'></span></div><div id='speechAudio' data-testid='speech-audio' style='margin-top:8px'></div>");
+    b.push_str("<label style='display:block;font-size:13px;margin-top:14px'>");
+    b.push_str(t("Audio to transcribe", zh));
+    b.push_str("</label><div style='display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px'><input type='file' id='speechFile' data-testid='speech-file' accept='.aac,.flac,.m4a,.mp3,.ogg,.opus,.wav,.webm,.wma'><button class='btn btn-o btn-sm' data-testid='speech-transcribe' onclick='speechTranscribe()'>📝 ");
+    b.push_str(t("Transcribe", zh));
+    b.push_str("</button></div><p id='speechTranscript' data-testid='speech-transcript' style='font-size:14px;margin-top:8px'></p></section>");
+    b.push_str("<script>function speechStatus(text,error){var node=document.getElementById('speechStatus');if(!node)return;node.textContent=text||'';node.style.color=error?'var(--d)':'var(--tm)'}");
+    b.push_str("function speechSay(){var text=(document.getElementById('speechText')||{}).value||'';if(!text.trim()){speechStatus('");
+    b.push_str(t("Type something first", zh));
+    b.push_str("',true);return}speechStatus('");
+    b.push_str(t("Synthesising...", zh));
+    b.push_str("');fetch('/api/v1/chat/audio/speech',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:text})}).then(function(response){var type=response.headers.get('content-type')||'';if(type.indexOf('audio/')===0){return response.blob().then(function(blob){var host=document.getElementById('speechAudio');host.replaceChildren();var player=document.createElement('audio');player.controls=true;player.autoplay=true;player.src=URL.createObjectURL(blob);host.appendChild(player);speechStatus('");
+    b.push_str(t("Playing", zh));
+    b.push_str(
+        "')})}return response.json().then(function(data){speechStatus((data&&data.message)||'",
+    );
+    b.push_str(t("Could not synthesise speech", zh));
+    b.push_str("',true)})}).catch(function(error){speechStatus(String(error),true)})}");
+    b.push_str("function speechTranscribe(){var input=document.getElementById('speechFile');var node=document.getElementById('speechTranscript');if(!input||!input.files||!input.files.length){node.textContent='");
+    b.push_str(t("Choose an audio file first", zh));
+    b.push_str("';node.style.color='var(--d)';return}var body=new FormData();body.append('file',input.files[0]);body.append('stream','false');node.textContent='");
+    b.push_str(t("Transcribing...", zh));
+    b.push_str("';node.style.color='var(--tm)';fetch('/api/v1/chat/audio/transcription',{method:'POST',body:body}).then(function(response){return response.json()}).then(function(data){if(data&&data.code===0){node.textContent=data.data.text;node.style.color='var(--tx)'}else{node.textContent=(data&&data.message)||'");
+    b.push_str(t("Could not transcribe", zh));
+    b.push_str("';node.style.color='var(--d)'}}).catch(function(error){node.textContent=String(error);node.style.color='var(--d)'})}</script>");
     // close the two-column shell (upstream keeps the modals inside the card)
     b.push_str("</section></div>");
     let page = if in_user_settings {

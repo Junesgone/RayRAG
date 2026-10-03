@@ -32,7 +32,7 @@ Configuration is `RAYRAG_TTS_API_BASE` / `RAYRAG_TTS_API_KEY` / `RAYRAG_TTS_MODE
 wizard and `.env.example` gained the four TTS fields in the same release, so the guide, the template
 and the registry cannot drift apart.
 
-**2210 tests pass, 0 failures**, including the suffix parsing, the exact refusal sentence, the
+**2205 tests pass, 0 failures**, including the suffix parsing, the exact refusal sentence, the
 allowlist as the documented set, and a router test that walks the documented refusals over a real
 multipart body. The parity ledger moved from 14 to **12** remaining gaps (195 upstream routes, 336 of
 ours, 136 exact).
