@@ -866,3 +866,14 @@ RAGFlow 把麦克风放在**聊天输入区**；RayRAG 目前把这个能力放�
 - **免登录修复**：`/auth/password/forgot/captcha`、`/forgot/otp`、`/forgot/otp/verify`、`/auth/password/reset` 原本被 bearer 中间件拦住（忘记密码的人没有 token），现与上游一致置于未认证组，有单测钉住。
 - **UI**：登录页新增自包含「重置密码」卡片 `#resetCard`（`data-testid='reset-card|reset-email|reset-captcha-image|reset-captcha|reset-reload|reset-send|reset-code|reset-new-password|reset-submit|reset-status'`）；占位符用 `@TOKEN@` + `replace`。
 - **发布规则（重要）**：`web/*.json` 与 `web/uploads/*.json` 一律**不随快照发布**（运行时状态：文档、元数据、记忆、令牌、轨迹），发布脚本对导出结果做结构性删除 + **任一残留即 FATAL 拒绝发布**；源仓库同步 `git rm --cached` + `.gitignore`。教训：按名单排除的机制对「后来新增的文件」没有记忆。
+
+### 0.22.0：逐文档结构图（GET + DELETE）—— 顺带修掉条件匹配的语义错误
+
+- **接口**：`GET /api/v1/datasets/{dataset_id}/documents/{document_id}/structure/graph`（可选 `?keywords=`）与 `DELETE` 同路径（body `{"template_id": "<id>|legacy:<compile_kwd>|raptor"}`）。
+- **响应**：`{total_entities, total_relations, returned_entities, returned_relations, templates[{template_id, template_name, kind, entities, relations}], scanned_rows, truncated, note}`；空图时 `note` 说明「编译产物由知识编译在解析后写入」。
+- **分桶规则（对齐上游）**：按 `compilation_template_ids` 分桶；无标记的行进 `legacy:<compile_kwd>` 桶（不丢数据）；数据集已配置的模板排在前面（按配置顺序）；`wiki` 模板跳过；无实体且无关系的桶不显示；RAPTOR 摘要行单独成 `RAPTOR Summary` 桶。
+- **本轮修掉的关键缺陷**：`DocStore` 的条件匹配原为严格相等（`row.get(k) == Some(v)`），而上游条件是搜索引擎的 `terms` 语义（如 `{"knowledge_graph_kwd": ["entity","relation"]}`）—— 该形状**永远匹配不到任何行**，`structure_graph_common` 因此从未真正工作过。现语义：标量=精确相等；数组=命中其中任一值（标量字段）或多值字段有交集。
+- **分桶实现**：按**行 id** 分组后再投影（用「doc + compile_kwd」作 scope 会连带命中带模板标记的行 → 重复计数）。
+- **keywords**：服务端按实体 `name` / 文本子串过滤（上游还会走向量检索补候选；此处确定性过滤，差异已登记）。
+- **DELETE**：删除该模板的 compact graph 行 + entity/relation 行；`raptor` 只删投影行（摘要分块仍可检索）；空 `template_id` → `102 \`template_id\` is required`。
+- **易错点**：`filter_entities_with_relations` 返回的是**实体**（不是关系），误用会把关系替换成节点列表。

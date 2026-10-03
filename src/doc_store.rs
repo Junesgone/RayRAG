@@ -344,7 +344,24 @@ struct StoredRow {
 fn condition_matches(row: &DocRow, condition: &FilterCondition) -> bool {
     condition
         .iter()
-        .all(|(key, value)| row.get(key) == Some(value))
+        .all(|(key, value)| value_matches(row.get(key), value))
+}
+
+/// One condition value against one row field.
+///
+/// Upstream builds these conditions for a search engine where an array means a `terms` query, and the
+/// code that mirrors it passes arrays such as `{"knowledge_graph_kwd": ["entity", "relation"]}`. Strict
+/// equality made every such condition unmatchable — the structure-graph helpers carried conditions of
+/// exactly that shape and could never have matched a row. A scalar keeps its exact meaning; an array
+/// matches a scalar field holding any of its values, or a multi-valued field sharing one.
+fn value_matches(field: Option<&Value>, wanted: &Value) -> bool {
+    match (field, wanted) {
+        (Some(Value::Array(have)), Value::Array(want)) => {
+            have.iter().any(|value| want.contains(value))
+        }
+        (Some(have), Value::Array(want)) => want.contains(have),
+        _ => field == Some(wanted),
+    }
 }
 
 /// Lexical + dense + rank-feature scoring for a single row.
@@ -1392,6 +1409,59 @@ impl DocStorePool {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_condition_value_that_is_an_array_means_any_of_them() {
+        let mut row = DocRow::new();
+        row.insert(
+            "knowledge_graph_kwd".to_string(),
+            serde_json::json!("entity"),
+        );
+        row.insert("doc_id".to_string(), serde_json::json!("doc-1"));
+        row.insert(
+            "doc_ids_kwd".to_string(),
+            serde_json::json!(["doc-1", "doc-2"]),
+        );
+
+        // The shape the structure-graph code passes, which strict equality could never match.
+        let mut condition = FilterCondition::new();
+        condition.insert(
+            "knowledge_graph_kwd".to_string(),
+            serde_json::json!(["entity", "relation"]),
+        );
+        assert!(condition_matches(&row, &condition));
+
+        // A scalar keeps exact equality, including "not equal".
+        let mut scalar = FilterCondition::new();
+        scalar.insert("doc_id".to_string(), serde_json::json!("doc-1"));
+        assert!(condition_matches(&row, &scalar));
+        scalar.insert("doc_id".to_string(), serde_json::json!("doc-2"));
+        assert!(!condition_matches(&row, &scalar));
+
+        // A multi-valued field matches when it shares any value, and not otherwise.
+        let mut shared = FilterCondition::new();
+        shared.insert("doc_ids_kwd".to_string(), serde_json::json!(["doc-2"]));
+        assert!(condition_matches(&row, &shared));
+        shared.insert("doc_ids_kwd".to_string(), serde_json::json!("doc-2"));
+        assert!(
+            !condition_matches(&row, &shared),
+            "a scalar must equal the array, not be inside it"
+        );
+
+        // Every condition must hold.
+        let mut both = FilterCondition::new();
+        both.insert(
+            "knowledge_graph_kwd".to_string(),
+            serde_json::json!(["entity", "relation"]),
+        );
+        both.insert("doc_id".to_string(), serde_json::json!("other"));
+        assert!(!condition_matches(&row, &both));
+
+        // A missing field never matches a wanted value.
+        let mut missing = FilterCondition::new();
+        missing.insert("absent".to_string(), serde_json::json!(["x"]));
+        assert!(!condition_matches(&row, &missing));
+    }
     use super::*;
 
     fn row(id: &str, content: &str) -> DocRow {

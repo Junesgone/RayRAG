@@ -5330,6 +5330,13 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/datasets/{dataset_id}/documents/{document_id}/metadata/config",
             axum::routing::put(crate::api::metadata_config::update_document_metadata_config),
         )
+        // The document-level structure graph. The assembly helpers existed for a while with no caller;
+        // this is the route that uses them, so a compiled graph can actually be read back.
+        .route(
+            "/api/v1/datasets/{dataset_id}/documents/{document_id}/structure/graph",
+            get(crate::api::structure_graph::document_structure_graph)
+                .delete(crate::api::structure_graph::delete_document_structure_graph),
+        )
         .route(
             "/api/v1/documents/images/{image_id}",
             get(crate::api::doc_assets::document_image),
@@ -13506,6 +13513,282 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    /// The document-level structure graph. The assembly helpers and the compiler had no caller for a
+    /// while, so this test is the one that exercises the route end to end: real rows in the shared doc
+    /// store come back grouped by the template that produced them, with the legacy bucket kept and the
+    /// empty case explained.
+    #[tokio::test]
+    async fn the_document_structure_graph_groups_compiled_rows_by_template() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Graph KB", "")
+            .unwrap();
+        let doc = crate::api::document::DocRecord {
+            id: "graph-doc".into(),
+            name: "graph.md".into(),
+            kb_id: kb.id.clone(),
+            size: 10,
+            storage_name: "graph.md".into(),
+            content_hash: "0123456789abcdef0123456789abcdef".into(),
+            indexed_content_hash: String::new(),
+            run: "DONE".into(),
+            progress: 1.0,
+            progress_msg: "Indexed 2 chunks".into(),
+            chunk_count: 2,
+            created_at: 1,
+            updated_at: 1,
+            status: crate::api::document::enabled_status(),
+        };
+        env.state.docs.insert(doc).unwrap();
+
+        let call = |uri: String| {
+            let router = build_router(env.state.clone());
+            let token = env.token.clone();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(Method::GET)
+                            .uri(uri)
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+        let graph_uri = format!(
+            "/api/v1/datasets/{}/documents/graph-doc/structure/graph",
+            kb.id
+        );
+
+        // With nothing compiled there is nothing to show, and the answer says so.
+        let empty = response_json(call(graph_uri.clone()).await).await;
+        assert_eq!(empty["code"], 0, "{empty}");
+        assert_eq!(empty["data"]["total_entities"], 0, "{empty}");
+        assert!(
+            empty["data"]["templates"].as_array().unwrap().is_empty(),
+            "{empty}"
+        );
+        assert!(
+            empty["data"]["note"]
+                .as_str()
+                .unwrap()
+                .contains("no compiled structure graph"),
+            "{empty}"
+        );
+
+        // Rows as the compiler writes them: entity and relation rows tagged with a template, plus one
+        // that predates the tag and must land in the legacy bucket rather than vanish.
+        // Rows carry the fields the store is queried by, not only the compiled payload: that is what
+        // the compiler writes and what the projection reads endpoints and names from.
+        let row = |id: &str, kind: &str, payload: &str, template: Option<&str>| {
+            let mut row = serde_json::json!({
+                "id": id,
+                "doc_id": "graph-doc",
+                "knowledge_graph_kwd": kind,
+                "content_with_weight": payload,
+            });
+            let object = row.as_object_mut().unwrap();
+            if kind == "entity" {
+                let name = payload
+                    .split("\"name\":\"")
+                    .nth(1)
+                    .and_then(|rest| rest.split('"').next())
+                    .unwrap_or(id);
+                object.insert("name_kwd".to_string(), serde_json::json!(name));
+                object.insert("mention_count_int".to_string(), serde_json::json!(1));
+            } else {
+                object.insert("from_entity_kwd".to_string(), serde_json::json!("rust"));
+                object.insert("to_entity_kwd".to_string(), serde_json::json!("cargo"));
+            }
+            match template {
+                Some(template) => {
+                    object.insert(
+                        "compilation_template_ids".to_string(),
+                        serde_json::json!([template]),
+                    );
+                    object.insert(
+                        "compilation_template_kind_kwd".to_string(),
+                        serde_json::json!("hypergraph"),
+                    );
+                    object.insert(
+                        "compile_kwd".to_string(),
+                        serde_json::json!("knowledge_graph"),
+                    );
+                }
+                None => {
+                    object.insert(
+                        "compile_kwd".to_string(),
+                        serde_json::json!("knowledge_graph"),
+                    );
+                }
+            }
+            row.as_object().unwrap().clone()
+        };
+        let rows: Vec<crate::doc_store::DocRow> = vec![
+            row(
+                "e1",
+                "entity",
+                r#"{"name":"rust","content_with_weight":"a systems language"}"#,
+                Some("tpl-1"),
+            ),
+            row(
+                "e2",
+                "entity",
+                r#"{"name":"cargo","content_with_weight":"the package manager"}"#,
+                Some("tpl-1"),
+            ),
+            row(
+                "r1",
+                "relation",
+                r#"{"from_entity_kwd":"rust","to_entity_kwd":"cargo","content_with_weight":"rust ships cargo"}"#,
+                Some("tpl-1"),
+            ),
+            row(
+                "e3",
+                "entity",
+                r#"{"name":"legacy-entity","content_with_weight":"older row"}"#,
+                None,
+            ),
+        ];
+        let store = env.state.doc_store.get_conn().unwrap();
+        store
+            .insert(
+                &rows,
+                &crate::harness::knowlege_dataset_nav::index_name("test-user"),
+                &kb.id,
+            )
+            .unwrap();
+
+        let listed = response_json(call(graph_uri.clone()).await).await;
+        assert_eq!(listed["code"], 0, "{listed}");
+        assert_eq!(listed["data"]["total_entities"], 3, "{listed}");
+        assert_eq!(listed["data"]["total_relations"], 1, "{listed}");
+        let templates = listed["data"]["templates"].as_array().unwrap();
+        assert_eq!(templates.len(), 2, "template + legacy bucket: {listed}");
+        let templated = templates
+            .iter()
+            .find(|bucket| bucket["template_id"] == "tpl-1")
+            .expect("the tagged rows must be grouped under their template");
+        assert_eq!(
+            templated["entities"].as_array().unwrap().len(),
+            2,
+            "{listed}"
+        );
+        assert_eq!(
+            templated["relations"].as_array().unwrap().len(),
+            1,
+            "{listed}"
+        );
+        let legacy = templates
+            .iter()
+            .find(|bucket| bucket["template_id"] == "legacy:knowledge_graph")
+            .expect("a row without a template id is kept, not dropped");
+        assert_eq!(
+            legacy["template_name"], "Legacy (knowledge_graph)",
+            "{listed}"
+        );
+        assert_eq!(legacy["entities"].as_array().unwrap().len(), 1, "{listed}");
+
+        // Keywords narrow the graph server-side, and a phrase that matches nothing is an empty graph
+        // rather than a refusal.
+        let narrowed = response_json(call(format!("{graph_uri}?keywords=cargo")).await).await;
+        let narrowed_templates = narrowed["data"]["templates"].as_array().unwrap();
+        let narrowed_entities: usize = narrowed_templates
+            .iter()
+            .map(|bucket| bucket["entities"].as_array().unwrap().len())
+            .sum();
+        assert_eq!(narrowed_entities, 1, "{narrowed}");
+        assert_eq!(
+            narrowed["data"]["total_entities"], 3,
+            "totals describe the document: {narrowed}"
+        );
+        let none = response_json(call(format!("{graph_uri}?keywords=zzzz")).await).await;
+        assert_eq!(none["code"], 0, "{none}");
+        assert!(
+            none["data"]["templates"].as_array().unwrap().is_empty(),
+            "{none}"
+        );
+
+        // Deleting a template's tab removes its rows (and only its rows), refuses an empty
+        // `template_id`, and leaves the other buckets alone.
+        let delete_call = |body: serde_json::Value| {
+            let router = build_router(env.state.clone());
+            let token = env.token.clone();
+            let uri = graph_uri.clone();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(Method::DELETE)
+                            .uri(uri)
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(body.to_string()))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+        let missing_id = response_json(delete_call(serde_json::json!({})).await).await;
+        assert_eq!(
+            missing_id["code"],
+            crate::server::code::INVALID_OR_MISSING_DATA,
+            "{missing_id}"
+        );
+        assert!(
+            missing_id["message"]
+                .as_str()
+                .unwrap()
+                .contains("template_id"),
+            "{missing_id}"
+        );
+
+        let removed =
+            response_json(delete_call(serde_json::json!({"template_id": "tpl-1"})).await).await;
+        assert_eq!(removed["code"], 0, "{removed}");
+        assert!(
+            removed["data"]["deleted"].as_u64().unwrap() >= 3,
+            "{removed}"
+        );
+        let after = response_json(call(graph_uri.clone()).await).await;
+        let remaining: Vec<&str> = after["data"]["templates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|bucket| bucket["template_id"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            remaining,
+            vec!["legacy:knowledge_graph"],
+            "only the legacy row survives: {after}"
+        );
+
+        // A document that belongs to another dataset is refused with the upstream wording.
+        let other = response_json(
+            call(format!(
+                "/api/v1/datasets/{}/documents/graph-doc/structure/graph",
+                "some-other-kb"
+            ))
+            .await,
+        )
+        .await;
+        assert_eq!(
+            other["code"],
+            crate::server::code::INVALID_OR_MISSING_DATA,
+            "{other}"
+        );
+        assert!(
+            other["message"].as_str().unwrap().contains("dataset"),
+            "{other}"
         );
     }
 

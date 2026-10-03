@@ -68,7 +68,6 @@ KNOWN_METHOD_GAPS: dict[str, str] = {
 }
 
 KNOWN_MISSING: dict[str, str] = {
-    "/datasets/<dataset_id>/documents/<document_id>/structure/graph": "功能级缺口：逐文档结构图（编译产物按文档/模板存储）未实现；RayRAG 的 GraphRAG 产物按数据集存储",
     "/datasets/<dataset_id>/skills": "功能级缺口：数据集 Skills 面未实现（Skills 索引仅有全局 /api/v1/skills/*）",
     "/datasets/<dataset_id>/skills/<path:skill_kwd>": "功能级缺口：同上（Skills 面未实现）",
     "/documents/artifact/<filename>": "功能级缺口：文档产物文件读取未实现",

@@ -2,6 +2,58 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.22.0] - 2026-10-04
+
+### A whole subsystem that had no way out: the per-document structure graph
+
+`GET` and `DELETE /api/v1/datasets/{dataset_id}/documents/{document_id}/structure/graph` now exist. The
+interesting part is why they did not before.
+
+RayRAG already had the machinery: `structure_graph_common` with `build_bucket`, `project_entity`,
+`project_relation`, `dedup_entities`, `normalize_relation_endpoints`, `keyword_subgraph`, and
+`structure_compile::rebuild_structure_graph_json` writing the compiled rows. It had **no caller** — a
+grep for every one of those names outside their own module returned nothing but a test. Knowledge
+compilation produced graphs that nothing could read back, and the endpoint was still listed as a gap.
+
+Wiring it up exposed a second, worse problem. `DocStore`'s condition matcher compared with strict
+equality (`row.get(key) == Some(value)`), while upstream's conditions are search-engine `terms` queries;
+the helper passes `{"knowledge_graph_kwd": ["entity", "relation"]}` and could therefore never match a
+single row. The matcher now understands both: a scalar keeps exact equality, an array matches a scalar
+field holding any of its values or a multi-valued field sharing one. That is a fix for every caller that
+mirrors an upstream condition, not only this one.
+
+What the endpoint does, following upstream `chunk_api`:
+
+* entities and relations are grouped **by the compilation template that produced them**, and rows that
+  predate the tag land in a `legacy:<compile_kwd>` bucket instead of being dropped;
+* templates configured on the dataset come first, in the configured order, `wiki` templates are skipped
+  (they render elsewhere), and templates that produced nothing are left out;
+* RAPTOR summary rows contribute a `RAPTOR Summary` bucket;
+* buckets are grouped **by row id** rather than by a second document-wide query — a scope of
+  "doc + compile_kwd" also matches the rows that carry a template id, and each of those would have been
+  counted twice;
+* `keywords` narrows the graph server-side by entity name and text (upstream also runs a vector search
+  for extra candidates; this filter is deterministic, and that difference is documented);
+* `DELETE` takes `{"template_id": …}`, removes the compact graph row plus the entity/relation rows for
+  that template, and for `raptor` removes only the projection so the summary chunks stay retrievable;
+* an empty graph explains itself: it names what produces the rows instead of looking like a broken page.
+
+The response carries `total_entities`, `total_relations`, `returned_entities`, `returned_relations`,
+`templates`, plus `scanned_rows` and `truncated`, so a capped scan is visible rather than silent.
+
+### One bug the new test caught in my own code
+
+`filter_entities_with_relations` returns **entities**; I assigned it to `relations`, and the endpoint
+cheerfully reported two relation-shaped nodes as the relations. The router test compared against real
+rows and failed on it. The pipeline is now `dedup_entities` → `normalize_relation_endpoints`, with the
+misuse recorded in a comment so the next reader does not repeat it.
+
+**2232 tests pass, 0 failures**, including: both matcher directions; the bucket rules (template, legacy,
+kind normalisation); keyword narrowing; and the route end to end — real rows in the shared doc store
+come back grouped by template, `DELETE` removes one template's rows and leaves the others, an empty
+`template_id` is refused, and a document in another dataset is refused with upstream's wording. The
+parity ledger drops from **5 gaps to 4** (and the method gap on this route closes with it).
+
 ## [0.21.0] - 2026-10-04
 
 ### Eight runtime state files were being published, and now cannot be
