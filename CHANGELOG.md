@@ -2,6 +2,39 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.14.0] - 2026-10-03
+
+### Document thumbnails, and the image endpoint they point at
+
+Two more documented endpoints, as one feature:
+
+| endpoint | behaviour |
+|---|---|
+| `GET /api/v1/thumbnails?doc_ids=…` | a map from document id to its thumbnail url, or `null` when it has none; `doc_ids` is repeatable |
+| `GET /api/v1/documents/images/{image_id}` | serves the thumbnail (`.jpg`) or the document's own image (`{id}.{ext}`) |
+
+RayRAG has no pre-rendered thumbnails, so it makes them: an image document is decoded, scaled to fit
+200px on its longest side (aspect ratio kept) and encoded as JPEG on first request, then cached beside
+the other uploads. A document whose format needs a renderer — a PDF, a Word file — has **no**
+thumbnail, and the map says `null` for it rather than inventing a placeholder, which is what the guide's
+own client expects. A missing `doc_ids` is answered exactly as upstream does: HTTP 200 with business
+code `101 Lack of "Document ID"`.
+
+Two bugs the tests caught, both worth naming because they were silent:
+
+* **Repeated query parameters collapsed.** The handler read `doc_ids` through a map extractor, and a
+  map keeps only the *last* value — so a request for three documents returned one. It reads the raw
+  query now, so repeats and the comma-separated spelling both work.
+* **The image id could not be split on the first dash.** Upstream's ids are 32 hex characters with no
+  dashes; RayRAG's are dashed UUIDs, where splitting at the first dash cuts the id in half. The
+  knowledge base is now found by longest matching prefix, so `{kb_id}-{name}.jpg` resolves for a
+  dashed UUID and a name that itself contains dashes. And the document id is the name without *any*
+  extension — trimming only `.jpg` asked for a document called `photo-1.png`.
+
+**2197 tests pass, 0 failures**, including the generation itself (a 600×300 PNG becomes a 200×100
+JPEG), the map for an image document, a text document and an unknown id, and both served forms. The
+parity ledger moved from 18 to **16** remaining gaps (195 upstream routes, 332 of ours, 132 exact).
+
 ## [0.13.0] - 2026-10-03
 
 ### Runtime attachments: the upload endpoint, and the two that stream them back

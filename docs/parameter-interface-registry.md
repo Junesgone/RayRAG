@@ -720,3 +720,14 @@ RayRAG 此前让**会话记录**占用同一条路径（GET/POST/DELETE 都是�
 **存储**：`attachments.json`（启动恢复 + 原子写入 + PostgreSQL 快照镜像），blob 存于 `uploads/attachments/<id>[.ext]`；`ext`/`mime_type` 只影响响应头，不改动字节。
 
 **界面**：聊天输入区新增 📎 按钮 → 上传后显示文件名与大小，并给出 `download` 链接（走 `/api/v1/agents/attachments/{id}/download`）。
+
+### 0.14.0：文档缩略图与图片端点
+
+| 接口 | 说明 |
+|---|---|
+| `GET /api/v1/thumbnails?doc_ids=a&doc_ids=b` | 返回 `{doc_id: 缩略图URL \| null}`；`doc_ids` **可重复**（也接受逗号分隔）。缺参 → **HTTP 200 + 业务码 101 `Lack of "Document ID"`**（与上游一致，业务码与传输码分别判断） |
+| `GET /api/v1/documents/images/{image_id}` | `{kb_id}-{name}.jpg` 返回生成的缩略图（image/jpeg，inline）；`{kb_id}-{name}.{ext}` 返回文档原图（按扩展名给 MIME）；找不到 → `404 / 102 document not found` |
+
+**缩略图生成**：仅对**可解码的图片**文档（png/jpg/jpeg/webp/bmp/gif/tif/tiff）生成 —— 等比缩放到最长边 200px 后编为 JPEG（质量 80），缓存在 `uploads/thumbnails/{doc_id}.jpg`；PDF/Word 等需要渲染器的格式**没有**缩略图，映射值为 `null`（不伪造占位图）。小图仍会转码为 JPEG，保证格式一致、可按 id 缓存。
+
+**图像 id 解析**：上游 id 为 32 位十六进制（无短横线），可按第一个短横线切分；RayRAG 的知识库 id 是**带短横线的 UUID**，故改为**最长前缀匹配**现有知识库，余下部分为文件名（文件名本身可含短横线）。文档 id 取“去**任意**扩展名”后的名字。

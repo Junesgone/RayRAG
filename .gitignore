@@ -14,4 +14,4 @@ zvec-data/
 *.index.json
 logs/
 .env.bak*
-scripts/ui-traversal/_tmp-*.mjs
+_tmp-*.mjs

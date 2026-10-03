@@ -5265,6 +5265,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/workspace-files/{file_id}/versions",
             get(crate::api::workspaces::file_versions),
         )
+        // Document assets (upstream `document_api.py`): the thumbnail map a document list points at,
+        // and the image endpoint that map's urls resolve to.
+        .route(
+            "/api/v1/thumbnails",
+            get(crate::api::doc_assets::list_thumbnails),
+        )
+        .route(
+            "/api/v1/documents/images/{image_id}",
+            get(crate::api::doc_assets::document_image),
+        )
         // Runtime attachments (upstream `document_api.py::upload_info` and
         // `agent_api.py::_stream_agent_attachment`): create one from a file or a url, stream it back
         // for download or preview, and the canvas-scoped upload.
@@ -13373,6 +13383,180 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    /// The document thumbnail map and the image endpoint its urls point at: a real image document
+    /// gets a generated thumbnail, a document that cannot be decoded says so with `null`, and a
+    /// missing `doc_ids` is the guide's business-code answer.
+    #[tokio::test]
+    async fn thumbnails_are_generated_and_served_for_image_documents() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "thumb-kb", "")
+            .unwrap();
+        // A real PNG on disk, registered the way an upload registers one.
+        let mut source = image::RgbImage::new(600, 300);
+        for (x, _y, pixel) in source.enumerate_pixels_mut() {
+            *pixel = image::Rgb([(x % 256) as u8, 90, 200]);
+        }
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgb8(source)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let uploads = std::path::Path::new(&env.state.files.data_dir);
+        std::fs::write(uploads.join("photo-1.png"), &png).unwrap();
+        let now = 1_700_000_000_000u64;
+        env.state
+            .docs
+            .insert(crate::api::document::DocRecord {
+                id: "photo-1".into(),
+                name: "photo.png".into(),
+                kb_id: kb.id.clone(),
+                size: png.len(),
+                storage_name: "photo-1.png".into(),
+                content_hash: String::new(),
+                indexed_content_hash: String::new(),
+                run: "DONE".into(),
+                progress: 1.0,
+                progress_msg: String::new(),
+                chunk_count: 0,
+                created_at: now,
+                updated_at: now,
+                status: crate::api::document::enabled_status(),
+            })
+            .unwrap();
+        // A text document, which has no thumbnail.
+        std::fs::write(uploads.join("notes-1.txt"), b"hello").unwrap();
+        env.state
+            .docs
+            .insert(crate::api::document::DocRecord {
+                id: "notes-1".into(),
+                name: "notes.txt".into(),
+                kb_id: kb.id.clone(),
+                size: 5,
+                storage_name: "notes-1.txt".into(),
+                content_hash: String::new(),
+                indexed_content_hash: String::new(),
+                run: "DONE".into(),
+                progress: 1.0,
+                progress_msg: String::new(),
+                chunk_count: 0,
+                created_at: now,
+                updated_at: now,
+                status: crate::api::document::enabled_status(),
+            })
+            .unwrap();
+
+        // Missing ids: HTTP 200 with the guide's business code.
+        let missing = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/v1/thumbnails")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::OK);
+        let missing = response_json(missing).await;
+        assert_eq!(missing["code"], 101, "{missing}");
+        assert_eq!(missing["message"], "Lack of \"Document ID\"");
+
+        let listed = response_json(
+            build_router(env.state.clone())
+                .oneshot(
+                    Request::builder()
+                        .method(Method::GET)
+                        .uri("/api/v1/thumbnails?doc_ids=photo-1&doc_ids=notes-1")
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(listed["code"], 0, "{listed}");
+        assert_eq!(
+            listed["data"]["photo-1"],
+            serde_json::json!(format!("/api/v1/documents/images/{}-photo-1.jpg", kb.id)),
+            "{listed}"
+        );
+        assert!(
+            listed["data"]["notes-1"].is_null(),
+            "a document that cannot be decoded has no thumbnail: {listed}"
+        );
+        assert!(listed["data"]["unknown-doc"].is_null(), "{listed}");
+
+        // The url the map handed out serves a JPEG.
+        let image = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/api/v1/documents/images/{}-photo-1.jpg", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(image.status(), StatusCode::OK);
+        assert_eq!(
+            image
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("image/jpeg")
+        );
+        let bytes = to_bytes(image.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(&bytes[..2], &[0xFF, 0xD8], "a JPEG");
+        let decoded = image::load_from_memory(&bytes).unwrap();
+        assert_eq!(decoded.width(), 200);
+        assert_eq!(decoded.height(), 100);
+
+        // The original image is served under its own name, too.
+        let original = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/api/v1/documents/images/{}-photo-1.png", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(original.status(), StatusCode::OK);
+        assert_eq!(
+            original
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("image/png")
+        );
+
+        // A text document has no image, and an unknown id is the documented 404.
+        for uri in [
+            format!("/api/v1/documents/images/{}-notes-1.jpg", kb.id),
+            format!("/api/v1/documents/images/{}-nothing.jpg", kb.id),
+        ] {
+            let response = build_router(env.state.clone())
+                .oneshot(
+                    Request::builder()
+                        .method(Method::GET)
+                        .uri(uri.clone())
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{uri}");
+        }
     }
 
     /// Runtime attachments: upload a file, stream it back for download and preview, and refuse the

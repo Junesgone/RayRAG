@@ -21,6 +21,7 @@ pub mod dataset_artifacts;
 pub mod dataset_navigation;
 pub mod dataset_tags;
 pub mod db;
+pub mod doc_assets;
 pub mod document;
 pub mod document_metadata;
 pub mod evaluation;
