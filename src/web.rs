@@ -18561,6 +18561,19 @@ connection: close
             leftover.is_empty(),
             "unsubstituted placeholders {leftover:?}"
         );
+        // A placeholder substituted as bare text inside the script is valid HTML with balanced braces,
+        // and it is exactly what shipped once: the CDP parser caught `sbArtifactSay(Could not load …)`.
+        for shape in [
+            "say(Could ",
+            "say(No artifacts",
+            "say(Downloaded",
+            "say(Deleted",
+        ] {
+            assert!(
+                !html.contains(shape),
+                "a script placeholder was substituted unquoted: {shape}"
+            );
+        }
     }
 
     #[tokio::test]
