@@ -29,8 +29,6 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde_json::{Map, Value, json};
 
-use crate::doc_store::DocStore;
-
 /// Upstream's `_SKILL_COMPILE_KWD`.
 pub const SKILL_COMPILE_KWD: &str = "skill";
 /// Upstream's `_SKILL_ALL_COMPILE_KWD`.
@@ -445,70 +443,47 @@ fn push_bounded(body: &mut String, text: &str) {
     }
 }
 
-/// Read the chunks a dataset is compiled from.
+/// The corpus a dataset is compiled from, exactly as the deployment holds it.
 ///
-/// Runs on a blocking thread through the sanctioned wrapper, and pages the index in fixed windows so a
-/// large dataset is read in order rather than pulled in one query.
-pub fn collect_chunks(
-    store: &dyn DocStore,
-    tenant_id: &str,
+/// The live corpus lives in the search engine, not in the document
+/// index: reading the document index found the nav-cluster and wiki rows but **none of the parsed
+/// chunks**, which is how the first live compile answered "no indexed content" for a dataset that
+/// plainly had chunks. Order is document first, then position, so a document's headings reach the
+/// compiler in the order a reader sees them.
+pub fn chunks_for_dataset(
+    engine: &crate::search::SearchEngine,
     kb_id: &str,
-) -> anyhow::Result<Vec<SkillSourceChunk>> {
-    const PAGE: usize = 500;
-    let fields: Vec<String> = ["doc_id", "docnm_kwd", "content_with_weight"]
-        .iter()
-        .map(|field| field.to_string())
+) -> Vec<SkillSourceChunk> {
+    // Deliberately not `chunks_for_kb`: that helper also requires a non-empty embedding, so a
+    // deployment with no embedding model would compile an empty tree from a corpus full of text.
+    let mut rows: Vec<crate::search::IndexedChunk> = engine
+        .to_vec()
+        .into_iter()
+        .filter(|chunk| chunk.metadata.get("kb_id").map(String::as_str) == Some(kb_id))
         .collect();
-    // No extra condition: `inc_search_page` already scopes the query to this dataset, and a second
-    // filter on a field the rows may not carry would silently return nothing.
-    let condition = Map::new();
-    let mut chunks: Vec<SkillSourceChunk> = Vec::new();
-    let mut offset = 0;
-    loop {
-        let rows = crate::harness::knowlege_wiki_incremental::inc_search_page(
-            store, tenant_id, kb_id, &fields, &condition, offset, PAGE,
-        )?;
-        let fetched = rows.len();
-        for row in rows {
-            let content = row
-                .get("content_with_weight")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string();
-            if content.trim().is_empty() {
-                continue;
-            }
-            chunks.push(SkillSourceChunk {
-                doc_id: row
-                    .get("doc_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string(),
-                doc_name: row
-                    .get("docnm_kwd")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string(),
-                content,
-            });
-            if chunks.len() >= MAX_CHUNK_ROWS {
-                tracing::warn!(
-                    kb = kb_id,
-                    limit = MAX_CHUNK_ROWS,
-                    "skill compilation stopped at the row cap"
-                );
-                return Ok(chunks);
-            }
-        }
-        if fetched < PAGE {
-            break;
-        }
-        offset += PAGE;
+    rows.sort_by(|left, right| {
+        left.doc_name
+            .cmp(&right.doc_name)
+            .then(left.position.cmp(&right.position))
+            .then(left.id.cmp(&right.id))
+    });
+    if rows.len() > MAX_CHUNK_ROWS {
+        tracing::warn!(
+            kb = kb_id,
+            total = rows.len(),
+            limit = MAX_CHUNK_ROWS,
+            "skill compilation stopped at the row cap"
+        );
+        rows.truncate(MAX_CHUNK_ROWS);
     }
-    // Group by document while keeping the order the store returned inside each one: headings of two
-    // different documents must not interleave into one tree.
-    chunks.sort_by(|left, right| left.doc_name.cmp(&right.doc_name));
-    Ok(chunks)
+    rows.into_iter()
+        .filter(|chunk| !chunk.content.trim().is_empty())
+        .map(|chunk| SkillSourceChunk {
+            doc_id: chunk.metadata.get("doc_id").cloned().unwrap_or_default(),
+            doc_name: chunk.doc_name.clone(),
+            content: chunk.content.clone(),
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -640,6 +615,49 @@ mod tests {
         assert_eq!(store.delete_all("kb-1"), 2);
         assert!(store.get("kb-1").is_none());
         assert_eq!(store.delete_all("kb-1"), 0);
+    }
+
+    #[test]
+    fn the_reader_takes_only_this_dataset_and_orders_by_document_then_position() {
+        use crate::search::IndexedChunk;
+        let chunk = |id: &str, doc: &str, name: &str, position: usize, kb: &str, content: &str| {
+            let mut metadata = std::collections::HashMap::new();
+            metadata.insert("kb_id".to_string(), kb.to_string());
+            metadata.insert("doc_id".to_string(), doc.to_string());
+            IndexedChunk {
+                id: id.to_string(),
+                doc_name: name.to_string(),
+                content: content.to_string(),
+                embedding: Vec::new(),
+                token_count: 1,
+                position,
+                metadata,
+            }
+        };
+        let engine = crate::search::SearchEngine::from_chunks(vec![
+            chunk("c2", "d1", "b.md", 1, "kb-1", "# Second\n\nBody."),
+            chunk("c1", "d1", "b.md", 0, "kb-1", "# First\n\nBody."),
+            chunk("c3", "d2", "a.md", 0, "kb-1", "# Other\n\nBody."),
+            chunk("c4", "d9", "z.md", 0, "kb-2", "# Not ours\n\nBody."),
+        ]);
+        let rows = chunks_for_dataset(&engine, "kb-1");
+        let names: Vec<&str> = rows.iter().map(|row| row.doc_name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["a.md", "b.md", "b.md"],
+            "other datasets are excluded"
+        );
+        // Within a document, position decides; across documents, the name decides.
+        assert_eq!(rows[1].content, "# First\n\nBody.");
+        assert_eq!(rows[2].content, "# Second\n\nBody.");
+        assert_eq!(rows[1].doc_id, "d1");
+
+        // An empty chunk must not become an empty skill body.
+        let engine = crate::search::SearchEngine::from_chunks(vec![chunk(
+            "c5", "d1", "x.md", 0, "kb-1", "   ",
+        )]);
+        assert!(chunks_for_dataset(&engine, "kb-1").is_empty());
+        assert!(chunks_for_dataset(&engine, "kb-none").is_empty());
     }
 
     #[test]
@@ -787,14 +805,11 @@ pub async fn compile_skills(
     // The index is named after the tenant that owns the rows; for a dataset reached through the API
     // that is the caller, exactly as the artifact routes derive it.
     let tenant = auth.user_id.clone();
-    let collect_kb = kb_id.clone();
-    let chunks = match crate::api::dataset_artifacts::with_store(&state, move |store| {
-        Ok(collect_chunks(store, &tenant, &collect_kb)?)
-    })
-    .await
-    {
-        Ok(chunks) => chunks,
-        Err(response) => return response,
+    let _ = &tenant;
+    // A snapshot under a short read lock: the tree is built from owned data, never while holding it.
+    let chunks = {
+        let engine = state.engine.read().unwrap();
+        chunks_for_dataset(&engine, &kb_id)
     };
     if chunks.is_empty() {
         // Say so rather than storing an empty tree that would look like a successful compilation.

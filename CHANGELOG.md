@@ -32,9 +32,9 @@ of storing a tree that looks compiled.
   refused with upstream's exact wording *and* its business code (`500 "no authorization"`), which differs
   from RayRAG's usual permission code on purpose and is recorded in the registry.
 * **The producer** is `POST /api/v1/datasets/{id}/skills/compile`, a RayRAG addition: upstream drives
-  compilation from its UI, and a button needs an endpoint. It reads the dataset's indexed chunks through
-  the sanctioned blocking wrapper, pages the index in 500-row windows, and stops at a 20,000-row cap, so a
-  large dataset is read in order rather than pulled into memory at once.
+  compilation from its UI, and a button needs an endpoint. It reads the corpus from the **search engine**
+  — where the parsed chunks actually live — takes a snapshot under a short read lock, stops at a
+  20,000-row cap, and never blocks the runtime.
 * **The UI** is a *Compiled skills* card on the dataset page: compile, refresh, delete-all, and per node a
   toggle, a *View* that fetches the node body, and a *Delete*. The card states where the content comes
   from rather than implying a model wrote it.
@@ -47,7 +47,15 @@ across documents** (a `#` heading in one file nested under the `##` heading the 
 sibling, and the no-heading fallback keyed a document as `notes-txt` instead of `notes`. All three were
 found by the compiler's own tests, not by a running deployment.
 
-**2248 tests pass, 0 failures; the parity ledger reads missing=0** — every upstream route in the v0.27.2
+The first live compile then answered `102 "The dataset has no indexed content to compile skills from"`
+for a dataset with 19 documents and parsed chunks — **the deployment proved the unit tests wrong about
+where the corpus lives**. Reading PostgreSQL showed the document index holding only nav-cluster and wiki
+rows; the parsed chunks were in the in-process engine, keyed `content`/`doc_name` with `kb_id` nested
+under `metadata`. The producer now reads the engine, and the reader is covered by its own test. It also
+deliberately does *not* use `SearchEngine::chunks_for_kb`, which requires a non-empty embedding and would
+have compiled an empty tree on a deployment with no embedding model.
+
+**2249 tests pass, 0 failures; the parity ledger reads missing=0** — every upstream route in the v0.27.2
 API guide is now implemented, aliased, or covered.
 
 ## [0.24.0] - 2026-10-04
