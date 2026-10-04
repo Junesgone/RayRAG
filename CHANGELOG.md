@@ -2,6 +2,47 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.32.0] - 2026-10-04
+
+### Two upstream controls that RayRAG was missing
+
+The live RAGFlow v0.27.2 traversal recorded the per-level control inventory; two entries had no counterpart
+here, and both are now implemented rather than noted:
+
+**`Add file`** — the Files panel's primary action was labelled 「上传」. Upstream calls it `Add file` and it
+opens the browser's own file picker, which is exactly what RayRAG's `uploadDoc()` drives; only the label was
+wrong. It now reads **Add file** / **添加文件** in both panel builders.
+
+**`Link data source`** — upstream's Configuration panel offers it beside the form. RayRAG's data-source surface
+lives under user settings, so the new control is a real navigation carrying the dataset across:
+`/user-setting/data-source?dataset=<id>`.
+
+Both are covered by `dataset_files_and_configuration_expose_upstream_actions`, which asserts the English and
+Chinese labels on the rendered page and rejects an English fallback on the Chinese one.
+
+### What the probe established, and what it did not
+
+`Add file` was clicked on the live instance: no modal, drawer, or `input[type=file]` appears in the DOM, which
+is how a temporary input that opens the OS picker behaves. So the action is a file picker, and the parity that
+matters is the label — recorded rather than guessed.
+
+For `Link data source` the modal body did not render in the captured frame, so its internal fields remain
+uncaptured. The control is implemented as the entry point upstream shows and the ledger says so plainly instead
+of implying the dialog was replicated.
+
+The probe also corrected a tooling mistake from the previous round: the SPA calls its API under **`/api/v1`**,
+not `/v1`, which is why the earlier attempts returned 404. Dataset create and delete through that path both
+returned `code: 0`, and the scratch dataset used for the probe was deleted again.
+
+### Verification
+
+- 2258 tests passed, 0 failed, 27 ignored.
+- Deployment and layout suites re-run against the released build.
+
+### Upgrading
+
+Nothing to do — same Compose file, same `rayrag` service. PostgreSQL and zvec remain the defaults in both the
+Docker and the plain-Linux deployment.
 ## [0.31.0] - 2026-10-04
 
 ### The sidebar label was the key's name, not its text

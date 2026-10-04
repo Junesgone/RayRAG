@@ -551,6 +551,8 @@ fn t(k: &str, zh: bool) -> &str {
             "该数据集还没有实体。构建图谱会从已索引的分块中抽取实体 —— 文本很少的文档只能得到很小的图谱。"
         }
         "User management" => "用户管理",
+        "Add file" => "添加文件",
+        "Link data source" => "关联数据源",
         "User not found" => "未找到用户",
         "User type" => "用户类型",
         "with the following tools:" => "使用以下工具：",
@@ -2448,7 +2450,9 @@ pub async fn kb_detail_page(
     b.push_str("<div class='card'><h2>");
     b.push_str(t("Upload", zh));
     b.push_str("</h2><div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'><input type='file' id='fi' multiple style='max-width:400px'><button class='btn btn-p' id='upBtn' onclick='uploadDoc()'>");
-    b.push_str(t("Upload", zh));
+    // Upstream's Files panel labels this action "Add file"; it opens the browser file picker,
+    // which is exactly what `uploadDoc()` drives here.
+    b.push_str(t("Add file", zh));
     b.push_str("</button><button class='btn btn-o' onclick='emptyAllDocs()'>");
     b.push_str(t("Empty", zh));
     b.push_str("</button><span id='upMsg' style='font-size:12px;color:var(--tm)'></span></div><p style='font-size:11px;color:var(--tm);margin-top:8px'>PDF, DOCX, TXT, MD, HTML, CSV, XLSX, EPUB, JSON, PPT, PNG/JPG(OCR), MP3/WAV(ASR)</p></div>");
@@ -2556,6 +2560,15 @@ pub async fn kb_detail_page(
     b.push_str("<tr><td>");
     b.push_str(t("Avatar", zh));
     b.push_str("</td><td><label style='display:flex;align-items:center;gap:8px'><input type='file' id='cfgAvatar' accept='image/*' onchange='onAvatarPick(this)'> <img id='cfgAvatarPreview' style='display:none;width:36px;height:36px;border-radius:50%;object-fit:cover'></label></td></tr>");
+    // Upstream's Configuration panel offers `Link data source` beside the form. RayRAG's data-source
+    // surface lives under user settings, so the entry point carries the dataset id across.
+    b.push_str("<tr><td>");
+    b.push_str(t("Link data source", zh));
+    b.push_str(
+        "</td><td><button class='btn btn-o' id='cfgLinkDataSource' data-testid='dataset-link-data-source' onclick='location.href=\"/user-setting/data-source?dataset=\"+encodeURIComponent(kbId)'>",
+    );
+    b.push_str(t("Link data source", zh));
+    b.push_str("</button></td></tr>");
     b.push_str("<tr><td colspan=2 style='padding-top:16px;border-top:1px solid var(--bd)'><h3 style='font-size:14px;margin:0'>");
     b.push_str(t("Parsing Configuration", zh));
     b.push_str("</h3></td></tr>");
@@ -2852,7 +2865,9 @@ pub async fn dataset_page(
     b.push_str("<div id='tab0'><div class='card'><h2>");
     b.push_str(t("Upload", zh));
     b.push_str("</h2><div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'><input type='file' id='fi' multiple style='max-width:400px'><button class='btn btn-p' id='upBtn' onclick='uploadDoc()'>");
-    b.push_str(t("Upload", zh));
+    // Upstream's Files panel labels this action "Add file"; it opens the browser file picker,
+    // which is exactly what `uploadDoc()` drives here.
+    b.push_str(t("Add file", zh));
     b.push_str("</button><span id='upMsg' style='font-size:12px;color:var(--tm)'></span></div><p style='font-size:11px;color:var(--tm);margin-top:8px'>PDF, DOCX, TXT, MD, HTML, CSV, XLSX, EPUB, JSON, PPT, PNG/JPG(OCR), MP3/WAV(ASR)</p></div>");
     // Upstream `components/bulk-operate-bar.tsx`: one `role="menu"` bar that appears
     // once rows are selected, carrying the selected count and the same item set the
@@ -3243,6 +3258,14 @@ pub async fn dataset_page(
     b.push_str("</th><th></th></tr></thead><tbody id='dsTagRows'></tbody></table><p id='dsTagEmpty' class='user-setting-description' hidden>");
     b.push_str(t("No data", zh));
     b.push_str("</p></div><p id='dsTagStatus' class='provider-instance-status' aria-live='polite'></p></section></td></tr>");
+    b.push_str("<tr><td>");
+    b.push_str(t("Link data source", zh));
+    b.push_str(
+        "</td><td><button class='btn btn-o' id='cfgLinkDataSource' data-testid='dataset-link-data-source' onclick='location.href=\"/user-setting/data-source?dataset=\"+encodeURIComponent(kbId)'>",
+    );
+    b.push_str(t("Link data source", zh));
+    b.push_str("</button></td></tr>");
+
     b.push_str("<tr><td colspan=2 style='padding-top:16px;border-top:1px solid var(--bd)'><h3 style='font-size:14px;margin:0'>");
     b.push_str(t("Parsing Configuration", zh));
     b.push_str("</h3></td></tr>");
@@ -17581,6 +17604,54 @@ connection: close
         assert!(
             kb_id_at < load_logs_at,
             "kbId must be declared before the merged Logs panel script"
+        );
+    }
+
+    /// Upstream's Files panel primary action is `Add file`, and Configuration carries a
+    /// `Link data source` entry point. Both are user-visible labels, so they are checked in both
+    /// languages rather than only in the markup.
+    #[tokio::test]
+    async fn dataset_files_and_configuration_expose_upstream_actions() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Actions KB", "d").unwrap();
+        let render = |lang: &'static str| {
+            let state = state.clone();
+            let id = kb.id.clone();
+            async move {
+                body_of(
+                    dataset_page(
+                        State(state),
+                        Path(id),
+                        Request::builder()
+                            .uri("/dataset/files/x")
+                            .header("Cookie", format!("lang={lang}"))
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await,
+                )
+                .await
+            }
+        };
+        let en = render("en").await;
+        assert!(en.contains(">Add file</button>"), "Add file action missing");
+        assert!(
+            en.contains("data-testid='dataset-link-data-source'"),
+            "Link data source control missing"
+        );
+        assert!(en.contains(">Link data source</button>"));
+        let zh = render("zh-CN").await;
+        assert!(
+            zh.contains(">添加文件</button>"),
+            "Chinese Add file label missing"
+        );
+        assert!(
+            zh.contains(">关联数据源</button>"),
+            "Chinese Link data source label missing"
+        );
+        assert!(
+            !zh.contains(">Add file</button>") && !zh.contains(">Link data source</button>"),
+            "the Chinese page must not fall back to the English labels"
         );
     }
 
