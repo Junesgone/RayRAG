@@ -42,7 +42,17 @@ validation, that test fails rather than a record being stored that cannot sync.
 ### Verification
 
 - Full suite, deployment and layout suites re-run against the released build.
-- The three request shapes above are re-sent to the running container and the messages recorded.
+- The request shapes above are re-sent to the running container and the messages recorded:
+
+| request | answer |
+| --- | --- |
+| `{"name":"p1","type":"rss"}` | `rss: invalid feed URL:` — the connector's own reason |
+| `{"name":"p2","type":"rss","url":"https://e.invalid/f"}` | `rss: cannot resolve feed host: e.invalid` — **accepted**, then failed the real lookup |
+| `{"name":"p4","type":"s3","url":"https://s3.example.com"}` | `token and target are required for s3 when config is omitted` |
+| `{"name":"p5","type":"feishu"}` | `url and token are required for feishu when config is omitted` |
+
+The second row is the point: a source that needs only a URL now gets past validation — it failed on a real DNS
+lookup, not on a complaint about a field it never needed.
 
 ### Upgrading
 
