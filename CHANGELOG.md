@@ -11,8 +11,12 @@ Round 120 traversed the button added in 0.32.0 and found a fidelity gap: upstrea
 in-place modal on the dataset configuration page, with upstream's control shape:
 
 - Title `Link data source`, a one-line explanation, a connector picker, and `Cancel` / `Confirm`.
-- The picker is filled from the **same registry** the data-source page renders
-  (`ConnectorRegistry::kinds()`), so the two surfaces cannot drift apart: 36 connectors, Salesforce first.
+- The picker is filled from the **same registry** the data-source page renders, so the two surfaces cannot
+  drift apart: both read `ConnectorRegistry::kinds()`. Measured in the browser, the picker holds **41**
+  options, first `GitLab`.
+- A note on a number that moved: round 120 recorded **36** connectors on the data-source page, which is its
+  own count of `+ Add` buttons (that page groups them). The registry behind both surfaces holds 41 — the two
+  numbers answer different questions and the earlier note did not say so.
 - `Confirm` continues to the data-source page with the dataset and the chosen connector
   (`?dataset=…&kind=…`), so the existing flow is preserved; `Cancel` closes the modal without leaving the page.
 
@@ -29,8 +33,11 @@ the data-source page's own modal is fixed by the same change.
 ### Verification
 
 - Full suite, deployment and layout suites re-run against the released build.
-- The modal is clicked through in a browser: it opens in place, `Cancel` closes it, `Confirm` navigates with
-  the chosen connector, **0 page errors**.
+- The modal is clicked through in a browser, in both languages, with the path printed next to every reading:
+  the click opens it **in place** (the path stays `/dataset/configuration/…`), the titles are
+  `关联数据源` / `Link data source`, the controls are `取消` / `确定` and `Cancel` / `Confirm`, and `Cancel`
+  closes it without leaving the page. **0 page errors**. `Confirm` was verified to navigate with
+  `?dataset=…&kind=…`; the values themselves come from the same handler the test asserts.
 
 ### Upgrading
 
