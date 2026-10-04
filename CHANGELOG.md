@@ -2,6 +2,35 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.33.0] - 2026-10-04
+
+### The pager now says what upstream's pager says
+
+Upstream renders page sizes through one shared component, `RAGFlowPagination`, and labels every option with
+`t('pagination.page', { page: x })`. The values are explicit in the locales:
+
+- `locales/en.ts:3716` — `page: '{{page}} / Page'`
+- `locales/zh.ts:3242` — `page: '{{page}}条/页'`
+
+RayRAG showed bare numbers (`50`, `20`, `100`) in its page-size selects, so the control read differently in
+both languages. A single helper now carries upstream's wording — `psLabel(n)` with a language suffix injected
+by the page shell — and all **nine** page-size selects across the dataset list, file list, agent logs, admin
+service/user pages and app list render `50 / Page` / `50条/页`.
+
+One helper rather than nine literals: the wording lives in the shell next to the store script, so a page that
+adds a pager later cannot invent its own phrasing.
+
+### Verification
+
+- A test asserts the English suffix ` / Page`, the Chinese suffix `条/页`, and that the options route
+  through `psLabel`. The rendered text itself is produced in JavaScript, so it is confirmed in the browser
+  rather than inferred from markup.
+- Full suite, deployment and layout suites re-run against the released build.
+
+### Upgrading
+
+Nothing to do — same Compose file, same `rayrag` service. PostgreSQL and zvec remain the defaults in both the
+Docker and the plain-Linux deployment.
 ## [0.32.0] - 2026-10-04
 
 ### Two upstream controls that RayRAG was missing
