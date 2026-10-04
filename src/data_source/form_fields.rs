@@ -342,7 +342,7 @@ pub fn source_info_for(key: &str) -> Option<&'static SourceInfo> {
     source_info().get(&key.to_ascii_lowercase())
 }
 
-/// The 35-source card manifest serialized for the browser (name/description/
+/// The source card manifest serialized for the browser (name/description/
 /// icon per upstream `dataSourceInfo`).
 pub fn source_info_for_ui() -> serde_json::Value {
     serde_json::to_value(source_info()).expect("source info manifest is serializable")
@@ -921,13 +921,29 @@ mod tests {
     }
 
     #[test]
-    fn source_info_manifest_covers_all_35_upstream_sources() {
+    fn source_info_manifest_covers_every_card_the_page_renders() {
         let parsed: HashMap<String, SourceInfo> =
             serde_json::from_str(SOURCE_INFO_JSON).expect("info manifest parses");
-        assert_eq!(
-            parsed.len(),
-            35,
-            "all upstream DataSourceKey entries mapped"
+        // Coverage, not a frozen count: the manifest is the cards the page renders, so every connector the
+        // registry can build must appear here (except those with a dedicated control). The number 35 that used
+        // to sit here hid exactly that — five connectors were added to the schema and this manifest was not.
+        let via_other_control = ["local", "webdav", "blob", "azure_blob"];
+        let registry = crate::connectors::ConnectorRegistry::kinds();
+        // Compare through the same normalisation the request path uses: the cards spell some services the way
+        // their users do (`google_cloud_storage`, `oci_storage`) while the registry names them `gcs`/`oracle`.
+        let cards: std::collections::HashSet<String> = parsed
+            .keys()
+            .map(|key| crate::api::data_source_mgr::normalize_kind(key))
+            .collect();
+        let missing: Vec<&str> = registry
+            .iter()
+            .map(|info| info.kind)
+            .filter(|kind| !via_other_control.contains(kind))
+            .filter(|kind| !cards.contains(*kind))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "these connectors have no card entry, so the page cannot render them: {missing:?}"
         );
         for (key, info) in &parsed {
             assert!(!info.name.is_empty(), "{key} has a display name");
@@ -997,6 +1013,32 @@ mod ui_schema_coverage_tests {
             );
         }
 
+        // The page does not render cards from this schema: it renders one card per entry of the source-info
+        // catalogue, and a card without schema fields would open an empty modal. Both lists must therefore
+        // agree with each other and with the registry — checking only two of the three is how five connectors
+        // ended up with fields but no card.
+        let info = super::source_info_for_ui();
+        let cards: Vec<String> = info
+            .as_object()
+            .expect("the source-info manifest is an object keyed by kind")
+            .keys()
+            .cloned()
+            .collect();
+        assert!(!cards.is_empty(), "the page would render no cards at all");
+
+        // Every rendered card must be a connector the API accepts.
+        for card in &cards {
+            let normalized = normalize_kind(card);
+            assert!(
+                is_supported_kind(&normalized),
+                "the page renders a card `{card}` that normalises to `{normalized}`, which the API rejects"
+            );
+            assert!(
+                keys.iter().any(|key| normalize_kind(key) == normalized),
+                "the card `{card}` has no form schema, so its modal would open with no fields"
+            );
+        }
+
         // Every registry kind must have a card, except the ones the page reaches through another control.
         let via_other_control = ["local", "webdav", "blob", "azure_blob"];
         let mut missing: Vec<&str> = Vec::new();
@@ -1005,7 +1047,7 @@ mod ui_schema_coverage_tests {
             if via_other_control.contains(&kind) {
                 continue;
             }
-            let rendered = keys.iter().any(|key| normalize_kind(key) == kind);
+            let rendered = cards.iter().any(|card| normalize_kind(card) == kind);
             if !rendered {
                 missing.push(kind);
             }

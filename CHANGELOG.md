@@ -2,6 +2,45 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.39.0] - 2026-10-04
+
+### 0.38.0 gave five connectors fields but no card
+
+0.38.0 added schema entries for `feishu`, `dingtalk`, `tencent_docs`, `wechat_docs` and `yuque` and called
+them reachable. They were not. The page does **not** render cards from the form schema — it renders one card
+per entry of a second catalogue, `source_info.json` (35 entries), and 0.38.0's invariant test compared the
+schema against the registry, so the card list was never checked.
+
+Measured across all three lists:
+
+| list | entries | role |
+| --- | --- | --- |
+| `ConnectorRegistry::kinds()` | 41 | what the API can build |
+| `form_schema.json` | 40 | the fields each source's modal shows |
+| `source_info.json` | 35 → **40** | the cards the page renders |
+
+The five had fields but no card, which is exactly the 36-vs-40 gap left open in 0.38.0's own release note — 35
+cards plus the local-folder control is the 36 buttons. Each now has a card and a self-contained 24×24 icon, so
+no external asset is fetched.
+
+The invariant test now spans all three lists:
+
+- every card must normalise to a kind the API accepts (the 0.38.0 failure mode);
+- every card must have a form schema, or its modal opens empty;
+- every registry kind must have a card, except those the page reaches through another control.
+
+It was proven by deleting the `feishu` card and watching it fail with
+`these connectors can be built but have no card on the data-source page`.
+
+### Verification
+
+- Full suite, deployment and layout suites re-run against the released build.
+- The page's card count is read back in a browser, and the five new cards are opened.
+
+### Upgrading
+
+Nothing to do — same Compose file, same `rayrag` service. PostgreSQL and zvec remain the defaults in both the
+Docker and the plain-Linux deployment.
 ## [0.38.0] - 2026-10-04
 
 ### Every connector card on the data-source page was rejected by the API
