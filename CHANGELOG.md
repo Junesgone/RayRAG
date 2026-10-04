@@ -49,6 +49,22 @@ Four pairs now map to the string their connector expects:
 Both halves must be present, so half a pair never becomes a fabricated `user:` — the single-key list is tried
 instead.
 
+### Found while walking the form, not fixed here
+
+The detail form's Token box is a password input that always renders empty (the stored token is never sent to the
+browser), and the payload keeps it only when it is non-empty:
+
+```js
+var token = document.getElementById('dsDetailToken').value;
+if (token) payload.token = token;
+```
+
+That default is right for an untouched box, but it leaves no way to *remove* a stored credential: clearing the
+box and pressing Save sends no token field, the server keeps the old value and answers 200. The capability exists
+in the API (`{"token": ""}`) and is now governed by the rule above, but the UI cannot express it. Doing this
+properly means an explicit control rather than always sending the field — always sending it would wipe every
+credential on every save, which is far worse. Left for the next round rather than rushed into this build.
+
 ### Verification
 
 - 2270 tests passed, 0 failed, 27 ignored.
