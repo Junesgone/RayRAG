@@ -32,11 +32,29 @@ while the API also offered `POST .../files` and `POST .../disconnect`. The detai
 Each refreshes the log table underneath, and the labels are relabelled in Chinese (`测试`, `立即同步`,
 `断开连接`) on the Chinese page.
 
+### Two mistakes made while doing it, and the check that now catches them
+
+The first attempt inserted the new handlers straight after `loadDsDetail()` with no separator, so the page died
+with `SyntaxError: Unexpected token 'function'` and even the previously working Test button stopped resolving.
+Fixing that revealed a second: both handlers used `await` while declared as plain functions.
+
+Neither is a Rust error, and the only check that saw the first one ran against the deployed container — after a
+13-minute build. The rendered script is now parsed with `node --check` by a test, so the next mistake of this
+class fails in under a second. Proven by reintroducing both mistakes (the test fails) and fixing them (it
+passes).
+
 ### Verification
 
-- 2266 tests passed, 0 failed, 27 ignored.
-- The three controls were clicked in the browser against a real `local` source: each issued its request and
-  printed its result, with 0 page errors. Recorded in the repository's operations ledger.
+- 2267 tests passed, 0 failed, 27 ignored.
+- The three controls were clicked in the browser against a real `local` source on the Chinese page:
+
+| clicked | request | shown |
+| --- | --- | --- |
+| `测试` | `POST .../test` | `Connection verified ✓` |
+| `立即同步` | `POST .../files` | `同步完成，源中共 147 个文件` |
+| `断开连接` | `POST .../disconnect` | `已断开连接` |
+
+  0 page errors.
 - Layout suites: nine suites, 0 page errors.
 
 ### Upgrading
