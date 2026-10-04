@@ -23,8 +23,12 @@ adds a pager later cannot invent its own phrasing.
 ### Verification
 
 - A test asserts the English suffix ` / Page`, the Chinese suffix `条/页`, and that the options route
-  through `psLabel`. The rendered text itself is produced in JavaScript, so it is confirmed in the browser
-  rather than inferred from markup.
+  through `psLabel`. The rendered text itself is produced in JavaScript, so it was read back from the browser:
+  the dataset list renders `12 / Page` in English and `12条/页` in Chinese, exactly upstream's format.
+- **Scope of that check:** the dataset *file list* did not render its pager during the probe (the page served
+  15 `<select>` elements, none carrying the `Page size` label), so its pager text is covered by the wiring
+  assertion rather than by a rendered reading. The helper is shared, so the wording cannot differ per page,
+  but the file list's own pager remains unconfirmed in the browser.
 - Full suite, deployment and layout suites re-run against the released build.
 
 ### Upgrading
