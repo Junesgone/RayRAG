@@ -7093,7 +7093,7 @@ pub(crate) fn data_source_detail_body_for_probe(
 
 fn data_source_detail_body(name: &str, id: &str, source: &str, schema: &str, zh: bool) -> String {
     let head = r#"<style>#dsDetailTest[hidden],#dsFlatFields[hidden],#dsPruneField[hidden]{display:none!important}.ds-segment{display:inline-flex;flex-wrap:wrap;gap:2px;padding:3px;margin-top:8px;border:1px solid var(--bd);border-radius:var(--r);background:var(--bg);width:fit-content}.ds-segment button{border:0;border-radius:calc(var(--r) - 2px);padding:6px 12px;background:transparent;color:var(--t2);font-size:13px;cursor:pointer}.ds-segment button[aria-checked=true]{background:var(--p);color:#fff}.ds-suffix{padding-left:6px;color:var(--tm);font-style:italic;font-size:12px}.ds-tip-trigger{display:inline-flex;width:15px;height:15px;align-items:center;justify-content:center;margin-left:6px;border-radius:50%;border:1px solid var(--bd);color:var(--tm);font-size:10px;cursor:help;vertical-align:middle}.ds-tip-trigger:hover,.ds-tip-trigger:focus-visible{color:var(--t);border-color:var(--p);outline:none}.ds-tip-popup{position:absolute;z-index:50;max-width:340px;margin-top:22px;padding:8px 10px;border:1px solid var(--bd);border-radius:var(--rs);background:var(--bgm);color:var(--t2);font-size:12px;font-weight:400;line-height:1.5;box-shadow:0 10px 24px rgba(0,0,0,.35);opacity:0;visibility:hidden;transition:opacity .12s}.ds-tip-popup.show{opacity:1;visibility:visible}.ds-panel{margin:10px 0;padding:10px 12px;border:1px solid var(--bd);border-radius:var(--rs);background:var(--bgc);color:var(--t2);font-size:12px}.ds-panel[hidden]{display:none!important}.ds-panel-heading{margin:0 0 4px;color:var(--t);font-weight:600}.ds-panel-line{margin:0 0 2px 12px}.ds-panel-line:last-child{margin-bottom:0}.provider-instance-field textarea{width:100%;min-height:88px;resize:vertical}.provider-instance-field input:disabled{opacity:.65;cursor:not-allowed}.ds-log-summary{max-width:32rem;white-space:normal;word-break:break-word}.ds-log-pager{display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-top:12px}</style><h1 id='dsDetailTitle'>🔗 __NAME__</h1><a class='btn btn-o btn-sm' href='/user-setting/data-source'>← __BACK__</a><div class='card' data-testid='data-source-detail-card'><h2>__CONN__</h2><p class='user-setting-description'>__TYPE__</p><label class='provider-instance-field'>Name<input id='dsDetailName' autocomplete='off' disabled></label><div id='dsFlatFields'><label class='provider-instance-field'>URL<input id='dsDetailUrl' autocomplete='off'></label><label class='provider-instance-field'>Target<input id='dsDetailTarget' autocomplete='off'></label><label class='provider-instance-field'>Token<input id='dsDetailToken' type='password' autocomplete='new-password' placeholder='Configured; leave blank to keep'></label></div><div id='dsDynamicFields'></div><label class='provider-instance-switch'><span>Sync deleted files</span><input id='dsDetailSyncDeleted' type='checkbox' role='switch'></label><label class='provider-instance-field' id='dsPruneField'>Prune Freq<span class='ds-suffix'>(minutes)</span><input id='dsDetailPrune' type='number' min='0' step='any'></label><label class='provider-instance-field'>Refresh Freq<span class='ds-suffix'>(minutes)</span><input id='dsDetailRefresh' type='number' min='0' step='any'></label><label class='provider-instance-field'>Timeout Secs<span class='ds-suffix'>(seconds)</span><input id='dsDetailTimeout' type='number' min='0' step='any'></label><p id='dsDetailStatus' class='provider-instance-status' aria-live='polite'></p><div class='provider-instance-actions'><button class='btn btn-o' id='dsDetailTest' type='button' onclick='dsDetailTest()'>Test</button><button class='btn btn-p' id='dsDetailPrimary' type='button' onclick='dsDetailPrimary()'>Save</button><button class='btn' id='dsDetailSync' type='button' onclick='dsDetailSync()'>Sync now</button><button class='btn' id='dsDetailDisconnect' type='button' onclick='dsDetailDisconnect()'>Disconnect</button></div></div><div class='card' data-testid='data-source-logs-card'><h2>Sync Logs</h2><div class='user-setting-table-wrap'><table class='team-table'><thead><tr><th>Time Started</th><th>Status</th><th>Dataset</th><th>Task Type</th><th>Summary</th></tr></thead><tbody id='dsLogRows'></tbody></table><div class='ds-log-pager' id='dsLogPager'></div></div></div>__JS__"#;
-    let js = r#"<script>window.DS_ZH=__DSZH__;var DS_DETAIL_ID='__ID__';var DS_SCHEMA=__SCHEMA__;var DS_SOURCE='__SOURCE__';var DS_SCHEMA_FIELDS=DS_SCHEMA[DS_SOURCE.toUpperCase()]||[];var DS_WRAPS={};var DS_PANELS={};var DS_RECORD=null;var DS_DIRTY=false;var DS_POLL=null;function dsDetailApi(url,options){return fetch(url,options).then(function(response){return response.json()})}function dsGet(obj,path){return (path||'').split('.').reduce(function(o,k){return o==null?undefined:o[k]},obj||{})}function dsSet(obj,path,value){var parts=path.split('.');var cur=obj;for(var i=0;i<parts.length-1;i++){if(typeof cur[parts[i]]!=='object'||cur[parts[i]]===null)cur[parts[i]]={};cur=cur[parts[i]]}cur[parts[parts.length-1]]=value}function dsInputOf(wrap){return wrap.querySelector('input,select,textarea')}
+    let js = r#"<script>window.DS_ZH=__DSZH__;var DS_DETAIL_ID='__ID__';var DS_SCHEMA=__SCHEMA__;var DS_SOURCE='__SOURCE__';var DS_SCHEMA_FIELDS=DS_SCHEMA[DS_SOURCE.toUpperCase()]||[];var DS_WRAPS={};var DS_PANELS={};var DS_RECORD=null;var DS_DIRTY=false;var DS_POLL=null;function dsDetailApi(url,options){return fetch(url,options).then(function(response){return response.text().then(function(body){var data=null;try{data=JSON.parse(body)}catch(ignore){data=null}if(data&&typeof data==='object'){if(data.code===undefined){data.code=response.status}return data}return {code:response.status||0,message:(body||'').trim()||('HTTP '+response.status)}})})}function dsGet(obj,path){return (path||'').split('.').reduce(function(o,k){return o==null?undefined:o[k]},obj||{})}function dsSet(obj,path,value){var parts=path.split('.');var cur=obj;for(var i=0;i<parts.length-1;i++){if(typeof cur[parts[i]]!=='object'||cur[parts[i]]===null)cur[parts[i]]={};cur=cur[parts[i]]}cur[parts[parts.length-1]]=value}function dsInputOf(wrap){return wrap.querySelector('input,select,textarea')}
 function dsCustomSelectInput(wrap){var host=wrap.querySelector('.ds-custom-select-host');return host?(host._input||host.querySelector('input')):null}function dsMarkDirty(){DS_DIRTY=true;dsUpdatePrimary()}function dsConditionMatches(condition){var value=dsFieldValue(condition.field);if(value===''&&condition.default!==undefined)value=condition.default;if(condition.any_filled&&condition.any_filled.length){var filled=condition.any_filled.some(function(name){return String(dsFieldValue(name)).trim()!==''});return condition.negate?!filled:filled}if(condition.any_of&&condition.any_of.length){var listed=condition.any_of.some(function(one){return String(one)===String(value)});return condition.negate?!listed:listed}var eq=String(value)===String(condition.equals);return condition.negate?!eq:eq}
 function dsVisible(field){var any=(!field.show_when||!field.show_when.length)||field.show_when.some(dsConditionMatches);var all=(!field.show_when_all||!field.show_when_all.length)||field.show_when_all.every(dsConditionMatches);return any&&all}function dsRefreshVisibility(){DS_SCHEMA_FIELDS.forEach(function(field){var visible=dsVisible(field);if(field.type==='Custom'){var panel=DS_PANELS[field.name];if(panel)panel.hidden=!visible;return}var wrap=DS_WRAPS[field.name];if(wrap)wrap.hidden=!visible});document.getElementById('dsPruneField').hidden=!document.getElementById('dsDetailSyncDeleted').checked}function dsFieldValue(name){var wrap=DS_WRAPS[name];if(!wrap)return '';var input=dsCustomSelectInput(wrap)||dsInputOf(wrap);if(!input)return '';if(input.type==='checkbox')return input.checked?'true':'false';return input.value}function dsSetFieldValue(name,value){var wrap=DS_WRAPS[name];if(!wrap)return;var input=dsCustomSelectInput(wrap)||dsInputOf(wrap);if(!input)return;if(input.type==='checkbox'){input.checked=String(value)==='true'}else{input.value=value==null?'':String(value)}if(wrap._seg){wrap._seg.querySelectorAll('button').forEach(function(button){button.setAttribute('aria-checked',String(button.dataset.value===String(input.value)))})}}function dsTooltipText(field){return (window.DS_ZH&&field.tooltip_zh)?field.tooltip_zh:field.tooltip_en}
 // Upstream `allowCustomValue` turns a select into a combobox: the list is a suggestion
@@ -21963,21 +21963,114 @@ mod detail_inline_script_tests {
     /// mistakes were made and caught here first.
     ///
     /// Skipped when node is unavailable so the suite still runs on a bare host.
+    /// Whether node can run, so the checks below can skip on a bare host instead of failing.
+    fn node_available() -> bool {
+        match std::process::Command::new("node").arg("--version").output() {
+            Ok(output) if output.status.success() => true,
+            _ => {
+                eprintln!("node not available; skipping the rendered-JavaScript checks");
+                false
+            }
+        }
+    }
+
+    /// The helper's source as the browser receives it, so the test exercises the real code.
+    fn detail_api_helper() -> String {
+        let schema = serde_json::to_string(&crate::data_source::form_fields::schema_for_ui())
+            .expect("schema serializes");
+        let body = super::data_source_detail_body_for_probe("probe", "s1", "local", &schema, false);
+        let start = body
+            .find("function dsDetailApi(")
+            .expect("the detail page emits the helper");
+        let tail = &body[start..];
+        let end = tail
+            .find("function dsGet")
+            .expect("the helper is followed by its neighbours");
+        tail[..end].to_string()
+    }
+
+    /// A failing request answered with a plain-text body used to reject the promise, so the caller's failure
+    /// branch never ran and the page kept showing "Testing…". The reason was on the wire the whole time.
+    #[test]
+    fn the_detail_api_helper_reports_a_plain_text_failure_instead_of_rejecting() {
+        if !node_available() {
+            return;
+        }
+        let helper = detail_api_helper();
+        let dir = std::env::temp_dir();
+        let script = dir.join("rayrag-detail-api-check.mjs");
+        let driver = format!(
+            r#"
+const helper = {helper};
+const cases = [
+  {{ label: 'json ok', status: 200, body: '{{"code":0,"data":{{"count":3}}}}' }},
+  {{ label: 'json error', status: 400, body: '{{"code":102,"message":"nope"}}' }},
+  {{ label: 'plain text 502', status: 502, body: 'connect failed: boom' }},
+  {{ label: 'empty 500', status: 500, body: '' }},
+];
+const results = [];
+for (const c of cases) {{
+  globalThis.fetch = async () => ({{ status: c.status, text: async () => c.body }});
+  const dsDetailApi = new Function('return ' + helper)();
+  try {{
+    const data = await dsDetailApi('/x', {{}});
+    results.push({{ label: c.label, code: data.code, message: data.message === undefined ? null : data.message }});
+  }} catch (error) {{
+    results.push({{ label: c.label, threw: String(error).slice(0, 60) }});
+  }}
+}}
+console.log(JSON.stringify(results));
+"#,
+            helper = serde_json::to_string(&helper).expect("helper escapes")
+        );
+        std::fs::write(&script, driver).expect("write driver");
+        let run = std::process::Command::new("node")
+            .arg(&script)
+            .output()
+            .expect("run the driver");
+        std::fs::remove_file(&script).ok();
+        let stdout = String::from_utf8_lossy(&run.stdout);
+        assert!(
+            run.status.success(),
+            "the driver failed: {}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        assert!(
+            !stdout.contains("threw"),
+            "no case may reject any more, got {stdout}"
+        );
+        // A JSON body keeps its own code; a plain-text body becomes one, with the reason as its message.
+        assert!(
+            stdout.contains(r#"{"label":"json ok","code":0,"message":null}"#),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains(r#"{"label":"json error","code":102,"message":"nope"}"#),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains(
+                r#"{"label":"plain text 502","code":502,"message":"connect failed: boom"}"#
+            ),
+            "the reason must survive as the message, got {stdout}"
+        );
+        assert!(
+            stdout.contains(r#"{"label":"empty 500","code":500,"message":"HTTP 500"}"#),
+            "an empty body must still report its status, got {stdout}"
+        );
+    }
+
     #[test]
     fn every_inline_script_of_the_detail_page_parses() {
-        let Ok(node) = std::process::Command::new("node").arg("--version").output() else {
-            eprintln!("node not available; skipping inline-script parse check");
-            return;
-        };
-        if !node.status.success() {
-            eprintln!("node not usable; skipping inline-script parse check");
+        if !node_available() {
             return;
         }
         let schema = serde_json::to_string(&crate::data_source::form_fields::schema_for_ui())
             .expect("schema serializes");
         let dir = std::env::temp_dir();
         for (lang, zh) in [("en", false), ("zh", true)] {
-            let body = super::data_source_detail_body_for_probe("probe", "s1", "local", &schema, zh);
+            let body =
+                super::data_source_detail_body_for_probe("probe", "s1", "local", &schema, zh);
             let mut rest = body.as_str();
             let mut index = 0;
             while let Some(open) = rest.find("<script>") {

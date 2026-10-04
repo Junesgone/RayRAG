@@ -2,6 +2,40 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.42.0] - 2026-10-04
+
+### A failing test that reported nothing
+
+Round 0.41.0 verified the success path of the new `Test` button. Its failure path was never walked. Doing so, with
+a WebDAV source pointed at a closed port:
+
+```
+clicked 测试        -> the label still read "Testing…" minutes later
+server answered     -> 502 text/plain: connect failed: webdav: probe request failed: ... Connection refused
+browser console     -> Uncaught (in promise) SyntaxError: Unexpected token 'c', "connect fa"... is not valid JSON
+```
+
+The page's helper called `response.json()` on every response, but the failure path answers with a **plain-text**
+body. The promise rejected, the caller's failure branch never ran, and the user was left reading "Testing…"
+forever — while the reason sat on the wire and in the log table underneath.
+
+The helper now reads the body as text, parses it when it is JSON, and otherwise returns
+`{code: <status>, message: <body>}`, which is the shape every caller on that page already handles. That fixes the
+same silent failure for `Test`, `Save`, `Sync now` and `Disconnect`, which share the helper.
+
+### Verification
+
+- 2269 tests passed, 0 failed, 27 ignored.
+- New behaviour test: the helper's own source, extracted from the rendered page, is executed in node against a
+  stubbed `fetch` for four responses — JSON success, JSON error, plain-text 502 and an empty 500 — asserting that
+  none rejects and that the reason survives as the message. Proven by restoring the original helper: the test
+  fails; with the fix it passes.
+- Recorded in the repository's operations ledger.
+
+### Upgrading
+
+Nothing to do — same Compose file, same `rayrag` service. PostgreSQL and zvec remain the defaults in both the
+Docker and the plain-Linux deployment.
 ## [0.41.0] - 2026-10-04
 
 ### A control that was hidden from 39 of the 41 kinds
