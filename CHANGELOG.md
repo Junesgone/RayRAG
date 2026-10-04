@@ -2,6 +2,47 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.44.0] - 2026-10-04
+
+### A credential could not be removed from the UI
+
+The Token box always renders empty (the stored value is never sent to the browser) and the payload kept the field
+only when it was non-empty:
+
+```js
+var token = document.getElementById('dsDetailToken').value;
+if (token) payload.token = token;
+```
+
+That default is right for an untouched box, but it left no way to *remove* a stored credential: clear the box,
+press Save, no token field is sent, the server keeps the old value and answers `200`. The capability existed in
+the API the whole time (`{"token": ""}`) and is exactly what 0.43.0's rule governs.
+
+The detail view now offers **Clear stored credentials**, next to the Token box:
+
+| box | tick | payload |
+| --- | --- | --- |
+| typed | – | sends what was typed |
+| blank | – | sends nothing, the stored credential stays |
+| blank | ✓ | sends `token: ""` — the credential is removed |
+| typed | ✓ | sends `token: ""`; the explicit request wins |
+
+Always sending the field was the tempting alternative and would have been much worse: every save would have
+wiped the credential. Removing one is now something the user asks for explicitly, and the answer is visible —
+for the eight kinds that need a token, 0.43.0's rule refuses it with the field named, and the page shows why.
+
+### Verification
+
+- 2271 tests passed, 0 failed, 27 ignored.
+- The new test runs the page's own payload builder in node against a stubbed DOM and checks all four
+  combinations above. Proven by restoring the old one-line payload: the test fails on the tick case.
+- The control and its Chinese label (`清除已保存的凭证`) are asserted on the rendered page.
+- Walked in the browser against a real source afterwards; recorded in the repository's operations ledger.
+
+### Upgrading
+
+Nothing to do — same Compose file, same `rayrag` service. PostgreSQL and zvec remain the defaults in both the
+Docker and the plain-Linux deployment.
 ## [0.43.0] - 2026-10-04
 
 ### The create path refused a configuration the update path accepted
