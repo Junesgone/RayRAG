@@ -2,6 +2,47 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.36.0] - 2026-10-04
+
+### Proving the silent-failure class is gone, and clicking through the data-source page
+
+0.35.0 fixed one instance of a bug shape: JavaScript that calls an identifier **no page defines**. It fails
+loudly in the console and silently for the user — the pager threw `ReferenceError` and rendered nothing. One
+instance is not the same as one *class*, so this release measures the class.
+
+Every page's inline JavaScript is now scanned for bare `PREFIX_name` identifiers and checked against the names
+that page declares. Five pages × two languages: **no undefined identifier**. The audit is a test, and it was
+proven by reintroducing the original bug and watching it fail.
+
+It also has an honest scope limit, learned while writing it: a **property access** such as
+`window.RAYRAG_ASK_KB_IDS` cannot throw when the global is missing, and matching it produced a false positive
+on `/search` before the rule was corrected. The audit checks bare identifiers only.
+
+### The `Link data source` destination, clicked through
+
+The button added in 0.32.0 navigates to `/user-setting/data-source?dataset=…`. Traversed as a user, with the
+path printed next to every reading:
+
+- The page lists **36 connectors** (Salesforce first), each with a `+ Add` button.
+- Clicking `+ Add` opens a modal titled **"Create your Salesforce connector"** with `Name`, `Instance URL *`,
+  `Client ID *` and vendor-specific fields (e.g. object list `Account,Contact,Opportunity,Case,Knowledge__kav`,
+  API version `v59.0`).
+- `Cancel` closes it and the page keeps working.
+- **0 page errors** across the whole sequence.
+
+This is the same `Cancel` / `Confirm` control shape seen on upstream's own modal. One divergence is recorded
+rather than glossed over: upstream opens that modal **in place** from the dataset configuration page, while
+RayRAG navigates to this page first.
+
+### Verification
+
+- 2262 tests passed, 0 failed, 27 ignored.
+- Layout suites and the browser traversal above: **0 page errors**.
+
+### Upgrading
+
+Nothing to do — same Compose file, same `rayrag` service. PostgreSQL and zvec remain the defaults in both the
+Docker and the plain-Linux deployment.
 ## [0.35.0] - 2026-10-04
 
 ### 0.34.0 broke the pager, and the test did not notice

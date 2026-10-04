@@ -17652,6 +17652,99 @@ connection: close
         );
     }
 
+    /// Renders the main pages and asserts that every bare `PREFIX_name` identifier used in their inline
+    /// JavaScript is declared in the same page.
+    ///
+    /// This is the shape of a real bug: the pager once called `FILE_totalLabel`, an identifier no page
+    /// defines, so it threw `ReferenceError` at runtime and rendered nothing — a silent failure that a
+    /// substring assertion had waved through. **Scope:** bare identifiers only. A property access such as
+    /// `window.RAYRAG_ASK_KB_IDS` cannot throw when the global is absent and is deliberately excluded; an
+    /// earlier version of this audit matched it and reported a false positive.
+    #[tokio::test]
+    async fn pages_do_not_reference_undeclared_prefixed_javascript_identifiers() {
+        let (_root, state) = test_state();
+        // `regex` has no look-around, so the guard consumes the preceding character instead: a bare
+        // identifier starts the JavaScript or follows something that is neither a dot nor a word character.
+        let used =
+            regex::Regex::new(r"(?:^|[^.\w])([A-Z][A-Z0-9]*_[a-zA-Z][a-zA-Z0-9_]*)\b").unwrap();
+        let declared = regex::Regex::new(
+            r"(?:var|let|const)\s+([A-Z][A-Z0-9]*_[a-zA-Z]\w*)|function\s+([A-Z][A-Z0-9]*_[a-zA-Z]\w*)",
+        )
+        .unwrap();
+        let req = |uri: &'static str, lang: &'static str| {
+            Request::builder()
+                .uri(uri)
+                .header("Cookie", format!("lang={lang}"))
+                .body(Body::empty())
+                .unwrap()
+        };
+        let pages: Vec<(&str, String, String)> = vec![
+            (
+                "datasets_page",
+                body_of(datasets_page(State(state.clone()), req("/datasets", "zh-CN")).await).await,
+                body_of(datasets_page(State(state.clone()), req("/datasets", "en-US")).await).await,
+            ),
+            (
+                "files_page",
+                body_of(files_page(State(state.clone()), req("/files", "zh-CN")).await).await,
+                body_of(files_page(State(state.clone()), req("/files", "en-US")).await).await,
+            ),
+            (
+                "chat_page",
+                body_of(chat_page(State(state.clone()), req("/chat", "zh-CN")).await).await,
+                body_of(chat_page(State(state.clone()), req("/chat", "en-US")).await).await,
+            ),
+            (
+                "search_page",
+                body_of(search_page(State(state.clone()), req("/search", "zh-CN")).await).await,
+                body_of(search_page(State(state.clone()), req("/search", "en-US")).await).await,
+            ),
+            (
+                "admin_page",
+                body_of(admin_page(State(state.clone()), req("/admin", "zh-CN")).await).await,
+                body_of(admin_page(State(state.clone()), req("/admin", "en-US")).await).await,
+            ),
+        ];
+        let mut problems: Vec<String> = Vec::new();
+        for (name, zh, en) in pages {
+            for (lang, html) in [("zh", zh), ("en", en)] {
+                let mut js = String::new();
+                let mut rest = html.as_str();
+                while let Some(open) = rest.find("<script") {
+                    let after = &rest[open..];
+                    let Some(gt) = after.find('>') else { break };
+                    let body = &after[gt + 1..];
+                    let Some(end) = body.find("</script>") else {
+                        break;
+                    };
+                    js.push_str(&body[..end]);
+                    js.push('\n');
+                    rest = &body[end..];
+                }
+                let defined: std::collections::HashSet<&str> = declared
+                    .captures_iter(&js)
+                    .map(|c| c.get(1).or_else(|| c.get(2)).unwrap().as_str())
+                    .collect();
+                let mut missing: Vec<&str> = used
+                    .captures_iter(&js)
+                    .map(|c| c.get(1).unwrap().as_str())
+                    .filter(|id| !defined.contains(id))
+                    .collect();
+                missing.sort_unstable();
+                missing.dedup();
+                if !missing.is_empty() {
+                    problems.push(format!("{name} ({lang}): {missing:?}"));
+                }
+            }
+        }
+        assert!(
+            problems.is_empty(),
+            "these pages use a prefixed JavaScript identifier that nothing on the page defines, so the code \
+             that touches it throws at runtime and fails silently:\n{}",
+            problems.join("\n")
+        );
+    }
+
     /// A blind substring replacement over generated JavaScript once turned `FILE_LABELS.total` into the
     /// identifier `FILE_totalLabel`, which no page defines: the pager threw `ReferenceError` on every load
     /// and silently rendered nothing, and a test that only looked for a substring still passed. This guard
