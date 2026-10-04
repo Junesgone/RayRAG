@@ -774,17 +774,18 @@ pub(crate) fn reference_payload(references: &[crate::llm::ChunkReference]) -> se
             "term_similarity": reference.term_similarity,
         });
         if let Some(object) = chunk.as_object_mut() {
-            if let Some(document_id) = &reference.document_id {
-                object.insert("document_id".into(), serde_json::json!(document_id));
-            }
-            if let Some(document_name) = &reference.document_name {
-                object.insert("document_name".into(), serde_json::json!(document_name));
-            }
             if let Some(metadata) = &reference.document_metadata {
                 object.insert(
                     "document_metadata".into(),
                     serde_json::Value::Object(metadata.clone()),
                 );
+            }
+            // Every citation key, including the ones that were missing entirely: `image_id`,
+            // `positions`, `url` and `doc_type`. The helper fills them from stored metadata and
+            // leaves them empty otherwise, which is what upstream sends when it has nothing.
+            for (key, value) in crate::api::chunk_citation::citation_fields_for_reference(reference)
+            {
+                object.insert(key, value);
             }
         }
         chunks.insert(index.to_string(), chunk);
@@ -1478,14 +1479,24 @@ pub(crate) fn references_payload(references: &[crate::llm::ChunkReference]) -> s
     serde_json::json!({
         "chunks": references
             .iter()
-            .map(|reference| serde_json::json!({
-                "id": reference.id,
-                "kb_id": reference.kb_id,
-                "content": reference.content,
-                "similarity": reference.similarity,
-                "vector_similarity": reference.vector_similarity,
-                "term_similarity": reference.term_similarity,
-            }))
+            .map(|reference| {
+                let mut chunk = serde_json::json!({
+                    "id": reference.id,
+                    "kb_id": reference.kb_id,
+                    "content": reference.content,
+                    "similarity": reference.similarity,
+                    "vector_similarity": reference.vector_similarity,
+                    "term_similarity": reference.term_similarity,
+                });
+                if let Some(object) = chunk.as_object_mut() {
+                    for (key, value) in
+                        crate::api::chunk_citation::citation_fields_for_reference(reference)
+                    {
+                        object.entry(key).or_insert(value);
+                    }
+                }
+                chunk
+            })
             .collect::<Vec<_>>(),
         "total": references.len(),
     })
@@ -1766,12 +1777,20 @@ async fn complete_session(
                     .references
                     .iter()
                     .map(|reference| {
-                        serde_json::json!({
+                        let mut chunk = serde_json::json!({
                             "chunk_id": reference.id,
                             "kb_id": reference.kb_id,
                             "score": reference.similarity,
                             "content": reference.content.chars().take(120).collect::<String>(),
-                        })
+                        });
+                        if let Some(object) = chunk.as_object_mut() {
+                            for (key, value) in
+                                crate::api::chunk_citation::citation_fields_for_reference(reference)
+                            {
+                                object.entry(key).or_insert(value);
+                            }
+                        }
+                        chunk
                     })
                     .collect();
                 let _ = tx.blocking_send(Ok(Event::default().data(

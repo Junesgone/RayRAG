@@ -373,19 +373,37 @@ pub async fn weighted_search(
                     metadata_fields.as_ref(),
                 )
             });
-            serde_json::json!({
-                "chunk_id": r.chunk.id,
-                "content": r.chunk.content,
-                "doc_name": r.chunk.doc_name,
-                "similarity": r.score,
-                "weighted_score": r.score,
-                "vector_similarity": r.vector_score,
-                "term_similarity": r.term_score,
-                "doc_id": doc_id,
-                "kb_id": kb_id,
-                "highlight": body.highlight.then(|| highlight_content(&r.chunk.content, &body.question)),
-                "document_metadata": document_metadata.flatten(),
-            })
+            {
+                let mut chunk = serde_json::json!({
+                    "chunk_id": r.chunk.id,
+                    "content": r.chunk.content,
+                    "doc_name": r.chunk.doc_name,
+                    "similarity": r.score,
+                    "weighted_score": r.score,
+                    "vector_similarity": r.vector_score,
+                    "term_similarity": r.term_score,
+                    "doc_id": doc_id,
+                    "kb_id": kb_id,
+                    "highlight": body.highlight.then(|| highlight_content(&r.chunk.content, &body.question)),
+                    "document_metadata": document_metadata.flatten(),
+                });
+                // Upstream's own names for the same chunk, plus the citation fields a client needs to
+                // render a source: without these a RAGFlow-shaped client had nothing to draw.
+                if let Some(object) = chunk.as_object_mut() {
+                    let citation = crate::api::chunk_citation::citation_fields(
+                        &r.chunk.id,
+                        &doc_id,
+                        &r.chunk.doc_name,
+                        &kb_id,
+                        &r.chunk.content,
+                        &r.chunk.metadata,
+                    );
+                    for (key, value) in citation {
+                        object.entry(key).or_insert(value);
+                    }
+                }
+                chunk
+            }
         })
         .collect();
     let graph_context = if body.use_kg {

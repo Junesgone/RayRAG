@@ -13,6 +13,7 @@ pub mod attachments;
 pub mod audio_api;
 pub mod chat_channel_mgr;
 pub mod chatapp_mgr;
+pub mod chunk_citation;
 pub mod chunks;
 pub mod common;
 pub mod compat;

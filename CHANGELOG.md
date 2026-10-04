@@ -2,6 +2,45 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.26.0] - 2026-10-04
+
+### The citation fields a reference chunk owes a client
+
+The API guide prints the shape of a reference chunk in both places it appears. Retrieval:
+
+```text
+content, content_ltks, document_id, document_keyword, highlight, id, image_id,
+important_keywords, tag_kwd, dataset_id, positions, similarity, term_similarity, vector_similarity
+```
+
+and chat/agent references: `id, content, document_id, document_name, document_metadata, dataset_id,
+image_id, positions, url, similarity, vector_similarity, term_similarity, doc_type`.
+
+RayRAG sent its own names instead — `chunk_id`, `doc_id`, `kb_id`, `doc_name` — and the citation-only
+fields (`positions`, `image_id`, `url`, `doc_type`, `content_ltks`, `important_keywords`, `tag_kwd`) were
+simply **absent**. A client written against RAGFlow had nothing to draw a source with.
+
+`api::chunk_citation` now builds that block once and every chunk/reference builder merges it:
+
+* **Nothing is invented.** A field is the stored value or it is empty — upstream itself sends
+  `"positions": []` and `"image_id": ""` when it has no position data, and an empty list is a truthful
+  answer while a fabricated coordinate is not. `content_ltks` is the stored token string when the chunk
+  has one, and otherwise tokenised from the content with the same tokenizer the keyword index uses.
+* Positions are parsed from what was stored: an array stays as it is, a JSON string is parsed, a
+  comma-separated tuple (`12,11,11`) is wrapped into upstream's list-of-tuples shape, and **malformed
+  JSON becomes `[]`** rather than a guessed position built from half a tuple.
+* RayRAG's own names stay beside upstream's, so every client that already read these responses keeps
+  working. On the retrieval path `similarity` and `score` are the same number under two names.
+
+**Found by following the contract rather than the code:** the `/api/v1/retrieval` handler in `server.rs`
+is a *second* implementation of the same response shape as `api::search::weighted_search`, and the first
+patch only reached the second one. The test failed on the real handler, which is how the duplicate
+surfaced — the shared helper now feeds all four builders, which is what stops them drifting again.
+
+**2254 tests pass, 0 failures**, including a router test that indexes a chunk with stored positions, an
+image id, a URL, a doc type and keyword lists, then reads every upstream key back off the response and
+asserts the values are the stored ones — plus the compatibility names the same response already had.
+
 ## [0.25.0] - 2026-10-04
 
 ### The last two gaps: the compiled skill tree

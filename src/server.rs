@@ -3978,18 +3978,37 @@ async fn retrieval(
                     metadata_fields.as_ref(),
                 )
             });
-            serde_json::json!({
-                "score": result.score,
-                "vector_similarity": result.vector_score,
-                "term_similarity": result.term_score,
-                "content": result.chunk.content,
-                "doc_name": result.chunk.doc_name,
-                "chunk_id": result.chunk.id,
-                "doc_id": doc_id,
-                "kb_id": kb_id,
-                "highlight": highlight.then(|| highlight_content(&result.chunk.content, q)),
-                "document_metadata": document_metadata.flatten(),
-            })
+            {
+                let mut chunk = serde_json::json!({
+                    "score": result.score,
+                    "vector_similarity": result.vector_score,
+                    "term_similarity": result.term_score,
+                    "content": result.chunk.content,
+                    "doc_name": result.chunk.doc_name,
+                    "chunk_id": result.chunk.id,
+                    "doc_id": doc_id,
+                    "kb_id": kb_id,
+                    "similarity": result.score,
+                    "highlight": highlight.then(|| highlight_content(&result.chunk.content, q)),
+                    "document_metadata": document_metadata.flatten(),
+                });
+                // Upstream's citation block: `id`, `document_id`, `dataset_id`, `positions`,
+                // `image_id`, `content_ltks`, `url`, `doc_type` and the keyword lists. RayRAG's own
+                // names stay beside them so nothing that already read this response breaks.
+                if let Some(object) = chunk.as_object_mut() {
+                    for (key, value) in crate::api::chunk_citation::citation_fields(
+                        &result.chunk.id,
+                        &doc_id,
+                        &result.chunk.doc_name,
+                        &kb_id,
+                        &result.chunk.content,
+                        &result.chunk.metadata,
+                    ) {
+                        object.entry(key).or_insert(value);
+                    }
+                }
+                chunk
+            }
         })
         .collect();
     let graph_context = state.graphs.context_for_query(&kb_ids, q);
@@ -7497,6 +7516,128 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(after.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// A fixed-width embedder, so a retrieval test does not need a model provider.
+    struct FixedEmbedder;
+
+    #[async_trait::async_trait]
+    impl crate::embed::Embedder for FixedEmbedder {
+        async fn embed(&self, texts: &[&str]) -> crate::Result<Vec<Vec<f32>>> {
+            Ok(texts.iter().map(|_| vec![0.5f32; 8]).collect())
+        }
+    }
+
+    /// A retrieval chunk carries every citation key the API guide lists, so a client written against
+    /// RAGFlow can render a source instead of finding the fields missing.
+    #[tokio::test]
+    async fn a_retrieval_chunk_carries_upstreams_citation_fields() {
+        let mut env = test_env();
+        Arc::get_mut(&mut env.state).unwrap().embedder = Some(std::sync::Arc::new(FixedEmbedder));
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Citation KB", "d")
+            .unwrap();
+        // One indexed chunk with real stored metadata: positions, an image and a source URL.
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert("kb_id".to_string(), kb.id.clone());
+        metadata.insert("doc_id".to_string(), "doc-1".to_string());
+        metadata.insert("img_id".to_string(), "img-7".to_string());
+        metadata.insert("url".to_string(), "https://example.cn/a".to_string());
+        metadata.insert("doc_type".to_string(), "markdown".to_string());
+        metadata.insert("important_kwd".to_string(), "[\"alpha\"]".to_string());
+        metadata.insert("tag_kwd".to_string(), "[\"beta\"]".to_string());
+        metadata.insert("positions".to_string(), "[[3,1,2,3,4]]".to_string());
+        env.state
+            .engine
+            .write()
+            .unwrap()
+            .index(vec![crate::search::IndexedChunk {
+                id: "chunk-1".to_string(),
+                doc_name: "guide.md".to_string(),
+                content: "retrieval augmented generation".to_string(),
+                embedding: vec![0.5; 8],
+                token_count: 3,
+                position: 0,
+                metadata,
+            }]);
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/retrieval")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "question": "retrieval augmented generation",
+                            "dataset_ids": [kb.id],
+                            "similarity_threshold": 0.0,
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 0, "{body}");
+        let chunks = body["data"]["chunks"].as_array().unwrap();
+        assert_eq!(chunks.len(), 1, "{body}");
+        let chunk = &chunks[0];
+        for key in [
+            "id",
+            "document_id",
+            "document_keyword",
+            "dataset_id",
+            "content_ltks",
+            "image_id",
+            "important_keywords",
+            "tag_kwd",
+            "positions",
+            "url",
+            "doc_type",
+        ] {
+            assert!(chunk.get(key).is_some(), "missing {key}: {chunk}");
+        }
+        // The values are the stored ones, not placeholders.
+        assert_eq!(chunk["id"], "chunk-1", "{chunk}");
+        assert_eq!(chunk["document_id"], "doc-1", "{chunk}");
+        assert_eq!(chunk["document_keyword"], "guide.md", "{chunk}");
+        assert_eq!(chunk["dataset_id"], kb.id, "{chunk}");
+        assert_eq!(chunk["image_id"], "img-7", "{chunk}");
+        assert_eq!(chunk["url"], "https://example.cn/a", "{chunk}");
+        assert_eq!(chunk["doc_type"], "markdown", "{chunk}");
+        assert_eq!(
+            chunk["important_keywords"],
+            serde_json::json!(["alpha"]),
+            "{chunk}"
+        );
+        assert_eq!(chunk["tag_kwd"], serde_json::json!(["beta"]), "{chunk}");
+        assert_eq!(
+            chunk["positions"],
+            serde_json::json!([[3, 1, 2, 3, 4]]),
+            "{chunk}"
+        );
+        assert!(
+            !chunk["content_ltks"].as_str().unwrap().trim().is_empty(),
+            "content_ltks is tokenised, not empty: {chunk}"
+        );
+        // RayRAG's own names for this response stay, so nothing that already read it breaks.
+        for key in [
+            "chunk_id",
+            "doc_id",
+            "kb_id",
+            "doc_name",
+            "score",
+            "vector_similarity",
+            "term_similarity",
+        ] {
+            assert!(chunk.get(key).is_some(), "lost {key}: {chunk}");
+        }
+        // `similarity` is upstream's name for the same number as `score`.
+        assert_eq!(chunk["similarity"], chunk["score"], "{chunk}");
     }
 
     /// Upstream `next-search/hooks.ts` posts `{kb_id, question, search_id, page,

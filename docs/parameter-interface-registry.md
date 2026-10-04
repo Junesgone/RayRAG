@@ -912,3 +912,13 @@ RAGFlow 把麦克风放在**聊天输入区**；RayRAG 目前把这个能力放�
 - **读取顺序与上限**：按文档分组（稳定排序，保留文档内原序），`inc_search_page` 分页 500 行/页，累计上限 20000 行；超出时记 warning。
 - **存储**：`uploads/skill_trees.json`（键为数据集 id；+ PostgreSQL 镜像）。
 - **UI**：数据集页 `#dsSkillCard`（`data-testid='dataset-skill-card|compile|reload|delete-all|status|tree|toggle|view|delete'`）。
+
+### 0.26.0：引用块（reference chunk）字段对齐
+
+- **上游契约（检索 `POST /api/v1/retrieval`）**：`content, content_ltks, document_id, document_keyword, highlight, id, image_id, important_keywords, tag_kwd, dataset_id, positions, similarity, term_similarity, vector_similarity`。
+- **上游契约（chat/agent 引用）**：`id, content, document_id, document_name, document_metadata, dataset_id, image_id, positions, url, similarity, vector_similarity, term_similarity, doc_type`。
+- **实现**：`src/api/chunk_citation.rs` 统一生成引用块；合并进 4 个构造点（`server.rs` 的 `/api/v1/retrieval`、`api/search.rs::weighted_search`、`api/features.rs::references_payload`、chat 流式引用帧）。
+- **取值规则**：字段值一律取存储值，无则为空（与上游一致：无位置数据时上游也发 `positions: []`、`image_id: ""`）；**不臆造坐标**。`content_ltks` 优先取存储的 `content_ltks`，否则用与关键词索引相同的分词器（`harness::knowlege_dataset_nav::tokenize`）现场生成。
+- **positions 解析**：JSON 数组原样；JSON 字符串解析；逗号元组（`12,11,11`）包装为「列表的列表」（上游形状）；**畸形 JSON → `[]`**，不从半截元组里猜坐标。
+- **兼容**：RayRAG 原有字段名（`chunk_id`/`doc_id`/`kb_id`/`doc_name`/`score`）保留；检索路径上 `similarity` 与 `score` 同值两名。
+- **注意（重复实现）**：`server.rs` 的 `/api/v1/retrieval` 与 `api/search.rs::weighted_search` 是**同一响应形状的两份实现**，首轮补丁只覆盖了后者，由路由测试在真实 handler 上发现。现由同一 helper 供给全部 4 处，避免再次漂移。
