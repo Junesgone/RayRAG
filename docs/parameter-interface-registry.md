@@ -922,3 +922,11 @@ RAGFlow 把麦克风放在**聊天输入区**；RayRAG 目前把这个能力放�
 - **positions 解析**：JSON 数组原样；JSON 字符串解析；逗号元组（`12,11,11`）包装为「列表的列表」（上游形状）；**畸形 JSON → `[]`**，不从半截元组里猜坐标。
 - **兼容**：RayRAG 原有字段名（`chunk_id`/`doc_id`/`kb_id`/`doc_name`/`score`）保留；检索路径上 `similarity` 与 `score` 同值两名。
 - **注意（重复实现）**：`server.rs` 的 `/api/v1/retrieval` 与 `api/search.rs::weighted_search` 是**同一响应形状的两份实现**，首轮补丁只覆盖了后者，由路由测试在真实 handler 上发现。现由同一 helper 供给全部 4 处，避免再次漂移。
+
+### 0.27.0：语音交互的 UI 控件（麦克风 / 朗读）
+
+- **接口**（早已存在，本轮补 UI）：`POST /api/v1/chat/audio/speech`（TTS，返回二进制音频流，`Content-Type: audio/mpeg`）、`POST /api/v1/chat/audio/transcription`（ASR，multipart 字段 `file`，`stream=false` 时返回 `{code:0,data:{text}}`）。
+- **UI**：聊天详情页 `#chatAudioCard`（`data-testid='chat-audio-card|chat-mic|chat-speak-last|chat-audio-status'`）；助手消息操作行追加 `data-testid='chat-message-speak'`（🔊），由一段脚本 + `MutationObserver` 注入，**不改动既有消息标记**。
+- **行为**：麦克风用 `MediaRecorder` 录音（优先 `audio/webm`，按 `mimeType` 推定扩展名），提交后把 `data.text` 追加进 `#chatInput`；朗读把最后一条助手消息 POST 给 TTS，用 Blob URL 播放并在 `ended` 时 `revokeObjectURL`。
+- **错误可见**：`Transcription failed.` / `Speech synthesis failed.` / `This browser refused microphone access.` / `Nothing was recorded or transcribed.` 全部带底层错误写入状态行 —— **不允许静默失败**；无麦克风权限的浏览器明确告知而不是留一个死按钮。
+- **插入纪律（沿用前两轮教训）**：控件块放在页面**脚本闭合之后**；页面测试断言「控件标记不得落在 script 内」「script 内不得出现裸 CSS 声明」「占位符必须以引号替换」。

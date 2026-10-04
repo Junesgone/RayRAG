@@ -2,6 +2,37 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.27.0] - 2026-10-04
+
+### Two endpoints that had no button
+
+`POST /api/v1/chat/audio/speech` and `POST /api/v1/chat/audio/transcription` were implemented, listed in
+the parity ledger, and reachable only by curl. Upstream's chat has a microphone in the composer and a
+read-aloud control on each message; RayRAG's composer had neither, which is precisely the gap the
+checklist names — *every feature needs a control*.
+
+The chat page now carries a **voice card** with both:
+
+* **Dictate** records with `MediaRecorder`, posts the clip as multipart to
+  `/api/v1/chat/audio/transcription` with `stream=false`, and appends the returned text to the composer's
+  input. The button toggles to *Stop dictation* while recording.
+* **Read aloud** posts the last assistant message to `/api/v1/chat/audio/speech` and plays the returned
+  audio from a blob URL, revoking it when playback ends. Every assistant message also gets a 🔊 button
+  appended to its existing action row, so a single answer can be replayed without re-reading the thread.
+
+Both controls report honestly instead of failing silently: `Transcription failed.`,
+`Speech synthesis failed.`, `This browser refused microphone access.` and
+`Nothing was recorded or transcribed.` all land in the card's status line with the underlying error, and a
+microphone-less browser is told so rather than left with a dead button. The per-message speaker is attached
+from one script that also observes the message list, so the existing message markup was not touched.
+
+The page test asserts the card, both endpoints, the multipart field name, `MediaRecorder`, the blob
+playback, the per-message speaker and each failure message — **plus the two shapes that shipped as bugs in
+earlier rounds**: the card must not sit inside a script block, no bare CSS declaration may sit in a
+script, and no placeholder may be substituted unquoted.
+
+**2255 tests pass, 0 failures.**
+
 ## [0.26.0] - 2026-10-04
 
 ### The citation fields a reference chunk owes a client

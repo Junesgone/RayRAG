@@ -3859,6 +3859,157 @@ pub async fn chat_detail_page(
     b.push_str("function regenMsg(i,mid){var el=document.getElementById('msg'+i);if(!el||!mid)return;var old=el.innerHTML;el.innerHTML='<p style=color:var(--tm)>Regenerating...</p>';fetch('/api/v1/conversations/'+sid+'/messages/'+mid+'/regenerate',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(async function(r){var d=await r.json();if(!r.ok)throw new Error(d.message||'Regenerate failed');var a=d.data?d.data.answer:'...';var refs=(d.data&&d.data.citations||[]).map(function(c){return {content:c}});var rh=refsHtml(refs);el.innerHTML=a+rh+'<div class=msg-actions><button class=btn-ghost btn-sm onclick=copyMsg('+i+') title=Copy>📋</button><button class=btn-ghost btn-sm onclick=regenMsg('+i+',&quot;'+mid+'&quot;) title=Regenerate>🔄</button><button class=btn-ghost btn-sm onclick=likeMsg(&quot;'+mid+'&quot;,1,this) title=Like>👍</button><button class=btn-ghost btn-sm onclick=likeMsg(&quot;'+mid+'&quot;,0,this) title=Dislike>👎</button></div>'}).catch(function(e){el.innerHTML=old;alert(e.message)})}");
     b.push_str("function likeMsg(mid,v,btn){if(!mid)return;fetch('/api/v1/conversations/'+sid+'/messages/'+mid+'/feedback',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({thumbup:!!v})}).then(async function(r){var d=await r.json();if(!r.ok)throw new Error(d.message||'Feedback failed');var actions=btn.parentElement;actions.querySelectorAll('button').forEach(function(b){b.style.color=''});btn.style.color=v?'var(--s)':'var(--d)'}).catch(function(e){alert(e.message)})}");
     b.push_str("</script>");
+    // Voice controls for the composer: upstream's chat has a microphone and a read-aloud control, and
+    // the API behind them (`/api/v1/chat/audio/transcription` and `/audio/speech`) had no button at all.
+    // Both live in one self-contained block after the page's scripts, and the per-message speaker is
+    // attached from here so the existing message markup is not touched.
+    let audio_template = r##"<section class='card' id='chatAudioCard' data-testid='chat-audio-card' style='margin-top:12px'>
+<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'>
+<button type='button' class='btn btn-o' id='chatMic' data-testid='chat-mic'>@MIC@</button>
+<button type='button' class='btn btn-o' id='chatSpeakLast' data-testid='chat-speak-last'>@SPEAK@</button>
+<span id='chatAudioStatus' data-testid='chat-audio-status' role='status' aria-live='polite' style='font-size:12px;color:var(--t2)'></span>
+</div>
+</section>
+<script>
+(function(){
+var rec=null,chunks=[],status=document.getElementById('chatAudioStatus');
+function say(text,error){status.textContent=text;status.style.color=error?'#c0392b':'var(--t2)';}
+function input(){return document.getElementById('chatInput');}
+function transcribe(blob,ext){
+  var form=new FormData();
+  form.append('file',blob,'dictation.'+ext);
+  form.append('stream','false');
+  say(@UPLOADING@);
+  return fetch('/api/v1/chat/audio/transcription',{method:'POST',body:form}).then(function(r){return r.json();}).then(function(body){
+    if(body.code!==0){say(body.message||@STT_FAILED@,true);return;}
+    var field=input();
+    var text=(body.data&&body.data.text)||'';
+    if(!text){say(@NOTHING_HEARD@,true);return;}
+    field.value=(field.value?field.value+' ':'')+text;
+    field.focus();
+    say(@INSERTED@);
+  }).catch(function(error){say(@STT_FAILED@+' '+error,true);});
+}
+function stopRecording(){
+  if(rec&&rec.state!=='inactive'){rec.stop();}
+}
+function startRecording(){
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){say(@NO_MIC@,true);return;}
+  navigator.mediaDevices.getUserMedia({audio:true}).then(function(stream){
+    chunks=[];
+    var type=(window.MediaRecorder&&MediaRecorder.isTypeSupported('audio/webm'))?'audio/webm':'';
+    rec=type?new MediaRecorder(stream,{mimeType:type}):new MediaRecorder(stream);
+    var ext=(rec.mimeType&&rec.mimeType.indexOf('ogg')>=0)?'ogg':((rec.mimeType&&rec.mimeType.indexOf('mp4')>=0)?'m4a':'webm');
+    rec.addEventListener('dataavailable',function(event){if(event.data&&event.data.size)chunks.push(event.data);});
+    rec.addEventListener('stop',function(){
+      stream.getTracks().forEach(function(track){track.stop();});
+      document.getElementById('chatMic').textContent=@MIC@;
+      if(!chunks.length){say(@NOTHING_HEARD@,true);return;}
+      transcribe(new Blob(chunks,{type:chunks[0].type||'audio/webm'}),ext);
+    });
+    rec.start();
+    document.getElementById('chatMic').textContent=@STOP_MIC@;
+    say(@RECORDING@);
+  }).catch(function(error){say(@NO_MIC@+' '+error,true);});
+}
+function speak(text){
+  if(!text||!text.trim()){say(@NOTHING_TO_SAY@,true);return;}
+  say(@SPEAKING@);
+  fetch('/api/v1/chat/audio/speech',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:text})})
+    .then(function(response){
+      if(!response.ok){return response.json().then(function(body){throw new Error(body.message||('HTTP '+response.status));});}
+      return response.blob();
+    })
+    .then(function(blob){
+      var url=URL.createObjectURL(blob);
+      var player=new Audio(url);
+      player.addEventListener('ended',function(){URL.revokeObjectURL(url);});
+      player.play();
+      say(@SPEAKING@);
+    })
+    .catch(function(error){say(@TTS_FAILED@+' '+error,true);});
+}
+function lastAssistantText(){
+  var all=document.querySelectorAll('.cma');
+  for(var i=all.length-1;i>=0;i-=1){
+    var node=all[i];
+    if(node.textContent&&node.textContent.trim())return node.textContent.trim();
+  }
+  return '';
+}
+document.getElementById('chatMic').addEventListener('click',function(){
+  if(rec&&rec.state==='recording'){stopRecording();return;}
+  startRecording();
+});
+document.getElementById('chatSpeakLast').addEventListener('click',function(){speak(lastAssistantText());});
+// A speaker on every assistant message: upstream puts the read-aloud control on the message itself.
+function decorate(){
+  document.querySelectorAll('.msg-actions').forEach(function(row){
+    if(row.querySelector('[data-testid=\'chat-message-speak\']'))return;
+    var button=document.createElement('button');
+    button.type='button';
+    button.className='btn btn-ghost btn-sm';
+    button.setAttribute('data-testid','chat-message-speak');
+    button.setAttribute('title',@READ_ALOUD@);
+    button.textContent='🔊';
+    button.addEventListener('click',function(){
+      var host=row.closest('.cma')||row.parentElement;
+      speak(host?host.textContent.trim():'');
+    });
+    row.appendChild(button);
+  });
+}
+decorate();
+if(window.MutationObserver){
+  new MutationObserver(decorate).observe(document.body,{childList:true,subtree:true});
+}
+})();
+</script>"##;
+    let audio_controls = [
+        ("@MIC@", t("Dictate", zh).to_string()),
+        ("@STOP_MIC@", t("Stop dictation", zh).to_string()),
+        ("@SPEAK@", t("Read aloud", zh).to_string()),
+        ("@READ_ALOUD@", json_script_string(t("Read aloud", zh))),
+        ("@UPLOADING@", json_script_string(t("Transcribing…", zh))),
+        (
+            "@STT_FAILED@",
+            json_script_string(t("Transcription failed.", zh)),
+        ),
+        (
+            "@NOTHING_HEARD@",
+            json_script_string(t("Nothing was recorded or transcribed.", zh)),
+        ),
+        (
+            "@INSERTED@",
+            json_script_string(t("Inserted the transcription.", zh)),
+        ),
+        (
+            "@NO_MIC@",
+            json_script_string(t("This browser refused microphone access.", zh)),
+        ),
+        (
+            "@RECORDING@",
+            json_script_string(t("Recording… click again to stop.", zh)),
+        ),
+        (
+            "@NOTHING_TO_SAY@",
+            json_script_string(t("There is nothing to read aloud yet.", zh)),
+        ),
+        (
+            "@SPEAKING@",
+            json_script_string(t("Playing the audio.", zh)),
+        ),
+        (
+            "@TTS_FAILED@",
+            json_script_string(t("Speech synthesis failed.", zh)),
+        ),
+    ]
+    .iter()
+    .fold(audio_template.to_string(), |html, (token, value)| {
+        html.replace(token, value)
+    });
+    b.push_str(&audio_controls);
+
     Html(layout(&name, &b, zh))
 }
 
@@ -18737,6 +18888,89 @@ connection: close
             html.contains("exportChunks"),
             "export chunks handler missing"
         );
+    }
+
+    /// The voice controls: a microphone that posts to the transcription endpoint and a read-aloud
+    /// control that posts to the speech endpoint. Both endpoints existed with no button at all, which
+    /// is exactly the gap this checks for.
+    #[tokio::test]
+    async fn the_chat_composer_offers_dictation_and_read_aloud() {
+        let (_root, state) = test_state();
+        let conv = state
+            .conversations
+            .create_for("test-user", "Voice chat")
+            .unwrap();
+        let req = Request::builder()
+            .uri(format!("/chat/{}", conv.id))
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(chat_detail_page(State(state), Path(conv.id.clone()), req).await).await;
+        assert_inline_scripts_balance(&html, "/chat/{id}");
+        for marker in [
+            "data-testid='chat-audio-card'",
+            "data-testid='chat-mic'",
+            "data-testid='chat-speak-last'",
+            "data-testid='chat-audio-status'",
+            // Both endpoints, called with the shapes the API guide documents.
+            "'/api/v1/chat/audio/transcription'",
+            "'/api/v1/chat/audio/speech'",
+            "new FormData()",
+            "form.append('file',blob",
+            "new MediaRecorder(",
+            "URL.createObjectURL(blob)",
+            "data-testid','chat-message-speak'",
+        ] {
+            assert!(html.contains(marker), "missing {marker}");
+        }
+        // Every refusal is surfaced in the status line rather than swallowed.
+        for message in [
+            "Transcription failed.",
+            "Speech synthesis failed.",
+            "This browser refused microphone access.",
+            "Nothing was recorded or transcribed.",
+        ] {
+            assert!(
+                html.contains(message),
+                "missing the honest failure message: {message}"
+            );
+        }
+        // The card is markup: it must not have landed inside a script block, and no bare CSS
+        // declaration may sit in the script (both mistakes shipped once already).
+        let script_bodies: Vec<&str> = html
+            .split("<script")
+            .skip(1)
+            .filter_map(|part| part.split_once("</script>").map(|(body, _)| body))
+            .collect();
+        for body in &script_bodies {
+            assert!(
+                !body.contains("data-testid='chat-audio-card'"),
+                "the audio card landed inside a script block"
+            );
+            for line in body.lines() {
+                let trimmed = line.trim();
+                let bare_css = [
+                    "align-items:",
+                    "justify-content:",
+                    "flex-wrap:",
+                    "gap:",
+                    "padding:",
+                    "margin:",
+                ]
+                .iter()
+                .any(|property| trimmed.starts_with(property));
+                assert!(
+                    !bare_css,
+                    "a CSS declaration is sitting in the script: {trimmed}"
+                );
+            }
+        }
+        for shape in ["say(Could ", "say(Transcription failed", "say(Recording"] {
+            assert!(
+                !html.contains(shape),
+                "a placeholder was substituted unquoted: {shape}"
+            );
+        }
     }
 
     /// The artifact card lists what the sandbox left behind and downloads it with the token the page's
