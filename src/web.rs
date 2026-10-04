@@ -1350,19 +1350,29 @@ pub async fn dashboard(
     b.push_str("</span></div></div>");
     b.push_str("<div class='card'><h2>");
     b.push_str(t("Knowledge Bases", zh));
-    b.push_str(" <a href='/kbs' style='font-size:13px;color:var(--p);text-decoration:none;float:right'>See all →</a></h2><div class='kb-grid'>");
+    b.push_str(
+        " <a href='/kbs' style='font-size:13px;color:var(--p);text-decoration:none;float:right'>",
+    );
+    b.push_str(t("See all →", zh));
+    b.push_str("</a></h2><div class='kb-grid'>");
     b.push_str(&kb_cards);
     b.push_str("</div></div>");
-    b.push_str("<div class='card'><h2>Quick Actions</h2><a class='btn btn-p' href='/kbs'>+ ");
+    b.push_str("<div class='card'><h2>");
+    b.push_str(t("Quick Actions", zh));
+    b.push_str("</h2><a class='btn btn-p' href='/kbs'>+ ");
     b.push_str(t("New KB", zh));
     b.push_str("</a> <a class='btn btn-o' href='/search'>");
     b.push_str(t("Search Docs", zh));
     b.push_str("</a> <a class='btn btn-o' href='/chat'>");
     b.push_str(t("New Chat", zh));
     b.push_str("</a></div>");
-    b.push_str("<div class='card'><h2>Recent Chats</h2>");
+    b.push_str("<div class='card'><h2>");
+    b.push_str(t("Recent Chats", zh));
+    b.push_str("</h2>");
     if convs.is_empty() {
-        b.push_str("<p style='color:var(--tm)'>No conversations yet.</p>");
+        b.push_str("<p style='color:var(--tm)'>");
+        b.push_str(t("No conversations yet.", zh));
+        b.push_str("</p>");
     } else {
         for c in convs.iter().rev().take(5) {
             let preview: String = c
@@ -1475,7 +1485,9 @@ pub async fn kbs_page(
     b.push_str(t("Parse Type", zh));
     b.push_str(": Built-in</option><option value='Pipeline'>Pipeline</option></select><select id='kbChunkMethod' style='margin-top:8px'><option value='naive'>");
     b.push_str(t("Chunk Method", zh));
-    b.push_str(": General</option><option value='qa'>Q&A</option><option value='resume'>Resume</option><option value='manual'>Manual</option><option value='table'>Table</option><option value='paper'>Paper</option><option value='book'>Book</option><option value='laws'>Laws</option><option value='presentation'>Presentation</option><option value='picture'>Picture</option><option value='one'>One</option><option value='audio'>Audio</option><option value='email'>Email</option><option value='tag'>Tag</option><option value='knowledge_graph'>Knowledge Graph</option></select><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-p' onclick='createKb()'>");
+    b.push_str(": General</option><option value='qa'>Q&A</option><option value='resume'>Resume</option><option value='manual'>Manual</option><option value='table'>Table</option><option value='paper'>Paper</option><option value='book'>Book</option><option value='laws'>Laws</option><option value='presentation'>Presentation</option><option value='picture'>Picture</option><option value='one'>One</option><option value='audio'>Audio</option><option value='email'>Email</option><option value='tag'>Tag</option><option value='knowledge_graph'>");
+    b.push_str(t("Knowledge Graph", zh));
+    b.push_str("</option></select><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-p' onclick='createKb()'>");
     b.push_str(t("Create", zh));
     b.push_str("</button><button class='btn btn-o' onclick='hideCreate()'>Cancel</button></div></div></div>");
     // Rename modal
@@ -2130,7 +2142,9 @@ pub async fn datasets_page(
     b.push_str(built_in_label);
     b.push_str("</span></label><label class='ds-radio'><input type='radio' name='dsParseType' value='pipeline' onchange='dsParseTypeChange()'> <span>Pipeline</span></label></div></div><label class='ds-field' id='dsChunkField'><span class='ds-field-label required'>");
     b.push_str(chunk_method_label);
-    b.push_str("</span><select id='dsCreateChunk'><option value='naive'>General</option><option value='qa'>Q&amp;A</option><option value='manual'>Manual</option><option value='table'>Table</option><option value='paper'>Paper</option><option value='book'>Book</option><option value='laws'>Laws</option><option value='presentation'>Presentation</option><option value='picture'>Picture</option><option value='one'>One</option><option value='audio'>Audio</option><option value='email'>Email</option><option value='tag'>Tag</option><option value='knowledge_graph'>Knowledge Graph</option></select><span class='ds-field-error' id='dsCreateChunkError'></span></label></div><div class='ds-dialog-footer'><button type='button' class='btn btn-p' id='dsCreateSubmit' onclick='dsCreate()'>");
+    b.push_str("</span><select id='dsCreateChunk'><option value='naive'>General</option><option value='qa'>Q&amp;A</option><option value='manual'>Manual</option><option value='table'>Table</option><option value='paper'>Paper</option><option value='book'>Book</option><option value='laws'>Laws</option><option value='presentation'>Presentation</option><option value='picture'>Picture</option><option value='one'>One</option><option value='audio'>Audio</option><option value='email'>Email</option><option value='tag'>Tag</option><option value='knowledge_graph'>");
+    b.push_str(t("Knowledge Graph", zh));
+    b.push_str("</option></select><span class='ds-field-error' id='dsCreateChunkError'></span></label></div><div class='ds-dialog-footer'><button type='button' class='btn btn-p' id='dsCreateSubmit' onclick='dsCreate()'>");
     // Custom pipelines: upstream swaps the chunk-method field for a pipeline picker, and when
     // the user has none yet it says where they come from instead of leaving an empty box.
     b.push_str(
@@ -2938,9 +2952,13 @@ pub async fn dataset_page(
     // Tab 5: Logs (RAGFlow parity) — parse run status with File filter
     b.push_str("<div id='datasetLogs'><div class='card'><h2>");
     b.push_str(t("Logs", zh));
-    b.push_str("</h2><div class='st' style='margin-bottom:12px'><div class='sc'><span class='lbl'>File</span><select id='logFile' onchange='filterLogs()' style='max-width:260px'><option value=''>All files</option></select></div></div>");
+    b.push_str("</h2><div class='st' style='margin-bottom:12px'><div class='sc'><span class='lbl'>File</span><select id='logFile' onchange='filterLogs()' style='max-width:260px'><option value=''>");
+    b.push_str(t("All files", zh));
+    b.push_str("</option></select></div></div>");
     b.push_str("<div class='table-wrap'><table style='width:100%'><thead><tr><th style='text-align:left'>Document</th><th style='text-align:left'>Status</th><th style='text-align:left'>Chunks</th><th style='text-align:left'>Progress</th></tr></thead><tbody id='logBody'></tbody></table></div>");
-    b.push_str("<script>function badge(run){run=run||'UNSTARTED';if(run==='DONE')return '<span class=\\\"badge bs\\\">DONE</span>';if(run==='RUNNING')return '<span class=\\\"badge bi\\\">RUNNING</span>';if(run==='FAILED')return '<span class=\\\"badge bw\\\" style=\\\"color:var(--d)\\\">FAILED</span>';return '<span class=\\\"badge bw\\\">'+(run||'UNSTARTED')+'</span>'};;function filterLogs(){var f=document.getElementById('logFile').value;var rows=document.querySelectorAll('#logBody tr');rows.forEach(function(r){r.style.display=(!f||r.getAttribute('data-f')===f)?'':'none'})};function loadLogs(){fetch('/api/v1/datasets/'+kbId+'/documents').then(function(r){return r.json()}).then(function(d){var docs=(d.data&&d.data.docs)||d.data||[];var sel=document.getElementById('logFile');var cur=sel.value;sel.innerHTML='<option value=\"\">All files</option>';var seen={};var h='';docs.forEach(function(dd){var nm=dd.name||'?';if(!seen[nm]){seen[nm]=1;sel.innerHTML+='<option value=\"'+nm.replace(/'/g,'&#39;')+'\">'+nm+'</option>'}});sel.value=cur;docs.forEach(function(dd){var nm=dd.name||\'?\';var st=dd.run||dd.status||'UNSTARTED';var ch=dd.chunk_count!=null?dd.chunk_count:0;var pg=Math.max(0,Math.min(100,Math.round((dd.progress||0)*100)));h+='<tr data-f=\"'+nm.replace(/'/g,'&#39;')+'\"><td>'+nm+'</td><td>'+badge(st)+'</td><td>'+ch+'</td><td><div style=\"width:110px;height:6px;background:var(--bd)\"><div style=\"height:6px;width:'+pg+'%;background:var(--p)\"></div></div></td></tr>'});document.getElementById('logBody').innerHTML=h;filterLogs()})};loadLogs();</script></div></div>");
+    b.push_str("<script>function badge(run){run=run||'UNSTARTED';if(run==='DONE')return '<span class=\\\"badge bs\\\">DONE</span>';if(run==='RUNNING')return '<span class=\\\"badge bi\\\">RUNNING</span>';if(run==='FAILED')return '<span class=\\\"badge bw\\\" style=\\\"color:var(--d)\\\">FAILED</span>';return '<span class=\\\"badge bw\\\">'+(run||'UNSTARTED')+'</span>'};;function filterLogs(){var f=document.getElementById('logFile').value;var rows=document.querySelectorAll('#logBody tr');rows.forEach(function(r){r.style.display=(!f||r.getAttribute('data-f')===f)?'':'none'})};function loadLogs(){fetch('/api/v1/datasets/'+kbId+'/documents').then(function(r){return r.json()}).then(function(d){var docs=(d.data&&d.data.docs)||d.data||[];var sel=document.getElementById('logFile');var cur=sel.value;sel.innerHTML='<option value=\"\">");
+    b.push_str(t("All files", zh));
+    b.push_str("</option>';var seen={};var h='';docs.forEach(function(dd){var nm=dd.name||'?';if(!seen[nm]){seen[nm]=1;sel.innerHTML+='<option value=\"'+nm.replace(/'/g,'&#39;')+'\">'+nm+'</option>'}});sel.value=cur;docs.forEach(function(dd){var nm=dd.name||\'?\';var st=dd.run||dd.status||'UNSTARTED';var ch=dd.chunk_count!=null?dd.chunk_count:0;var pg=Math.max(0,Math.min(100,Math.round((dd.progress||0)*100)));h+='<tr data-f=\"'+nm.replace(/'/g,'&#39;')+'\"><td>'+nm+'</td><td>'+badge(st)+'</td><td>'+ch+'</td><td><div style=\"width:110px;height:6px;background:var(--bd)\"><div style=\"height:6px;width:'+pg+'%;background:var(--p)\"></div></div></td></tr>'});document.getElementById('logBody').innerHTML=h;filterLogs()})};loadLogs();</script></div></div>");
     // Close the overview (tab1) panel that hosts the merged Logs section so the
     // remaining panels stay siblings instead of nesting inside the hidden tab1.
     b.push_str("</div>");
@@ -3217,29 +3235,47 @@ pub async fn dataset_page(
     b.push_str("<tr><td>");
     b.push_str(t("Rerank", zh));
     b.push_str("</td><td><label style='display:flex;align-items:center;gap:6px'><input type='checkbox' id='cfgRerank'> mxbai-rerank-large-v2</label></td></tr>");
-    b.push_str("<tr><td colspan=2 style='padding-top:16px;border-top:1px solid var(--bd)'><h3 style='font-size:14px;margin:0'>RAPTOR (Recursive Abstractive Processing)</h3></td></tr>");
+    b.push_str("<tr><td colspan=2 style='padding-top:16px;border-top:1px solid var(--bd)'><h3 style='font-size:14px;margin:0'>");
+    b.push_str(t("RAPTOR (Recursive Abstractive Processing)", zh));
+    b.push_str("</h3></td></tr>");
     b.push_str("<tr><td>");
     b.push_str(t("Enable RAPTOR", zh));
     b.push_str("</td><td><label style='display:flex;align-items:center;gap:6px'><input type='checkbox' id='raptorEn'> ");
     b.push_str(t("Enable recursive summarization tree", zh));
     b.push_str("</label></td></tr>");
-    b.push_str("<tr><td>Max Depth</td><td><select id='raptorDepth' disabled><option>3</option><option selected>5</option><option>7</option></select></td></tr>");
+    b.push_str("<tr><td>");
+    b.push_str(t("Max Depth", zh));
+    b.push_str("</td><td><select id='raptorDepth' disabled><option>3</option><option selected>5</option><option>7</option></select></td></tr>");
     b.push_str("<tr><td>Threshold</td><td><input id='raptorThreshold' type='number' step='0.01' min='0' max='1' value='0.7' disabled style='max-width:120px'></td></tr>");
     b.push_str("<tr><td>Generation scope</td><td><select id='raptorScope' disabled><option>Dataset</option><option>Single file</option></select></td></tr>");
     b.push_str("<tr><td>Prompt</td><td><textarea id='raptorPrompt' rows='2' disabled style='width:100%;font-size:12px'></textarea></td></tr>");
-    b.push_str("<tr><td>Max token</td><td><input id='raptorMaxToken' type='number' value='512' disabled style='max-width:120px'></td></tr>");
-    b.push_str("<tr><td>Clustering method</td><td><select id='raptorCluster' disabled><option>GMM</option><option>AHC</option></select></td></tr>");
-    b.push_str("<tr><td>Max cluster</td><td><input id='raptorMaxCluster' type='number' value='64' disabled style='max-width:120px'></td></tr>");
-    b.push_str("<tr><td>Random seed</td><td><input id='raptorSeed' type='number' value='0' disabled style='max-width:120px'></td></tr>");
-    b.push_str("<tr><td colspan=2 style='padding-top:16px;border-top:1px solid var(--bd)'><h3 style='font-size:14px;margin:0'>GraphRAG (Entity Extraction)</h3></td></tr>");
+    b.push_str("<tr><td>");
+    b.push_str(t("Max token", zh));
+    b.push_str("</td><td><input id='raptorMaxToken' type='number' value='512' disabled style='max-width:120px'></td></tr>");
+    b.push_str("<tr><td>");
+    b.push_str(t("Clustering method", zh));
+    b.push_str("</td><td><select id='raptorCluster' disabled><option>GMM</option><option>AHC</option></select></td></tr>");
+    b.push_str("<tr><td>");
+    b.push_str(t("Max cluster", zh));
+    b.push_str("</td><td><input id='raptorMaxCluster' type='number' value='64' disabled style='max-width:120px'></td></tr>");
+    b.push_str("<tr><td>");
+    b.push_str(t("Random seed", zh));
+    b.push_str("</td><td><input id='raptorSeed' type='number' value='0' disabled style='max-width:120px'></td></tr>");
+    b.push_str("<tr><td colspan=2 style='padding-top:16px;border-top:1px solid var(--bd)'><h3 style='font-size:14px;margin:0'>");
+    b.push_str(t("GraphRAG (Entity Extraction)", zh));
+    b.push_str("</h3></td></tr>");
     b.push_str("<tr><td>");
     b.push_str(t("Enable GraphRAG", zh));
     b.push_str("</td><td><label style='display:flex;align-items:center;gap:6px'><input type='checkbox' id='graphEn'> ");
     b.push_str(t("Enable entity-relation extraction", zh));
     b.push_str("</label></td></tr>");
-    b.push_str("<tr><td>Entity Types</td><td><input id='cfgEntityTypes' value='organization, person, location, event, concept' style='font-size:12px'></td></tr>");
+    b.push_str("<tr><td>");
+    b.push_str(t("Entity Types", zh));
+    b.push_str("</td><td><input id='cfgEntityTypes' value='organization, person, location, event, concept' style='font-size:12px'></td></tr>");
     b.push_str("<tr><td>Method</td><td><select id='cfgGraphMethod'><option>Light</option><option>General</option></select></td></tr>");
-    b.push_str("<tr><td>Batch chunk token size</td><td><input id='graphBatchSize' type='number' value='8196' style='max-width:120px'></td></tr>");
+    b.push_str("<tr><td>");
+    b.push_str(t("Batch chunk token size", zh));
+    b.push_str("</td><td><input id='graphBatchSize' type='number' value='8196' style='max-width:120px'></td></tr>");
     b.push_str("<tr><td>Entity resolution</td><td><label style='display:flex;align-items:center;gap:6px'><input type='checkbox' id='graphEntityRes'> <span style='font-size:12px'>Resolve entities across graph</span></label></td></tr>");
     b.push_str("<tr><td>Community reports</td><td><label style='display:flex;align-items:center;gap:6px'><input type='checkbox' id='graphCommReports'> <span style='font-size:12px'>Generate community reports</span></label></td></tr>");
     b.push_str("<tr><td colspan=2 style='padding-top:16px;border-top:1px solid var(--bd)'><h3 style='font-size:14px;margin:0'>");
@@ -3795,9 +3831,16 @@ pub async fn chat_detail_page(
     b.push_str(&id_short);
     b.push_str("...</p>");
     // Knowledge bases attached to this conversation (RAGFlow sidebar parity)
-    b.push_str("<div style='margin-top:12px'><h3 style='font-size:13px;margin-bottom:8px'>Knowledge Bases</h3>");
+    b.push_str("<div style='margin-top:12px'><h3 style='font-size:13px;margin-bottom:8px'>");
+    b.push_str(t("Knowledge Bases", zh));
+    b.push_str("</h3>");
     if conv_kb_ids.is_empty() {
-        b.push_str("<p style='font-size:11px;color:var(--tm)'>No knowledge base attached. Use the temporary chat to pick KBs.</p>");
+        b.push_str("<p style='font-size:11px;color:var(--tm)'>");
+        b.push_str(t(
+            "No knowledge base attached. Use the temporary chat to pick KBs.",
+            zh,
+        ));
+        b.push_str("</p>");
     } else {
         for kb_id in conv_kb_ids.split(',') {
             if kb_id.trim().is_empty() {
@@ -3823,11 +3866,17 @@ pub async fn chat_detail_page(
     b.push_str("'><span id='convName' style='display:none'>");
     b.push_str(&name);
     b.push_str("</span>");
-    b.push_str("<div style='margin-top:20px;border-top:1px solid var(--bd);padding-top:16px'><h3 style='font-size:13px;margin-bottom:8px'>Chat Settings</h3>");
+    b.push_str("<div style='margin-top:20px;border-top:1px solid var(--bd);padding-top:16px'><h3 style='font-size:13px;margin-bottom:8px'>");
+    b.push_str(t("Chat Settings", zh));
+    b.push_str("</h3>");
     b.push_str("<label style='font-size:11px;display:block;margin:6px 0'>Model</label><select id='chatModel'><option>MiniMax-M3</option><option>Qwen3.5-9B</option><option>GPT-4</option></select>");
     b.push_str("<label style='font-size:11px;display:block;margin:6px 0'>Temperature</label><input type='range' min='0' max='2' step='0.1' value='0.7' id='chatTemp' style='padding:0'><span id='tempVal' style='font-size:11px;color:var(--tm)'>0.7</span>");
-    b.push_str("<label style='font-size:11px;display:block;margin:6px 0'>Max Tokens</label><select id='chatMaxTok'><option>512</option><option selected>1024</option><option>2048</option><option>4096</option></select>");
-    b.push_str("<label style='font-size:11px;display:block;margin:6px 0'>System Prompt</label><textarea id='chatSys' rows='3' style='font-size:12px' placeholder='You are a helpful assistant...'>You are a helpful AI assistant. Use the context to answer questions.</textarea>");
+    b.push_str("<label style='font-size:11px;display:block;margin:6px 0'>");
+    b.push_str(t("Max Tokens", zh));
+    b.push_str("</label><select id='chatMaxTok'><option>512</option><option selected>1024</option><option>2048</option><option>4096</option></select>");
+    b.push_str("<label style='font-size:11px;display:block;margin:6px 0'>");
+    b.push_str(t("System Prompt", zh));
+    b.push_str("</label><textarea id='chatSys' rows='3' style='font-size:12px' placeholder='You are a helpful assistant...'>You are a helpful AI assistant. Use the context to answer questions.</textarea>");
     b.push_str("<label style='font-size:11px;display:flex;align-items:center;gap:4px;margin-top:8px'><input type='checkbox' checked> Show citations</label>");
     b.push_str("<label style='font-size:11px;display:flex;align-items:center;gap:4px;margin-top:4px'><input type='checkbox'> Stream response</label>");
     b.push_str("</div></div>");
@@ -3836,7 +3885,9 @@ pub async fn chat_detail_page(
     // Chat area
     b.push_str("<div class='card' style='flex:1;display:flex;flex-direction:column'><div style='flex:1;overflow-y:auto;padding:12px;background:var(--bg);border-radius:var(--r);margin-bottom:12px;min-height:400px' id='chatMsgs'>");
     b.push_str(&msgs);
-    b.push_str("</div><div class='sb'><select id='chatModel' onchange='window.chatModel=this.value' style='margin-right:8px;max-width:180px'><option value=''>Model: default</option></select><input id='chatInput' data-testid='chat-textarea' placeholder='Ask anything...' onkeydown='if(event.key===&quot;Enter&quot;)sendMsg()'><button class='btn btn-o' id='thinkBtn' data-testid='chat-detail-thinking-toggle' onclick='toggleThink()' title='Thinking'>🤔</button><button class='btn btn-p' data-testid='chat-detail-send' onclick='sendMsg()'>");
+    b.push_str("</div><div class='sb'><select id='chatModel' onchange='window.chatModel=this.value' style='margin-right:8px;max-width:180px'><option value=''>");
+    b.push_str(t("Model: default", zh));
+    b.push_str("</option></select><input id='chatInput' data-testid='chat-textarea' placeholder='Ask anything...' onkeydown='if(event.key===&quot;Enter&quot;)sendMsg()'><button class='btn btn-o' id='thinkBtn' data-testid='chat-detail-thinking-toggle' onclick='toggleThink()' title='Thinking'>🤔</button><button class='btn btn-p' data-testid='chat-detail-send' onclick='sendMsg()'>");
     b.push_str(t("Send", zh));
     b.push_str("</button><span id='streamStatus' data-testid='chat-stream-status' style='display:none;color:var(--p);font-size:12px'>● Streaming</span><button class='btn btn-d' id='stopBtn' data-testid='chat-detail-stop' onclick='stopGen()' style='display:none'>⏹ ");
     b.push_str(t("Stop", zh));
@@ -4105,7 +4156,9 @@ fn search_page_markup(
     // Search results (hidden initially)
     b.push_str("<div id='searchView' style='display:none'><div style='display:flex;gap:16px'><div style='flex:1'><div class='card'><div class='search-ask'><input id='q2' class='search-ask-input' placeholder='__GREETING__' onkeydown='if(event.key===&quot;Enter&quot;)doSearch2()'><div class='search-ask-actions'><span class='search-ask-clear' id='searchAskClear' role='button' tabindex='0' aria-label='__CLEAR__' onclick='searchAskReset()'><svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M18 6 6 18'/><path d='m6 6 12 12'/></svg></span><span class='search-ask-sep' aria-hidden='true'>|</span><button type='button' class='search-ask-submit' id='searchAskSubmit' data-testid='search-ask-submit' aria-label='__SUBMIT__' onclick='searchAskAction()'><svg width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><circle cx='11' cy='11' r='8'/><path d='m21 21-4.3-4.3'/></svg></button></div></div><div style='display:flex;gap:12px;margin-top:12px;align-items:center;flex-wrap:wrap'><label style='font-size:12px;display:flex;align-items:center;gap:4px'><input type='checkbox' id='hybrid'> BM25+Vector</label><label style='font-size:12px'>");
     b.push_str(t("Knowledge Base", zh));
-    b.push_str("</label><select id='kbSel' style='font-size:12px;max-width:200px' onchange='kbSelChange()'><option value='__all__'>All knowledge bases</option></select><label style='font-size:12px'>");
+    b.push_str("</label><select id='kbSel' style='font-size:12px;max-width:200px' onchange='kbSelChange()'><option value='__all__'>");
+    b.push_str(t("All knowledge bases", zh));
+    b.push_str("</option></select><label style='font-size:12px'>");
     // Upstream `next-search/retrieval-documents/index.tsx`: the trigger shows the
     // `Files` icon, the selected/total counter and `knowledgeDetails.subbarFiles`,
     // with an X that clears the selection and a ChevronDown; the popover holds a
@@ -4579,7 +4632,9 @@ pub async fn agent_detail_page(
     }
     b.push_str("</div></div><div class='card' style='flex:1'><h2>");
     b.push_str(t("Canvas", zh));
-    b.push_str("</h2><div id='canvasView' style='overflow:auto;border:1px solid var(--bd);border-radius:var(--r);padding:8px;min-height:260px'><p style='color:var(--tm)'>Loading topology...</p></div></div></div>");
+    b.push_str("</h2><div id='canvasView' style='overflow:auto;border:1px solid var(--bd);border-radius:var(--r);padding:8px;min-height:260px'><p style='color:var(--tm)'>");
+    b.push_str(t("Loading topology...", zh));
+    b.push_str("</p></div></div></div>");
     b.push_str("<div style='display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px'><div class='card'><h2>");
     b.push_str(t("Canvas DSL", zh));
     b.push_str("</h2><button class='btn btn-o btn-sm' style='margin-bottom:8px' onclick='editDsl()'>✏️ Edit DSL</button> <button class='btn btn-p btn-sm' style='margin-bottom:8px' onclick='saveDsl()'>💾 Save</button><textarea id='agentDslEdit' style='display:none;width:100%;min-height:300px;font-family:monospace;font-size:12px' spellcheck='false'></textarea><pre id='agentDsl' style='background:var(--bg);padding:16px;border-radius:var(--r);font-size:12px;overflow:auto;max-height:480px;white-space:pre-wrap'>Loading...</pre></div><div class='card'><h2>");
@@ -4588,7 +4643,9 @@ pub async fn agent_detail_page(
     b.push_str(t("Ask", zh));
     b.push_str("</button><div id='aa2' style='margin-top:12px;background:var(--bg);padding:16px;border-radius:var(--r);min-height:120px;white-space:pre-wrap;line-height:1.6;font-size:13px'></div></div><div class='card'><h2>");
     b.push_str(t("Run Log", zh));
-    b.push_str("</h2><div id='runLog' style='font-size:12px;color:var(--t2);max-height:300px;overflow:auto'><p style='color:var(--tm)'>No runs yet.</p></div></div></div>");
+    b.push_str("</h2><div id='runLog' style='font-size:12px;color:var(--t2);max-height:300px;overflow:auto'><p style='color:var(--tm)'>");
+    b.push_str(t("No runs yet.", zh));
+    b.push_str("</p></div></div></div>");
     // Agent webhook: the API landed last release, so the page it belongs to must offer it.
     b.push_str("</div></div><div class='card agent-webhook' style='margin-top:16px'><h2>");
     b.push_str(t("Webhook", zh));
@@ -6670,14 +6727,18 @@ pub async fn datasources_page(
         "Available sources"
     });
     b.push_str("</h2><p class='user-setting-description'>Add a connector and sync its content into your knowledge base.</p><section class='ds-available-grid' id='dsAvailable' data-testid='available-sources-section' aria-live='polite'></section><div class='ds-local-row' style='margin-top:16px'><label class='provider-instance-field' style='margin-top:0;max-width:300px'>Local sources<select id='dsLocalType'><option value='local'>Local Files</option><option value='feishu'>飞书云空间</option><option value='dingtalk'>钉钉云盘</option><option value='tencent_docs'>腾讯文档</option><option value='yuque'>语雀</option><option value='wechat_docs'>微信文档</option></select></label><button class='btn btn-p' type='button' onclick='openDsAdd(document.getElementById(\"dsLocalType\").value,document.getElementById(\"dsLocalType\").selectedOptions[0].textContent)'>+ Add</button></div></div>");
-    b.push_str("<div class='card'><h2>Sources</h2><div style='margin-bottom:8px'><select id='dsKb'><option value=''>Sync to KB (optional)</option></select></div><div id='dsList'>Loading...</div></div>");
+    b.push_str("<div class='card'><h2>Sources</h2><div style='margin-bottom:8px'><select id='dsKb'><option value=''>");
+    b.push_str(t("Sync to KB (optional)", zh));
+    b.push_str("</option></select></div><div id='dsList'>Loading...</div></div>");
     b.push_str("<div class='card'><h2>");
     b.push_str(if zh {
         "文件列表 / 同步预览"
     } else {
         "Files / Sync Preview"
     });
-    b.push_str("</h2><div id='dsPreview' style='color:var(--t2)'>Select a source, then List / Sync.</div></div><script>");
+    b.push_str("</h2><div id='dsPreview' style='color:var(--t2)'>");
+    b.push_str(t("Select a source, then List / Sync.", zh));
+    b.push_str("</div></div><script>");
     b.push_str("function dsHint(){var m={'gitlab':'url=https://gitlab.com, token=PAT, target=project id or owner/repo','github':'url=https://github.com, token=PAT, target=owner/repo','bitbucket':'url=https://bitbucket.org, token=app_password, target=workspace/repo','webdav':'url=https://webdav.example.com, token=user:password, target=/path','confluence':'url=https://xxx.atlassian.net/wiki, token=email:api_token, target=spaceKey','jira':'url=https://xxx.atlassian.net, token=email:api_token, target=project key','notion':'token=integration_token, target=database/page id','google_drive':'token=service_account_json, target=folder id','gmail':'token=service_account_json, target=query','gcs':'url=https://storage.googleapis.com, token=access_token, target=bucket','oracle':'url=https://objectstorage.region.oraclecloud.com, token=access:secret, target=bucket','s3':'url=https://s3.region.amazonaws.com, token=access:secret, target=bucket','r2':'url=https://<account>.r2.cloudflarestorage.com, token=access:secret, target=bucket','azure_blob':'url=https://acct.blob.core.windows.net, token=SAS, target=container','box':'token=access_token (OAuth), target=folder id','dropbox':'token=access_token (OAuth), target=folder path','onedrive':'token=OAuth credentials, target=folder id','outlook':'token=OAuth credentials, target=mailbox query','sharepoint':'url=site url, token=OAuth credentials, target=library','teams':'token=OAuth credentials, target=channel id','slack':'token=bot token, target=channel id','discord':'token=bot token, target=channel id','zendesk':'url=https://subdomain.zendesk.com, token=email:api_token','salesforce':'url=instance url, token=OAuth credentials','moodle':'url=https://moodle.example.com, token=api_token','airtable':'token=personal_access_token, target=base id','asana':'token=personal_access_token, target=project gid','imap':'url=imap host, token=user:password, target=folder','dingtalk_ai_table':'token=appKey:appSecret, target=app id (多维表格)','seafile':'url=https://seafile.example.com, token=api_token, target=library id','rss':'url=https://feed.example.com/rss, target=optional filter','rest_api':'url=api endpoint, token=optional, target=optional','mysql':'url=host, token=user:password, target=database','postgresql':'url=host, token=user:password, target=database','bigquery':'token=service_account_json, target=dataset','local':'url=absolute directory path, target=optional relative subdir','feishu':'token=app_id:app_secret, target=可选 folder_token','dingtalk':'token=app_key:app_secret, target=可选 space_id','tencent_docs':'token=access_token, target=可选 folder_id','yuque':'token=access_token, target=namespace/repo slug','wechat_docs':'token=access_token, target=可选 folder_id'};document.getElementById('dsHint').textContent=m[document.getElementById('dsType').value]||'';}");
     b.push_str(r#"function loadKbs(){fetch('/api/v1/datasets').then(function(r){return r.json()}).then(function(d){var kbs=d.data||[];var sel=document.getElementById('dsKb');sel.replaceChildren();var empty=document.createElement('option');empty.value='';empty.textContent='Sync to KB (optional)';sel.appendChild(empty);kbs.forEach(function(k){var option=document.createElement('option');option.value=k.id;option.textContent=k.name||k.id;sel.appendChild(option)})})}function dsCell(row,text){var cell=document.createElement('td');cell.textContent=text==null?'':String(text);row.appendChild(cell);return cell}function dsAction(text,className,handler){var button=document.createElement('button');button.type='button';button.className=className;button.textContent=text;button.addEventListener('click',handler);return button}function loadDs(){fetch('/api/v1/data_sources').then(function(r){return r.json()}).then(function(d){var list=d.data||[];var root=document.getElementById('dsList');root.replaceChildren();var table=document.createElement('table');var head=document.createElement('thead');head.innerHTML='<tr><th>Name</th><th>Type</th><th>URL</th><th>Target</th><th>State</th><th></th></tr>';table.appendChild(head);var body=document.createElement('tbody');list.forEach(function(x){var row=document.createElement('tr');dsCell(row,x.name);dsCell(row,x.type);dsCell(row,x.url||'');dsCell(row,x.target||'');var state=dsCell(row,'');var badge=document.createElement('span');badge.className=x.connected?'badge bs':'badge bw';badge.textContent=x.connected?'connected':'disconnected';state.appendChild(badge);var actions=dsCell(row,'');actions.append(dsAction('Connect','btn btn-p btn-sm',function(){connDs(x.id)}),document.createTextNode(' '),dsAction('Disconnect','btn btn-o btn-sm',function(){discDs(x.id)}),document.createTextNode(' '),dsAction('List','btn btn-o btn-sm',function(){listDs(x.id)}),document.createTextNode(' '),dsAction('Sync','btn btn-p btn-sm',function(){syncDs(x.id)}),document.createTextNode(' '),dsAction('Details','btn btn-o btn-sm',function(){location.href='/user-setting/data-source/'+encodeURIComponent(x.id)}),document.createTextNode(' '),dsAction('Del','btn btn-d btn-sm',function(){delDs(x.id)}));body.appendChild(row)});table.appendChild(body);root.appendChild(table)})}"#);
     b.push_str("function connDs(id){document.getElementById('dsPreview').textContent='Connecting...';fetch('/api/v1/data_sources/'+id+'/connect',{method:'POST'}).then(function(r){return r.json()}).then(function(d){document.getElementById('dsPreview').textContent=d.code===0?'Connected ✓':'Connect failed: '+(d.message||'unknown');loadDs();});}");
@@ -7149,7 +7210,9 @@ pub async fn memories_page(
     b.push_str(t("Create Memory", zh));
     b.push_str("</button><button class='btn btn-d' onclick='clearAllMem()'>🗑 ");
     b.push_str(t("Clear All", zh));
-    b.push_str("</button></div><div class='card'><h2>Memory Apps <span style='font-size:12px;color:var(--tm)' id='memCount'></span></h2><div id='memList'>Loading...</div></div>");
+    b.push_str("</button></div><div class='card'><h2>");
+    b.push_str(t("Memory Apps", zh));
+    b.push_str("<span style='font-size:12px;color:var(--tm)' id='memCount'></span></h2><div id='memList'>Loading...</div></div>");
     // Add / edit memory modal (RAGFlow memory fields: name / memory_type / embd / llm)
     b.push_str(
         "<div class='modal-overlay' id='memModal'><div class='modal'><h2 id='memModalTitle'>",
@@ -7160,7 +7223,9 @@ pub async fn memories_page(
     b.push_str("</button><button class='btn btn-o' onclick='closeMemModal()'>");
     b.push_str(t("Cancel", zh));
     b.push_str("</button></div></div></div>");
-    b.push_str("<script>var memEditId=null;function showMemModal(){memEditId=null;document.getElementById('mname').value='';document.getElementById('mdesc').value='';document.querySelectorAll('.mtype').forEach(function(x){x.checked=false});document.getElementById('memModalTitle').textContent='Create Memory';document.getElementById('memModal').classList.add('show')};function closeMemModal(){document.getElementById('memModal').classList.remove('show')};function editMem(m){memEditId=m.id;document.getElementById('mname').value=m.name||'';document.getElementById('mdesc').value=m.description||'';document.querySelectorAll('.mtype').forEach(function(x){x.checked=(m.memory_type||[]).indexOf(x.value)>=0});if(m.embd_id)document.getElementById('membd').value=m.embd_id;if(m.llm_id)document.getElementById('mllm').value=m.llm_id;document.getElementById('memModalTitle').textContent='Edit Memory';document.getElementById('memModal').classList.add('show')};function saveMem(){var n=document.getElementById('mname').value;if(!n){alert('Name required');return}var types=[];document.querySelectorAll('.mtype:checked').forEach(function(x){types.push(x.value)});if(!types.length){types=['raw']}var body={name:n,memory_type:types,embd_id:document.getElementById('membd').value||'default',llm_id:document.getElementById('mllm').value||'default',description:document.getElementById('mdesc').value};var url=memEditId?'/api/v1/memories/'+memEditId:'/api/v1/memories';var method=memEditId?'PUT':'POST';fetch(url,{method:method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(d=>{if(d.code===0){closeMemModal();loadMems()}else{alert(d.message||'Save failed')}})};function delMem(id){if(!confirm('Delete this memory?'))return;fetch('/api/v1/memories/'+id,{method:'DELETE'}).then(r=>r.json()).then(d=>{if(d.code===0){loadMems()}else{alert(d.message||'Delete failed')}})};function clearAllMem(){if(!confirm('Delete ALL memories?'))return;fetch('/api/v1/memories/clear',{method:'DELETE'}).then(r=>r.json()).then(d=>{if(d.code===0){loadMems()}else{alert(d.message||'Clear failed')}})};function loadMems(){fetch('/api/v1/memories').then(r=>r.json()).then(d=>{var list=(d.data&&d.data.memory_list)||[];document.getElementById('memCount').textContent='('+list.length+')';var h='<table><thead><tr><th>Name</th><th>Type</th><th>Storage</th><th>Embedding</th><th>Chat</th><th>Size</th><th></th></tr></thead><tbody>';list.forEach(function(m){h+='<tr><td style=font-weight:500>'+(m.name||'')+'</td><td>'+(m.memory_type||[]).join(', ')+'</td><td class=co>'+(m.storage_type||'')+'</td><td class=co>'+(m.embd_id||'')+'</td><td class=co>'+(m.llm_id||'')+'</td><td>'+(m.memory_size||0)+'</td><td><button class=btn btn-o btn-sm onclick=\\'editMem('+JSON.stringify(m).replace(/'/g,'&#39;')+')\\' style=\\'font-size:12px\\'>✏️ Edit</button> <button class=btn btn-d btn-sm onclick=\\'delMem(\\\"'+m.id+'\\\")\\'>Del</button></td></tr>'});document.getElementById('memList').innerHTML=h+'</tbody></table>'||'<p style=color:var(--tm);padding:20px>No memories yet.</p>'})};function loadModelOpts(){fetch('/api/v1/providers').then(r=>r.json()).then(function(d){var ps=d.data||[];var e=document.getElementById('membd');var l=document.getElementById('mllm');(ps||[]).forEach(function(p){if(!p.models)return;(p.models||[]).forEach(function(m){var o=document.createElement('option');o.value=p.id+':'+m;o.textContent=m;e.appendChild(o);var o2=document.createElement('option');o2.value=p.id+':'+m;o2.textContent=m;l.appendChild(o2)})})}).catch(function(){})};loadMems();loadModelOpts();</script>");
+    b.push_str("<script>var memEditId=null;function showMemModal(){memEditId=null;document.getElementById('mname').value='';document.getElementById('mdesc').value='';document.querySelectorAll('.mtype').forEach(function(x){x.checked=false});document.getElementById('memModalTitle').textContent='Create Memory';document.getElementById('memModal').classList.add('show')};function closeMemModal(){document.getElementById('memModal').classList.remove('show')};function editMem(m){memEditId=m.id;document.getElementById('mname').value=m.name||'';document.getElementById('mdesc').value=m.description||'';document.querySelectorAll('.mtype').forEach(function(x){x.checked=(m.memory_type||[]).indexOf(x.value)>=0});if(m.embd_id)document.getElementById('membd').value=m.embd_id;if(m.llm_id)document.getElementById('mllm').value=m.llm_id;document.getElementById('memModalTitle').textContent='Edit Memory';document.getElementById('memModal').classList.add('show')};function saveMem(){var n=document.getElementById('mname').value;if(!n){alert('Name required');return}var types=[];document.querySelectorAll('.mtype:checked').forEach(function(x){types.push(x.value)});if(!types.length){types=['raw']}var body={name:n,memory_type:types,embd_id:document.getElementById('membd').value||'default',llm_id:document.getElementById('mllm').value||'default',description:document.getElementById('mdesc').value};var url=memEditId?'/api/v1/memories/'+memEditId:'/api/v1/memories';var method=memEditId?'PUT':'POST';fetch(url,{method:method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(d=>{if(d.code===0){closeMemModal();loadMems()}else{alert(d.message||'Save failed')}})};function delMem(id){if(!confirm('Delete this memory?'))return;fetch('/api/v1/memories/'+id,{method:'DELETE'}).then(r=>r.json()).then(d=>{if(d.code===0){loadMems()}else{alert(d.message||'Delete failed')}})};function clearAllMem(){if(!confirm('Delete ALL memories?'))return;fetch('/api/v1/memories/clear',{method:'DELETE'}).then(r=>r.json()).then(d=>{if(d.code===0){loadMems()}else{alert(d.message||'Clear failed')}})};function loadMems(){fetch('/api/v1/memories').then(r=>r.json()).then(d=>{var list=(d.data&&d.data.memory_list)||[];document.getElementById('memCount').textContent='('+list.length+')';var h='<table><thead><tr><th>Name</th><th>Type</th><th>Storage</th><th>Embedding</th><th>Chat</th><th>Size</th><th></th></tr></thead><tbody>';list.forEach(function(m){h+='<tr><td style=font-weight:500>'+(m.name||'')+'</td><td>'+(m.memory_type||[]).join(', ')+'</td><td class=co>'+(m.storage_type||'')+'</td><td class=co>'+(m.embd_id||'')+'</td><td class=co>'+(m.llm_id||'')+'</td><td>'+(m.memory_size||0)+'</td><td><button class=btn btn-o btn-sm onclick=\\'editMem('+JSON.stringify(m).replace(/'/g,'&#39;')+')\\' style=\\'font-size:12px\\'>✏️ Edit</button> <button class=btn btn-d btn-sm onclick=\\'delMem(\\\"'+m.id+'\\\")\\'>Del</button></td></tr>'});document.getElementById('memList').innerHTML=h+'</tbody></table>'||'<p style=color:var(--tm);padding:20px>");
+    b.push_str(t("No memories yet.", zh));
+    b.push_str("</p>'})};function loadModelOpts(){fetch('/api/v1/providers').then(r=>r.json()).then(function(d){var ps=d.data||[];var e=document.getElementById('membd');var l=document.getElementById('mllm');(ps||[]).forEach(function(p){if(!p.models)return;(p.models||[]).forEach(function(m){var o=document.createElement('option');o.value=p.id+':'+m;o.textContent=m;e.appendChild(o);var o2=document.createElement('option');o2.value=p.id+':'+m;o2.textContent=m;l.appendChild(o2)})})}).catch(function(){})};loadMems();loadModelOpts();</script>");
     // Keep conversation list below for reference (RAGFlow memory page also links sessions)
     if !convs.is_empty() {
         let mut rows = String::new();
@@ -7168,7 +7233,11 @@ pub async fn memories_page(
             let msgs = c.messages.len();
             rows.push_str(&format!("<tr><td style='font-weight:500'>{}</td><td>{} msgs</td><td><a class='btn btn-o btn-sm' href='/chat/{}'>View</a></td></tr>", c.name.chars().take(40).collect::<String>(), msgs, c.id));
         }
-        b.push_str("<div class='card' style='margin-top:16px'><h2>Recent Conversations</h2><table><thead><tr><th>Name</th><th>Messages</th><th></th></tr></thead><tbody>");
+        b.push_str("<div class='card' style='margin-top:16px'><h2>");
+        b.push_str(t("Recent Conversations", zh));
+        b.push_str(
+            "</h2><table><thead><tr><th>Name</th><th>Messages</th><th></th></tr></thead><tbody>",
+        );
         b.push_str(&rows);
         b.push_str("</tbody></table></div>");
     }
@@ -7420,7 +7489,9 @@ pub async fn memory_message_page(
     b.push_str(t("Cancel", zh));
     b.push_str("</button><button class='btn btn-d' id='confirmForget'>");
     b.push_str(t("Forget", zh));
-    b.push_str("</button></div></div></div><div class='modal-overlay' id='taskModal' role='dialog' aria-modal='true'><div class='modal'><h2>Task Log</h2><div id='taskLog'></div><div class='memory-modal-actions'><button class='btn btn-o' data-close='taskModal'>");
+    b.push_str("</button></div></div></div><div class='modal-overlay' id='taskModal' role='dialog' aria-modal='true'><div class='modal'><h2>");
+    b.push_str(t("Task Log", zh));
+    b.push_str("</h2><div id='taskLog'></div><div class='memory-modal-actions'><button class='btn btn-o' data-close='taskModal'>");
     b.push_str(t("Close", zh));
     b.push_str(
         "</button></div></div></div><div id='memoryToast' class='memory-toast' hidden></div>",
@@ -7477,7 +7548,9 @@ pub async fn memory_setting_page(
     b.push_str(t("Configuration", zh));
     b.push_str("</a></li></ul></aside><main class='memory-detail-main'><div class='memory-detail-title'><div><h1>");
     b.push_str(t("Memory Configuration", zh));
-    b.push_str("</h1><p class='sub'>Configure models, capacity and extraction behavior.</p></div></div><form id='memorySettingForm'><h2>");
+    b.push_str("</h1><p class='sub'>");
+    b.push_str(t("Configure models, capacity and extraction behavior.", zh));
+    b.push_str("</p></div></div><form id='memorySettingForm'><h2>");
     b.push_str(t("Basic settings", zh));
     b.push_str("</h2><div class='memory-setting-form'><label>");
     b.push_str(t("Name", zh));
@@ -7511,7 +7584,11 @@ pub async fn memory_setting_page(
     b.push_str(t("Memory Type", zh));
     b.push_str("</legend><div class='memory-type-grid'><label><input type='checkbox' class='cfg-type' value='raw' disabled> Raw (required)</label><label><input type='checkbox' class='cfg-type' value='semantic'> Semantic</label><label><input type='checkbox' class='cfg-type' value='episodic'> Episodic</label><label><input type='checkbox' class='cfg-type' value='procedural'> Procedural</label></div><p class='sub' id='cfgLockHint'></p></fieldset><label class='wide'>");
     b.push_str(t("Memory capacity (bytes)", zh));
-    b.push_str("<input id='cfgSize' type='number' min='1' max='10485760' step='1'><span class='sub'>Default 5242880 bytes; maximum 10485760 bytes.</span></label></div><details class='memory-advanced'><summary>");
+    b.push_str(
+        "<input id='cfgSize' type='number' min='1' max='10485760' step='1'><span class='sub'>",
+    );
+    b.push_str(t("Default 5242880 bytes; maximum 10485760 bytes.", zh));
+    b.push_str("</span></label></div><details class='memory-advanced'><summary>");
     b.push_str(t("Advanced settings", zh));
     b.push_str("</summary><div class='memory-setting-form'><label>");
     b.push_str(t("Permissions", zh));
@@ -7758,7 +7835,9 @@ pub async fn admin_page(
     // `rgb(128, 255, 248)`, coverage 60/12/12) over the animated `BgSvg` bands.
     b.push_str("<div class='auth-spotlight auth-spotlight-main' aria-hidden='true'></div><div class='auth-spotlight auth-spotlight-left' aria-hidden='true'></div><div class='auth-spotlight auth-spotlight-right' aria-hidden='true'></div>");
     b.push_str("<div class='admin-login-head'><div class='admin-login-brand'><img class='admin-logo' src='/logo.svg' alt='logo'><span class='admin-login-brand-name'>RayRAG</span></div>");
-    b.push_str("<h1 class='admin-login-title'>Admin console</h1></div>");
+    b.push_str("<h1 class='admin-login-title'>");
+    b.push_str(t("Admin console", zh));
+    b.push_str("</h1></div>");
     b.push_str("<div class='admin-login-center'><div class='admin-login-column'><div class='admin-login-card card'><div class='admin-login-body'><form class='admin-login-form' id='adminLoginForm' onsubmit='event.preventDefault();adminConsoleLogin()'><div class='admin-login-item'><label class='admin-login-label required' for='adminEmail'>");
     b.push_str(t("Email", zh));
     b.push_str("</label><input id='adminEmail' class='admin-login-input' data-testid='admin-email' type='email' autocomplete='email' placeholder='");
@@ -7794,7 +7873,9 @@ pub async fn admin_whitelist_page(
     }
     let mut b = String::with_capacity(8192);
     b.push_str(r#"<div class='admin-panel' data-testid='admin-whitelist-panel'><div class='admin-panel-head'><h2 class='admin-panel-title'>Registration whitelist</h2></div>"#);
-    b.push_str(r#"<p class='admin-note'>While the whitelist is off, anyone may register - that is the default. Turning it on limits registration to the addresses and @domains listed here.</p>"#);
+    b.push_str(r#"<p class='admin-note'>"#);
+    b.push_str(t("While the whitelist is off, anyone may register - that is the default. Turning it on limits registration to the addresses and @domains listed here.", zh));
+    b.push_str(r#"</p>"#);
     b.push_str(r#"<div class='admin-toolbar'><label class='admin-filter'><input type='checkbox' id='wlEnabled' data-testid='admin-whitelist-enabled' onchange='wlToggle()'> <span>Enforce the whitelist</span></label>"#);
     b.push_str(r#"<input class='admin-input' id='wlEmail' data-testid='admin-whitelist-input' placeholder='someone@example.com or @example.com'>"#);
     b.push_str(r#"<button class='btn btn-p' type='button' data-testid='admin-whitelist-add' onclick='wlAdd()'>Add</button>"#);
@@ -7830,7 +7911,9 @@ pub async fn admin_roles_page(
     }
     let mut b = String::with_capacity(8192);
     b.push_str(r#"<div class='admin-panel' data-testid='admin-roles-panel'><div class='admin-panel-head'><h2 class='admin-panel-title'>Roles</h2></div>"#);
-    b.push_str(r#"<p class='admin-note'>Administrators manage services, users and the registration whitelist. Everyone else keeps their own datasets and assistants.</p>"#);
+    b.push_str(r#"<p class='admin-note'>"#);
+    b.push_str(t("Administrators manage services, users and the registration whitelist. Everyone else keeps their own datasets and assistants.", zh));
+    b.push_str(r#"</p>"#);
     b.push_str(
         r#"<span class='admin-status' id='roleStatus' data-testid='admin-roles-status'></span>"#,
     );
@@ -7862,7 +7945,12 @@ pub async fn admin_monitoring_page(
     }
     let mut b = String::with_capacity(8192);
     b.push_str(r#"<div class='admin-panel' data-testid='admin-monitoring-panel'><div class='admin-panel-head'><h2 class='admin-panel-title'>Monitoring</h2></div>"#);
-    b.push_str(r#"<p class='admin-note'>Host resources, the databases RayRAG depends on, and the running version.</p>"#);
+    b.push_str(r#"<p class='admin-note'>"#);
+    b.push_str(t(
+        "Host resources, the databases RayRAG depends on, and the running version.",
+        zh,
+    ));
+    b.push_str(r#"</p>"#);
     b.push_str(r#"<div class='admin-metrics' id='monMetrics' data-testid='admin-monitoring-metrics'></div>"#);
     b.push_str(r#"<span class='admin-status' id='monStatus' data-testid='admin-monitoring-status'></span>"#);
     b.push_str(r#"<table class='admin-table'><thead><tr><th>Service</th><th>State</th><th></th></tr></thead><tbody id='monServices' data-testid='admin-monitoring-services'></tbody></table></div>"#);
@@ -9810,7 +9898,9 @@ pub async fn providers_page(
         push_default_model_selector(&mut b, &field, zh);
     }
     b.push_str("</div><p id='dmMsg' class='system-model-message'></p></article>");
-    b.push_str("<section class='added-models-section' data-testid='added-models-section'><h2>Added models</h2><div id='addedModelList' class='added-model-list'><p class='added-model-loading'>Loading…</p></div></section>");
+    b.push_str("<section class='added-models-section' data-testid='added-models-section'><h2>");
+    b.push_str(t("Added models", zh));
+    b.push_str("</h2><div id='addedModelList' class='added-model-list'><p class='added-model-loading'>Loading…</p></div></section>");
     {
         let summary = crate::api::tenant_models::plan_available_providers(
             crate::api::tenant_models::factory_llm_entries(),
@@ -9962,7 +10052,9 @@ pub async fn providers_page(
             b.push_str(&available.model_count.to_string());
             b.push_str(" models</p></article>");
         }
-        b.push_str("</div></div><p class='available-provider-empty' id='availableProviderEmpty'>No model providers found.</p></div></aside>");
+        b.push_str("</div></div><p class='available-provider-empty' id='availableProviderEmpty'>");
+        b.push_str(t("No model providers found.", zh));
+        b.push_str("</p></div></aside>");
     }
     // The seeded catalogue is a collapsed `<details>`: the closing tags below used to be
     // emitted with **no opener**, so the browser rendered every provider and every model
@@ -10828,19 +10920,32 @@ pub async fn settings_page(
     b.push_str("</button><p id='pwMsg' style='font-size:12px;color:var(--tm)'></p></div></div>");
     b.push_str("<div class='card'><h2>");
     b.push_str(t("API Keys", zh));
-    b.push_str("</h2><p style='color:var(--tm);margin-bottom:12px'>Generate and manage personal API keys.</p><button class='btn btn-p' onclick='genKey()'>Generate</button><div id='akList' style='margin-top:12px'></div></div>");
+    b.push_str("</h2><p style='color:var(--tm);margin-bottom:12px'>");
+    b.push_str(t("Generate and manage personal API keys.", zh));
+    b.push_str("</p><button class='btn btn-p' onclick='genKey()'>Generate</button><div id='akList' style='margin-top:12px'></div></div>");
     b.push_str("<div class='card'><h2>");
     b.push_str(t("Invite", zh));
-    b.push_str("</h2><p style='color:var(--tm);margin-bottom:12px'>Invite a registered user to your team.</p><div style='display:grid;gap:8px;max-width:360px'><input id='invEmail' placeholder='user@example.com'><button class='btn btn-p' onclick='inviteUser()'>");
+    b.push_str("</h2><p style='color:var(--tm);margin-bottom:12px'>");
+    b.push_str(t("Invite a registered user to your team.", zh));
+    b.push_str("</p><div style='display:grid;gap:8px;max-width:360px'><input id='invEmail' placeholder='user@example.com'><button class='btn btn-p' onclick='inviteUser()'>");
     b.push_str(t("Invite", zh));
     b.push_str("</button><p id='invMsg' style='font-size:12px;color:var(--tm)'></p></div></div>");
-    b.push_str("<script>function changePw(){var c=document.getElementById('curPw').value;var n=document.getElementById('newPw').value;if(!c||!n){document.getElementById('pwMsg').textContent='Please fill both fields';return}fetch('/api/v1/user/password',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({current_password:c,new_password:n})}).then(r=>r.json()).then(d=>{document.getElementById('pwMsg').textContent=d.code===0?'Password updated':'Error: '+(d.message||'unknown')})};function loadKeys(){fetch('/api/v1/system/api_keys').then(r=>r.json()).then(d=>{var keys=d.data||[];var e=document.getElementById('akList');if(!keys.length){e.innerHTML='<p style=color:var(--tm)>No API keys yet.</p>';return}var h='<table><thead><tr><th>Key</th><th>Created</th><th></th></tr></thead><tbody>';keys.forEach(function(k){h+='<tr><td style=font-family:monospace;font-size:12px>'+k.token+'</td><td style=color:var(--tm);font-size:12px>'+k.create_date+'</td><td><button class=\\'btn btn-d btn-sm\\' onclick=\\'delKey(&quot;'+k.token+'&quot;)\\'>Delete</button></td></tr>'});e.innerHTML=h+'</tbody></table>'})};function genKey(){fetch('/api/v1/system/api_keys',{method:'POST'}).then(r=>r.json()).then(d=>{if(d.code===0){loadKeys()}else{alert('Error: '+(d.message||'unknown'))}})};function delKey(k){if(!confirm('Delete this API key?'))return;fetch('/api/v1/system/api_keys/'+encodeURIComponent(k),{method:'DELETE'}).then(r=>r.json()).then(d=>{if(d.code===0){loadKeys()}else{alert('Error: '+(d.message||'unknown'))}})};function inviteUser(){var e=document.getElementById('invEmail').value;if(!e){document.getElementById('invMsg').textContent='Please enter an email';return}fetch('/api/v1/users/invite',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e})}).then(r=>r.json()).then(d=>{document.getElementById('invMsg').textContent=d.code===0?'Invitation sent':'Error: '+(d.message||'unknown')})};loadKeys()</script>");
+    b.push_str("<script>function changePw(){var c=document.getElementById('curPw').value;var n=document.getElementById('newPw').value;if(!c||!n){document.getElementById('pwMsg').textContent='Please fill both fields';return}fetch('/api/v1/user/password',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({current_password:c,new_password:n})}).then(r=>r.json()).then(d=>{document.getElementById('pwMsg').textContent=d.code===0?'Password updated':'Error: '+(d.message||'unknown')})};function loadKeys(){fetch('/api/v1/system/api_keys').then(r=>r.json()).then(d=>{var keys=d.data||[];var e=document.getElementById('akList');if(!keys.length){e.innerHTML='<p style=color:var(--tm)>");
+    b.push_str(t("No API keys yet.", zh));
+    b.push_str("</p>';return}var h='<table><thead><tr><th>Key</th><th>Created</th><th></th></tr></thead><tbody>';keys.forEach(function(k){h+='<tr><td style=font-family:monospace;font-size:12px>'+k.token+'</td><td style=color:var(--tm);font-size:12px>'+k.create_date+'</td><td><button class=\\'btn btn-d btn-sm\\' onclick=\\'delKey(&quot;'+k.token+'&quot;)\\'>Delete</button></td></tr>'});e.innerHTML=h+'</tbody></table>'})};function genKey(){fetch('/api/v1/system/api_keys',{method:'POST'}).then(r=>r.json()).then(d=>{if(d.code===0){loadKeys()}else{alert('Error: '+(d.message||'unknown'))}})};function delKey(k){if(!confirm('Delete this API key?'))return;fetch('/api/v1/system/api_keys/'+encodeURIComponent(k),{method:'DELETE'}).then(r=>r.json()).then(d=>{if(d.code===0){loadKeys()}else{alert('Error: '+(d.message||'unknown'))}})};function inviteUser(){var e=document.getElementById('invEmail').value;if(!e){document.getElementById('invMsg').textContent='Please enter an email';return}fetch('/api/v1/users/invite',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e})}).then(r=>r.json()).then(d=>{document.getElementById('invMsg').textContent=d.code===0?'Invitation sent':'Error: '+(d.message||'unknown')})};loadKeys()</script>");
 
     // Chat channels (RAGFlow user-setting parity): registered channel builders
-    b.push_str("<div class='card' style='margin-top:16px'><h3>Chat Channels</h3>");
+    b.push_str("<div class='card' style='margin-top:16px'><h3>");
+    b.push_str(t("Chat Channels", zh));
+    b.push_str("</h3>");
     let channel_ids = state.channels.registered_ids().await;
     if channel_ids.is_empty() {
-        b.push_str("<p style='color:var(--tm);font-size:12px'>No chat channels registered. Configure via environment (CHANNELS_*) or data sources.</p>");
+        b.push_str("<p style='color:var(--tm);font-size:12px'>");
+        b.push_str(t(
+            "No chat channels registered. Configure via environment (CHANNELS_*) or data sources.",
+            zh,
+        ));
+        b.push_str("</p>");
     } else {
         b.push_str("<table style='width:100%;font-size:13px'><thead><tr><th style='text-align:left'>Platform</th><th style='text-align:left'>Status</th></tr></thead><tbody>");
         for cid in &channel_ids {
@@ -10853,11 +10958,19 @@ pub async fn settings_page(
     }
     b.push_str("</div>");
     // MCP servers (RAGFlow user-setting parity): built-in MCP tool catalogue
-    b.push_str("<div class='card' style='margin-top:16px'><h3>MCP Servers</h3>");
-    b.push_str("<p style='color:var(--tm);font-size:12px'>RayRAG exposes a built-in MCP server at <code>/api/v1/mcp/tools</code> with the following tools:</p>");
+    b.push_str("<div class='card' style='margin-top:16px'><h3>");
+    b.push_str(t("MCP Servers", zh));
+    b.push_str("</h3>");
+    b.push_str("<p style='color:var(--tm);font-size:12px'>");
+    b.push_str(t("RayRAG exposes a built-in MCP server at", zh));
+    b.push_str("<code>/api/v1/mcp/tools</code> with the following tools:</p>");
     b.push_str("<table style='width:100%;font-size:13px'><thead><tr><th style='text-align:left'>Tool</th><th style='text-align:left'>Description</th></tr></thead><tbody>");
-    b.push_str("<tr><td><code>search_knowledge</code></td><td style='font-size:12px'>Search RayRAG knowledge base with vector similarity</td></tr>");
-    b.push_str("<tr><td><code>list_datasets</code></td><td style='font-size:12px'>List available knowledge bases</td></tr>");
+    b.push_str("<tr><td><code>search_knowledge</code></td><td style='font-size:12px'>");
+    b.push_str(t("Search RayRAG knowledge base with vector similarity", zh));
+    b.push_str("</td></tr>");
+    b.push_str("<tr><td><code>list_datasets</code></td><td style='font-size:12px'>");
+    b.push_str(t("List available knowledge bases", zh));
+    b.push_str("</td></tr>");
     b.push_str("</tbody></table></div>");
     Html(layout(t("Settings", zh), &b, zh))
 }
@@ -18887,6 +19000,55 @@ connection: close
         assert!(
             html.contains("exportChunks"),
             "export chunks handler missing"
+        );
+    }
+
+    /// An audit of the page markup itself: every user-visible label must go through the translation
+    /// helper, so the English pages and the Chinese pages cannot drift apart.
+    ///
+    /// It reads this very file with `include_str!` and looks for text sitting between `>` and `<` on a
+    /// line that renders markup and never calls `t(..)`. The ceiling is **zero**: a new label written
+    /// straight into a literal fails the suite. Nothing here inspects JavaScript-only strings, and the
+    /// audit's scope is stated so it is not mistaken for full coverage.
+    #[test]
+    fn every_page_label_goes_through_the_translation_helper() {
+        const BASELINE: usize = 0;
+        let source = include_str!("web.rs");
+        let mut found: Vec<String> = Vec::new();
+        for (index, line) in source.lines().enumerate() {
+            // Only markup that ends up in a page, and only lines that never reach the helper.
+            if !line.contains("push_str") && !line.contains("format!(") {
+                continue;
+            }
+            if line.contains("json_script_string") || line.contains("t(\"") || line.contains("t(&")
+            {
+                continue;
+            }
+            let Some(open) = line.find('>') else {
+                continue;
+            };
+            let Some(close) = line[open + 1..].find('<') else {
+                continue;
+            };
+            let text = &line[open + 1..open + 1 + close];
+            let words = text
+                .split_whitespace()
+                .filter(|word| {
+                    word.len() >= 2
+                        && word
+                            .chars()
+                            .all(|character| character.is_ascii_alphabetic())
+                })
+                .count();
+            if words >= 2 && text.trim().len() >= 6 && !text.contains('{') {
+                found.push(format!("line {}: {}", index + 1, text.trim()));
+            }
+        }
+        assert!(
+            found.len() <= BASELINE,
+            "untranslated page labels grew from {BASELINE} to {}; route each new label through t(..):\n{}",
+            found.len(),
+            found.join("\n")
         );
     }
 

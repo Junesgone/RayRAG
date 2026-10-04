@@ -930,3 +930,11 @@ RAGFlow 把麦克风放在**聊天输入区**；RayRAG 目前把这个能力放�
 - **行为**：麦克风用 `MediaRecorder` 录音（优先 `audio/webm`，按 `mimeType` 推定扩展名），提交后把 `data.text` 追加进 `#chatInput`；朗读把最后一条助手消息 POST 给 TTS，用 Blob URL 播放并在 `ended` 时 `revokeObjectURL`。
 - **错误可见**：`Transcription failed.` / `Speech synthesis failed.` / `This browser refused microphone access.` / `Nothing was recorded or transcribed.` 全部带底层错误写入状态行 —— **不允许静默失败**；无麦克风权限的浏览器明确告知而不是留一个死按钮。
 - **插入纪律（沿用前两轮教训）**：控件块放在页面**脚本闭合之后**；页面测试断言「控件标记不得落在 script 内」「script 内不得出现裸 CSS 声明」「占位符必须以引号替换」。
+
+### 0.28.0：页面文案必须走翻译助手（i18n 审计）
+
+- **规则（由测试强制）**：`src/web.rs` 中凡是渲染标记的行（含 `push_str` / `format!(`），其 `>文案<` 文本必须通过 `t("...", zh)` 输出；测试 `every_page_label_goes_through_the_translation_helper` 用 `include_str!("web.rs")` 自读源码执行该审计，**上限为 0**。
+- **审计口径（重要，勿误读为全量 i18n 覆盖）**：只看**标记里的可见文本**；不检查仅存在于 JS 字符串中的文案；不检查 `json_script_string(t(...))` 之外的其他注入路径。
+- **本轮**：修复 49 处未走翻译助手的标签（其中 43 处由脚本拆分字面量：前缀 / `t(...)` / 后缀；6 处整句位于 `format!` 与三处 admin 页面裸字符串中，手工拆分）。
+- **教训**：Python 粗扫得出「剩 25 处」，而测试口径实测为 6 处 —— 两者规则不同。**以测试口径为准**，避免用没被强制的数字写进发布说明。
+- **验证**：故意注入 `b.push_str("<p>Brand new English Label</p>");` 并把上限设为 0，测试确实失败并指名到行 —— 守卫不是摆设。

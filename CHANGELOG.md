@@ -2,6 +2,40 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.28.0] - 2026-10-04
+
+### 49 page labels that never reached the translator
+
+RayRAG renders both languages, but only the strings that go through the translation helper actually switch:
+a label written straight into a markup literal stays English on the Chinese pages. An audit of the page
+markup found 49 of them — *All files*, *Chat Settings*, *Max Tokens*, *No memories yet.*, *User
+management*, *Registration whitelist*, *Local sources*, *Recommended concurrent documents:* and the rest —
+spread over 21 page functions, with `dataset_page` alone holding 17.
+
+All 49 now go through the helper: 43 by a scripted split of the literal into prefix, translated label and
+suffix, and the last six (whole sentences inside `format!` bodies and raw strings on the three admin pages)
+by hand, because a mechanical split there would have changed the markup.
+
+### The audit is a test, and it is not allowed to pass by accident
+
+The fix alone would rot, so the audit **is** the guard: a test in the suite reads this very file with
+`include_str!`, looks for text sitting between `>` and `<` on a line that renders markup and never calls
+the helper, and fails if there is any. The ceiling is zero.
+
+Two things were worth proving rather than assuming:
+
+* **The guard can fail.** Injecting `b.push_str("<p>Brand new English Label</p>");` and setting the
+  ceiling to zero made it fail and name the line.
+* **My first measurement was wrong.** A Python scan had reported 25 remaining labels; running the *test's*
+  rule reported 6. The looser rule counted lines the test does not, so the changelog and the registry
+  quote the rule that is actually enforced — the test — and the six it named are the six that were fixed.
+  Without that check the release would have claimed a number it had not measured.
+
+The audit's scope is stated in its own doc comment: it inspects markup literals, not JavaScript-only
+strings, so it is not full i18n coverage.
+
+**2256 tests pass, 0 failures.**
+
 ## [0.27.0] - 2026-10-04
 
 ### Two endpoints that had no button
