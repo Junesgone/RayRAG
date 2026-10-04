@@ -486,6 +486,77 @@ fn t(k: &str, zh: bool) -> &str {
         "For Chinese users, no need to fill in or use https://api.siliconflow.cn/v1. For international users, use https://api.siliconflow.com/v1" => {
             "对于中国用户，不需要填写或使用 https://api.siliconflow.cn/v1。对于国际用户，使用 https://api.siliconflow.com/v1。"
         }
+        // Labels that reach the page through JavaScript strings (option lists, innerHTML fragments).
+        "Add a connector and sync its content into your knowledge base." => {
+            "添加连接器并将其内容同步到知识库。"
+        }
+        "+ Add Provider" => "+ 添加提供商",
+        "+ Add Skill" => "+ 添加技能",
+        "Add Skill" => "添加技能",
+        "All datasets" => "全部数据集",
+        "All files" => "全部文件",
+        "All knowledge bases" => "全部知识库",
+        "Are you sure you want to delete this user?" => "确定要删除该用户吗？",
+        "Available models" => "可用模型",
+        "Begin · Conversational" => "开始 · 对话式",
+        "Change password" => "修改密码",
+        "Community reports" => "社区报告",
+        "⚙ Configure Search" => "⚙ 检索设置",
+        "Confirm new password" => "确认新密码",
+        "Confirm password" => "确认密码",
+        "🚀 Confirm publish" => "🚀 确认发布",
+        "Create new user" => "新建用户",
+        "Create & Start" => "创建并开始",
+        "Delete user" => "删除用户",
+        "Each dataset is a folder: open one to see the files inside it." => {
+            "每个数据集相当于一个文件夹：打开即可查看其中的文件。"
+        }
+        "✏️ Edit DSL" => "✏️ 编辑 DSL",
+        "Email or domain" => "邮箱或域名",
+        "Empty canvas" => "空画布",
+        "Enable / Disable" => "启用 / 禁用",
+        "Enforce the whitelist" => "启用白名单",
+        "Entity resolution" => "实体消解",
+        "⬇ Export MD" => "⬇ 导出 Markdown",
+        "Folder ID" => "文件夹 ID",
+        "Generate community reports" => "生成社区报告",
+        "Generation scope" => "生成范围",
+        "Load failed" => "加载失败",
+        "Loading knowledge bases…" => "正在加载知识库…",
+        "Local Files" => "本地文件",
+        "Local sources" => "本地来源",
+        "New password" => "新密码",
+        "New user" => "新建用户",
+        "No graph has been built for this dataset yet." => "该数据集还没有构建图谱。",
+        "No knowledge bases" => "没有知识库",
+        "No navigation tree yet. Use Build navigation tree above." => {
+            "还没有导航树，请使用上方的「构建导航树」。"
+        }
+        "No versions yet" => "还没有版本",
+        "Plain Text" => "纯文本",
+        "🐠 RayRAG Search" => "🐠 RayRAG 检索",
+        "Registration whitelist" => "注册白名单",
+        "♻ Reindex All" => "♻ 全部重建索引",
+        "Resolve entities across graph" => "跨图谱消解实体",
+        "💾 Save as App" => "💾 保存为应用",
+        "Select a model provider" => "选择模型提供商",
+        "Service status" => "服务状态",
+        "Service type" => "服务类型",
+        "Show citations" => "显示引用",
+        "Single file" => "单文件",
+        "Skill ID" => "技能 ID",
+        "Start a new conversation with RayRAG." => "与 RayRAG 开始新的对话。",
+        "Stream response" => "流式响应",
+        "This dataset has no entities yet. Build Graph extracts them from the indexed chunks - a document with little text yields little graph." => {
+            "该数据集还没有实体。构建图谱会从已索引的分块中抽取实体 —— 文本很少的文档只能得到很小的图谱。"
+        }
+        "User management" => "用户管理",
+        "User not found" => "未找到用户",
+        "User type" => "用户类型",
+        "with the following tools:" => "使用以下工具：",
+        "You are a helpful AI assistant. Use the context to answer questions." => {
+            "你是一个乐于助人的 AI 助手，请根据上下文回答问题。"
+        }
         _ => k,
     }
 }
@@ -3172,7 +3243,9 @@ pub async fn dataset_page(
     b.push_str("</h3></td></tr>");
     b.push_str("<tr><td>");
     b.push_str(t("Chunk Method", zh));
-    b.push_str("</td><td><select id='chunkMethod' onchange='toggleChunkOptions()'><option value='naive'>Naive (token-based)</option><option value='manual'>Manual</option><option value='qa'>Q&amp;A</option><option value='table'>Table</option><option value='paper'>Paper</option><option value='book'>Book</option><option value='laws'>Laws</option><option value='presentation'>Presentation</option><option value='picture'>Picture</option><option value='audio'>Audio</option><option value='email'>Email</option><option value='one'>One</option><option value='resume'>Resume</option><option value='tag'>Tag</option><option value='knowledge_graph'>Knowledge Graph</option></select></td></tr>");
+    b.push_str("</td><td><select id='chunkMethod' onchange='toggleChunkOptions()'><option value='naive'>Naive (token-based)</option><option value='manual'>Manual</option><option value='qa'>Q&amp;A</option><option value='table'>Table</option><option value='paper'>Paper</option><option value='book'>Book</option><option value='laws'>Laws</option><option value='presentation'>Presentation</option><option value='picture'>Picture</option><option value='audio'>Audio</option><option value='email'>Email</option><option value='one'>One</option><option value='resume'>Resume</option><option value='tag'>Tag</option><option value='knowledge_graph'>");
+    b.push_str(t("Knowledge Graph", zh));
+    b.push_str("</option></select></td></tr>");
     b.push_str("<tr id='chunkSizeRow'><td>");
     b.push_str(t("Chunk Size", zh));
     b.push_str("</td><td><select id='chunkSize'><option>256</option><option selected>512</option><option>1024</option><option>2048</option></select></td></tr>");
@@ -3216,7 +3289,9 @@ pub async fn dataset_page(
     b.push_str("</label></td></tr>");
     b.push_str("<tr><td>");
     b.push_str(t("Parser Type", zh));
-    b.push_str("</td><td><select id='cfgParserType'><option value='deepdoc'>DeepDOC (PDF/DOCX)</option><option value='plain'>Plain Text</option></select></td></tr>");
+    b.push_str("</td><td><select id='cfgParserType'><option value='deepdoc'>DeepDOC (PDF/DOCX)</option><option value='plain'>");
+    b.push_str(t("Plain Text", zh));
+    b.push_str("</option></select></td></tr>");
     b.push_str("<tr><td>");
     b.push_str(t("Auto Keywords", zh));
     b.push_str("</td><td><label style='display:flex;align-items:center;gap:6px'><input type='checkbox' id='cfgAutoKeywords'> ");
@@ -3247,7 +3322,9 @@ pub async fn dataset_page(
     b.push_str(t("Max Depth", zh));
     b.push_str("</td><td><select id='raptorDepth' disabled><option>3</option><option selected>5</option><option>7</option></select></td></tr>");
     b.push_str("<tr><td>Threshold</td><td><input id='raptorThreshold' type='number' step='0.01' min='0' max='1' value='0.7' disabled style='max-width:120px'></td></tr>");
-    b.push_str("<tr><td>Generation scope</td><td><select id='raptorScope' disabled><option>Dataset</option><option>Single file</option></select></td></tr>");
+    b.push_str("<tr><td>");
+    b.push_str(t("Generation scope", zh));
+    b.push_str("</td><td><select id='raptorScope' disabled><option>Dataset</option><option>Single file</option></select></td></tr>");
     b.push_str("<tr><td>Prompt</td><td><textarea id='raptorPrompt' rows='2' disabled style='width:100%;font-size:12px'></textarea></td></tr>");
     b.push_str("<tr><td>");
     b.push_str(t("Max token", zh));
@@ -3276,8 +3353,12 @@ pub async fn dataset_page(
     b.push_str("<tr><td>");
     b.push_str(t("Batch chunk token size", zh));
     b.push_str("</td><td><input id='graphBatchSize' type='number' value='8196' style='max-width:120px'></td></tr>");
-    b.push_str("<tr><td>Entity resolution</td><td><label style='display:flex;align-items:center;gap:6px'><input type='checkbox' id='graphEntityRes'> <span style='font-size:12px'>Resolve entities across graph</span></label></td></tr>");
-    b.push_str("<tr><td>Community reports</td><td><label style='display:flex;align-items:center;gap:6px'><input type='checkbox' id='graphCommReports'> <span style='font-size:12px'>Generate community reports</span></label></td></tr>");
+    b.push_str("<tr><td>");
+    b.push_str(t("Entity resolution", zh));
+    b.push_str("</td><td><label style='display:flex;align-items:center;gap:6px'><input type='checkbox' id='graphEntityRes'> <span style='font-size:12px'>Resolve entities across graph</span></label></td></tr>");
+    b.push_str("<tr><td>");
+    b.push_str(t("Community reports", zh));
+    b.push_str("</td><td><label style='display:flex;align-items:center;gap:6px'><input type='checkbox' id='graphCommReports'> <span style='font-size:12px'>Generate community reports</span></label></td></tr>");
     b.push_str("<tr><td colspan=2 style='padding-top:16px;border-top:1px solid var(--bd)'><h3 style='font-size:14px;margin:0'>");
     b.push_str(t("Retrieval Configuration", zh));
     b.push_str("</h3></td></tr>");
@@ -3583,7 +3664,9 @@ function testSearch(){var q=document.getElementById('testQ').value;if(!q){alert(
     b.push_str("function saveConfig(){var body={name:document.getElementById('cfgName').value,description:document.getElementById('cfgDescription').value,permission:(swsValue('cfgPerm')==='team'?'team':'me'),embd_id:(document.getElementById('embdSel').dataset.value||'default'),chunk_method:document.getElementById('chunkMethod').value,chunk_size:parseInt(document.getElementById('chunkSize').value,10)||512,overlap:document.getElementById('overlap').value,delimiter:document.getElementById('cfgDelim').value,parser_type:document.getElementById('cfgParserType').value,layout_recognize:document.getElementById('cfgLayoutRecognize').value,language:swsValue('cfgLang'),pdf_parser:document.getElementById('cfgPdfParser').value,page_index:document.getElementById('cfgPageIndex').checked,image_and_table_window:parseInt(document.getElementById('cfgImgTableWin').value,10)||5,excel_to_html:document.getElementById('cfgExcelHtml').checked,children_delimiters:document.getElementById('cfgChildrenDelims').value.split('\\n').map(function(x){return x.trim()}).filter(Boolean),title_levels:document.getElementById('cfgTitleLevels').value.split(',').map(function(x){return x.trim()}).filter(Boolean),enable_metadata:document.getElementById('cfgAutoMeta').checked,page_rank:parseInt(document.getElementById('cfgPageRank').value,10)||0,tag_sets:document.getElementById('cfgTagSets').value,avatar:avatarDataUrl,auto_keywords:document.getElementById('cfgAutoKeywords').checked,auto_questions:document.getElementById('cfgAutoQuestions').checked,enable_children:document.getElementById('cfgChildren').checked,rerank:document.getElementById('cfgRerank').checked,raptorEn:document.getElementById('raptorEn').checked,graphEn:document.getElementById('graphEn').checked,entity_types:document.getElementById('cfgEntityTypes').value,top_k:parseInt(document.getElementById('cfgTopK').value,10)||10,similarity_threshold:parseFloat(document.getElementById('cfgThreshold').value),vector_similarity_weight:parseFloat(document.getElementById('cfgVector').value)};body.prompt_config={cross_languages:(document.getElementById('cfgLangs').value||'').split(',').map(function(x){return x.trim()}).filter(Boolean)};var rd=document.getElementById('raptorDepth');if(document.getElementById('raptorEn').checked)body.raptor_depth=parseInt(rd.value,10)||5;if(document.getElementById('raptorEn').checked){body.raptor_threshold=parseFloat(document.getElementById('raptorThreshold').value)||0.7;body.raptor_scope=document.getElementById('raptorScope').value;body.raptor_prompt=document.getElementById('raptorPrompt').value;body.raptor_max_token=parseInt(document.getElementById('raptorMaxToken').value,10)||512;body.raptor_cluster_method=document.getElementById('raptorCluster').value;body.raptor_max_cluster=parseInt(document.getElementById('raptorMaxCluster').value,10)||64;body.raptor_random_seed=parseInt(document.getElementById('raptorSeed').value,10)||0}body.graphrag_method=document.getElementById('cfgGraphMethod').value;body.graphrag_batch_chunk_size=parseInt(document.getElementById('graphBatchSize').value,10)||8196;body.graphrag_entity_resolution=document.getElementById('graphEntityRes').checked;body.graphrag_community_reports=document.getElementById('graphCommReports').checked;var m=document.getElementById('cfgMsg');if(m){m.textContent='保存中…';m.style.color='var(--tm)'}fetch('/api/v1/datasets/'+kbId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json()}).then(function(d){if(m){if(d.code===0){m.textContent='✅ 已保存';m.style.color='var(--s)'}else{m.textContent='保存失败: '+(d.message||'未知错误');m.style.color='var(--d)'}}})};");
     b.push_str("function toggleLang(btn){btn.classList.toggle('on');var sel=[];document.querySelectorAll('.lang-chip.on').forEach(function(x){sel.push(x.dataset.lang)});var h=document.getElementById('cfgLangs');if(h)h.value=sel.join(',');}
 function toggleChunkOptions(){var m=document.getElementById('chunkMethod').value;var show=['naive','manual'].indexOf(m)>=0;document.getElementById('chunkSizeRow').style.display=show?'':'none';document.getElementById('overlapRow').style.display=show?'':'none'};document.getElementById('raptorEn').onchange=function(){document.getElementById('raptorDepth').disabled=!this.checked};");
-    b.push_str("function kgRenderGraph(g){if(!g)return '';var nodes=g.nodes||[];var edges=g.edges||[];var h='<p style=margin:0 0 10px><strong>'+nodes.length+'</strong> nodes / <strong>'+edges.length+'</strong> edges</p>';if(!nodes.length){h+='<p style=color:var(--tm)>This dataset has no entities yet. Build Graph extracts them from the indexed chunks - a document with little text yields little graph.</p>';return h}h+='<table><thead><tr><th>Entity</th><th>Type</th><th>Degree</th><th>Documents</th></tr></thead><tbody>';nodes.slice(0,50).forEach(function(n){h+='<tr><td>'+String(n.label||n.id||'')+'</td><td class=co>'+String(n.entity_type||'')+'</td><td>'+(n.degree||0)+'</td><td>'+((n.documents||[]).length)+'</td></tr>'});h+='</tbody></table>';if(edges.length){h+='<p style=margin:10px 0 4px><strong>Relations</strong></p><table><thead><tr><th>Source</th><th>Target</th><th>Weight</th></tr></thead><tbody>';edges.slice(0,50).forEach(function(e){h+='<tr><td>'+String(e.source||'')+'</td><td>'+String(e.target||'')+'</td><td class=co>'+Number(e.weight||0).toFixed(3)+'</td></tr>'});h+='</tbody></table>'}return h}function loadGraph(){var box=document.getElementById('graphResult');if(!box)return;fetch('/api/v1/datasets/'+kbId+'/graph').then(function(r){return r.json()}).then(function(d){if(d.code!==0){box.innerHTML='<p style=color:var(--d)>'+(d.message||'failed to read the graph')+'</p>';return}var data=d.data||{};box.innerHTML=(data.built?'':'<p style=color:var(--tm)>No graph has been built for this dataset yet.</p>')+kgRenderGraph(data.graph)}).catch(function(error){box.innerHTML='<p style=color:var(--d)>'+String((error&&error.message)||error)+'</p>'})}function navTreeEscape(v){var s=String(v==null?'':v);s=s.split('&').join('&amp;');s=s.split('<').join('&lt;');s=s.split('>').join('&gt;');return s}function navLoadChildren(host,name){host.textContent='Loading...';fetch('/api/v1/datasets/'+kbId+'/navigation/'+encodeURIComponent(name)+'/children').then(function(r){return r.json()}).then(function(d){if(d.code!==0){host.innerHTML='<span style=color:var(--d)>'+navTreeEscape(d.message||'failed')+'</span>';return}var items=(d.data&&d.data.items)||[];if(!items.length){host.innerHTML='<span style=color:var(--tm)>No children.</span>';return}host.innerHTML=items.map(function(n){return navTreeEscape(n.name)+' <span class=co>('+navTreeEscape(n.type)+')</span>'}).join('<br>')}).catch(function(e){host.textContent=String((e&&e.message)||e)})}function navLoadTree(){var box=document.getElementById('ovNavTree');if(!box)return;fetch('/api/v1/datasets/'+kbId+'/navigation').then(function(r){return r.json()}).then(function(d){if(d.code!==0){box.innerHTML='<p style=color:var(--d)>'+navTreeEscape(d.message||'failed to read the navigation tree')+'</p>';return}var items=(d.data&&d.data.items)||[];if(!items.length){box.innerHTML='<p style=color:var(--tm)>No navigation tree yet. Use Build navigation tree above.</p>';return}var table=document.createElement('table');var head=document.createElement('thead');var headRow=document.createElement('tr');['Cluster','Type','Documents',''].forEach(function(label){var th=document.createElement('th');th.textContent=label;headRow.appendChild(th)});head.appendChild(headRow);table.appendChild(head);var body=document.createElement('tbody');items.forEach(function(n){var tr=document.createElement('tr');[n.name,n.type,String(n.doc_count||0)].forEach(function(value){var td=document.createElement('td');td.textContent=value;tr.appendChild(td)});var actions=document.createElement('td');var button=document.createElement('button');button.type='button';button.className='btn btn-o btn-sm';button.textContent=n.has_children?'Children':'Open';actions.appendChild(button);tr.appendChild(actions);body.appendChild(tr);var sub=document.createElement('tr');sub.style.display='none';var cell=document.createElement('td');cell.colSpan=4;var host=document.createElement('div');host.className='ov-nav-children';cell.appendChild(host);sub.appendChild(cell);body.appendChild(sub);button.addEventListener('click',function(){if(sub.style.display!=='none'){sub.style.display='none';return}sub.style.display='';navLoadChildren(host,n.name)})});table.appendChild(body);box.replaceChildren(table)}).catch(function(e){box.innerHTML='<p style=color:var(--d)>'+navTreeEscape((e&&e.message)||e)+'</p>'})}function buildNavTree(){var st=document.getElementById('ovNavStatus');if(st){st.textContent='Building navigation tree...';st.style.color='var(--tm)'}fetch('/api/v1/datasets/'+kbId+'/navigation',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(function(r){return r.json()}).then(function(d){if(!st)return;if(d.code!==0){st.style.color='var(--d)';st.textContent=d.message||'failed';return}var data=d.data||{};var skipped=(data.skipped||[]).length;st.style.color='var(--tm)';st.textContent='Generated '+data.generated+' of '+data.total+' document(s)'+(skipped?(', skipped '+skipped+' without parsed chunks'):'')+'.';if(data.message){st.textContent+=' '+data.message}navLoadTree()}).catch(function(error){if(st){st.style.color='var(--d)';st.textContent=String((error&&error.message)||error)}})}function buildGraph(){document.getElementById('graphResult').innerHTML='<p style=color:var(--tm)>Building... (LLM entity extraction)</p>';fetch('/api/v1/datasets/'+kbId+'/graphrag/build',{method:'POST'}).then(function(r){return r.json()}).then(function(d){if(d.code!==0){document.getElementById('graphResult').textContent='Error: '+(d.message||'unknown');return}var data=d.data||{};var nodes=data.node_list||[];var maxD=1;nodes.forEach(function(n){maxD=Math.max(maxD,n.degree||1)});var R=120;var svg='<svg width=640 height=460 style=background:var(--bg);border-radius:var(--r)><text x=320 y=30 text-anchor=middle font-size=14 fill=var(--t2)>'+data.nodes+' nodes / '+data.edges+' edges</text>';nodes.slice(0,24).forEach(function(n,i){var ang=2*Math.PI*i/nodes.slice(0,24).length;var cx=320+R*Math.cos(ang);var cy=240+R*Math.sin(ang);var r=(n.degree||1)/maxD*22+10;svg+='<line x1=320 y1=240 x2='+cx+' y2='+cy+' stroke=var(--p) stroke-opacity=0.35></line><circle cx='+cx+' cy='+cy+' r='+r+' fill=var(--p) fill-opacity=0.15 stroke=var(--p)></circle><text x='+cx+' y='+(cy+r+14)+' text-anchor=middle font-size=11 fill=var(--t2)>'+String(n.name||'').slice(0,14)+'</text>'});svg+='<circle cx=320 cy=240 r=26 fill=var(--p)></circle><text x=320 y=245 text-anchor=middle font-size=11 fill=var(--bg)>KB</text></svg>';var h='<div style=margin-bottom:8px>Nodes: '+data.nodes+' | Edges: '+data.edges+' | Documents: '+data.documents+' | Entities: '+data.entities+'</div>'+svg+'<div style=margin-top:10px;font-size:12px;color:var(--tm)>(环形图：节点大小=degree，中心=知识库)</div>';document.getElementById('graphResult').innerHTML=h}).catch(function(e){document.getElementById('graphResult').textContent='Error: '+e})};");
+    b.push_str("function kgRenderGraph(g){if(!g)return '';var nodes=g.nodes||[];var edges=g.edges||[];var h='<p style=margin:0 0 10px><strong>'+nodes.length+'</strong> nodes / <strong>'+edges.length+'</strong> edges</p>';if(!nodes.length){h+='<p style=color:var(--tm)>");
+    b.push_str(t("This dataset has no entities yet. Build Graph extracts them from the indexed chunks - a document with little text yields little graph.", zh));
+    b.push_str("</p>';return h}h+='<table><thead><tr><th>Entity</th><th>Type</th><th>Degree</th><th>Documents</th></tr></thead><tbody>';nodes.slice(0,50).forEach(function(n){h+='<tr><td>'+String(n.label||n.id||'')+'</td><td class=co>'+String(n.entity_type||'')+'</td><td>'+(n.degree||0)+'</td><td>'+((n.documents||[]).length)+'</td></tr>'});h+='</tbody></table>';if(edges.length){h+='<p style=margin:10px 0 4px><strong>Relations</strong></p><table><thead><tr><th>Source</th><th>Target</th><th>Weight</th></tr></thead><tbody>';edges.slice(0,50).forEach(function(e){h+='<tr><td>'+String(e.source||'')+'</td><td>'+String(e.target||'')+'</td><td class=co>'+Number(e.weight||0).toFixed(3)+'</td></tr>'});h+='</tbody></table>'}return h}function loadGraph(){var box=document.getElementById('graphResult');if(!box)return;fetch('/api/v1/datasets/'+kbId+'/graph').then(function(r){return r.json()}).then(function(d){if(d.code!==0){box.innerHTML='<p style=color:var(--d)>'+(d.message||'failed to read the graph')+'</p>';return}var data=d.data||{};box.innerHTML=(data.built?'':'<p style=color:var(--tm)>No graph has been built for this dataset yet.</p>')+kgRenderGraph(data.graph)}).catch(function(error){box.innerHTML='<p style=color:var(--d)>'+String((error&&error.message)||error)+'</p>'})}function navTreeEscape(v){var s=String(v==null?'':v);s=s.split('&').join('&amp;');s=s.split('<').join('&lt;');s=s.split('>').join('&gt;');return s}function navLoadChildren(host,name){host.textContent='Loading...';fetch('/api/v1/datasets/'+kbId+'/navigation/'+encodeURIComponent(name)+'/children').then(function(r){return r.json()}).then(function(d){if(d.code!==0){host.innerHTML='<span style=color:var(--d)>'+navTreeEscape(d.message||'failed')+'</span>';return}var items=(d.data&&d.data.items)||[];if(!items.length){host.innerHTML='<span style=color:var(--tm)>No children.</span>';return}host.innerHTML=items.map(function(n){return navTreeEscape(n.name)+' <span class=co>('+navTreeEscape(n.type)+')</span>'}).join('<br>')}).catch(function(e){host.textContent=String((e&&e.message)||e)})}function navLoadTree(){var box=document.getElementById('ovNavTree');if(!box)return;fetch('/api/v1/datasets/'+kbId+'/navigation').then(function(r){return r.json()}).then(function(d){if(d.code!==0){box.innerHTML='<p style=color:var(--d)>'+navTreeEscape(d.message||'failed to read the navigation tree')+'</p>';return}var items=(d.data&&d.data.items)||[];if(!items.length){box.innerHTML='<p style=color:var(--tm)>No navigation tree yet. Use Build navigation tree above.</p>';return}var table=document.createElement('table');var head=document.createElement('thead');var headRow=document.createElement('tr');['Cluster','Type','Documents',''].forEach(function(label){var th=document.createElement('th');th.textContent=label;headRow.appendChild(th)});head.appendChild(headRow);table.appendChild(head);var body=document.createElement('tbody');items.forEach(function(n){var tr=document.createElement('tr');[n.name,n.type,String(n.doc_count||0)].forEach(function(value){var td=document.createElement('td');td.textContent=value;tr.appendChild(td)});var actions=document.createElement('td');var button=document.createElement('button');button.type='button';button.className='btn btn-o btn-sm';button.textContent=n.has_children?'Children':'Open';actions.appendChild(button);tr.appendChild(actions);body.appendChild(tr);var sub=document.createElement('tr');sub.style.display='none';var cell=document.createElement('td');cell.colSpan=4;var host=document.createElement('div');host.className='ov-nav-children';cell.appendChild(host);sub.appendChild(cell);body.appendChild(sub);button.addEventListener('click',function(){if(sub.style.display!=='none'){sub.style.display='none';return}sub.style.display='';navLoadChildren(host,n.name)})});table.appendChild(body);box.replaceChildren(table)}).catch(function(e){box.innerHTML='<p style=color:var(--d)>'+navTreeEscape((e&&e.message)||e)+'</p>'})}function buildNavTree(){var st=document.getElementById('ovNavStatus');if(st){st.textContent='Building navigation tree...';st.style.color='var(--tm)'}fetch('/api/v1/datasets/'+kbId+'/navigation',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(function(r){return r.json()}).then(function(d){if(!st)return;if(d.code!==0){st.style.color='var(--d)';st.textContent=d.message||'failed';return}var data=d.data||{};var skipped=(data.skipped||[]).length;st.style.color='var(--tm)';st.textContent='Generated '+data.generated+' of '+data.total+' document(s)'+(skipped?(', skipped '+skipped+' without parsed chunks'):'')+'.';if(data.message){st.textContent+=' '+data.message}navLoadTree()}).catch(function(error){if(st){st.style.color='var(--d)';st.textContent=String((error&&error.message)||error)}})}function buildGraph(){document.getElementById('graphResult').innerHTML='<p style=color:var(--tm)>Building... (LLM entity extraction)</p>';fetch('/api/v1/datasets/'+kbId+'/graphrag/build',{method:'POST'}).then(function(r){return r.json()}).then(function(d){if(d.code!==0){document.getElementById('graphResult').textContent='Error: '+(d.message||'unknown');return}var data=d.data||{};var nodes=data.node_list||[];var maxD=1;nodes.forEach(function(n){maxD=Math.max(maxD,n.degree||1)});var R=120;var svg='<svg width=640 height=460 style=background:var(--bg);border-radius:var(--r)><text x=320 y=30 text-anchor=middle font-size=14 fill=var(--t2)>'+data.nodes+' nodes / '+data.edges+' edges</text>';nodes.slice(0,24).forEach(function(n,i){var ang=2*Math.PI*i/nodes.slice(0,24).length;var cx=320+R*Math.cos(ang);var cy=240+R*Math.sin(ang);var r=(n.degree||1)/maxD*22+10;svg+='<line x1=320 y1=240 x2='+cx+' y2='+cy+' stroke=var(--p) stroke-opacity=0.35></line><circle cx='+cx+' cy='+cy+' r='+r+' fill=var(--p) fill-opacity=0.15 stroke=var(--p)></circle><text x='+cx+' y='+(cy+r+14)+' text-anchor=middle font-size=11 fill=var(--t2)>'+String(n.name||'').slice(0,14)+'</text>'});svg+='<circle cx=320 cy=240 r=26 fill=var(--p)></circle><text x=320 y=245 text-anchor=middle font-size=11 fill=var(--bg)>KB</text></svg>';var h='<div style=margin-bottom:8px>Nodes: '+data.nodes+' | Edges: '+data.edges+' | Documents: '+data.documents+' | Entities: '+data.entities+'</div>'+svg+'<div style=margin-top:10px;font-size:12px;color:var(--tm)>(环形图：节点大小=degree，中心=知识库)</div>';document.getElementById('graphResult').innerHTML=h}).catch(function(e){document.getElementById('graphResult').textContent='Error: '+e})};");
     // Model options are rendered by the shared default-model tree (the field is a
     // popover trigger, not a <select>), so no legacy <option> injection here.
     b.push_str("loadDocs();loadConfig();dsTagLoad();showTab(0);navLoadTree();if(location.pathname.indexOf('/dataset/knowledge-graph/')>=0)loadGraph();</script>");
@@ -3775,8 +3858,12 @@ pub async fn chat_page(
     b.push_str("<div class='chat-list'>");
     b.push_str(&cards);
     b.push_str("</div>");
-    b.push_str("<div class='modal-overlay' id='newChatModal'><div class='modal'><h2>New Chat</h2><p style='color:var(--tm);margin-bottom:12px'>Start a new conversation with RayRAG.</p><input id='chatName' placeholder='Name' style='width:100%;margin-bottom:8px'><select id='chatKbs' multiple style='width:100%;min-height:90px;margin-bottom:16px'><option value=''>Loading knowledge bases…</option></select><div style='display:flex;gap:8px'><button class='btn btn-p' onclick='createChat()'>Create & Start</button><button class='btn btn-o' onclick='document.getElementById(\"newChatModal\").classList.remove(\"show\")'>Cancel</button></div></div></div>");
-    b.push_str("<script>function renConv(id){var nn=prompt('Rename conversation:');if(!nn)return;fetch('/api/v1/conversations/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nn})}).then(r=>r.json()).then(function(d){if(d.code===0){location.reload()}else{alert(d.message||'Error')}})};function delConv(id){if(!confirm('Delete this conversation?'))return;fetch('/api/v1/conversations/'+id,{method:'DELETE'}).then(function(){location.reload()})};function shareConv(id){var u=location.origin+'/chat/'+id;navigator.clipboard.writeText(u).then(function(){alert('Link copied: '+u)}).catch(function(){prompt('Share link:',u)})};function newChat(){var sel=document.getElementById('chatKbs');sel.innerHTML='<option value=\"\">Loading…</option>';fetch('/api/v1/datasets').then(function(r){return r.json()}).then(function(d){var kbs=d.data||[];if(!kbs.length){sel.innerHTML='<option value=\"\">No knowledge bases</option>';return}sel.innerHTML=kbs.map(function(k){return '<option value=\"'+k.id+'\">'+k.name+'</option>'}).join('')}).catch(function(){sel.innerHTML='<option value=\"\">Load failed</option>'});document.getElementById('newChatModal').classList.add('show')};function createChat(){var n=document.getElementById('chatName').value||'New Chat';var kbs=[];[...document.querySelectorAll('#chatKbs option:checked')].forEach(function(o){if(o.value)kbs.push(o.value)});fetch('/api/v1/conversations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:n,kb_ids:kbs})}).then(r=>r.json()).then(d=>{var id=d.data?d.data.id:d.id;location.href='/chat/'+id})}</script>");
+    b.push_str("<div class='modal-overlay' id='newChatModal'><div class='modal'><h2>");
+    b.push_str(t("New Chat", zh));
+    b.push_str("</h2><p style='color:var(--tm);margin-bottom:12px'>Start a new conversation with RayRAG.</p><input id='chatName' placeholder='Name' style='width:100%;margin-bottom:8px'><select id='chatKbs' multiple style='width:100%;min-height:90px;margin-bottom:16px'><option value=''>Loading knowledge bases…</option></select><div style='display:flex;gap:8px'><button class='btn btn-p' onclick='createChat()'>Create & Start</button><button class='btn btn-o' onclick='document.getElementById(\"newChatModal\").classList.remove(\"show\")'>Cancel</button></div></div></div>");
+    b.push_str("<script>function renConv(id){var nn=prompt('Rename conversation:');if(!nn)return;fetch('/api/v1/conversations/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nn})}).then(r=>r.json()).then(function(d){if(d.code===0){location.reload()}else{alert(d.message||'Error')}})};function delConv(id){if(!confirm('Delete this conversation?'))return;fetch('/api/v1/conversations/'+id,{method:'DELETE'}).then(function(){location.reload()})};function shareConv(id){var u=location.origin+'/chat/'+id;navigator.clipboard.writeText(u).then(function(){alert('Link copied: '+u)}).catch(function(){prompt('Share link:',u)})};function newChat(){var sel=document.getElementById('chatKbs');sel.innerHTML='<option value=\"\">Loading…</option>';fetch('/api/v1/datasets').then(function(r){return r.json()}).then(function(d){var kbs=d.data||[];if(!kbs.length){sel.innerHTML='<option value=\"\">");
+    b.push_str(t("No knowledge bases", zh));
+    b.push_str("</option>';return}sel.innerHTML=kbs.map(function(k){return '<option value=\"'+k.id+'\">'+k.name+'</option>'}).join('')}).catch(function(){sel.innerHTML='<option value=\"\">Load failed</option>'});document.getElementById('newChatModal').classList.add('show')};function createChat(){var n=document.getElementById('chatName').value||'New Chat';var kbs=[];[...document.querySelectorAll('#chatKbs option:checked')].forEach(function(o){if(o.value)kbs.push(o.value)});fetch('/api/v1/conversations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:n,kb_ids:kbs})}).then(r=>r.json()).then(d=>{var id=d.data?d.data.id:d.id;location.href='/chat/'+id})}</script>");
     Html(layout(t("Chat", zh), &b, zh))
 }
 
@@ -3876,7 +3963,12 @@ pub async fn chat_detail_page(
     b.push_str("</label><select id='chatMaxTok'><option>512</option><option selected>1024</option><option>2048</option><option>4096</option></select>");
     b.push_str("<label style='font-size:11px;display:block;margin:6px 0'>");
     b.push_str(t("System Prompt", zh));
-    b.push_str("</label><textarea id='chatSys' rows='3' style='font-size:12px' placeholder='You are a helpful assistant...'>You are a helpful AI assistant. Use the context to answer questions.</textarea>");
+    b.push_str("</label><textarea id='chatSys' rows='3' style='font-size:12px' placeholder='You are a helpful assistant...'>");
+    b.push_str(t(
+        "You are a helpful AI assistant. Use the context to answer questions.",
+        zh,
+    ));
+    b.push_str("</textarea>");
     b.push_str("<label style='font-size:11px;display:flex;align-items:center;gap:4px;margin-top:8px'><input type='checkbox' checked> Show citations</label>");
     b.push_str("<label style='font-size:11px;display:flex;align-items:center;gap:4px;margin-top:4px'><input type='checkbox'> Stream response</label>");
     b.push_str("</div></div>");
@@ -4138,7 +4230,9 @@ fn search_page_markup(
         b.push_str(";</script>");
     }
     // RAGFlow-style: centered search home
-    b.push_str("<div class='search-home' id='searchHome'><h1>🐠 RayRAG Search</h1><p>");
+    b.push_str("<div class='search-home' id='searchHome'><h1>");
+    b.push_str(t("🐠 RayRAG Search", zh));
+    b.push_str("</h1><p>");
     b.push_str(if zh {
         "👋 欢迎回来！输入你的问题开始搜索"
     } else {
@@ -4183,7 +4277,9 @@ fn search_page_markup(
     b.push_str(t("Clear", zh));
     b.push_str("</button><span class='search-docs-sep' id='searchDocsFooterSep' hidden aria-hidden='true'></span><button type='button' class='search-docs-action' onclick='searchDocsClose()'>");
     b.push_str(t("Close", zh));
-    b.push_str("</button></div></div></div></div><button class='btn btn-p' style='font-size:12px;padding:4px 10px' onclick='saveApp()'>💾 Save as App</button><button class='btn btn-o' style='font-size:12px;padding:4px 10px;margin-left:auto' onclick='exportResults()'>⬇ Export MD</button></div></div><div id='aiSummaryBlock' data-testid='search-ai-summary' hidden><div class='search-ai-title'>__AI_SUMMARY__</div><div class='search-ai-body' id='aiSummaryBody'></div><div class='search-ai-divider'></div></div><div class='search-result-bar'><button type='button' class='btn btn-o btn-sm' id='searchMindBtn' data-testid='search-mindmap' hidden onclick='searchMindmapOpen()'><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M21 12h-8'/><path d='M21 6H8'/><path d='M21 18h-8'/><path d='M3 6v4c0 1.1.9 2 2 2h3'/><path d='M3 10v6c0 1.1.9 2 2 2h3'/></svg><span>__MIND_LABEL__</span></button><span class='search-result-total' id='searchTotal'></span></div><div id='results' style='margin-top:16px'></div></div>");
+    b.push_str("</button></div></div></div></div><button class='btn btn-p' style='font-size:12px;padding:4px 10px' onclick='saveApp()'>");
+    b.push_str(t("💾 Save as App", zh));
+    b.push_str("</button><button class='btn btn-o' style='font-size:12px;padding:4px 10px;margin-left:auto' onclick='exportResults()'>⬇ Export MD</button></div></div><div id='aiSummaryBlock' data-testid='search-ai-summary' hidden><div class='search-ai-title'>__AI_SUMMARY__</div><div class='search-ai-body' id='aiSummaryBody'></div><div class='search-ai-divider'></div></div><div class='search-result-bar'><button type='button' class='btn btn-o btn-sm' id='searchMindBtn' data-testid='search-mindmap' hidden onclick='searchMindmapOpen()'><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M21 12h-8'/><path d='M21 6H8'/><path d='M21 18h-8'/><path d='M3 6v4c0 1.1.9 2 2 2h3'/><path d='M3 10v6c0 1.1.9 2 2 2h3'/></svg><span>__MIND_LABEL__</span></button><span class='search-result-total' id='searchTotal'></span></div><div id='results' style='margin-top:16px'></div></div>");
     // Upstream `next-search/search-setting.tsx`: the settings live in a
     // slide-out drawer opened from the toolbar, not in a fixed sidebar card.
     push_search_settings_drawer(&mut b, zh);
@@ -4588,7 +4684,11 @@ pub async fn agent_detail_page(
     b.push_str("</h2><div id='verList'>Loading...</div><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-o' onclick=document.getElementById('verModal').classList.remove('show')>");
     b.push_str(t("Close", zh));
     b.push_str("</button></div></div></div>");
-    b.push_str("<div class='modal-overlay' id='pubModal'><div class='modal' style='max-width:480px'><h2>🚀 Confirm publish</h2><p style='color:var(--tm);font-size:13px'>");
+    b.push_str(
+        "<div class='modal-overlay' id='pubModal'><div class='modal' style='max-width:480px'><h2>",
+    );
+    b.push_str(t("🚀 Confirm publish", zh));
+    b.push_str("</h2><p style='color:var(--tm);font-size:13px'>");
     b.push_str(t("You are about to publish this agent", zh));
     b.push_str("</p><div style='display:flex;justify-content:flex-end;gap:8px;margin-top:16px'><button class='btn btn-o' onclick=document.getElementById('pubModal').classList.remove('show')>");
     b.push_str(t("Cancel", zh));
@@ -4605,7 +4705,9 @@ pub async fn agent_detail_page(
     b.push_str(t("Close", zh));
     b.push_str("</button></div></div></div>");
     push_agent_embed_modal(&mut b, zh);
-    b.push_str("<div style='display:flex;gap:6px;margin-top:10px;align-items:center'><button class='btn btn-o btn-sm' title='Zoom In' onclick='zoomCanvas(1)'>🔍+</button><button class='btn btn-o btn-sm' title='Zoom Out' onclick='zoomCanvas(-1)'>🔍−</button><button class='btn btn-o btn-sm' title='Fit View' onclick='fitCanvas()'>⛶</button><button class='btn btn-o btn-sm' title='Toggle Interactivity' onclick='toggleInter()'>✋</button><span style='color:var(--tm);font-size:12px'>Begin · Conversational</span></div>");
+    b.push_str("<div style='display:flex;gap:6px;margin-top:10px;align-items:center'><button class='btn btn-o btn-sm' title='Zoom In' onclick='zoomCanvas(1)'>🔍+</button><button class='btn btn-o btn-sm' title='Zoom Out' onclick='zoomCanvas(-1)'>🔍−</button><button class='btn btn-o btn-sm' title='Fit View' onclick='fitCanvas()'>⛶</button><button class='btn btn-o btn-sm' title='Toggle Interactivity' onclick='toggleInter()'>✋</button><span style='color:var(--tm);font-size:12px'>");
+    b.push_str(t("Begin · Conversational", zh));
+    b.push_str("</span></div>");
     b.push_str("<div class='st' style='margin-top:16px'><div class='sc'><span class='lbl'>ID</span><span class='val' id='agentId' style='font-size:13px'>-</span></div><div class='sc'><span class='lbl'>KBs</span><span class='val' id='agentKbs'>-</span></div><div class='sc'><span class='lbl'>Status</span><span class='val' id='agentStatus' style='font-size:15px'>-</span></div></div>");
     b.push_str("<div style='display:flex;gap:16px;margin-top:16px;align-items:flex-start'><div class='card' style='width:230px;flex-shrink:0'><h2>");
     b.push_str(t("Components", zh));
@@ -4637,7 +4739,11 @@ pub async fn agent_detail_page(
     b.push_str("</p></div></div></div>");
     b.push_str("<div style='display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px'><div class='card'><h2>");
     b.push_str(t("Canvas DSL", zh));
-    b.push_str("</h2><button class='btn btn-o btn-sm' style='margin-bottom:8px' onclick='editDsl()'>✏️ Edit DSL</button> <button class='btn btn-p btn-sm' style='margin-bottom:8px' onclick='saveDsl()'>💾 Save</button><textarea id='agentDslEdit' style='display:none;width:100%;min-height:300px;font-family:monospace;font-size:12px' spellcheck='false'></textarea><pre id='agentDsl' style='background:var(--bg);padding:16px;border-radius:var(--r);font-size:12px;overflow:auto;max-height:480px;white-space:pre-wrap'>Loading...</pre></div><div class='card'><h2>");
+    b.push_str(
+        "</h2><button class='btn btn-o btn-sm' style='margin-bottom:8px' onclick='editDsl()'>",
+    );
+    b.push_str(t("✏️ Edit DSL", zh));
+    b.push_str("</button> <button class='btn btn-p btn-sm' style='margin-bottom:8px' onclick='saveDsl()'>💾 Save</button><textarea id='agentDslEdit' style='display:none;width:100%;min-height:300px;font-family:monospace;font-size:12px' spellcheck='false'></textarea><pre id='agentDsl' style='background:var(--bg);padding:16px;border-radius:var(--r);font-size:12px;overflow:auto;max-height:480px;white-space:pre-wrap'>Loading...</pre></div><div class='card'><h2>");
     b.push_str(t("Test", zh));
     b.push_str("</h2><input id='aq2' placeholder='Ask...' style='width:100%'><button class='btn btn-p' style='margin-top:8px;width:100%' onclick='askAgent()'>");
     b.push_str(t("Ask", zh));
@@ -4677,7 +4783,9 @@ pub async fn agent_detail_page(
     b.push_str("<div class='agent-webhook-logs' id='whLogBox'></div>");
     b.push_str("<script>var aid='");
     b.push_str(&agent_id);
-    b.push_str("';function whShow(message,isError){var box=document.getElementById('whStatus');if(!box)return;box.textContent=String(message);box.style.color=isError?'var(--d)':'var(--tm)'}function whSave(){var url=document.getElementById('whUrl').value.trim();if(!url){whShow('Enter a webhook URL first.',true);return}whShow('Saving...',false);fetch('/api/v1/agents/'+aid+'/webhook',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:url,enabled:document.getElementById('whEnabled').checked})}).then(function(r){return r.json()}).then(function(d){if(d.code!==0){whShow(d.message||'failed',true);return}whShow('Saved. The webhook id is '+(d.data&&d.data.id)+'.',false)}).catch(function(e){whShow(String((e&&e.message)||e),true)})}function whTest(){whShow('Sending a test delivery...',false);fetch('/api/v1/agents/'+aid+'/webhook/test',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(function(r){return r.json()}).then(function(d){if(d.code!==0){whShow(d.message||'failed',true);return}whShow(d.message||'sent',!(d.data&&d.data.delivery&&d.data.delivery.ok));whLogs()}).catch(function(e){whShow(String((e&&e.message)||e),true)})}function whLogs(){fetch('/api/v1/agents/'+aid+'/webhook/logs').then(function(r){return r.json()}).then(function(d){var box=document.getElementById('whLogBox');if(!box)return;var items=(d.data&&d.data.items)||[];box.textContent='';if(!items.length){box.textContent=d.message||'No deliveries recorded yet.';return}items.forEach(function(entry){var row=document.createElement('div');row.className='agent-webhook-log';row.textContent=new Date((entry.at||0)*1000).toLocaleString()+' - '+entry.event+' - '+(entry.ok?'OK':'FAILED')+' - '+entry.detail+' ('+entry.duration_ms+' ms)';if(!entry.ok){row.style.color='var(--d)'}box.appendChild(row)})}).catch(function(e){whShow(String((e&&e.message)||e),true)})}function whDelete(){fetch('/api/v1/agents/'+aid+'/webhook',{method:'DELETE'}).then(function(r){return r.json()}).then(function(d){whShow(d.message||'removed',false);var box=document.getElementById('whLogBox');if(box){box.textContent=''}}).catch(function(e){whShow(String((e&&e.message)||e),true)})}function whLoad(){fetch('/api/v1/agents/'+aid+'/webhook').then(function(r){return r.json()}).then(function(d){if(d.code!==0)return;var webhook=d.data;if(!webhook){whShow(d.message||'No webhook yet.',false);return}document.getElementById('whUrl').value=webhook.url||'';document.getElementById('whEnabled').checked=!!webhook.enabled;whShow('Registered webhook '+(webhook.id||'')+(webhook.enabled?'':' (disabled)'),false);whLogs()}).catch(function(){})}whLoad();function editDsl(){var pre=document.getElementById('agentDsl');var ta=document.getElementById('agentDslEdit');ta.value=pre.textContent;ta.style.display='block';pre.style.display='none';ta.focus()};function saveDsl(){var ta=document.getElementById('agentDslEdit');var v;try{v=JSON.parse(ta.value)}catch(e){alert('Invalid JSON: '+e.message);return}fetch('/api/v1/agents/'+aid,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({dsl:v})}).then(r=>r.json()).then(function(d){if(d.code===0){loadAgent()}else{alert('Save failed: '+(d.message||'unknown'))}})};function loadAgent(){fetch('/api/v1/agents/'+aid).then(r=>r.json()).then(d=>{var a=d.data||{};document.getElementById('agentTitle').textContent='🤖 '+(a.name||'Agent');document.getElementById('agentId').textContent=a.id||'-';document.getElementById('agentKbs').textContent=(a.kb_ids||[]).join(', ')||'none';document.getElementById('agentStatus').textContent=a.canvas_category||'standard';document.getElementById('agentDsl').textContent=JSON.stringify(a.dsl||a.canvas||{},null,2);renderTopology(a.dsl||a.canvas||{})})};function renderTopology(dsl){var nodes=(dsl.nodes||[]);var edges=(dsl.edges||[]);if(!nodes.length){document.getElementById('canvasView').innerHTML='<p style=color:var(--tm)>Empty canvas</p>';return}var xMin=1e9,yMin=1e9,xMax=-1e9,yMax=-1e9;var pos={};nodes.forEach(function(n){var p=n.position||{x:0,y:0};pos[n.id]=p;xMin=Math.min(xMin,p.x);yMin=Math.min(yMin,p.y);xMax=Math.max(xMax,p.x);yMax=Math.max(yMax,p.y)});var W=xMax-xMin+300,H=yMax-yMin+300;var svg='<svg width='+W+' height='+H+' style=background:var(--bg)><defs><marker id=arr markerWidth=8 markerHeight=8 refX=8 refY=4 orient=auto><path d=M0,0L8,4L0,8 fill=var(--p)></path></marker></defs>';edges.forEach(function(e){var s=pos[e.source]||{x:0,y:0};var t=pos[e.target]||{x:0,y:0};svg+='<line x1='+(s.x-xMin+150)+' y1='+(s.y-yMin+150)+' x2='+(t.x-xMin+150)+' y2='+(t.y-yMin+150)+' stroke=var(--p) stroke-width=1.5 marker-end=url(#arr)></line>'});nodes.forEach(function(n){var p=pos[n.id];var label=n.data&&(n.data.title||n.data.name)||n.id;svg+='<g><rect x='+(p.x-xMin+120)+' y='+(p.y-yMin+130)+' width=150 height=40 rx=8 fill=var(--card) stroke=var(--p)></rect><text x='+(p.x-xMin+195)+' y='+(p.y-yMin+153)+' text-anchor=middle font-size=12 fill=var(--t2)>'+label+'</text></g>'});svg+='</svg>';document.getElementById('canvasView').innerHTML=svg};function logRun(q,status,out){var lg=document.getElementById('runLog');var ph=lg.querySelector('p');if(ph)ph.remove();var d=new Date();var ts=d.getHours()+':'+('0'+d.getMinutes()).slice(-2)+':'+('0'+d.getSeconds()).slice(-2);var div=document.createElement('div');div.style.cssText='padding:8px;border-bottom:1px solid var(--bd);white-space:pre-wrap';div.innerHTML='<span style=color:var(--tm)>['+ts+'] '+status+' &middot; Q: '+(q||'').substring(0,120)+'</span><br>'+String(out).substring(0,600);lg.insertBefore(div,lg.firstChild)};function runAgent(){document.getElementById('aa2').textContent='Running agent...';logRun('Run agent once','running','');fetch('/api/v1/agents/'+aid+'/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:'Run agent once'})}).then(r=>r.json()).then(d=>{var out=d.data?d.data.answer:JSON.stringify(d);document.getElementById('aa2').textContent=out;logRun('Run agent once',d.code===0?'done':'error',out)})};function askAgent(){var q=document.getElementById('aq2').value;if(!q)return;document.getElementById('aa2').textContent='Running...';logRun(q,'running','');fetch('/api/v1/agents/'+aid+'/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})}).then(r=>r.json()).then(d=>{var out=d.data?d.data.answer:JSON.stringify(d);document.getElementById('aa2').textContent=out;logRun(q,d.code===0?'done':'error',out)})};function saveAgent(){var ta=document.getElementById('agentDslEdit');var raw=ta.style.display==='none'?document.getElementById('agentDsl').textContent:ta.value;var v;try{v=JSON.parse(raw)}catch(e){alert('Invalid JSON: '+e.message);return}fetch('/api/v1/agents/'+aid,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({dsl:v})}).then(r=>r.json()).then(function(d){if(d.code===0){alert('Saved');loadAgent();updateAutosave()}else{alert('Save failed: '+(d.message||'unknown'))}})};function publishAgent(){document.getElementById('pubModal').classList.add('show')}function confirmPublish(){fetch('/api/v1/agents/'+aid,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({release:true})}).then(r=>r.json()).then(function(d){document.getElementById('pubModal').classList.remove('show');if(d.code===0){openChatTest()}else{alert('Publish failed: '+(d.message||'unknown'))}})}function openChatTest(){document.getElementById('chatTestModal').classList.add('show')}function launchAgent(){location.href='/agent/'+encodeURIComponent(aid)+'/explore'}function sendTestMsg(){var q=document.getElementById('testQ').value;if(!q)return;document.getElementById('testOut').textContent='Thinking...';fetch('/api/v1/agents/'+aid+'/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})}).then(r=>r.json()).then(function(d){document.getElementById('testOut').textContent=d.data?d.data.answer:JSON.stringify(d)})}function updateAutosave(){var el=document.getElementById('autosaveSt');if(el)el.textContent='Autosaved '+new Date().toLocaleString()}function zoomCanvas(dir){var p=document.getElementById('compPanel');var cur=parseFloat(p.dataset.z||'12');cur=Math.min(20,Math.max(9,cur+dir));p.dataset.z=cur;p.style.fontSize=cur+'px'}function fitCanvas(){var p=document.getElementById('compPanel');p.dataset.z='12';p.style.fontSize='12px'}function toggleInter(){var p=document.getElementById('compPanel');p.classList.toggle('no-click')}function addComponent(name){fetch('/api/v1/agents/'+aid).then(r=>r.json()).then(d=>{var a=d.data||{};var dsl=a.dsl||a.canvas||{};if(!dsl.components)dsl.components={};var n=0;var base=name.replace(/[^A-Za-z0-9_]/g,'');var key=base+':'+n;while(dsl.components[key]){n++;key=base+':'+n}var node={'obj':{'component_name':name,'params':{}},'downstream':[],'upstream':[]};if(dsl.components['begin']){dsl.components['begin'].downstream=dsl.components['begin'].downstream||[];dsl.components['begin'].downstream.push(key);node.upstream=['begin']}dsl.components[key]=node;var ta=document.getElementById('agentDslEdit');var pre=document.getElementById('agentDsl');ta.value=JSON.stringify(dsl,null,2);ta.style.display='block';pre.style.display='none';ta.focus();alert('Component \"'+name+'\" added to DSL. Click 💾 Save to persist.')})};function delAgent(){if(!confirm('Delete this agent?'))return;fetch('/api/v1/agents/'+aid,{method:'DELETE'}).then(function(){location.href='/agents'})};function openVersions(){document.getElementById('verList').innerHTML='<p style=color:var(--tm)>Loading...</p>';document.getElementById('verModal').classList.add('show');fetch('/api/v1/agents/'+aid+'/versions').then(r=>r.json()).then(function(d){var vs=d.data||[];if(!vs.length){document.getElementById('verList').innerHTML='<p style=color:var(--tm)>No versions yet</p>';return}var h='<table><thead><tr><th>ID</th><th>Title</th><th>Created</th><th></th></tr></thead><tbody>';vs.forEach(function(v){h+='<tr><td style=font-family:monospace;font-size:12px>'+v.id+'</td><td>'+(v.title||'')+'</td><td style=color:var(--tm);font-size:12px>'+new Date(v.created_at).toLocaleString()+'</td><td><button class=btn btn-o btn-sm onclick=downloadVersion(&quot;'+v.id+'&quot;)>Download</button></td></tr>'});document.getElementById('verList').innerHTML=h+'</tbody></table>'})};function downloadVersion(vid){fetch('/api/v1/agents/'+aid+'/versions/'+encodeURIComponent(vid)).then(r=>r.json()).then(function(d){var v=(d.data||{}).dsl||{};var a=document.createElement('a');a.href='data:application/json;charset=utf-8,'+encodeURIComponent(JSON.stringify(v,null,2));a.download='agent_'+aid+'_v'+vid+'.json';a.click()})};function exportAgentJson(){var ta=document.getElementById('agentDslEdit');var raw=ta.style.display==='none'?document.getElementById('agentDsl').textContent:ta.value;var a=document.createElement('a');a.href='data:application/json;charset=utf-8,'+encodeURIComponent(raw);a.download='agent_'+aid+'.json';a.click()};loadAgent()</script>");
+    b.push_str("';function whShow(message,isError){var box=document.getElementById('whStatus');if(!box)return;box.textContent=String(message);box.style.color=isError?'var(--d)':'var(--tm)'}function whSave(){var url=document.getElementById('whUrl').value.trim();if(!url){whShow('Enter a webhook URL first.',true);return}whShow('Saving...',false);fetch('/api/v1/agents/'+aid+'/webhook',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:url,enabled:document.getElementById('whEnabled').checked})}).then(function(r){return r.json()}).then(function(d){if(d.code!==0){whShow(d.message||'failed',true);return}whShow('Saved. The webhook id is '+(d.data&&d.data.id)+'.',false)}).catch(function(e){whShow(String((e&&e.message)||e),true)})}function whTest(){whShow('Sending a test delivery...',false);fetch('/api/v1/agents/'+aid+'/webhook/test',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(function(r){return r.json()}).then(function(d){if(d.code!==0){whShow(d.message||'failed',true);return}whShow(d.message||'sent',!(d.data&&d.data.delivery&&d.data.delivery.ok));whLogs()}).catch(function(e){whShow(String((e&&e.message)||e),true)})}function whLogs(){fetch('/api/v1/agents/'+aid+'/webhook/logs').then(function(r){return r.json()}).then(function(d){var box=document.getElementById('whLogBox');if(!box)return;var items=(d.data&&d.data.items)||[];box.textContent='';if(!items.length){box.textContent=d.message||'No deliveries recorded yet.';return}items.forEach(function(entry){var row=document.createElement('div');row.className='agent-webhook-log';row.textContent=new Date((entry.at||0)*1000).toLocaleString()+' - '+entry.event+' - '+(entry.ok?'OK':'FAILED')+' - '+entry.detail+' ('+entry.duration_ms+' ms)';if(!entry.ok){row.style.color='var(--d)'}box.appendChild(row)})}).catch(function(e){whShow(String((e&&e.message)||e),true)})}function whDelete(){fetch('/api/v1/agents/'+aid+'/webhook',{method:'DELETE'}).then(function(r){return r.json()}).then(function(d){whShow(d.message||'removed',false);var box=document.getElementById('whLogBox');if(box){box.textContent=''}}).catch(function(e){whShow(String((e&&e.message)||e),true)})}function whLoad(){fetch('/api/v1/agents/'+aid+'/webhook').then(function(r){return r.json()}).then(function(d){if(d.code!==0)return;var webhook=d.data;if(!webhook){whShow(d.message||'No webhook yet.',false);return}document.getElementById('whUrl').value=webhook.url||'';document.getElementById('whEnabled').checked=!!webhook.enabled;whShow('Registered webhook '+(webhook.id||'')+(webhook.enabled?'':' (disabled)'),false);whLogs()}).catch(function(){})}whLoad();function editDsl(){var pre=document.getElementById('agentDsl');var ta=document.getElementById('agentDslEdit');ta.value=pre.textContent;ta.style.display='block';pre.style.display='none';ta.focus()};function saveDsl(){var ta=document.getElementById('agentDslEdit');var v;try{v=JSON.parse(ta.value)}catch(e){alert('Invalid JSON: '+e.message);return}fetch('/api/v1/agents/'+aid,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({dsl:v})}).then(r=>r.json()).then(function(d){if(d.code===0){loadAgent()}else{alert('Save failed: '+(d.message||'unknown'))}})};function loadAgent(){fetch('/api/v1/agents/'+aid).then(r=>r.json()).then(d=>{var a=d.data||{};document.getElementById('agentTitle').textContent='🤖 '+(a.name||'Agent');document.getElementById('agentId').textContent=a.id||'-';document.getElementById('agentKbs').textContent=(a.kb_ids||[]).join(', ')||'none';document.getElementById('agentStatus').textContent=a.canvas_category||'standard';document.getElementById('agentDsl').textContent=JSON.stringify(a.dsl||a.canvas||{},null,2);renderTopology(a.dsl||a.canvas||{})})};function renderTopology(dsl){var nodes=(dsl.nodes||[]);var edges=(dsl.edges||[]);if(!nodes.length){document.getElementById('canvasView').innerHTML='<p style=color:var(--tm)>");
+    b.push_str(t("Empty canvas", zh));
+    b.push_str("</p>';return}var xMin=1e9,yMin=1e9,xMax=-1e9,yMax=-1e9;var pos={};nodes.forEach(function(n){var p=n.position||{x:0,y:0};pos[n.id]=p;xMin=Math.min(xMin,p.x);yMin=Math.min(yMin,p.y);xMax=Math.max(xMax,p.x);yMax=Math.max(yMax,p.y)});var W=xMax-xMin+300,H=yMax-yMin+300;var svg='<svg width='+W+' height='+H+' style=background:var(--bg)><defs><marker id=arr markerWidth=8 markerHeight=8 refX=8 refY=4 orient=auto><path d=M0,0L8,4L0,8 fill=var(--p)></path></marker></defs>';edges.forEach(function(e){var s=pos[e.source]||{x:0,y:0};var t=pos[e.target]||{x:0,y:0};svg+='<line x1='+(s.x-xMin+150)+' y1='+(s.y-yMin+150)+' x2='+(t.x-xMin+150)+' y2='+(t.y-yMin+150)+' stroke=var(--p) stroke-width=1.5 marker-end=url(#arr)></line>'});nodes.forEach(function(n){var p=pos[n.id];var label=n.data&&(n.data.title||n.data.name)||n.id;svg+='<g><rect x='+(p.x-xMin+120)+' y='+(p.y-yMin+130)+' width=150 height=40 rx=8 fill=var(--card) stroke=var(--p)></rect><text x='+(p.x-xMin+195)+' y='+(p.y-yMin+153)+' text-anchor=middle font-size=12 fill=var(--t2)>'+label+'</text></g>'});svg+='</svg>';document.getElementById('canvasView').innerHTML=svg};function logRun(q,status,out){var lg=document.getElementById('runLog');var ph=lg.querySelector('p');if(ph)ph.remove();var d=new Date();var ts=d.getHours()+':'+('0'+d.getMinutes()).slice(-2)+':'+('0'+d.getSeconds()).slice(-2);var div=document.createElement('div');div.style.cssText='padding:8px;border-bottom:1px solid var(--bd);white-space:pre-wrap';div.innerHTML='<span style=color:var(--tm)>['+ts+'] '+status+' &middot; Q: '+(q||'').substring(0,120)+'</span><br>'+String(out).substring(0,600);lg.insertBefore(div,lg.firstChild)};function runAgent(){document.getElementById('aa2').textContent='Running agent...';logRun('Run agent once','running','');fetch('/api/v1/agents/'+aid+'/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:'Run agent once'})}).then(r=>r.json()).then(d=>{var out=d.data?d.data.answer:JSON.stringify(d);document.getElementById('aa2').textContent=out;logRun('Run agent once',d.code===0?'done':'error',out)})};function askAgent(){var q=document.getElementById('aq2').value;if(!q)return;document.getElementById('aa2').textContent='Running...';logRun(q,'running','');fetch('/api/v1/agents/'+aid+'/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})}).then(r=>r.json()).then(d=>{var out=d.data?d.data.answer:JSON.stringify(d);document.getElementById('aa2').textContent=out;logRun(q,d.code===0?'done':'error',out)})};function saveAgent(){var ta=document.getElementById('agentDslEdit');var raw=ta.style.display==='none'?document.getElementById('agentDsl').textContent:ta.value;var v;try{v=JSON.parse(raw)}catch(e){alert('Invalid JSON: '+e.message);return}fetch('/api/v1/agents/'+aid,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({dsl:v})}).then(r=>r.json()).then(function(d){if(d.code===0){alert('Saved');loadAgent();updateAutosave()}else{alert('Save failed: '+(d.message||'unknown'))}})};function publishAgent(){document.getElementById('pubModal').classList.add('show')}function confirmPublish(){fetch('/api/v1/agents/'+aid,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({release:true})}).then(r=>r.json()).then(function(d){document.getElementById('pubModal').classList.remove('show');if(d.code===0){openChatTest()}else{alert('Publish failed: '+(d.message||'unknown'))}})}function openChatTest(){document.getElementById('chatTestModal').classList.add('show')}function launchAgent(){location.href='/agent/'+encodeURIComponent(aid)+'/explore'}function sendTestMsg(){var q=document.getElementById('testQ').value;if(!q)return;document.getElementById('testOut').textContent='Thinking...';fetch('/api/v1/agents/'+aid+'/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})}).then(r=>r.json()).then(function(d){document.getElementById('testOut').textContent=d.data?d.data.answer:JSON.stringify(d)})}function updateAutosave(){var el=document.getElementById('autosaveSt');if(el)el.textContent='Autosaved '+new Date().toLocaleString()}function zoomCanvas(dir){var p=document.getElementById('compPanel');var cur=parseFloat(p.dataset.z||'12');cur=Math.min(20,Math.max(9,cur+dir));p.dataset.z=cur;p.style.fontSize=cur+'px'}function fitCanvas(){var p=document.getElementById('compPanel');p.dataset.z='12';p.style.fontSize='12px'}function toggleInter(){var p=document.getElementById('compPanel');p.classList.toggle('no-click')}function addComponent(name){fetch('/api/v1/agents/'+aid).then(r=>r.json()).then(d=>{var a=d.data||{};var dsl=a.dsl||a.canvas||{};if(!dsl.components)dsl.components={};var n=0;var base=name.replace(/[^A-Za-z0-9_]/g,'');var key=base+':'+n;while(dsl.components[key]){n++;key=base+':'+n}var node={'obj':{'component_name':name,'params':{}},'downstream':[],'upstream':[]};if(dsl.components['begin']){dsl.components['begin'].downstream=dsl.components['begin'].downstream||[];dsl.components['begin'].downstream.push(key);node.upstream=['begin']}dsl.components[key]=node;var ta=document.getElementById('agentDslEdit');var pre=document.getElementById('agentDsl');ta.value=JSON.stringify(dsl,null,2);ta.style.display='block';pre.style.display='none';ta.focus();alert('Component \"'+name+'\" added to DSL. Click 💾 Save to persist.')})};function delAgent(){if(!confirm('Delete this agent?'))return;fetch('/api/v1/agents/'+aid,{method:'DELETE'}).then(function(){location.href='/agents'})};function openVersions(){document.getElementById('verList').innerHTML='<p style=color:var(--tm)>Loading...</p>';document.getElementById('verModal').classList.add('show');fetch('/api/v1/agents/'+aid+'/versions').then(r=>r.json()).then(function(d){var vs=d.data||[];if(!vs.length){document.getElementById('verList').innerHTML='<p style=color:var(--tm)>No versions yet</p>';return}var h='<table><thead><tr><th>ID</th><th>Title</th><th>Created</th><th></th></tr></thead><tbody>';vs.forEach(function(v){h+='<tr><td style=font-family:monospace;font-size:12px>'+v.id+'</td><td>'+(v.title||'')+'</td><td style=color:var(--tm);font-size:12px>'+new Date(v.created_at).toLocaleString()+'</td><td><button class=btn btn-o btn-sm onclick=downloadVersion(&quot;'+v.id+'&quot;)>Download</button></td></tr>'});document.getElementById('verList').innerHTML=h+'</tbody></table>'})};function downloadVersion(vid){fetch('/api/v1/agents/'+aid+'/versions/'+encodeURIComponent(vid)).then(r=>r.json()).then(function(d){var v=(d.data||{}).dsl||{};var a=document.createElement('a');a.href='data:application/json;charset=utf-8,'+encodeURIComponent(JSON.stringify(v,null,2));a.download='agent_'+aid+'_v'+vid+'.json';a.click()})};function exportAgentJson(){var ta=document.getElementById('agentDslEdit');var raw=ta.style.display==='none'?document.getElementById('agentDsl').textContent:ta.value;var a=document.createElement('a');a.href='data:application/json;charset=utf-8,'+encodeURIComponent(raw);a.download='agent_'+aid+'.json';a.click()};loadAgent()</script>");
     Html(layout("Agent", &b, zh))
 }
 
@@ -6726,7 +6834,12 @@ pub async fn datasources_page(
     } else {
         "Available sources"
     });
-    b.push_str("</h2><p class='user-setting-description'>Add a connector and sync its content into your knowledge base.</p><section class='ds-available-grid' id='dsAvailable' data-testid='available-sources-section' aria-live='polite'></section><div class='ds-local-row' style='margin-top:16px'><label class='provider-instance-field' style='margin-top:0;max-width:300px'>Local sources<select id='dsLocalType'><option value='local'>Local Files</option><option value='feishu'>飞书云空间</option><option value='dingtalk'>钉钉云盘</option><option value='tencent_docs'>腾讯文档</option><option value='yuque'>语雀</option><option value='wechat_docs'>微信文档</option></select></label><button class='btn btn-p' type='button' onclick='openDsAdd(document.getElementById(\"dsLocalType\").value,document.getElementById(\"dsLocalType\").selectedOptions[0].textContent)'>+ Add</button></div></div>");
+    b.push_str("</h2><p class='user-setting-description'>");
+    b.push_str(t(
+        "Add a connector and sync its content into your knowledge base.",
+        zh,
+    ));
+    b.push_str("</p><section class='ds-available-grid' id='dsAvailable' data-testid='available-sources-section' aria-live='polite'></section><div class='ds-local-row' style='margin-top:16px'><label class='provider-instance-field' style='margin-top:0;max-width:300px'>Local sources<select id='dsLocalType'><option value='local'>Local Files</option><option value='feishu'>飞书云空间</option><option value='dingtalk'>钉钉云盘</option><option value='tencent_docs'>腾讯文档</option><option value='yuque'>语雀</option><option value='wechat_docs'>微信文档</option></select></label><button class='btn btn-p' type='button' onclick='openDsAdd(document.getElementById(\"dsLocalType\").value,document.getElementById(\"dsLocalType\").selectedOptions[0].textContent)'>+ Add</button></div></div>");
     b.push_str("<div class='card'><h2>Sources</h2><div style='margin-bottom:8px'><select id='dsKb'><option value=''>");
     b.push_str(t("Sync to KB (optional)", zh));
     b.push_str("</option></select></div><div id='dsList'>Loading...</div></div>");
@@ -7218,7 +7331,9 @@ pub async fn memories_page(
         "<div class='modal-overlay' id='memModal'><div class='modal'><h2 id='memModalTitle'>",
     );
     b.push_str(t("Create Memory", zh));
-    b.push_str("</h2><input id='mname' placeholder='Name'><label style='font-size:12px;display:block;margin:8px 0 4px'>Memory Type</label><div style='font-size:12px;margin-bottom:4px'><a href='javascript:void(0)' onclick=\"document.querySelectorAll('.mtype').forEach(function(x){x.checked=true})\" style='color:var(--p)'>Select all</a></div><div style='display:flex;gap:10px;flex-wrap:wrap;font-size:12px'><label><input type='checkbox' class='mtype' value='raw'> raw</label><label><input type='checkbox' class='mtype' value='semantic'> semantic</label><label><input type='checkbox' class='mtype' value='episodic'> episodic</label><label><input type='checkbox' class='mtype' value='procedural'> procedural</label></div><label style='font-size:12px;display:block;margin:8px 0 4px'>Embedding Model</label><select id='membd'><option value='default'>default</option></select><label style='font-size:12px;display:block;margin:8px 0 4px'>Chat Model</label><select id='mllm'><option value='default'>default</option></select><textarea id='mdesc' placeholder='Description' style='margin-top:8px;min-height:50px'></textarea><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-p' onclick='saveMem()'>");
+    b.push_str("</h2><input id='mname' placeholder='Name'><label style='font-size:12px;display:block;margin:8px 0 4px'>");
+    b.push_str(t("Memory Type", zh));
+    b.push_str("</label><div style='font-size:12px;margin-bottom:4px'><a href='javascript:void(0)' onclick=\"document.querySelectorAll('.mtype').forEach(function(x){x.checked=true})\" style='color:var(--p)'>Select all</a></div><div style='display:flex;gap:10px;flex-wrap:wrap;font-size:12px'><label><input type='checkbox' class='mtype' value='raw'> raw</label><label><input type='checkbox' class='mtype' value='semantic'> semantic</label><label><input type='checkbox' class='mtype' value='episodic'> episodic</label><label><input type='checkbox' class='mtype' value='procedural'> procedural</label></div><label style='font-size:12px;display:block;margin:8px 0 4px'>Embedding Model</label><select id='membd'><option value='default'>default</option></select><label style='font-size:12px;display:block;margin:8px 0 4px'>Chat Model</label><select id='mllm'><option value='default'>default</option></select><textarea id='mdesc' placeholder='Description' style='margin-top:8px;min-height:50px'></textarea><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-p' onclick='saveMem()'>");
     b.push_str(t("Save", zh));
     b.push_str("</button><button class='btn btn-o' onclick='closeMemModal()'>");
     b.push_str(t("Cancel", zh));
@@ -7721,7 +7836,8 @@ impl AdminConsoleSection {
         }
     }
 
-    /// Upstream `admin.*` labels: absent from `zh.ts`, so they stay English.
+    /// The upstream `admin.*` label. Callers pass it through the translator so the admin console
+    /// follows the page language like the rest of the interface.
     fn label(self) -> &'static str {
         match self {
             Self::Services => "Service status",
@@ -7777,7 +7893,7 @@ fn admin_console_shell(active: AdminConsoleSection, body: &str, zh: bool) -> Str
         nav.push_str("' href='/admin");
         nav.push_str(section.key());
         nav.push_str("' aria-label='");
-        nav.push_str(section.label());
+        nav.push_str(t(section.label(), zh));
         nav.push('\'');
         if section == active {
             nav.push_str(" aria-current='page'");
@@ -7785,7 +7901,7 @@ fn admin_console_shell(active: AdminConsoleSection, body: &str, zh: bool) -> Str
         nav.push_str("><span class='admin-console-nav-icon' aria-hidden='true'>");
         nav.push_str(section.icon());
         nav.push_str("</span><span class='admin-console-nav-label'>");
-        nav.push_str(section.label());
+        nav.push_str(t(section.label(), zh));
         nav.push_str("</span></a></li>");
     }
     format!(
@@ -7979,7 +8095,11 @@ pub async fn admin_services_page(
         return Redirect::temporary("/admin").into_response();
     }
     let mut b = String::with_capacity(8192);
-    b.push_str("<div class='admin-panel'><div class='admin-panel-head'><h2 class='admin-panel-title'>Service status</h2></div><div class='admin-toolbar'><label class='admin-filter'><span>Service type</span><select id='adminServiceType' data-testid='admin-service-type-filter' onchange='adminRenderServices()'><option value=''>All</option></select></label><button class='btn btn-o btn-sm' type='button' onclick='adminResetServiceFilter()'>Reset</button><input id='adminServiceSearch' class='admin-service-search' type='search' placeholder='Search' aria-label='Search services' oninput='adminServicePage=1;adminRenderServices()'></div><div class='admin-table-wrap'><table class='admin-table' data-testid='admin-services-table'><thead><tr><th>ID</th><th>Name</th><th>Service type</th><th>Host</th><th>Port</th><th>Status</th><th>Actions</th></tr></thead><tbody id='adminServiceRows'><tr><td colspan='7' class='admin-empty'>Loading…</td></tr></tbody></table></div><footer class='admin-service-pager' id='adminServicePager' data-testid='admin-services-pagination'></footer></div>");
+    b.push_str(
+        "<div class='admin-panel'><div class='admin-panel-head'><h2 class='admin-panel-title'>",
+    );
+    b.push_str(t("Service status", zh));
+    b.push_str("</h2></div><div class='admin-toolbar'><label class='admin-filter'><span>Service type</span><select id='adminServiceType' data-testid='admin-service-type-filter' onchange='adminRenderServices()'><option value=''>All</option></select></label><button class='btn btn-o btn-sm' type='button' onclick='adminResetServiceFilter()'>Reset</button><input id='adminServiceSearch' class='admin-service-search' type='search' placeholder='Search' aria-label='Search services' oninput='adminServicePage=1;adminRenderServices()'></div><div class='admin-table-wrap'><table class='admin-table' data-testid='admin-services-table'><thead><tr><th>ID</th><th>Name</th><th>Service type</th><th>Host</th><th>Port</th><th>Status</th><th>Actions</th></tr></thead><tbody id='adminServiceRows'><tr><td colspan='7' class='admin-empty'>Loading…</td></tr></tbody></table></div><footer class='admin-service-pager' id='adminServicePager' data-testid='admin-services-pagination'></footer></div>");
     // Upstream `service-status.tsx` mounts two dialogs: `admin.extraInfo` renders
     // `item.extra` through `JsonView`, and the details dialog renders
     // `serviceDetails.message` through `TaskExecutorDetail` for `task_executor`
@@ -8069,10 +8189,20 @@ pub async fn admin_users_page(
     b.push_str("\";var ADMIN_TRASH_SVG=\"");
     b.push_str(ADMIN_TRASH_SVG);
     b.push_str("\";</script>");
-    b.push_str("<div class='admin-panel'><div class='admin-panel-head'><h2 class='admin-panel-title'>User management</h2><button class='btn btn-p' type='button' data-testid='admin-new-user' onclick='adminOpenCreateUser()'>New user</button></div><div class='admin-toolbar'><label class='admin-filter'><span>Role</span><select id='adminUserRole' onchange='adminRenderUsers()'><option value=''>All</option><option value='admin'>Superuser</option><option value='normal'>Normal</option></select></label><label class='admin-filter'><span>Status</span><select id='adminUserStatus' onchange='adminRenderUsers()'><option value=''>All</option><option value='active'>Active</option><option value='inactive'>Inactive</option></select></label><button class='btn btn-o btn-sm' type='button' onclick='adminResetUserFilters()'>Reset</button><input id='adminUserSearch' class='admin-service-search' type='search' placeholder='Search' aria-label='Search users' oninput='adminUserPage=1;adminRenderUsers()'></div><div class='admin-table-wrap'><table class='admin-table' data-testid='admin-users-table'><thead><tr><th data-sort='email' class='admin-sortable' data-testid='admin-users-sort-email' onclick='adminUserSort(&quot;email&quot;)'>Email<span class='admin-sort-mark' id='adminUserSortEmail'></span></th><th data-sort='nickname' class='admin-sortable' data-testid='admin-users-sort-nickname' onclick='adminUserSort(&quot;nickname&quot;)'>Nickname<span class='admin-sort-mark' id='adminUserSortNickname'></span></th><th data-sort='role' class='admin-sortable' data-testid='admin-users-sort-role' onclick='adminUserSort(&quot;role&quot;)'>Role<span class='admin-sort-mark' id='adminUserSortRole'></span></th><th data-sort='status' class='admin-sortable' data-testid='admin-users-sort-status' onclick='adminUserSort(&quot;status&quot;)'>Status<span class='admin-sort-mark' id='adminUserSortStatus'></span></th><th>User type</th><th>Actions</th></tr></thead><tbody id='adminUserRows'><tr><td colspan='6' class='admin-empty'>Loading…</td></tr></tbody></table></div><footer class='admin-service-pager' id='adminUserPager' data-testid='admin-users-pagination'></footer></div>");
-    b.push_str("<div class='modal-overlay' id='adminCreateUserDialog' onclick=\"if(event.target===this)this.classList.remove('show')\"><div class='modal admin-user-modal'><h2>Create new user</h2><label class='admin-field'><span>Email</span><input id='adminNewUserEmail' type='email' autocomplete='username' placeholder='Email' data-testid='admin-create-user-email' oninput='adminCreateUserErrors()'><span class='admin-field-error' data-testid='admin-create-user-email-error' id='adminNewUserEmailError'></span></label><label class='admin-field'><span>Password</span><input id='adminNewUserPassword' type='password' autocomplete='new-password' placeholder='Password' data-testid='admin-create-user-password' oninput='adminCreateUserErrors()'><span class='admin-field-error' data-testid='admin-create-user-password-error' id='adminNewUserPasswordError'></span></label><label class='admin-field'><span>Confirm password</span><input id='adminNewUserConfirm' type='password' autocomplete='new-password' placeholder='Confirm password' data-testid='admin-create-user-confirm' oninput='adminCreateUserErrors()'><span class='admin-field-error' data-testid='admin-create-user-confirm-error' id='adminNewUserConfirmError'></span></label><label class='admin-field'><span>Role</span><select id='adminNewUserRole'><option value='normal'>Normal</option><option value='admin'>Superuser</option></select></label><p class='admin-dialog-error' id='adminCreateUserError'></p><div class='admin-dialog-actions'><button class='btn btn-o' type='button' onclick=\"document.getElementById('adminCreateUserDialog').classList.remove('show')\">Cancel</button><button class='btn btn-p' type='button' data-testid='admin-create-user-submit' onclick='adminCreateUser()'>Confirm</button></div></div></div>");
-    b.push_str("<div class='modal-overlay' id='adminPasswordDialog' onclick=\"if(event.target===this)this.classList.remove('show')\"><div class='modal admin-user-modal'><h2>Change password</h2><label class='admin-field'><span>Email</span><input id='adminPasswordEmail' readonly data-testid='admin-password-email'></label><label class='admin-field'><span>New password</span><input id='adminNewPassword' type='password' autocomplete='new-password' placeholder='New password' data-testid='admin-new-password' oninput='adminPasswordErrors()'><span class='admin-field-error' data-testid='admin-new-password-error' id='adminNewPasswordError'></span></label><label class='admin-field'><span>Confirm new password</span><input id='adminNewPasswordConfirm' type='password' autocomplete='new-password' placeholder='Confirm new password' data-testid='admin-new-password-confirm' oninput='adminPasswordErrors()'><span class='admin-field-error' data-testid='admin-new-password-confirm-error' id='adminNewPasswordConfirmError'></span></label><p class='admin-dialog-error' id='adminPasswordError'></p><div class='admin-dialog-actions'><button class='btn btn-o' type='button' onclick=\"document.getElementById('adminPasswordDialog').classList.remove('show')\">Cancel</button><button class='btn btn-p' type='button' onclick='adminSubmitPassword()'>Change password</button></div></div></div>");
-    b.push_str("<div class='modal-overlay' id='adminDeleteUserDialog' onclick=\"if(event.target===this)this.classList.remove('show')\"><div class='modal admin-user-modal'><h2>Delete user</h2><p class='admin-dialog-sub'>Are you sure you want to delete this user?</p><p class='admin-user-target' id='adminDeleteTarget'></p><p class='admin-dialog-error' id='adminDeleteError'></p><div class='admin-dialog-actions'><button class='btn btn-o' type='button' onclick=\"document.getElementById('adminDeleteUserDialog').classList.remove('show')\">Cancel</button><button class='btn btn-d' type='button' data-testid='admin-delete-user-submit' onclick='adminSubmitDeleteUser()'>Delete</button></div></div></div>");
+    b.push_str(
+        "<div class='admin-panel'><div class='admin-panel-head'><h2 class='admin-panel-title'>",
+    );
+    b.push_str(t("User management", zh));
+    b.push_str("</h2><button class='btn btn-p' type='button' data-testid='admin-new-user' onclick='adminOpenCreateUser()'>New user</button></div><div class='admin-toolbar'><label class='admin-filter'><span>Role</span><select id='adminUserRole' onchange='adminRenderUsers()'><option value=''>All</option><option value='admin'>Superuser</option><option value='normal'>Normal</option></select></label><label class='admin-filter'><span>Status</span><select id='adminUserStatus' onchange='adminRenderUsers()'><option value=''>All</option><option value='active'>Active</option><option value='inactive'>Inactive</option></select></label><button class='btn btn-o btn-sm' type='button' onclick='adminResetUserFilters()'>Reset</button><input id='adminUserSearch' class='admin-service-search' type='search' placeholder='Search' aria-label='Search users' oninput='adminUserPage=1;adminRenderUsers()'></div><div class='admin-table-wrap'><table class='admin-table' data-testid='admin-users-table'><thead><tr><th data-sort='email' class='admin-sortable' data-testid='admin-users-sort-email' onclick='adminUserSort(&quot;email&quot;)'>Email<span class='admin-sort-mark' id='adminUserSortEmail'></span></th><th data-sort='nickname' class='admin-sortable' data-testid='admin-users-sort-nickname' onclick='adminUserSort(&quot;nickname&quot;)'>Nickname<span class='admin-sort-mark' id='adminUserSortNickname'></span></th><th data-sort='role' class='admin-sortable' data-testid='admin-users-sort-role' onclick='adminUserSort(&quot;role&quot;)'>Role<span class='admin-sort-mark' id='adminUserSortRole'></span></th><th data-sort='status' class='admin-sortable' data-testid='admin-users-sort-status' onclick='adminUserSort(&quot;status&quot;)'>Status<span class='admin-sort-mark' id='adminUserSortStatus'></span></th><th>User type</th><th>Actions</th></tr></thead><tbody id='adminUserRows'><tr><td colspan='6' class='admin-empty'>Loading…</td></tr></tbody></table></div><footer class='admin-service-pager' id='adminUserPager' data-testid='admin-users-pagination'></footer></div>");
+    b.push_str("<div class='modal-overlay' id='adminCreateUserDialog' onclick=\"if(event.target===this)this.classList.remove('show')\"><div class='modal admin-user-modal'><h2>");
+    b.push_str(t("Create new user", zh));
+    b.push_str("</h2><label class='admin-field'><span>Email</span><input id='adminNewUserEmail' type='email' autocomplete='username' placeholder='Email' data-testid='admin-create-user-email' oninput='adminCreateUserErrors()'><span class='admin-field-error' data-testid='admin-create-user-email-error' id='adminNewUserEmailError'></span></label><label class='admin-field'><span>Password</span><input id='adminNewUserPassword' type='password' autocomplete='new-password' placeholder='Password' data-testid='admin-create-user-password' oninput='adminCreateUserErrors()'><span class='admin-field-error' data-testid='admin-create-user-password-error' id='adminNewUserPasswordError'></span></label><label class='admin-field'><span>Confirm password</span><input id='adminNewUserConfirm' type='password' autocomplete='new-password' placeholder='Confirm password' data-testid='admin-create-user-confirm' oninput='adminCreateUserErrors()'><span class='admin-field-error' data-testid='admin-create-user-confirm-error' id='adminNewUserConfirmError'></span></label><label class='admin-field'><span>Role</span><select id='adminNewUserRole'><option value='normal'>Normal</option><option value='admin'>Superuser</option></select></label><p class='admin-dialog-error' id='adminCreateUserError'></p><div class='admin-dialog-actions'><button class='btn btn-o' type='button' onclick=\"document.getElementById('adminCreateUserDialog').classList.remove('show')\">Cancel</button><button class='btn btn-p' type='button' data-testid='admin-create-user-submit' onclick='adminCreateUser()'>Confirm</button></div></div></div>");
+    b.push_str("<div class='modal-overlay' id='adminPasswordDialog' onclick=\"if(event.target===this)this.classList.remove('show')\"><div class='modal admin-user-modal'><h2>Change password</h2><label class='admin-field'><span>Email</span><input id='adminPasswordEmail' readonly data-testid='admin-password-email'></label><label class='admin-field'><span>New password</span><input id='adminNewPassword' type='password' autocomplete='new-password' placeholder='New password' data-testid='admin-new-password' oninput='adminPasswordErrors()'><span class='admin-field-error' data-testid='admin-new-password-error' id='adminNewPasswordError'></span></label><label class='admin-field'><span>Confirm new password</span><input id='adminNewPasswordConfirm' type='password' autocomplete='new-password' placeholder='Confirm new password' data-testid='admin-new-password-confirm' oninput='adminPasswordErrors()'><span class='admin-field-error' data-testid='admin-new-password-confirm-error' id='adminNewPasswordConfirmError'></span></label><p class='admin-dialog-error' id='adminPasswordError'></p><div class='admin-dialog-actions'><button class='btn btn-o' type='button' onclick=\"document.getElementById('adminPasswordDialog').classList.remove('show')\">Cancel</button><button class='btn btn-p' type='button' onclick='adminSubmitPassword()'>");
+    b.push_str(t("Change password", zh));
+    b.push_str("</button></div></div></div>");
+    b.push_str("<div class='modal-overlay' id='adminDeleteUserDialog' onclick=\"if(event.target===this)this.classList.remove('show')\"><div class='modal admin-user-modal'><h2>");
+    b.push_str(t("Delete user", zh));
+    b.push_str("</h2><p class='admin-dialog-sub'>Are you sure you want to delete this user?</p><p class='admin-user-target' id='adminDeleteTarget'></p><p class='admin-dialog-error' id='adminDeleteError'></p><div class='admin-dialog-actions'><button class='btn btn-o' type='button' onclick=\"document.getElementById('adminDeleteUserDialog').classList.remove('show')\">Cancel</button><button class='btn btn-d' type='button' data-testid='admin-delete-user-submit' onclick='adminSubmitDeleteUser()'>Delete</button></div></div></div>");
     b.push_str(
         r#"<script>var ADMIN_USERS=[];var ADMIN_PASSWORD_TARGET='';var ADMIN_DELETE_TARGET='';function adminEscape(value){return String(value==null?'':value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}// Upstream `admin/users.tsx`: global search (`header.search`), sortable columns
 // (no `enableSorting: false` here) and a `RAGFlowPagination` footer.
@@ -8129,9 +8259,13 @@ pub async fn admin_user_detail_page(
         .any(|user| user.email == user_id || user.id == user_id);
     let mut b = String::with_capacity(4096);
     if !known {
-        b.push_str("<div class='admin-panel'><h2 class='admin-panel-title'>User management</h2><p class='admin-empty'>User not found</p><p><a class='admin-link' href='/admin/users'>Back</a></p></div>");
+        b.push_str("<div class='admin-panel'><h2 class='admin-panel-title'>");
+        b.push_str(t("User management", zh));
+        b.push_str("</h2><p class='admin-empty'>User not found</p><p><a class='admin-link' href='/admin/users'>Back</a></p></div>");
     } else {
-        b.push_str("<div class='admin-panel' data-testid='admin-user-detail-panel'><nav class='admin-back-nav'><a class='btn btn-o admin-back' href='/admin/users' data-testid='admin-user-back'><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='m12 19-7-7 7-7'/><path d='M19 12H5'/></svg><span>Back</span></a></nav><section class='admin-detail-head'><span class='admin-detail-avatar' id='adminDetailAvatar' aria-hidden='true'>U</span><span class='admin-detail-email' id='adminDetailEmail'></span><span class='badge bs' id='adminDetailStatus'></span><span class='badge bw' id='adminDetailRole'></span></section><section class='admin-detail-fields' id='adminDetailFields'></section><div class='admin-detail-actions'><button class='btn btn-o' type='button' data-testid='admin-detail-toggle' onclick='adminDetailToggle()'>Enable / Disable</button><button class='btn btn-o' type='button' onclick='adminDetailPassword()'>Change password</button><button class='btn btn-d' type='button' onclick='adminDetailDelete()'>Delete</button></div><div class='admin-tabs' role='tablist'><button type='button' role='tab' class='admin-tab active' data-tab='dataset' aria-selected='true' onclick='adminDetailTab(this)'>Dataset</button><button type='button' role='tab' class='admin-tab' data-tab='flow' aria-selected='false' onclick='adminDetailTab(this)'>Agent</button></div><div class='admin-tab-panel' id='adminDetailDatasetPanel'><div class='admin-table-wrap'><table class='admin-table' data-testid='admin-user-datasets'><tbody id='adminUserDatasetRows'></tbody></table></div><div class='admin-pager' data-testid='admin-user-datasets-pager' id='adminUserDatasetPager'></div></div><div class='admin-tab-panel' id='adminDetailFlowPanel' hidden><div class='admin-table-wrap'><table class='admin-table' data-testid='admin-user-agents'><tbody id='adminUserAgentRows'></tbody></table></div><div class='admin-pager' data-testid='admin-user-agents-pager' id='adminUserAgentPager'></div></div></div>");
+        b.push_str("<div class='admin-panel' data-testid='admin-user-detail-panel'><nav class='admin-back-nav'><a class='btn btn-o admin-back' href='/admin/users' data-testid='admin-user-back'><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='m12 19-7-7 7-7'/><path d='M19 12H5'/></svg><span>Back</span></a></nav><section class='admin-detail-head'><span class='admin-detail-avatar' id='adminDetailAvatar' aria-hidden='true'>U</span><span class='admin-detail-email' id='adminDetailEmail'></span><span class='badge bs' id='adminDetailStatus'></span><span class='badge bw' id='adminDetailRole'></span></section><section class='admin-detail-fields' id='adminDetailFields'></section><div class='admin-detail-actions'><button class='btn btn-o' type='button' data-testid='admin-detail-toggle' onclick='adminDetailToggle()'>");
+        b.push_str(t("Enable / Disable", zh));
+        b.push_str("</button><button class='btn btn-o' type='button' onclick='adminDetailPassword()'>Change password</button><button class='btn btn-d' type='button' onclick='adminDetailDelete()'>Delete</button></div><div class='admin-tabs' role='tablist'><button type='button' role='tab' class='admin-tab active' data-tab='dataset' aria-selected='true' onclick='adminDetailTab(this)'>Dataset</button><button type='button' role='tab' class='admin-tab' data-tab='flow' aria-selected='false' onclick='adminDetailTab(this)'>Agent</button></div><div class='admin-tab-panel' id='adminDetailDatasetPanel'><div class='admin-table-wrap'><table class='admin-table' data-testid='admin-user-datasets'><tbody id='adminUserDatasetRows'></tbody></table></div><div class='admin-pager' data-testid='admin-user-datasets-pager' id='adminUserDatasetPager'></div></div><div class='admin-tab-panel' id='adminDetailFlowPanel' hidden><div class='admin-table-wrap'><table class='admin-table' data-testid='admin-user-agents'><tbody id='adminUserAgentRows'></tbody></table></div><div class='admin-pager' data-testid='admin-user-agents-pager' id='adminUserAgentPager'></div></div></div>");
         b.push_str("<script>var ADMIN_DETAIL_USER=");
         b.push_str(&json_script_value(&serde_json::json!(user_id)));
         // Upstream `TableEmpty` renders `common.noResults` when an asset table has
@@ -9141,8 +9275,12 @@ pub async fn skills_page(
         "Index and search reusable skills by name, tags, description, and content.",
         zh,
     ));
-    b.push_str("</p><div class='toolbar' style='display:flex;gap:8px;flex-wrap:wrap;align-items:center'><input id='skillSpace' value='default' placeholder='Space ID' style='max-width:180px'><input id='skillQuery' placeholder='Search skills by meaning...' style='min-width:260px;flex:1' onkeydown='if(event.key===&quot;Enter&quot;)searchSkills()'><button class='btn btn-p' onclick='searchSkills()'>Search</button><button class='btn btn-o' onclick='openSkillModal()'>+ Add Skill</button><button class='btn btn-o' onclick='openSkillConfig()'>⚙ Configure Search</button><button class='btn btn-o' onclick='reindexSkills()'>↻ Reindex All</button></div><p id='skillMeta' style='color:var(--tm);font-size:12px'></p><div id='skillList' class='kb-grid'><p style='color:var(--tm)'>Loading...</p></div>");
-    b.push_str("<div class='modal-overlay' id='skillModal'><div class='modal' style='max-width:680px'><h2>Add Skill</h2><label>Skill ID</label><input id='skillId' placeholder='my-skill'><label>Name</label><input id='skillName' placeholder='My Skill'><label>Folder ID</label><input id='skillFolder' placeholder='optional folder id'><label>Version</label><input id='skillVersion' value='1.0.0'><label>Tags</label><input id='skillTags' placeholder='rag, rust, search'><label>Description</label><textarea id='skillDescription'></textarea><label>Content</label><textarea id='skillContent' style='min-height:160px'></textarea><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-p' onclick='indexSkill()'>Index</button><button class='btn btn-o' onclick='closeSkillModal()'>Cancel</button></div></div></div>");
+    b.push_str("</p><div class='toolbar' style='display:flex;gap:8px;flex-wrap:wrap;align-items:center'><input id='skillSpace' value='default' placeholder='Space ID' style='max-width:180px'><input id='skillQuery' placeholder='Search skills by meaning...' style='min-width:260px;flex:1' onkeydown='if(event.key===&quot;Enter&quot;)searchSkills()'><button class='btn btn-p' onclick='searchSkills()'>Search</button><button class='btn btn-o' onclick='openSkillModal()'>");
+    b.push_str(t("+ Add Skill", zh));
+    b.push_str("</button><button class='btn btn-o' onclick='openSkillConfig()'>⚙ Configure Search</button><button class='btn btn-o' onclick='reindexSkills()'>↻ Reindex All</button></div><p id='skillMeta' style='color:var(--tm);font-size:12px'></p><div id='skillList' class='kb-grid'><p style='color:var(--tm)'>Loading...</p></div>");
+    b.push_str("<div class='modal-overlay' id='skillModal'><div class='modal' style='max-width:680px'><h2>");
+    b.push_str(t("Add Skill", zh));
+    b.push_str("</h2><label>Skill ID</label><input id='skillId' placeholder='my-skill'><label>Name</label><input id='skillName' placeholder='My Skill'><label>Folder ID</label><input id='skillFolder' placeholder='optional folder id'><label>Version</label><input id='skillVersion' value='1.0.0'><label>Tags</label><input id='skillTags' placeholder='rag, rust, search'><label>Description</label><textarea id='skillDescription'></textarea><label>Content</label><textarea id='skillContent' style='min-height:160px'></textarea><div style='display:flex;gap:8px;margin-top:16px'><button class='btn btn-p' onclick='indexSkill()'>Index</button><button class='btn btn-o' onclick='closeSkillModal()'>Cancel</button></div></div></div>");
     b.push_str("<div class='modal-overlay' id='skillConfigModal'><div class='modal' style='max-width:620px'><h2>");
     b.push_str(t("Skill Search Configuration", zh));
     b.push_str("</h2><p class='user-setting-description' style='margin:0 0 12px'>");
@@ -9915,7 +10053,9 @@ pub async fn providers_page(
         b.push_str(t("Check model endpoints", zh));
         b.push_str("</button><div class='endpoint-check-result' id='endpointCheckResult' aria-live='polite'></div></section>");
         b.push_str("<section class='model-providers-column model-providers-right'>");
-        b.push_str("<aside class='card available-models-panel' id='availableModels' data-testid='available-models-section' aria-label='Available models'><h3 class='available-models-title'>Available models</h3><button class='btn btn-o btn-sm provider-add-open' type='button' id='addProvOpen' data-testid='add-provider-open' aria-haspopup='dialog' onclick='showAddProv()'>+ Add Provider</button><div class='provider-picker' id='providerPicker'><button class='provider-picker-trigger' type='button' id='providerPickerTrigger' data-testid='provider-picker-trigger' aria-haspopup='listbox' aria-expanded='false' aria-controls='providerPickerPopover' onclick='toggleProviderPicker()'><span class='provider-picker-label' id='providerPickerLabel'>Select a model provider</span><span class='provider-picker-count badge' id='providerPickerCount'>0</span><span class='provider-picker-chevron' aria-hidden='true'></span></button><div class='provider-picker-popover' id='providerPickerPopover' role='listbox' aria-label='Model providers' hidden><input id='providerSearch' data-testid='model-providers-search' type='search' placeholder='Search' aria-label='Search model providers' oninput='filterAvailableProviders()'><div class='provider-filter-bar' id='providerFilters'><button class='btn btn-o btn-sm provider-chip on' data-filter='' onclick=\"selectProviderFilter('',this)\">All<span id='providerCountAll'></span></button>");
+        b.push_str("<aside class='card available-models-panel' id='availableModels' data-testid='available-models-section' aria-label='Available models'><h3 class='available-models-title'>");
+        b.push_str(t("Available models", zh));
+        b.push_str("</h3><button class='btn btn-o btn-sm provider-add-open' type='button' id='addProvOpen' data-testid='add-provider-open' aria-haspopup='dialog' onclick='showAddProv()'>+ Add Provider</button><div class='provider-picker' id='providerPicker'><button class='provider-picker-trigger' type='button' id='providerPickerTrigger' data-testid='provider-picker-trigger' aria-haspopup='listbox' aria-expanded='false' aria-controls='providerPickerPopover' onclick='toggleProviderPicker()'><span class='provider-picker-label' id='providerPickerLabel'>Select a model provider</span><span class='provider-picker-count badge' id='providerPickerCount'>0</span><span class='provider-picker-chevron' aria-hidden='true'></span></button><div class='provider-picker-popover' id='providerPickerPopover' role='listbox' aria-label='Model providers' hidden><input id='providerSearch' data-testid='model-providers-search' type='search' placeholder='Search' aria-label='Search model providers' oninput='filterAvailableProviders()'><div class='provider-filter-bar' id='providerFilters'><button class='btn btn-o btn-sm provider-chip on' data-filter='' onclick=\"selectProviderFilter('',this)\">All<span id='providerCountAll'></span></button>");
         // Upstream `un-add-model.tsx` orders the tag pills with `orderMap` and
         // labels them with `mapModelKey[tag] || tag`. Both now come from the
         // shared `crate::providers` table rather than a second literal copy.
@@ -10669,7 +10809,7 @@ fn chunk_workbench_header(active: ChunkSection, doc_id: &str, query: &str, zh: b
         segments.push_str("' href='");
         segments.push_str(&html_escape(&section.href(doc_id, query)));
         segments.push_str("'>");
-        segments.push_str(section.label());
+        segments.push_str(t(section.label(), zh));
         segments.push_str("</a>");
     }
     let dataset_href = if query.is_empty() {
@@ -10678,7 +10818,7 @@ fn chunk_workbench_header(active: ChunkSection, doc_id: &str, query: &str, zh: b
         format!("/datasets?{query}")
     };
     let current = if doc_id.is_empty() {
-        active.label().to_string()
+        t(active.label(), zh).to_string()
     } else {
         doc_id.to_string()
     };
@@ -11741,6 +11881,34 @@ pub async fn search_app_detail_page(
 
 #[cfg(test)]
 mod tests {
+    /// The translation table has two arms: an English early-return for namespaced upstream keys, and the
+    /// Chinese arm. Inserting a key into the wrong arm inverts the pages (English rendering Chinese) without
+    /// failing any existing test, so both directions are asserted here.
+    #[test]
+    fn translation_table_points_the_right_way() {
+        for (english, chinese) in [
+            ("Knowledge Graph", "知识图谱"),
+            ("Plain Text", "纯文本"),
+            ("All files", "全部文件"),
+            ("Entity resolution", "实体消解"),
+            // The admin console kept these English through `AdminConsoleSection::label()`, and a layout
+            // test had frozen that leak as expected behaviour.
+            ("User management", "用户管理"),
+            ("Service status", "服务状态"),
+        ] {
+            assert_eq!(
+                t(english, true),
+                chinese,
+                "zh arm missing or wrong for {english:?}"
+            );
+            assert_eq!(
+                t(english, false),
+                english,
+                "the English arm must return the English label for {english:?}"
+            );
+        }
+    }
+
     use super::*;
 
     #[test]
@@ -19011,42 +19179,78 @@ connection: close
     /// straight into a literal fails the suite. Nothing here inspects JavaScript-only strings, and the
     /// audit's scope is stated so it is not mistaken for full coverage.
     #[test]
+    /// An audit of the page markup itself: every user-visible label must go through the translation helper,
+    /// so the English pages and the Chinese pages cannot drift apart.
+    ///
+    /// It reads this very file with `include_str!` and looks for text sitting between `>` and `<` on a line
+    /// that renders markup. A label counts as translated only when **that label** sits inside a `t("..")`
+    /// call — the earlier rule skipped the whole line as soon as any label on it was translated, which hid
+    /// labels injected through JavaScript strings (`<option>All files</option>` stayed English on the
+    /// Chinese pages for exactly that reason).
+    ///
+    /// The ceiling is a measured backlog, not zero: it may only go down. Nothing here inspects strings that
+    /// never reach markup, and the scope is stated so it is not mistaken for full coverage.
+    #[test]
     fn every_page_label_goes_through_the_translation_helper() {
-        const BASELINE: usize = 0;
+        const BACKLOG: usize = 42;
         let source = include_str!("web.rs");
         let mut found: Vec<String> = Vec::new();
         for (index, line) in source.lines().enumerate() {
-            // Only markup that ends up in a page, and only lines that never reach the helper.
             if !line.contains("push_str") && !line.contains("format!(") {
                 continue;
             }
-            if line.contains("json_script_string") || line.contains("t(\"") || line.contains("t(&")
-            {
-                continue;
+            let bytes = line.as_bytes();
+            let mut translated: Vec<(usize, usize)> = Vec::new();
+            let mut cursor = 0;
+            while let Some(found_at) = line[cursor..].find("t(\"") {
+                let literal_start = cursor + found_at + 2;
+                let mut literal_end = literal_start + 1;
+                while literal_end < bytes.len() {
+                    if bytes[literal_end] == b'\\' {
+                        literal_end += 2;
+                        continue;
+                    }
+                    if bytes[literal_end] == b'"' {
+                        break;
+                    }
+                    literal_end += 1;
+                }
+                translated.push((literal_start, literal_end));
+                cursor = literal_end.max(literal_start + 1);
             }
-            let Some(open) = line.find('>') else {
-                continue;
-            };
-            let Some(close) = line[open + 1..].find('<') else {
-                continue;
-            };
-            let text = &line[open + 1..open + 1 + close];
-            let words = text
-                .split_whitespace()
-                .filter(|word| {
-                    word.len() >= 2
-                        && word
-                            .chars()
-                            .all(|character| character.is_ascii_alphabetic())
-                })
-                .count();
-            if words >= 2 && text.trim().len() >= 6 && !text.contains('{') {
-                found.push(format!("line {}: {}", index + 1, text.trim()));
+            let mut search_from = 0;
+            while let Some(open) = line[search_from..].find('>') {
+                let open = search_from + open;
+                let Some(close_offset) = line[open + 1..].find('<') else {
+                    break;
+                };
+                let close = open + 1 + close_offset;
+                let text = line[open + 1..close].trim();
+                search_from = close.max(open + 1);
+                let words = text
+                    .split_whitespace()
+                    .filter(|word| {
+                        word.len() >= 2
+                            && word
+                                .chars()
+                                .all(|character| character.is_ascii_alphabetic())
+                    })
+                    .count();
+                if words < 2 || text.len() < 6 || text.contains('{') || text.contains('\'') {
+                    continue;
+                }
+                if translated.iter().any(|(literal_start, literal_end)| {
+                    open + 1 >= *literal_start && open + 1 < *literal_end
+                }) {
+                    continue;
+                }
+                found.push(format!("line {}: {}", index + 1, text));
             }
         }
         assert!(
-            found.len() <= BASELINE,
-            "untranslated page labels grew from {BASELINE} to {}; route each new label through t(..):\n{}",
+            found.len() <= BACKLOG,
+            "untranslated page labels grew past the recorded backlog of {BACKLOG} to {}; route each new \
+             label through t(..) or lower the backlog with the rest of the translation:\n{}",
             found.len(),
             found.join("\n")
         );
@@ -19405,8 +19609,10 @@ connection: close
             admin_services_page(State(state.clone()), page_req("/admin/services", "zh-CN")).await,
         )
         .await;
-        assert!(zh_services.contains(">Service status</h2>"));
-        assert!(zh_services.contains(">User management</span>"));
+        // These two headings used to be asserted in English on the Chinese page, which froze the
+        // leak this release fixes; they now have to be translated like every other label.
+        assert!(zh_services.contains(">服务状态</h2>"));
+        assert!(zh_services.contains(">用户管理</span>"));
         assert!(zh_services.contains(">登出</button>"));
 
         // User detail keeps the upstream account summary, the two asset tabs and

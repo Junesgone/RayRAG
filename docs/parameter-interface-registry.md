@@ -947,3 +947,15 @@ RAGFlow 把麦克风放在**聊天输入区**；RayRAG 目前把这个能力放�
 | **严格口径**（未强制，仅记录） | 同一行内**逐标签**判断：任何 `>文案<`，含通过 JS 字符串注入 innerHTML / `<option>` 的文案 | **59** 处待办 |
 
 严格口径下待翻译的 59 处集中在：JS 注入的 `<option>` 列表（如 `All files`）、innerHTML 片段（`No graph has been built for this dataset yet.`、`Building... (LLM entity extraction)`、`Load failed`）、以及配置项文案（`Naive (token-based)`、`Generation scope`、`Entity resolution`、`Community reports`、`Empty canvas`、`No versions yet`、`Local sources` 等）。**中文页面上这些仍是英文**（已实机确认 `<option>All files</option>` 不随语言切换）。下一轮按此清单推进，并把强制口径逐步收紧到严格口径。
+
+## i18n: page-label contract (0.29.0)
+
+| Item | Value |
+| --- | --- |
+| Translator | `web::t(key, zh)` — two match arms: `if !zh { return match .. }` (English early-return, ends with `other => other,`) then the Chinese table (ends with `_ => k,`) |
+| Correct insertion anchor for a Chinese key | the **last** `_ => k,` inside `t()`, immediately before the closing brace and `fn detect_lang` |
+| Direction guard | `web::tests::translation_table_points_the_right_way` — asserts `t(label, true) == zh` and `t(label, false) == label`; proven to fail when a key is missing or lands in the wrong arm |
+| Page-label audit | `web::tests::every_page_label_goes_through_the_translation_helper` — per-label rule; ceiling `BACKLOG = 42` (measured), may only go down |
+| Audit scope | lines that build markup (`push_str` / `format!`); strings that never reach markup are outside it |
+| JS-injected labels | translated by splitting the literal at the label boundary into `prefix + t(label, zh) + suffix` — output bytes are identical, so the page structure cannot change |
+| Admin console labels | `AdminConsoleSection::label()` returns the upstream English label; **callers must pass it through `t()`** |

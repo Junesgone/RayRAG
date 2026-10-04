@@ -2,6 +2,44 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.29.0] - 2026-10-04
+
+### The labels that only JavaScript could see
+
+The previous audit walked the served markup line by line and accepted a line as soon as *any* label on
+it went through the translation helper. That rule was too generous: `<option>All files</option>` sat on
+a line that already translated something else, so it stayed English on the Chinese pages, and so did
+every label injected through an `innerHTML` fragment or a JavaScript string.
+
+Two things changed.
+
+**The audit now judges one label at a time.** A label counts as translated only when that very label
+sits inside a `t("..")` call. Measured against the code as it stood, the stricter rule found **69**
+untranslated labels — the honest number the looser rule had been hiding (it reported zero).
+
+**The translator now has a direction test.** `t()` holds two match arms: an English early-return for
+namespaced upstream keys, and the Chinese table. A key added to the wrong arm inverts the pages —
+English rendering Chinese — without failing any existing test, which is exactly what happened while
+writing this release. `translation_table_points_the_right_way` now asserts both directions
+(`t("Knowledge Graph", true) == "知识图谱"` and `t("Knowledge Graph", false) == "Knowledge Graph"`); it
+was run before the keys existed and failed as intended.
+
+With the guard in place, 60 keys were added to the Chinese arm and 27 markup sites were split so the
+labels inside JavaScript strings pass through the translator. The stricter audit measures **42**
+remaining untranslated labels, which is the ceiling this release enforces; it may only go down. The
+audit's scope is unchanged and stated in the test: it inspects lines that build markup, so strings that
+never reach markup are outside it.
+
+### A test that had frozen the bug
+
+Tightening the rule surfaced something worse than a missing translation: the admin console layout test
+asserted that the *Chinese* admin page contains `>Service status</h2>` and `>User management</span>` — in
+English. The labels come from `AdminConsoleSection::label()`, which had been left untranslated on the
+grounds that upstream's `zh.ts` omits the `admin.*` keys, and the test recorded that as correct. The
+labels now go through the translator at every call site, the assertions check the Chinese text, and the
+direction test covers both admin labels. A green suite is only as meaningful as the expectations inside
+it.
+
 ## [0.28.0] - 2026-10-04
 
 ### 49 page labels that never reached the translator
