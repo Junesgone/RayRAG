@@ -2350,5 +2350,123 @@
         }
       ]
     }
+  ],
+  "FEISHU": [
+    {
+      "label": "App ID",
+      "name": "config.credentials.app_id",
+      "type": "Text",
+      "required": true
+    },
+    {
+      "label": "App Secret",
+      "name": "config.credentials.app_secret",
+      "type": "Password",
+      "required": true
+    },
+    {
+      "label": "Base URL",
+      "name": "config.base_url",
+      "type": "Text",
+      "required": false,
+      "placeholder": "https://open.feishu.cn"
+    },
+    {
+      "label": "Folder Token",
+      "name": "config.folder_id",
+      "type": "Text",
+      "required": false
+    }
+  ],
+  "DINGTALK": [
+    {
+      "label": "App Key",
+      "name": "config.credentials.app_key",
+      "type": "Text",
+      "required": true
+    },
+    {
+      "label": "App Secret",
+      "name": "config.credentials.app_secret",
+      "type": "Password",
+      "required": true
+    },
+    {
+      "label": "Base URL",
+      "name": "config.base_url",
+      "type": "Text",
+      "required": false,
+      "placeholder": "https://api.dingtalk.com"
+    },
+    {
+      "label": "Space Id",
+      "name": "config.folder_id",
+      "type": "Text",
+      "required": false
+    }
+  ],
+  "TENCENT_DOCS": [
+    {
+      "label": "Access Token",
+      "name": "config.credentials.access_token",
+      "type": "Password",
+      "required": true
+    },
+    {
+      "label": "Base URL",
+      "name": "config.base_url",
+      "type": "Text",
+      "required": false,
+      "placeholder": "https://docs.qq.com"
+    },
+    {
+      "label": "Folder Id",
+      "name": "config.folder_id",
+      "type": "Text",
+      "required": false
+    }
+  ],
+  "WECHAT_DOCS": [
+    {
+      "label": "Access Token",
+      "name": "config.credentials.access_token",
+      "type": "Password",
+      "required": true
+    },
+    {
+      "label": "Base URL",
+      "name": "config.base_url",
+      "type": "Text",
+      "required": false,
+      "placeholder": "https://doc.weixin.qq.com"
+    },
+    {
+      "label": "Folder Id",
+      "name": "config.folder_id",
+      "type": "Text",
+      "required": false
+    }
+  ],
+  "YUQUE": [
+    {
+      "label": "Access Token",
+      "name": "config.credentials.access_token",
+      "type": "Password",
+      "required": true
+    },
+    {
+      "label": "Namespace",
+      "name": "config.folder_id",
+      "type": "Text",
+      "required": true,
+      "placeholder": "user/repo_slug"
+    },
+    {
+      "label": "Base URL",
+      "name": "config.base_url",
+      "type": "Text",
+      "required": false,
+      "placeholder": "https://www.yuque.com"
+    }
   ]
 }

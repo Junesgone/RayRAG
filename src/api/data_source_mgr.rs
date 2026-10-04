@@ -240,6 +240,9 @@ fn apply_config_mapping(record: &mut DataSourceRecord, config: &serde_json::Valu
         "config.moodle_url",
         "config.wiki_base",
         "config.credentials.instance_url",
+        // The generic key the schema uses for REST-style sources, and the one the connector hints name.
+        "config.url",
+        "config.credentials.base_url",
     ]
     .iter()
     .map(|key| get(key))
@@ -266,8 +269,36 @@ fn apply_config_mapping(record: &mut DataSourceRecord, config: &serde_json::Valu
             record.target = target;
         }
     }
-    let token = get("config.credentials.gitlab_access_token");
-    if !token.is_empty() {
+    // Credentials live under `config.credentials.*`, and the schema names them per source. Reading only
+    // GitLab's key left every other schema-driven source with an empty token: the record was created and the
+    // connector then had nothing to authenticate with. The app-id/app-secret pair is joined the way the
+    // Feishu, DingTalk and GitLab connectors split it (`id:secret`); otherwise the first well-known key wins.
+    let app_id = [
+        "config.credentials.app_id",
+        "config.credentials.app_key",
+        "config.credentials.client_id",
+    ]
+    .iter()
+    .map(|key| get(key))
+    .find(|value| !value.is_empty());
+    let app_secret = get("config.credentials.app_secret");
+    let token = match (app_id, app_secret.is_empty()) {
+        (Some(id), false) => Some(format!("{id}:{app_secret}")),
+        _ => [
+            "config.credentials.gitlab_access_token",
+            "config.credentials.token",
+            "config.credentials.access_token",
+            "config.credentials.api_token",
+            "config.credentials.api_key",
+            "config.credentials.notion_integration_token",
+            "config.credentials.secret_key",
+            "config.token",
+        ]
+        .iter()
+        .map(|key| get(key))
+        .find(|value| !value.is_empty()),
+    };
+    if let Some(token) = token {
         record.token = token;
     }
     record.include_merge_requests = get("config.include_mrs") == "true";
@@ -535,8 +566,10 @@ pub async fn create_data_source(
             "name is required",
         ));
     }
-    // Supported kinds: gitlab (legacy) + connector registry kinds.
-    if !is_supported_kind(&body.kind) {
+    // Supported kinds: gitlab (legacy) + connector registry kinds. The kind is normalised first so the
+    // spellings the UI renders and the canonical registry kinds both resolve.
+    let kind = normalize_kind(&body.kind);
+    if !is_supported_kind(&kind) {
         return Err(data_source_error(
             StatusCode::BAD_REQUEST,
             format!(
@@ -550,7 +583,7 @@ pub async fn create_data_source(
     let mut record = DataSourceRecord {
         id,
         name,
-        kind: body.kind,
+        kind: kind.clone(),
         url,
         token: body.token,
         target,
@@ -1112,7 +1145,24 @@ pub async fn list_data_source_files(
     })))
 }
 
-fn is_supported_kind(kind: &str) -> bool {
+/// Canonicalises a data source kind.
+///
+/// The UI renders one card per entry of its own schema catalogue, whose keys are upper-cased
+/// (`SALESFORCE`, `GOOGLE_CLOUD_STORAGE`, `OCI_STORAGE`), while the connector registry and this API speak
+/// lower-case kinds (`salesforce`, `gcs`, `oracle`). Every card on the data-source page therefore posted a
+/// type the API rejected, so the whole add flow failed. Normalising here — one place, used for both the
+/// validation and the stored record — fixes the page without a second naming convention on the client.
+pub(crate) fn normalize_kind(raw: &str) -> String {
+    let lowered = raw.trim().to_ascii_lowercase();
+    match lowered.as_str() {
+        // The UI's display names for services the registry names differently.
+        "google_cloud_storage" => "gcs".to_string(),
+        "oci_storage" => "oracle".to_string(),
+        _ => lowered,
+    }
+}
+
+pub(crate) fn is_supported_kind(kind: &str) -> bool {
     if kind == "gitlab" {
         return true;
     }

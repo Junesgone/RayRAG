@@ -2,6 +2,59 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.38.0] - 2026-10-04
+
+### Every connector card on the data-source page was rejected by the API
+
+Round 120 stopped at "the modal opens" and round 121 counted the cards. This round submitted one, and the
+whole flow turned out to be broken:
+
+```
+POST /api/v1/data_sources  {"type":"SALESFORCE"}      -> 400 unsupported data source type: SALESFORCE
+POST /api/v1/data_sources  {"type":"GOOGLE_CLOUD_STORAGE"} -> 400 unsupported
+POST /api/v1/data_sources  {"type":"OCI_STORAGE"}     -> 400 unsupported
+POST /api/v1/data_sources  {"type":"gitlab"}          -> 400 name/url/target are required  (accepted)
+```
+
+The page renders one card per entry of its own schema catalogue, whose keys are **upper-cased**
+(`SALESFORCE`), while the connector registry and the API speak lower-case kinds (`salesforce`). Every card
+posted a type the API rejected, so `+ Add` → fill in → `Confirm` could not succeed for any of them. Two
+spellings also named services differently from the registry (`GOOGLE_CLOUD_STORAGE` → `gcs`,
+`OCI_STORAGE` → `oracle`).
+
+The kind is now normalised in one place, used for both the validation and the stored record, so the page and
+the API agree without a second naming convention on the client.
+
+### Credentials that never reached the connector
+
+Fixing the type exposed the next step of the same flow. For a config-driven create the record's `url` came
+from a fixed list of seven keys and its `token` from exactly one — GitLab's. Every other source was stored
+with an empty token: the record appeared, and the connector had nothing to authenticate with. The
+derivation now also reads `config.url`, and builds the token from the `app_id`/`app_key`/`client_id` plus
+`app_secret` pair (joined the way the Feishu, DingTalk and GitLab connectors split it) or from the
+well-known single-token keys.
+
+### Five connectors had no card at all
+
+A new invariant test — every registry kind must be reachable from the page, and every card must be a kind the
+API accepts — failed immediately with the five mainland-China connectors this project adds:
+
+`feishu`, `dingtalk`, `tencent_docs`, `wechat_docs`, `yuque`
+
+They were registered and buildable, but no user could add one. Each now has a card with the fields its
+connector actually requires, and the count assertion that had frozen the schema at 35 entries was replaced by
+that property.
+
+### Verification
+
+- Full suite, deployment and layout suites re-run against the released build.
+- The previously rejected spellings are re-tested against the running container, and the new cards are counted
+  in a browser.
+
+### Upgrading
+
+Nothing to do — same Compose file, same `rayrag` service. PostgreSQL and zvec remain the defaults in both the
+Docker and the plain-Linux deployment.
 ## [0.37.0] - 2026-10-04
 
 ### `Link data source` opens in place, as upstream does

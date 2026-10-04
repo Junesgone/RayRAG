@@ -356,7 +356,28 @@ mod tests {
     fn embedded_schema_covers_all_upstream_sources_with_valid_paths() {
         let parsed: HashMap<String, Vec<FormFieldSpec>> =
             serde_json::from_str(SCHEMA_JSON).expect("schema parses");
-        assert_eq!(parsed.len(), 35, "all fixed upstream sources are mapped");
+        // Upstream's fixed source list, plus the mainland-China connectors this project adds (Feishu,
+        // DingTalk, Tencent Docs, WeChat Docs, Yuque). The count is a canary that a source disappeared; the
+        // real coverage property is asserted in `ui_schema_coverage_tests` below, which checks every kind the
+        // registry can build against the cards the page renders.
+        // Every connector the registry can build must have a form schema, except the ones the page reaches
+        // through a dedicated control rather than a card. The converse (no card without a connector) is
+        // asserted in `ui_schema_coverage_tests` below.
+        let dedicated_control = ["local"];
+        let uncovered: Vec<&str> = crate::connectors::ConnectorRegistry::kinds()
+            .iter()
+            .map(|info| info.kind)
+            .filter(|kind| !dedicated_control.contains(kind))
+            .filter(|kind| {
+                !parsed
+                    .keys()
+                    .any(|key| crate::api::data_source_mgr::normalize_kind(key) == *kind)
+            })
+            .collect();
+        assert!(
+            uncovered.is_empty(),
+            "these connectors have no form schema, so the page cannot create them: {uncovered:?}"
+        );
         for (source, fields) in &parsed {
             assert!(!fields.is_empty(), "{source} has fields");
             for field in fields {
@@ -936,6 +957,63 @@ mod tests {
         assert!(
             field.tooltip_zh.is_some(),
             "zh tooltip present for CN users"
+        );
+    }
+}
+
+#[cfg(test)]
+mod ui_schema_coverage_tests {
+    use super::schema_for_ui;
+    use crate::api::data_source_mgr::{is_supported_kind, normalize_kind};
+
+    /// Every connector the registry can build must be reachable from the data-source page, and every card the
+    /// page renders must be a connector the API accepts.
+    ///
+    /// This is the invariant that was silently broken: the page renders one card per schema key, the keys are
+    /// upper-cased (`SALESFORCE`, `GOOGLE_CLOUD_STORAGE`, `OCI_STORAGE`), and the API compared them verbatim
+    /// against the lower-case registry kinds — so **every** card posted a type the API rejected. A test that
+    /// only opened the modal could not see it; a test that maps each rendered key through the same path the
+    /// request takes can.
+    #[test]
+    fn every_rendered_card_is_accepted_and_every_connector_has_a_card() {
+        let schema = schema_for_ui();
+        let keys: Vec<String> = schema
+            .as_object()
+            .expect("the UI schema is an object keyed by source name")
+            .keys()
+            .cloned()
+            .collect();
+        assert!(
+            !keys.is_empty(),
+            "the data-source page would render no cards at all"
+        );
+
+        // Every rendered card must survive the request path.
+        for key in &keys {
+            let normalized = normalize_kind(key);
+            assert!(
+                is_supported_kind(&normalized),
+                "the page renders a card `{key}` that normalises to `{normalized}`, which the API rejects"
+            );
+        }
+
+        // Every registry kind must have a card, except the ones the page reaches through another control.
+        let via_other_control = ["local", "webdav", "blob", "azure_blob"];
+        let mut missing: Vec<&str> = Vec::new();
+        for info in crate::connectors::ConnectorRegistry::kinds() {
+            let kind = info.kind;
+            if via_other_control.contains(&kind) {
+                continue;
+            }
+            let rendered = keys.iter().any(|key| normalize_kind(key) == kind);
+            if !rendered {
+                missing.push(kind);
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "these connectors can be built but have no card on the data-source page, so no user can add \
+             them: {missing:?}"
         );
     }
 }
