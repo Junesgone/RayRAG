@@ -2,6 +2,42 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.35.0] - 2026-10-04
+
+### 0.34.0 broke the pager, and the test did not notice
+
+The previous release replaced `LABELS.total + ' ' + total` with a shared helper. The match was a plain
+substring, so it also hit the **prefixed** label objects used by two panels:
+
+| before | after |
+| --- | --- |
+| `FILE_LABELS.total + ' ' + total` | `FILE_totalLabel(total)` |
+| `DS_LABELS.total + ' ' + total` | `DS_totalLabel(total)` |
+
+Neither name is defined on any page, so `renderFilePagination` threw
+`ReferenceError: FILE_totalLabel is not defined` on every load. The function builds the pager's footer, so it
+died before writing anything and the footer stayed empty: **the pager rendered nothing at all**, on the file
+list and the dataset list. The release's own verification missed it because the assertion looked for
+`totalLabel(total)`, which `FILE_totalLabel(total)` contains as a substring.
+
+Both call sites now use the shared helper, and three defences replace the one that failed:
+
+1. The page test asserts the helper is called **without** a prefix and that the page actually **defines** the
+   helpers it calls.
+2. A source-level guard scans the lines that emit markup or JavaScript and forbids any `_totalLabel` or
+   `_psLabel` identifier — the exact shape the mangling produced.
+3. The guard was proven by reintroducing the bug and watching it fail.
+
+The rendered pager is read back from a browser in this release, the check that had been outstanding.
+
+### Verification
+
+- Full suite, deployment and layout suites re-run against the released build.
+
+### Upgrading
+
+Nothing to do — same Compose file, same `rayrag` service. PostgreSQL and zvec remain the defaults in both the
+Docker and the plain-Linux deployment.
 ## [0.34.0] - 2026-10-04
 
 ### The pager's total, the other half of the same component
