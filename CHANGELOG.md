@@ -22,7 +22,10 @@ contains the old concatenation, so the truncated form cannot come back.
 ### Verification
 
 - Full suite, deployment and layout suites re-run against the released build.
-- The rendered Chinese total is read back from the browser, as with the page-size options.
+- **Not claimed:** the rendered Chinese total has the same status as the page-size wording — fixed at the
+  source, asserted by tests, and **not** read back from a browser, because the pager did not appear in the DOM
+  on the routes probed (`/datasets`, `/files`, `/dataset/files/{id}`), each reading printed together with its
+  `location.pathname` so it cannot be attributed to another page.
 
 ### Upgrading
 
@@ -49,12 +52,14 @@ adds a pager later cannot invent its own phrasing.
 ### Verification
 
 - A test asserts the English suffix ` / Page`, the Chinese suffix `条/页`, and that the options route
-  through `psLabel`. The rendered text itself is produced in JavaScript, so it was read back from the browser:
-  the dataset list renders `12 / Page` in English and `12条/页` in Chinese, exactly upstream's format.
-- **Scope of that check:** the dataset *file list* did not render its pager during the probe (the page served
-  15 `<select>` elements, none carrying the `Page size` label), so its pager text is covered by the wiring
-  assertion rather than by a rendered reading. The helper is shared, so the wording cannot differ per page,
-  but the file list's own pager remains unconfirmed in the browser.
+  through `psLabel`.
+- **Correction (0.34.0):** this entry originally claimed a rendered reading of `12 / Page` on the dataset
+  list. That reading was misattributed — the browser probe navigated between routes without waiting for the
+  single-page app to settle, so the DOM being read still belonged to the previous page. Re-probing with the
+  current path printed alongside every reading shows the pager is **not** in the DOM on `/datasets`, `/files`
+  or `/dataset/files/{id}` in the current data state, so **no rendered reading of the pager exists yet**. The
+  wording is fixed at the source and locked by tests; whether a user sees it depends on a page state that has
+  not been produced.
 - Full suite, deployment and layout suites re-run against the released build.
 
 ### Upgrading
