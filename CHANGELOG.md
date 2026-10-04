@@ -41,9 +41,16 @@ API accepts — failed immediately with the five mainland-China connectors this 
 
 `feishu`, `dingtalk`, `tencent_docs`, `wechat_docs`, `yuque`
 
-They were registered and buildable, but no user could add one. Each now has a card with the fields its
-connector actually requires, and the count assertion that had frozen the schema at 35 entries was replaced by
-that property.
+They were registered and buildable, but no user could add one. Each now has a schema entry with the fields its
+connector actually requires — verified by opening the Yuque entry in a browser, which renders its four fields
+(`Access Token *`, `Namespace *`, `Base URL`) under the title `Create your 语雀 (Yuque) connector` — and the
+assertion that had frozen the schema at 35 entries was replaced by that property.
+
+**Stated as open, not as solved:** the page renders **36** `+ Add` buttons against **40** schema entries, and
+this round did not establish which four lack a button. The invariant test checks the schema against the
+registry in both directions; it does **not** yet check the rendered buttons against the schema, which is the
+measurement that would close this. Round 121's 36 came from the same button count, so the number has not moved
+even though the schema grew by five.
 
 ### Verification
 
