@@ -2,6 +2,40 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.37.0] - 2026-10-04
+
+### `Link data source` opens in place, as upstream does
+
+Round 120 traversed the button added in 0.32.0 and found a fidelity gap: upstream opens the connector picker
+**in place** as a modal, while RayRAG **navigated away** to `/user-setting/data-source`. That is now an
+in-place modal on the dataset configuration page, with upstream's control shape:
+
+- Title `Link data source`, a one-line explanation, a connector picker, and `Cancel` / `Confirm`.
+- The picker is filled from the **same registry** the data-source page renders
+  (`ConnectorRegistry::kinds()`), so the two surfaces cannot drift apart: 36 connectors, Salesforce first.
+- `Confirm` continues to the data-source page with the dataset and the chosen connector
+  (`?dataset=…&kind=…`), so the existing flow is preserved; `Cancel` closes the modal without leaving the page.
+
+The test asserts the button opens the modal rather than navigating, that the modal and its handlers exist,
+that `Cancel` / `Confirm` are present, that the connector list is rendered, and that the Chinese modal is
+translated. It was proven by restoring the navigation and watching it fail.
+
+### A translation gap this surfaced
+
+`Add data source` had **no Chinese translation**, which is why the round-120 traversal saw that English title on
+a Chinese page. Both it and the new explanatory line now have Chinese values, and because the key is shared,
+the data-source page's own modal is fixed by the same change.
+
+### Verification
+
+- Full suite, deployment and layout suites re-run against the released build.
+- The modal is clicked through in a browser: it opens in place, `Cancel` closes it, `Confirm` navigates with
+  the chosen connector, **0 page errors**.
+
+### Upgrading
+
+Nothing to do — same Compose file, same `rayrag` service. PostgreSQL and zvec remain the defaults in both the
+Docker and the plain-Linux deployment.
 ## [0.36.0] - 2026-10-04
 
 ### Proving the silent-failure class is gone, and clicking through the data-source page

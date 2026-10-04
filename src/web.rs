@@ -559,6 +559,8 @@ fn t(k: &str, zh: bool) -> &str {
         "You are a helpful AI assistant. Use the context to answer questions." => {
             "你是一个乐于助人的 AI 助手，请根据上下文回答问题。"
         }
+        "Add data source" => "添加数据源",
+        "Connectors sync their content into this dataset." => "连接器会将其内容同步到该知识库。",
         _ => k,
     }
 }
@@ -3303,10 +3305,24 @@ pub async fn dataset_page(
     b.push_str("</th><th></th></tr></thead><tbody id='dsTagRows'></tbody></table><p id='dsTagEmpty' class='user-setting-description' hidden>");
     b.push_str(t("No data", zh));
     b.push_str("</p></div><p id='dsTagStatus' class='provider-instance-status' aria-live='polite'></p></section></td></tr>");
+    // The connector list comes from the same registry the data-source page renders, so the two surfaces
+    // cannot drift apart.
+    let connector_options: String = crate::connectors::ConnectorRegistry::kinds().iter().fold(
+        String::new(),
+        |mut acc, info| {
+            acc.push_str("<option value='");
+            acc.push_str(&html_escape(info.kind));
+            acc.push_str("'>");
+            acc.push_str(&html_escape(info.label));
+            acc.push_str("</option>");
+            acc
+        },
+    );
+
     b.push_str("<tr><td>");
     b.push_str(t("Link data source", zh));
     b.push_str(
-        "</td><td><button class='btn btn-o' id='cfgLinkDataSource' data-testid='dataset-link-data-source' onclick='location.href=\"/user-setting/data-source?dataset=\"+encodeURIComponent(kbId)'>",
+        "</td><td><button class='btn btn-o' id='cfgLinkDataSource' data-testid='dataset-link-data-source' onclick='openLinkDataSource()'>",
     );
     b.push_str(t("Link data source", zh));
     b.push_str("</button></td></tr>");
@@ -3871,6 +3887,36 @@ document.getElementById('dsSkillDeleteAll').addEventListener('click',function(){
 load();
 })();
 </script>"##;
+    // Upstream opens `Link data source` as a modal on the dataset configuration page rather than leaving it.
+    // RayRAG navigated away to the data-source page; this modal restores the in-place interaction, keeps the
+    // connector list, and uses upstream's `Cancel` / `Confirm` control shape.
+    b.push_str("<div class='modal' id='linkDataSourceModal' data-testid='dataset-link-data-source-modal' role='dialog' aria-modal='true' aria-labelledby='linkDataSourceTitle' style='display:none'>");
+    b.push_str("<div class='modal-body' style='max-width:520px'><h3 id='linkDataSourceTitle' style='margin:0 0 4px;font-size:16px'>");
+    b.push_str(t("Link data source", zh));
+    b.push_str("</h3><p style='margin:0 0 12px;color:var(--tx2);font-size:13px'>");
+    b.push_str(t("Connectors sync their content into this dataset.", zh));
+    b.push_str("</p><label style='display:block;font-size:13px;margin-bottom:4px' for='linkDataSourceKind'>");
+    b.push_str(t("Add data source", zh));
+    b.push_str("</label><select id='linkDataSourceKind' style='width:100%' aria-label='");
+    b.push_str(t("Add data source", zh));
+    b.push_str("'>");
+    b.push_str(&connector_options);
+    b.push_str(
+        "</select><div style='display:flex;gap:8px;justify-content:flex-end;margin-top:16px'>",
+    );
+    b.push_str("<button type='button' class='btn btn-o' data-testid='dataset-link-data-source-cancel' onclick='closeLinkDataSource()'>");
+    b.push_str(t("Cancel", zh));
+    b.push_str("</button><button type='button' class='btn' data-testid='dataset-link-data-source-confirm' onclick='confirmLinkDataSource()'>");
+    b.push_str(t("Confirm", zh));
+    b.push_str("</button></div></div></div><script>");
+    b.push_str("function openLinkDataSource(){var m=document.getElementById('linkDataSourceModal');if(m)m.style.display='flex'}");
+    b.push_str("function closeLinkDataSource(){var m=document.getElementById('linkDataSourceModal');if(m)m.style.display='none'}");
+    b.push_str(
+        "function confirmLinkDataSource(){var s=document.getElementById('linkDataSourceKind');",
+    );
+    b.push_str("var kind=s?s.value:'';location.href='/user-setting/data-source?dataset='+encodeURIComponent(kbId)+'&kind='+encodeURIComponent(kind)}");
+    b.push_str("</script>");
+
     let skill_card = [
         ("@TITLE@", t("Compiled skills", zh).to_string()),
         (
@@ -17870,6 +17916,35 @@ connection: close
         assert!(
             !zh.contains(">Add file</button>") && !zh.contains(">Link data source</button>"),
             "the Chinese page must not fall back to the English labels"
+        );
+
+        // `Link data source` opens its connector modal in place, as upstream does, instead of navigating
+        // away. The modal keeps upstream's `Cancel` / `Confirm` control shape and the connector list that
+        // the data-source page renders, so the two surfaces cannot drift apart.
+        assert!(
+            en.contains("onclick='openLinkDataSource()'")
+                && !en.contains("onclick='location.href=\"/user-setting/data-source"),
+            "the English button must open the modal in place rather than navigating away"
+        );
+        assert!(
+            en.contains("id='linkDataSourceModal'")
+                && en.contains("data-testid='dataset-link-data-source-confirm'")
+                && en.contains("function confirmLinkDataSource()"),
+            "the English page must render the modal and its confirm handler"
+        );
+        assert!(
+            en.contains(">Cancel</button>") && en.contains(">Confirm</button>"),
+            "the modal must carry upstream's Cancel and Confirm controls"
+        );
+        assert!(
+            en.contains("<option value='salesforce'>Salesforce</option>"),
+            "the modal must list the connectors the data-source page renders"
+        );
+        assert!(
+            zh.contains(">取消</button>")
+                && zh.contains(">确定</button>")
+                && zh.contains("添加数据源"),
+            "the Chinese modal must be translated, not fall back to English"
         );
     }
 
