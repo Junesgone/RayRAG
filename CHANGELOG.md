@@ -23,6 +23,11 @@ The five had fields but no card, which is exactly the 36-vs-40 gap left open in 
 cards plus the local-folder control is the 36 buttons. Each now has a card and a self-contained 24×24 icon, so
 no external asset is fetched.
 
+Confirmed in a browser after deploying: `DS_SOURCE_INFO` holds **40** entries with all five new ones present,
+and the page renders **41** `+ Add` buttons — 40 cards plus the local-folder control, the arithmetic that
+explains the 36. Opening the Yuque card shows its four fields (`Name`, `Access Token *`, `Namespace *`,
+`Base URL`) under the title `Create your Yuque connector`, with **0 page errors**.
+
 The invariant test now spans all three lists:
 
 - every card must normalise to a kind the API accepts (the 0.38.0 failure mode);
