@@ -25,12 +25,20 @@ same silent failure for `Test`, `Save`, `Sync now` and `Disconnect`, which share
 
 ### Verification
 
-- 2269 tests passed, 0 failed, 27 ignored.
+- 2268 tests passed, 0 failed, 27 ignored.
 - New behaviour test: the helper's own source, extracted from the rendered page, is executed in node against a
   stubbed `fetch` for four responses — JSON success, JSON error, plain-text 502 and an empty 500 — asserting that
   none rejects and that the reason survives as the message. Proven by restoring the original helper: the test
   fails; with the fix it passes.
-- Recorded in the repository's operations ledger.
+- Re-walked in the browser after the fix, same source, Chinese page:
+
+| | before | after |
+| --- | --- | --- |
+| label | `Testing…` forever | `Test failed: connect failed: webdav: probe request failed: … Connection refused` |
+| styling | neutral | error colour (`var(--d)`) |
+| console | `Uncaught (in promise) SyntaxError: Unexpected token 'c'` | no page errors |
+
+  The `FAIL` row with the same reason was already accumulating in the log table underneath, before and after.
 
 ### Upgrading
 
