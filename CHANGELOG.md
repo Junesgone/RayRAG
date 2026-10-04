@@ -2,6 +2,68 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.43.0] - 2026-10-04
+
+### The create path refused a configuration the update path accepted
+
+0.40.0 taught the create path to reject a configuration the connector cannot use — an `s3` source with no
+bucket, a `feishu` source with no token — because such a record is stored happily and only fails later, at sync
+time. That rule was never applied to updates:
+
+```
+PATCH /api/v1/data_sources/{id}   {"target": ""}    -> 200, code 0, record now unusable
+```
+
+Clearing one field in the detail form (or with one API call) produced exactly the record create exists to
+prevent. The same check now runs on the record an update would store, naming the field and the kind:
+
+```
+400  target is required for s3
+```
+
+It only runs when the request touches a credential field, so renaming a record that predates the rule keeps
+working.
+
+### The stricter rule immediately found a second bug: two-field credentials were never saved
+
+The new check refused a test patch that supplied WebDAV's `credentials.username` / `credentials.password`:
+
+```
+400  token is required for webdav
+```
+
+That refusal was correct, and it exposed why: the form collects **two** fields, the connector authenticates with
+one `user:secret` string, and nothing was folding them together. The pair stayed in `extra`, `record.token`
+stayed empty, the save reported success, and the source could never connect. Walking the detail form in a browser
+would have looked like it worked.
+
+Four pairs now map to the string their connector expects:
+
+| form fields | token | connector |
+| --- | --- | --- |
+| `credentials.username` + `credentials.password` | `user:secret` | WebDAV |
+| `credentials.aws_access_key_id` + `aws_secret_access_key` | `key:secret` | S3, GCS, Oracle, R2 |
+| `credentials.confluence_username` + `confluence_access_token` | `email:api_token` | Confluence |
+| `credentials.account_name` + `account_key` | `name:key` | Azure Blob |
+
+Both halves must be present, so half a pair never becomes a fabricated `user:` — the single-key list is tried
+instead.
+
+### Verification
+
+- 2270 tests passed, 0 failed, 27 ignored.
+- The new test pins all three behaviours: clearing a required field is refused *and* leaves the stored record
+  untouched, a rename of the same record still succeeds, and completing the configuration is accepted. Proven by
+  removing the rule: the update returns `code 0` and the test fails.
+- A second test pins all four pairs, asserts that half a pair falls through to the single-key list, and fails
+  when the pair mapping is removed.
+- The detail form's Save was then walked in the browser for both a valid and an invalid change; recorded in the
+  repository's operations ledger.
+
+### Upgrading
+
+Nothing to do — same Compose file, same `rayrag` service. PostgreSQL and zvec remain the defaults in both the
+Docker and the plain-Linux deployment.
 ## [0.42.0] - 2026-10-04
 
 ### A failing test that reported nothing

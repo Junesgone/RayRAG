@@ -282,21 +282,52 @@ fn apply_config_mapping(record: &mut DataSourceRecord, config: &serde_json::Valu
     .map(|key| get(key))
     .find(|value| !value.is_empty());
     let app_secret = get("config.credentials.app_secret");
+    // Two-field credentials: the form collects a user and a secret, the connector authenticates with one
+    // `user:secret` string. None of these pairs used to be folded, so saving a WebDAV, S3, Confluence or Azure
+    // source from the schema-driven form stored an empty token — the save reported success and the source could
+    // never connect. Both halves must be present; otherwise the single-key list below gets its chance.
+    let pair = [
+        ("config.credentials.username", "config.credentials.password"),
+        (
+            "config.credentials.aws_access_key_id",
+            "config.credentials.aws_secret_access_key",
+        ),
+        (
+            "config.credentials.confluence_username",
+            "config.credentials.confluence_access_token",
+        ),
+        (
+            "config.credentials.account_name",
+            "config.credentials.account_key",
+        ),
+    ]
+    .iter()
+    .find_map(|(user_key, secret_key)| {
+        let user = get(user_key);
+        let secret = get(secret_key);
+        if user.is_empty() || secret.is_empty() {
+            None
+        } else {
+            Some(format!("{user}:{secret}"))
+        }
+    });
+    let single = [
+        "config.credentials.gitlab_access_token",
+        "config.credentials.token",
+        "config.credentials.access_token",
+        "config.credentials.api_token",
+        "config.credentials.api_key",
+        "config.credentials.notion_integration_token",
+        "config.credentials.secret_key",
+        "config.token",
+    ]
+    .iter()
+    .map(|key| get(key))
+    .find(|value| !value.is_empty());
+    // The app-id pair wins, then the user:secret pairs, then the first single well-known key.
     let token = match (app_id, app_secret.is_empty()) {
         (Some(id), false) => Some(format!("{id}:{app_secret}")),
-        _ => [
-            "config.credentials.gitlab_access_token",
-            "config.credentials.token",
-            "config.credentials.access_token",
-            "config.credentials.api_token",
-            "config.credentials.api_key",
-            "config.credentials.notion_integration_token",
-            "config.credentials.secret_key",
-            "config.token",
-        ]
-        .iter()
-        .map(|key| get(key))
-        .find(|value| !value.is_empty()),
+        _ => pair.or(single),
     };
     if let Some(token) = token {
         record.token = token;
@@ -765,6 +796,32 @@ pub async fn update_data_source(
     }
     if credential_changed {
         record.connected = false;
+    }
+    // The create path refuses a configuration the connector cannot use; an update that clears one of those
+    // fields must not be able to produce the same unusable record. Only checked when the request touched a
+    // credential field, so renaming a record that predates this rule keeps working.
+    if credential_changed {
+        let missing: Vec<&str> = deferred_validation_fields(&record.kind)
+            .iter()
+            .copied()
+            .filter(|field| match *field {
+                "url" => record.url.is_empty(),
+                "token" => record.token.is_empty(),
+                "target" => record.target.is_empty(),
+                _ => false,
+            })
+            .collect();
+        if !missing.is_empty() {
+            return Err(data_source_error(
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "{} {} required for {}",
+                    missing.join(" and "),
+                    if missing.len() == 1 { "is" } else { "are" },
+                    record.kind
+                ),
+            ));
+        }
     }
     let requested_status = match body.status.as_ref() {
         Some(value) => Some(
@@ -1387,6 +1444,68 @@ mod tests {
         let store = DataSourceStore::new(dir.to_str().unwrap()).unwrap();
         assert_eq!(store.list().len(), 1);
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// Every two-field credential the schema collects has to become the one string its connector expects, or a
+    /// schema-driven save stores an empty token and the source silently never connects.
+    #[test]
+    fn config_mapping_joins_each_username_password_pair() {
+        let mapped = |config: serde_json::Value| {
+            let mut record = DataSourceRecord {
+                id: "t".into(),
+                name: "t".into(),
+                kind: "webdav".into(),
+                url: String::new(),
+                token: String::new(),
+                target: String::new(),
+                include_issues: false,
+                include_merge_requests: false,
+                max_items: 5,
+                created_at: "2026-01-01T00:00:00Z".into(),
+                connected: false,
+                sync_deleted_files: false,
+                prune_freq: None,
+                refresh_freq: None,
+                timeout_secs: None,
+                status: "unstart".into(),
+                extra: Default::default(),
+                sync_logs: Vec::new(),
+            };
+            apply_config_mapping(&mut record, &config);
+            record.token
+        };
+        for (user_key, secret_key, user, secret, expected) in [
+            ("username", "password", "alice", "secret", "alice:secret"),
+            (
+                "aws_access_key_id",
+                "aws_secret_access_key",
+                "AKIA",
+                "shh",
+                "AKIA:shh",
+            ),
+            (
+                "confluence_username",
+                "confluence_access_token",
+                "me@example.com",
+                "tok",
+                "me@example.com:tok",
+            ),
+            ("account_name", "account_key", "acct", "key", "acct:key"),
+        ] {
+            let config =
+                serde_json::json!({ "credentials": { user_key: user, secret_key: secret } });
+            assert_eq!(
+                mapped(config),
+                expected,
+                "{user_key}/{secret_key} must be joined as {expected}"
+            );
+        }
+        // Half a pair is not a credential: the single-key list gets its chance instead of a fabricated "user:".
+        let half =
+            serde_json::json!({ "credentials": { "username": "alice", "token": "explicit" } });
+        assert_eq!(mapped(half), "explicit");
+        let neither = serde_json::json!({ "credentials": { "username": "alice" } });
+        assert_eq!(mapped(neither), "");
     }
 
     #[test]

@@ -21495,6 +21495,99 @@ connection: close
         }
     }
 
+    /// The create path refuses a configuration the connector cannot use (an `s3` source without a bucket, say),
+    /// because such a record is stored happily and only fails at sync time. An update could still produce one by
+    /// clearing the field, so the same rule now runs on the resulting record.
+    #[tokio::test]
+    async fn data_source_patch_cannot_clear_a_field_the_kind_requires() {
+        use crate::api::data_source_mgr::{
+            DataSourceRecord, DataSourceStore, UpdateDataSourceRequest,
+        };
+        let (root, mut state) = test_state();
+        let store = std::sync::Arc::new(
+            DataSourceStore::new(root.path().join("ds-patch").to_str().unwrap()).unwrap(),
+        );
+        std::sync::Arc::get_mut(&mut state).unwrap().data_sources = Some(store.clone());
+        let id = "ds-s3".to_string();
+        let record = DataSourceRecord {
+            id: id.clone(),
+            name: "s3-main".into(),
+            kind: "s3".into(),
+            url: "https://s3.example.com".into(),
+            token: "key:secret".into(),
+            target: "bucket/prefix".into(),
+            include_issues: false,
+            include_merge_requests: false,
+            max_items: 5,
+            created_at: "2026-01-01T00:00:00Z".into(),
+            connected: false,
+            sync_deleted_files: false,
+            prune_freq: None,
+            refresh_freq: None,
+            timeout_secs: None,
+            status: "unstart".into(),
+            extra: std::collections::HashMap::new(),
+            sync_logs: Vec::new(),
+        };
+        store.insert(record).unwrap();
+        let auth = crate::server::AuthContext {
+            user_id: "u1".into(),
+            is_admin: true,
+            token: String::new(),
+        };
+
+        // Clearing the bucket is refused, and the message names the field.
+        let body: UpdateDataSourceRequest =
+            serde_json::from_value(serde_json::json!({ "target": "" })).unwrap();
+        let error = crate::api::data_source_mgr::update_data_source(
+            axum::extract::State(state.clone()),
+            axum::Extension(auth.clone()),
+            axum::extract::Path(id.clone()),
+            axum::Json(body),
+        )
+        .await
+        .expect_err("clearing the bucket must be refused");
+        let message = error.1.0["message"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            message.contains("target is required for s3"),
+            "the message must name the field and the kind, got: {message}"
+        );
+        assert_eq!(
+            store.get(&id).unwrap().target,
+            "bucket/prefix",
+            "a refused update must not change the stored record"
+        );
+
+        // A rename does not touch a credential field, so a legacy record keeps working.
+        let body: UpdateDataSourceRequest =
+            serde_json::from_value(serde_json::json!({ "name": "s3-renamed" })).unwrap();
+        let response = crate::api::data_source_mgr::update_data_source(
+            axum::extract::State(state.clone()),
+            axum::Extension(auth.clone()),
+            axum::extract::Path(id.clone()),
+            axum::Json(body),
+        )
+        .await
+        .expect("a rename must still succeed");
+        assert_eq!(response["data"]["name"], "s3-renamed");
+
+        // Completing the configuration is allowed.
+        let body: UpdateDataSourceRequest =
+            serde_json::from_value(serde_json::json!({ "target": "other-bucket" })).unwrap();
+        let response = crate::api::data_source_mgr::update_data_source(
+            axum::extract::State(state),
+            axum::Extension(auth),
+            axum::extract::Path(id.clone()),
+            axum::Json(body),
+        )
+        .await
+        .expect("a complete configuration must be accepted");
+        assert_eq!(response["data"]["target"], "other-bucket");
+    }
+
     #[tokio::test]
     async fn data_source_patch_cancel_persists_status_without_syncing() {
         use crate::api::data_source_mgr::{
@@ -21685,6 +21778,12 @@ connection: close
         assert_eq!(record.prune_freq, Some(7));
         assert!(record.sync_deleted_files);
         assert_eq!(record.extra["config.credentials.username"], "alice");
+        // The credential the WebDAV connector actually authenticates with. The two form fields used to be kept
+        // in `extra` only, so the record was saved with an empty token and could never connect; nothing said so.
+        assert_eq!(
+            record.token, "alice:secret",
+            "the username/password pair must be folded into the connector's user:secret token"
+        );
         assert_eq!(
             response["data"]["config"]["credentials"]["username"],
             "alice"
