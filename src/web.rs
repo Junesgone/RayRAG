@@ -21790,26 +21790,53 @@ connection: close
     }
 
     #[tokio::test]
-    async fn data_source_create_without_config_still_requires_url_and_target() {
+    async fn data_source_create_without_config_reports_the_field_that_is_missing() {
         use crate::api::data_source_mgr::{CreateDataSourceRequest, DataSourceStore};
         let (root, mut state) = test_state();
         let store = std::sync::Arc::new(
             DataSourceStore::new(root.path().join("ds-flat").to_str().unwrap()).unwrap(),
         );
         std::sync::Arc::get_mut(&mut state).unwrap().data_sources = Some(store.clone());
+        // `webdav` is one of the eight kinds that do not validate in their constructor, so the API checks it.
+        // The message used to be the fixed string "name/url/target are required" for every omission, which
+        // named fields the caller had supplied; it now names the empty one.
         let body: CreateDataSourceRequest =
             serde_json::from_value(serde_json::json!({ "name": "n", "type": "webdav" })).unwrap();
+        let error = crate::api::data_source_mgr::create_data_source(
+            axum::extract::State(state.clone()),
+            axum::Json(body),
+        )
+        .await
+        .expect_err("flat create without url/token fails closed");
+        let message = error.1.0["message"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            message.contains("url and token are required for webdav"),
+            "the message must name the missing fields, got: {message}"
+        );
+        assert!(
+            !message.contains("name/"),
+            "the message must not list fields the caller supplied, got: {message}"
+        );
+
+        // A kind that validates in its constructor reports its own reason instead of the table's.
+        let body: CreateDataSourceRequest =
+            serde_json::from_value(serde_json::json!({ "name": "n", "type": "rss" })).unwrap();
         let error = crate::api::data_source_mgr::create_data_source(
             axum::extract::State(state),
             axum::Json(body),
         )
         .await
-        .expect_err("flat create without url/target fails closed");
+        .expect_err("a feed without a URL is refused");
+        let message = error.1.0["message"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
         assert!(
-            error.1.0["message"]
-                .as_str()
-                .is_some_and(|message| message.contains("name/url/target are required")),
-            "{error:?}"
+            message.to_lowercase().contains("url"),
+            "the connector's own message must name the URL, got: {message}"
         );
     }
 

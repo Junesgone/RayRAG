@@ -2,6 +2,52 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.40.0] - 2026-10-04
+
+### The create error named fields the caller had already supplied
+
+Creating a data source without a `config` block answered every omission with one fixed string:
+
+```
+{"name":"p1","type":"rss"}                            -> 400 name/url/target are required
+{"name":"p2","type":"rss","url":"https://e.invalid/f"} -> 400 name/url/target are required
+{"name":"p3","type":"rss","target":"t"}                -> 400 name/url/target are required
+```
+
+The second case names three fields when only `target` was empty, and the third names `url` when only that was
+empty. A caller could not tell what to fix, and a source that needs only a URL was refused.
+
+The message now names the field that is actually empty, and only for the kinds that need it:
+
+```
+url is required when config is omitted
+target is required for s3 when config is omitted
+url and token are required for feishu when config is omitted
+```
+
+### Which kinds need that check was measured, not guessed
+
+Delegating the whole check to the connectors was tried first and did not work: it let an `s3` source with no
+bucket be stored. Probing every registry kind with an empty configuration shows why —
+
+| behaviour | kinds |
+| --- | --- |
+| reject an empty configuration in the constructor (33) | `gitlab`, `github`, `notion`, `rss`, `mysql`, `postgresql`, `yuque`, `local`, … |
+| accept one, and would only fail at sync time (8) | `s3`, `gcs`, `oracle`, `r2`, `azure_blob`, `webdav`, `confluence`, `feishu` |
+
+So the eight get an explicit table of the fields their own guards require, the other 33 report their own reason
+when the connector is built, and a test pins the exact set of eight — if a connector loses constructor
+validation, that test fails rather than a record being stored that cannot sync.
+
+### Verification
+
+- Full suite, deployment and layout suites re-run against the released build.
+- The three request shapes above are re-sent to the running container and the messages recorded.
+
+### Upgrading
+
+Nothing to do — same Compose file, same `rayrag` service. PostgreSQL and zvec remain the defaults in both the
+Docker and the plain-Linux deployment.
 ## [0.39.0] - 2026-10-04
 
 ### 0.38.0 gave five connectors fields but no card

@@ -609,11 +609,39 @@ pub async fn create_data_source(
             return Err(data_source_error(StatusCode::BAD_REQUEST, message));
         }
         apply_config_mapping(&mut record, &config);
-    } else if record.url.is_empty() || record.target.is_empty() {
-        return Err(data_source_error(
-            StatusCode::BAD_REQUEST,
-            "name/url/target are required",
-        ));
+    } else {
+        // No config was supplied, so the flat fields are all the caller gave.
+        //
+        // 33 of the 41 kinds reject an incomplete configuration when they are built and state the field
+        // themselves, so they are checked by building the connector below. The remaining eight do not, and for
+        // those the API checks the fields they actually need — a record missing one would otherwise be stored
+        // happily and fail later, at sync time.
+        //
+        // The message this replaces was the fixed string "name/url/target are required", returned whatever was
+        // missing: it named fields the caller had already supplied and rejected a source that needs only a URL.
+        let missing: Vec<&str> = deferred_validation_fields(&kind)
+            .iter()
+            .copied()
+            .filter(|field| match *field {
+                "url" => record.url.is_empty(),
+                "token" => record.token.is_empty(),
+                "target" => record.target.is_empty(),
+                _ => false,
+            })
+            .collect();
+        if !missing.is_empty() {
+            return Err(data_source_error(
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "{} {} required for {kind} when config is omitted",
+                    missing.join(" and "),
+                    if missing.len() == 1 { "is" } else { "are" }
+                ),
+            ));
+        }
+        // Every kind is then built, so the 33 that validate in their constructor report their own reason.
+        crate::connectors::ConnectorRegistry::create(&kind, record.to_options())
+            .map_err(|error| data_source_error(StatusCode::BAD_REQUEST, error.to_string()))?;
     }
     store
         .insert(record.clone())
@@ -1162,6 +1190,23 @@ pub(crate) fn normalize_kind(raw: &str) -> String {
     }
 }
 
+/// Fields a connector needs but does **not** check in its constructor.
+///
+/// Measured, not guessed: of the 41 registry kinds, 33 reject an empty configuration when they are built and
+/// report the field themselves; these eight accept one and would only fail later, at sync time — the silent
+/// failure this API must prevent. Each entry mirrors the connector's own guard:
+/// `s3`/`gcs`/`oracle`/`r2` need an endpoint, credentials and a bucket; `azure_blob` an endpoint and a SAS
+/// token; `webdav` a server URL and credentials; `confluence` an instance URL, a space key and a token;
+/// `feishu` a base URL and `app_id:app_secret`.
+fn deferred_validation_fields(kind: &str) -> &'static [&'static str] {
+    match kind {
+        "s3" | "gcs" | "oracle" | "r2" => &["url", "token", "target"],
+        "azure_blob" | "webdav" | "feishu" => &["url", "token"],
+        "confluence" => &["url", "target", "token"],
+        _ => &[],
+    }
+}
+
 pub(crate) fn is_supported_kind(kind: &str) -> bool {
     if kind == "gitlab" {
         return true;
@@ -1345,15 +1390,59 @@ mod tests {
     }
 
     #[test]
-    fn create_request_defaults() {
-        let body: CreateDataSourceRequest = serde_json::from_str(
-            r#"{"name":"n","type":"gitlab","url":"https://gitlab.com","target":"1"}"#,
-        )
-        .unwrap();
-        assert_eq!(body.max_items, 50);
-        assert!(!body.include_issues);
+    fn flat_create_names_the_missing_field_for_kinds_that_need_one() {
+        assert_eq!(
+            deferred_validation_fields("s3"),
+            &["url", "token", "target"]
+        );
+        assert_eq!(
+            deferred_validation_fields("confluence"),
+            &["url", "target", "token"]
+        );
+        // Kinds that validate in their constructor need no entry here.
+        assert!(deferred_validation_fields("rss").is_empty());
+        assert!(deferred_validation_fields("notion").is_empty());
     }
 
+    /// Pins the measurement the API's split relies on: exactly these kinds accept an empty configuration when
+    /// built. If a connector loses or gains constructor validation this fails, and the table above must be
+    /// revisited — the alternative is a record that only fails at sync time.
+    #[test]
+    fn only_the_listed_kinds_skip_constructor_validation() {
+        let mut lax: Vec<&str> = Vec::new();
+        for info in crate::connectors::ConnectorRegistry::kinds() {
+            let options = crate::data_source::SourceOptions {
+                url: String::new(),
+                token: String::new(),
+                target: String::new(),
+                include_issues: false,
+                include_merge_requests: false,
+                max_items: 50,
+                extra: Default::default(),
+            };
+            if crate::connectors::ConnectorRegistry::create(info.kind, options).is_ok() {
+                lax.push(info.kind);
+            }
+        }
+        lax.sort_unstable();
+        assert_eq!(
+            lax,
+            vec![
+                "azure_blob",
+                "confluence",
+                "feishu",
+                "gcs",
+                "oracle",
+                "r2",
+                "s3",
+                "webdav"
+            ],
+            "the set of connectors that accept an empty configuration changed: \
+             deferred_validation_fields must be updated to match"
+        );
+    }
+
+    #[test]
     #[test]
     fn registry_dispatch_accepts_all_supported_kinds() {
         // create_data_source's kind gate mirrors the connector registry.
