@@ -1,6 +1,6 @@
 [package]
 name = "rayrag"
-version = "0.30.0"
+version = "0.31.0"
 edition = "2024"
 description = "RayRAG: RAGFlow parsing pipeline rewritten in Rust, powered by zvec"
 authors = ["Boss"]

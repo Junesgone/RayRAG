@@ -593,3 +593,25 @@ API；截图 `00-chat-channels.png` 至 `02-telegram-deleted.png`。
 - 仍未遍历：`/search/{id}`（需搜索应用）与 chunk 详情路由（需已解析文档）；agent/memory 详情（需模型/数据）。
 - Model providers 页：RayRAG 侧卡片刻意与上游 v0.27.2 对齐（71 卡、顺序/标签/文档链接/行标签
   经 `provider-catalog-diff.py` 核对 PASS）。
+
+## v0.27.2 dataset 详情页逐点击记录（live 容器 v0.27.2，2026-10-04）
+
+CDP 真点（`127.0.0.1:16002` → RAGFlow `127.0.0.1:11526`，已登录会话），逐一点击数据集详情侧边栏并记录各层级按钮：
+
+| 层级 | 路由 | 实测按钮/控件 |
+| --- | --- | --- |
+| Files | `/dataset/files/{id}` | Add file、`50 / Page` 分页 |
+| Retrieval testing | `/dataset/retrieval/{id}` | 两个 Select value 下拉、Run |
+| Logs | `/dataset/logs/{id}` | File 下拉、Dataset 下拉、`50 / Page` 分页 |
+| Configuration | `/dataset/configuration/{id}` | Language(English)、Upload（头像）、Only me（权限）、Select value（嵌入模型）、General（分块方法）、Link data source、Cancel、Save、Built-in pipeline introduction |
+| Artifacts | `/dataset/compilation/{id}` | Confirm（弹层按钮） |
+
+侧边栏可见文字依次为 `Files / Retrieval testing / Logs / Configuration / Artifacts`。
+
+**Logs 标签的取值证据链**（本轮修正了一处早先的误判）：
+1. `web/src/pages/dataset/sidebar/index.tsx` 第 45-47 行用 `LucideLogs` 图标 + `key: Routes.DataSetOverview`；
+2. `web/src/routes.tsx:86` `DataSetOverview = '/logs'`；
+3. 真正显示的文字来自 `label: t('knowledgeDetails.overview')`，其值在 `web/src/locales/en.ts:488` 是 `overview: 'Logs'`、`zh.ts:435` 是 `overview: '日志'`。
+   **教训：i18n 键名不是标签文案。** 早先一轮读了键名 `overview` 就把侧边栏写成 "Overview"/"概览"，与上游自己的翻译不符；本轮改为 Logs/日志，并加断言锁住中文值。
+
+**另一条方法论教训**：五个路由返回**字节完全相同**的 HTML（MD5 一致）**不是**缺陷 —— `showTab()` 在客户端按 `location.pathname` 片段激活面板。运行时实测（真实加载五个路由并读取可见面板）证明：files→tab0、retrieval→tab2、logs→tab1、configuration→tab3、compilation→tab5，侧边栏高亮同步。**要验证客户端渲染的页面层级，必须看渲染后的可见性，而不是比对 HTML。**

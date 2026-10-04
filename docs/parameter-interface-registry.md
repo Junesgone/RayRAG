@@ -972,3 +972,21 @@ passes. A future bulk pass must handle all of them:
 | `r#"..."#` raw literal | A regex expecting `push_str("` does not match | Support `r#`…`r###` openings; a raw prefix may not contain `"#` |
 | Literal that opens on one line and closes on another | Every line-based pass skips it, silently | Relax the pattern to allow an unterminated literal and keep the continuation in the suffix statement |
 | Browser tab `<title>` | Not a `>text<` node, so no audit sees it | `page_head` passes its title through `t()` |
+
+## Dataset detail page levels (0.31.0)
+
+| Route segment | Panel id | Sidebar label (en / zh) |
+| --- | --- | --- |
+| `files` | `tab0` | Files / 文件列表 |
+| `retrieval` | `tab2` | Retrieval testing / 检索测试 |
+| `logs` | `tab1` | **Logs / 日志** — upstream key `knowledgeDetails.overview`, value from `en.ts:488` / `zh.ts:435` |
+| `configuration` | `tab3` | Configuration / 配置 |
+| `knowledge-graph` | `tab4` | deep link only, not a sidebar entry |
+| `compilation` | `tab5` | Artifacts / Artifacts |
+
+`showTab(n)` activates the panel from `location.pathname`, so **all five routes serve the same HTML** and the
+difference exists only after the client script runs. Verify page levels by rendered visibility
+(`offsetParent` / computed `display`), never by comparing response bytes.
+
+**i18n rule:** a label is the translation **value** for its key, not the key name. Check `locales/en.ts` and
+`locales/zh.ts` for the value before writing a label into the UI.

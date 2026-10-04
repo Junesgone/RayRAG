@@ -2820,11 +2820,11 @@ pub async fn dataset_page(
     for (idx, tab, label_en, label_zh) in [
         (0usize, "files", "Files", "文件列表"),
         (2, "retrieval", "Retrieval testing", "检索测试"),
-        // Upstream v0.27.2 labels this dataset destination `knowledgeDetails.overview`
-        // (`pages/dataset/sidebar/index.tsx`) while reusing the Logs icon, and its route is
-        // `/dataset/logs`; the page carries the parse logs. RayRAG showed the icon's name
-        // ("Logs") instead of the destination's, which read as a missing feature.
-        (1, "logs", "Overview", "概览"),
+        // The i18n *key* is `knowledgeDetails.overview` (`pages/dataset/sidebar/index.tsx`)
+        // but its value is what the user reads: en.ts:488 `overview: 'Logs'` and zh.ts:435
+        // `overview: '日志'`. An earlier pass copied the key's name and rendered "Overview" /
+        // "概览", so the sidebar disagreed with upstream's own translation.
+        (1, "logs", "Logs", "日志"),
         (3, "configuration", "Configuration", "配置"),
         (5, "compilation", "Artifacts", "Artifacts"),
     ] {
@@ -17605,10 +17605,33 @@ connection: close
             !html.contains("id='nav4'"),
             "knowledge-graph must leave the sidebar"
         );
+        // The label is upstream's translation *value*, not its key name: en.ts:488
+        // `knowledgeDetails.overview: 'Logs'` and zh.ts:435 `'日志'`.
+        let zh_html = body_of(
+            dataset_page(
+                State(state.clone()),
+                Path(kb.id.clone()),
+                Request::builder()
+                    .uri("/dataset/logs/x")
+                    .header("Cookie", "lang=zh-CN")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        assert!(
+            zh_html.contains(">日志</a>"),
+            "the Chinese sidebar must use upstream's value 日志"
+        );
+        assert!(
+            !zh_html.contains(">概览</a>"),
+            "the key name Overview must not reach the sidebar"
+        );
         for (route, label) in [
             ("files", "Files"),
             ("retrieval", "Retrieval testing"),
-            ("logs", "Overview"),
+            ("logs", "Logs"),
             ("configuration", "Configuration"),
             ("compilation", "Artifacts"),
         ] {

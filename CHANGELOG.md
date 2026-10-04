@@ -2,6 +2,57 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.31.0] - 2026-10-04
+
+### The sidebar label was the key's name, not its text
+
+Upstream's dataset sidebar renders its Logs entry as `label: t('knowledgeDetails.overview')` with the Logs
+icon, and its route is `/logs`. An earlier pass read the *key* — `overview` — and shipped the sidebar label
+"Overview" / "概览". The value is what a user reads, and upstream's own translations say otherwise:
+
+- `web/src/locales/en.ts:488` — `overview: 'Logs'`
+- `web/src/locales/zh.ts:435` — `overview: '日志'`
+
+The sidebar now shows **Logs** / **日志**, and a test asserts the Chinese value `>日志</a>` while rejecting
+`>概览</a>` in the sidebar, so the key name cannot leak back in.
+
+### The tabs were never broken — the instrument was
+
+All five dataset routes (`/dataset/files|retrieval|logs|configuration|compilation/{id}`) return **byte-identical
+HTML**; the same MD5. That looked like the tab segment being ignored, and it was nearly "fixed" by rewriting the
+page. Loading the five routes in a real browser shows `showTab()` reading `location.pathname` and activating one
+panel each: files→tab0, retrieval→tab2, logs→tab1, configuration→tab3, compilation→tab5, with the sidebar
+highlight in step.
+
+Comparing HTML bytes cannot verify a page level that the client renders. The check is now recorded in the UI
+ledger, together with the live control inventory of the five levels, so the next comparison starts from
+rendered visibility instead of document equality.
+
+### Live traversal of the five dataset levels (RAGFlow v0.27.2)
+
+The running container reports **v0.27.2**, matching the version under comparison, and was clicked through over
+CDP rather than read from source:
+
+| Level | Controls observed |
+| --- | --- |
+| Files | `Add file`, `50 / Page` |
+| Retrieval testing | two `Select value` dropdowns, `Run` |
+| Logs | `File` dropdown, `Dataset` dropdown, `50 / Page` |
+| Configuration | English (language), `Upload` (avatar), `Only me` (permission), `Select value` (embedding model), `General` (chunk method), `Link data source`, `Cancel`, `Save`, `Built-in pipeline introduction` |
+| Artifacts | `Confirm` (dialog) |
+
+RayRAG's remaining differences are recorded rather than papered over: its Files action reads "上传" where
+upstream says `Add file`, it has no `Link data source` entry, and its pager label differs.
+
+### Verification
+
+- 2258 tests passed, 0 failed, 27 ignored.
+- Deployment and layout suites re-run against the released build.
+
+### Upgrading
+
+Nothing to do — same Compose file, same `rayrag` service. PostgreSQL and zvec remain the defaults in both the
+Docker and the plain-Linux deployment.
 ## [0.30.0] - 2026-10-04
 
 ### The backlog is gone: zero untranslated page labels
