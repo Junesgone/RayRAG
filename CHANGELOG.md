@@ -2,6 +2,42 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.30.0] - 2026-10-04
+
+### The backlog is gone: zero untranslated page labels
+
+0.29.0 left a measured backlog of **42** labels that reached the page without going through the
+translator. This release takes it to **zero**, and the audit now enforces that with no allowance.
+
+Three passes found the rest, and each one was a shape the earlier passes could not see:
+
+- **All occurrences, not the first.** The first splitter rewrote one occurrence per line, so a label
+  appearing twice on a long line survived the pass that claimed to fix it.
+- **Whitespace inside the text node.** `<label> Show citations</label>` carries a leading space, so a
+  marker looking for `>Show citations<` never matched while the audit (which trims) kept counting it.
+- **Literals that span lines.** One site is a Rust string literal that opens on one line and closes on
+  another — every line-based pass treated it as an unclosed literal and skipped it silently. It is now
+  split with the continuation preserved.
+
+### The browser tab follows the page language
+
+`page_head` wrote its title straight into `<title>`, so a Chinese page still announced
+`Service status · RayRAG` in the tab. The title now goes through the translator; `t` returns its input
+when it has no key, so user-supplied names such as a dataset title pass through unchanged. The admin
+console layout test asserts the Chinese tab title, not just the headings.
+
+### Verification
+
+- 2258 tests passed, 0 failed, 27 ignored.
+- Live: the Chinese dataset page carries `知识图谱` / `纯文本` / `实体消解` and no English equivalents;
+  the English page carries the English labels and none of the Chinese. The same check on the admin page
+  covers `服务状态` / `用户管理`.
+- Deployment checked end to end, including the layout suites at 34 routes × 2 widths.
+
+### Upgrading
+
+Nothing to do — same Compose file, same `rayrag` service. PostgreSQL and zvec remain the defaults in
+both the Docker and the plain-Linux deployment.
 ## [0.29.0] - 2026-10-04
 
 ### The labels that only JavaScript could see

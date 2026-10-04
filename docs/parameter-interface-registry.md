@@ -955,7 +955,20 @@ RAGFlow 把麦克风放在**聊天输入区**；RayRAG 目前把这个能力放�
 | Translator | `web::t(key, zh)` — two match arms: `if !zh { return match .. }` (English early-return, ends with `other => other,`) then the Chinese table (ends with `_ => k,`) |
 | Correct insertion anchor for a Chinese key | the **last** `_ => k,` inside `t()`, immediately before the closing brace and `fn detect_lang` |
 | Direction guard | `web::tests::translation_table_points_the_right_way` — asserts `t(label, true) == zh` and `t(label, false) == label`; proven to fail when a key is missing or lands in the wrong arm |
-| Page-label audit | `web::tests::every_page_label_goes_through_the_translation_helper` — per-label rule; ceiling `BACKLOG = 42` (measured), may only go down |
+| Page-label audit | `web::tests::every_page_label_goes_through_the_translation_helper` — per-label rule; ceiling `BACKLOG = 0` (reached in 0.30.0), may not grow |
 | Audit scope | lines that build markup (`push_str` / `format!`); strings that never reach markup are outside it |
 | JS-injected labels | translated by splitting the literal at the label boundary into `prefix + t(label, zh) + suffix` — output bytes are identical, so the page structure cannot change |
 | Admin console labels | `AdminConsoleSection::label()` returns the upstream English label; **callers must pass it through `t()`** |
+
+## i18n: label-splitting shapes (0.30.0)
+
+Splitting a markup literal at a label boundary is always byte-identical, but four shapes defeated earlier
+passes. A future bulk pass must handle all of them:
+
+| Shape | Symptom | Handling |
+| --- | --- | --- |
+| Label appears twice on one line | Only the first occurrence is rewritten; the second survives | Split **every** occurrence, from the last to the first |
+| Whitespace inside the text node (`<label> Show citations</label>`) | `>Label<` never matches while the trimming audit keeps counting it | Match `>(\s*)Label(\s*)<` and keep the whitespace in the prefix/suffix |
+| `r#"..."#` raw literal | A regex expecting `push_str("` does not match | Support `r#`…`r###` openings; a raw prefix may not contain `"#` |
+| Literal that opens on one line and closes on another | Every line-based pass skips it, silently | Relax the pattern to allow an unterminated literal and keep the continuation in the suffix statement |
+| Browser tab `<title>` | Not a `>text<` node, so no audit sees it | `page_head` passes its title through `t()` |
