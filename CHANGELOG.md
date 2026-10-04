@@ -31,8 +31,24 @@ Two things were worth proving rather than assuming:
   quote the rule that is actually enforced — the test — and the six it named are the six that were fixed.
   Without that check the release would have claimed a number it had not measured.
 
-The audit's scope is stated in its own doc comment: it inspects markup literals, not JavaScript-only
-strings, so it is not full i18n coverage.
+### The audit's scope is stated, and so is what it does not cover
+
+It inspects the text of markup literals. A stricter rule — any `>label<` on a line that renders markup,
+including labels injected through JavaScript strings — finds **59 more**: `Naive (token-based)`,
+`Generation scope`, `Entity resolution`, `Empty canvas`, the `<option>` lists and the innerHTML fragments.
+Those stay English on the Chinese pages today, and the live check below shows one of them doing exactly
+that. They are recorded as the next tranche in the internal parameter registry rather than claimed as
+covered, because a guard that reports zero while 59 labels are untranslated would be worse than no guard.
+
+### Measured on the running deployment
+
+```
+GET /dataset/files/<id>  Cookie: lang=en-US   "All files" present            (translated site renders)
+GET /dataset/files/<id>  Cookie: lang=zh-CN   "知识库", "系统提示词" present   (t(..) switches language)
+GET /dataset/files/<id>  Cookie: lang=zh-CN   <option>All files</option> still English
+                                              (one of the 59 JavaScript-injected labels)
+panics: 0
+```
 
 **2256 tests pass, 0 failures.**
 

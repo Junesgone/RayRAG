@@ -938,3 +938,12 @@ RAGFlow 把麦克风放在**聊天输入区**；RayRAG 目前把这个能力放�
 - **本轮**：修复 49 处未走翻译助手的标签（其中 43 处由脚本拆分字面量：前缀 / `t(...)` / 后缀；6 处整句位于 `format!` 与三处 admin 页面裸字符串中，手工拆分）。
 - **教训**：Python 粗扫得出「剩 25 处」，而测试口径实测为 6 处 —— 两者规则不同。**以测试口径为准**，避免用没被强制的数字写进发布说明。
 - **验证**：故意注入 `b.push_str("<p>Brand new English Label</p>");` 并把上限设为 0，测试确实失败并指名到行 —— 守卫不是摆设。
+
+#### i18n 审计的两套口径与遗留清单（务必区分）
+
+| 口径 | 规则 | 实测 |
+|---|---|---|
+| **强制口径**（`every_page_label_goes_through_the_translation_helper`） | 渲染行（含 `push_str`/`format!(`）里 `>文案<` 的**标记字面量文本**，且该行未调用 `t(` | **0**（上限 0，新增即失败） |
+| **严格口径**（未强制，仅记录） | 同一行内**逐标签**判断：任何 `>文案<`，含通过 JS 字符串注入 innerHTML / `<option>` 的文案 | **59** 处待办 |
+
+严格口径下待翻译的 59 处集中在：JS 注入的 `<option>` 列表（如 `All files`）、innerHTML 片段（`No graph has been built for this dataset yet.`、`Building... (LLM entity extraction)`、`Load failed`）、以及配置项文案（`Naive (token-based)`、`Generation scope`、`Entity resolution`、`Community reports`、`Empty canvas`、`No versions yet`、`Local sources` 等）。**中文页面上这些仍是英文**（已实机确认 `<option>All files</option>` 不随语言切换）。下一轮按此清单推进，并把强制口径逐步收紧到严格口径。
