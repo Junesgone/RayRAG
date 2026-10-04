@@ -2,6 +2,47 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.41.0] - 2026-10-04
+
+### A control that was hidden from 39 of the 41 kinds
+
+`POST /api/v1/data_sources/{id}/test` is a real verification for every kind: it builds the connector, calls
+`load_credentials()`, and on failure records a `FAIL` sync log and answers `502` with the reason. The detail page
+showed its **Test** button only for two kinds:
+
+```js
+document.getElementById('dsDetailTest').hidden = !(DS_SOURCE === 'rest_api' || DS_SOURCE === 'bigquery');
+```
+
+So an S3 bucket, a Feishu token or a WebDAV server could be checked from the API but not from the UI, and a
+failure reason the backend was already producing had nowhere to appear. The button is now visible for every kind
+and reports `Connection verified ✓` or `Test failed: <reason>`.
+
+### Two endpoints that had no control at all
+
+Walking the detail route as a user (not reading the source) showed its controls to be `Save`, `Prev` and `Next`,
+while the API also offered `POST .../files` and `POST .../disconnect`. The detail view now has:
+
+| control | endpoint | reports |
+| --- | --- | --- |
+| `Test` | `POST .../test` | `Connection verified ✓` or the failure reason |
+| `Sync now` | `POST .../files` | `Synced ✓ N files at the source` or the reason |
+| `Disconnect` | `POST .../disconnect` | `Disconnected ✓` or the reason |
+
+Each refreshes the log table underneath, and the labels are relabelled in Chinese (`测试`, `立即同步`,
+`断开连接`) on the Chinese page.
+
+### Verification
+
+- 2266 tests passed, 0 failed, 27 ignored.
+- The three controls were clicked in the browser against a real `local` source: each issued its request and
+  printed its result, with 0 page errors. Recorded in the repository's operations ledger.
+- Layout suites: nine suites, 0 page errors.
+
+### Upgrading
+
+Nothing to do — same Compose file, same `rayrag` service. PostgreSQL and zvec remain the defaults in both the
+Docker and the plain-Linux deployment.
 ## [0.40.0] - 2026-10-04
 
 ### The create error named fields the caller had already supplied
