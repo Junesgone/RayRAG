@@ -2,6 +2,32 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.34.0] - 2026-10-04
+
+### The pager's total, the other half of the same component
+
+0.33.0 fixed the page-size options of upstream's shared pager. Its total was still off in Chinese. Upstream's
+`RAGFlowPagination` renders `t('pagination.total', { total })`, whose values are:
+
+- `locales/en.ts:3715` — `total: 'Total {{total}}'`
+- `locales/zh.ts:3241` — `total: '总共 {{total}} 条'`
+
+RayRAG built the string by concatenation (`总共` + ` ` + count), which cannot produce the Chinese form: the
+counter sits **after** the number. A second shared helper, `totalLabel(n)`, now carries both templates, and the
+two pager call sites render through it — `Total 5` in English, `总共 5 条` in Chinese.
+
+The test asserts each template, that both call sites use the helper, and that the Chinese page no longer
+contains the old concatenation, so the truncated form cannot come back.
+
+### Verification
+
+- Full suite, deployment and layout suites re-run against the released build.
+- The rendered Chinese total is read back from the browser, as with the page-size options.
+
+### Upgrading
+
+Nothing to do — same Compose file, same `rayrag` service. PostgreSQL and zvec remain the defaults in both the
+Docker and the plain-Linux deployment.
 ## [0.33.0] - 2026-10-04
 
 ### The pager now says what upstream's pager says
