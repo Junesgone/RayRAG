@@ -28,7 +28,16 @@ Both call sites now use the shared helper, and three defences replace the one th
    `_psLabel` identifier — the exact shape the mangling produced.
 3. The guard was proven by reintroducing the bug and watching it fail.
 
-The rendered pager is read back from a browser in this release, the check that had been outstanding.
+The rendered pager is read back from a browser in this release, the check that had been outstanding since
+0.33.0. Read with the current path printed alongside every value, on `/files`, with **0 page errors**:
+
+| language | total | page sizes | pager buttons |
+| --- | --- | --- | --- |
+| English | `Total 2` | `50 / Page`, `20 / Page`, `100 / Page` | 2 |
+| Chinese | `总共 2 条` | `50条/页`, `20条/页`, `100条/页` | 2 |
+
+Both upstream templates now render as written — `pagination.total` and `pagination.page` — and the footer is
+populated instead of empty.
 
 ### Verification
 
