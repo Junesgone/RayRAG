@@ -31,6 +31,36 @@ Always sending the field was the tempting alternative and would have been much w
 wiped the credential. Removing one is now something the user asks for explicitly, and the answer is visible —
 for the eight kinds that need a token, 0.43.0's rule refuses it with the field named, and the page shows why.
 
+### Six advertised source types have no connector, and the refusal was hiding it
+
+Walking the new control surfaced something else. `ConnectorRegistry::kinds()` advertises 41 source types — they
+are the cards the page renders — but the factory cannot build six of them:
+
+```
+gitlab, gmail, google_drive, notion, tencent_docs, wechat_docs
+```
+
+A probe creating a `notion` source shows what a user met:
+
+```
+POST /api/v1/data_sources  {"type":"notion", ...}
+400  unsupported connector kind: notion
+```
+
+`gitlab` is special-cased in the sync path, but the other five have no implementation anywhere, so a source of
+those types could never sync. Since 0.40.0's rule, creation refuses them up front instead of storing a record
+that fails later — which is the better behaviour, but the message was the factory's internal wording. It now says
+what happened:
+
+```
+400  notion: no connector is available for this source type, so it was not created
+```
+
+The measurement behind this was also wrong at first: an earlier probe counted an unbuildable kind as one that
+"validates in its constructor", because both surface as an error. The test now separates the two, asserts the
+exact set of six, and would fail if the set changes — so the gap is measured rather than assumed, and it is
+recorded here rather than left for a user to discover.
+
 ### Verification
 
 - 2271 tests passed, 0 failed, 27 ignored.

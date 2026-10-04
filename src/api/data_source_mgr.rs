@@ -670,9 +670,21 @@ pub async fn create_data_source(
                 ),
             ));
         }
-        // Every kind is then built, so the 33 that validate in their constructor report their own reason.
-        crate::connectors::ConnectorRegistry::create(&kind, record.to_options())
-            .map_err(|error| data_source_error(StatusCode::BAD_REQUEST, error.to_string()))?;
+        // Every kind is then built, so the kinds that validate in their constructor report their own reason.
+        crate::connectors::ConnectorRegistry::create(&kind, record.to_options()).map_err(|error| {
+            let message = error.to_string();
+            // Some advertised kinds have no connector in this build at all. Refusing here is deliberate: before
+            // this check the record was stored and only failed at sync time, with the same reason but after the
+            // user had been told the source was created. Say so plainly instead.
+            if message.contains("unsupported connector kind") {
+                data_source_error(
+                    StatusCode::BAD_REQUEST,
+                    format!("{kind}: no connector is available for this source type, so it was not created"),
+                )
+            } else {
+                data_source_error(StatusCode::BAD_REQUEST, message)
+            }
+        })?;
     }
     store
         .insert(record.clone())
@@ -1529,6 +1541,7 @@ mod tests {
     #[test]
     fn only_the_listed_kinds_skip_constructor_validation() {
         let mut lax: Vec<&str> = Vec::new();
+        let mut unbuildable: Vec<&str> = Vec::new();
         for info in crate::connectors::ConnectorRegistry::kinds() {
             let options = crate::data_source::SourceOptions {
                 url: String::new(),
@@ -1539,11 +1552,31 @@ mod tests {
                 max_items: 50,
                 extra: Default::default(),
             };
-            if crate::connectors::ConnectorRegistry::create(info.kind, options).is_ok() {
-                lax.push(info.kind);
+            match crate::connectors::ConnectorRegistry::create(info.kind, options) {
+                Ok(_) => lax.push(info.kind),
+                // "unsupported connector kind" means there is no connector, not that the configuration is
+                // incomplete; counting it as strict made the earlier measurement wrong.
+                Err(error) if error.to_string().contains("unsupported connector kind") => {
+                    unbuildable.push(info.kind)
+                }
+                Err(_) => {}
             }
         }
         lax.sort_unstable();
+        unbuildable.sort_unstable();
+        assert_eq!(
+            unbuildable,
+            vec![
+                "gitlab",
+                "gmail",
+                "google_drive",
+                "notion",
+                "tencent_docs",
+                "wechat_docs"
+            ],
+            "the set of advertised kinds without a connector changed; the create path refuses these on purpose, \
+             so the count and the user-facing message must be revisited"
+        );
         assert_eq!(
             lax,
             vec![
