@@ -26,4 +26,4 @@
 
 ## ⚠ 实例缺陷（重要）
 
-记忆记录「记忆」的 `embd_id` 为陈旧复合格式 → `messages/search` 一律 `code:100 LookupError`（`tenant_model_service.py:330`）。修复 = 规范化 `embd_id` 为 tenant_model id（`0e994d42bc1e11f1902779b1174dca50`）。**待确认后执行（DB 写）。**
+记忆记录「记忆」的 `embd_id` 为陈旧复合格式 → `messages/search` 一律 `code:100 LookupError`（`tenant_model_service.py:330`）。修复 = 规范化 `embd_id` 为 tenant_model id（`0e994d42bc1e11f1902779b1174dca50`）。**2026-10-12 用户决定：不需要修复（实例保持原样，事项关闭，不做 DB 写）。**

@@ -12,7 +12,7 @@
 | 文件提交面 | 轮⑦：八端点双挂载契约、错误三态、RetCode 全表 | `src/api/workspaces.rs` 全家族（`a574065` 补审后按真实存储实现：快照/diff/未提交变更/tree/内容/版本史）；双挂载 `server.rs:5263-5318` | **已实现** ✓；**信封边界注记**（见下） |
 | memory 面 | 轮⑥：四类记忆、消息复合键、归因策略、提示词资产 | 台账 full（v0.3.3af）；`code::INVALID_OR_MISSING_DATA` 引用 `src/api/features.rs:425/436/581` | 对齐 ✓（提示词资产在库：`docs/rea-v0.27.2/memory-default-system-prompt.txt`） |
 | OpenAI 兼容面 | 轮④：两段式错误、SSE、弃用别名 | 台账 aligned（`src/server.rs; src/api/`） | 引用已挂 ✓ |
-| RetCode 值 | 轮⑦：上游全表（0/10/100/101/102/103/105/106/108/109 + HTTP 4xx 族） | 抽查：`code::INVALID_OR_MISSING_DATA=102`（`server.rs:1595`）、`101 INVALID_ARGUMENT`、`EXCEPTION_ERROR=100`（`user_register.rs:27`）、`OPERATING_ERROR=103`（`:30`） | 抽查一致 ✓；**全表逐项对照留后续轮** |
+| RetCode 值 | 轮⑦：上游全表（0/10/100/101/102/103/105/106/108/109 + HTTP 4xx 族） | 抽查：`code::INVALID_OR_MISSING_DATA=102`（`server.rs:1595`）、`101 INVALID_ARGUMENT`、`EXCEPTION_ERROR=100`（`user_register.rs:27`）、`OPERATING_ERROR=103`（`:30`） | **全表逐项对照完成 ✓**（10 值全在 `code` 模块 + `user_register.rs`；HTTP 族 400/401/403/404/409/500 由原生 `StatusCode` 承载，映射注释见 `server.rs:1580-1621`） |
 
 ## 信封边界注记（文件提交面）
 
@@ -29,4 +29,5 @@
 
 ## 后续
 
-- RetCode 全表逐项对照；file-commit 信封决策；轮⑧ UI 地图 → 任务-3 CDP 批次输入清单。
+- ~~RetCode 全表逐项对照~~ ✓（本轮完成，见上表）；**file-commit 信封逐字复刻决策**；轮⑧ UI 地图 → 任务-3 CDP 批次输入清单。
+- **实例记忆缺陷修复**：用户 2026-10-12 决定不需要，事项关闭（不做 DB 写，实例保持原样）。
