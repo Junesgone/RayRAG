@@ -2,6 +2,34 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.46.0] - 2026-10-12
+
+### The document API answers like RAGFlow — field for field
+
+The document surface of the RAGFlow v0.27.2 HTTP API was replicated end to end: every
+route contract was probed read-only against a live v0.27.2 instance, and each answer —
+message text, numeric code, response shape — was folded back into RayRAG.
+
+- Document listing speaks the upstream query language: `keywords`, `page`/`page_size`,
+  `orderby`, `desc`, `types` and `run` filters, with the upstream answers for invalid
+  filters and the `{total, filter}` facet map for `type=filter`. Rows carry the localised
+  dates, the short `run` vocabulary (`UNSTART`/`RUNNING`/`CANCEL`/`DONE`/`FAIL` alongside
+  the numeric value), the aggregated token count and the derived document type; the UI
+  pages through large datasets transparently.
+- The document update route (`PATCH /datasets/{id}/documents/{id}`) is the full field
+  face — `name`, `chunk_method`, `enabled`, `parser_config`, `pipeline_id`, `meta_fields` —
+  with RAGFlow's validation wordings reproduced verbatim (immutable chunk/token counters,
+  the 255-byte name rule, extension and duplicate checks, automatic parser-type guards). A
+  successful update answers with the complete document object.
+- A rename or parser-method change resets the parse state atomically: progress cleared,
+  chunk counters released, the document object reloaded.
+- The metadata-config routes validate raw request bodies like upstream — an empty body
+  answers `metadata is required` with code 101, malformed payloads answer the
+  raised-exception envelopes — and unknown or foreign datasets get the permission wording.
+- The ingest route, batch status, thumbnails and delete follow the probed upstream
+  semantics, edge cases included; application errors ride HTTP 200 with numeric codes,
+  matching RAGFlow.
+
 ## [0.45.0] - 2026-10-11
 
 ### The database starts where the first login does: admin
