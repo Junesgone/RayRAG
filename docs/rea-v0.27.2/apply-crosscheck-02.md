@@ -83,3 +83,10 @@
 
 - `document_api.py` 行「aligned / 复核通过」已精细化：追加本件指针与三级差异分类（见 coverage 行注）。
 - 未决总表追加：文档面写路径成功形状（既有）+ 四级差异修正批队列（本件）。
+
+## 批① 执行记录（2026-10-12）
+
+已落地（仓库提交 `api: document-surface batch 1`）：批① 清单全部执行——list/delete 鉴权文案（`You don't own the dataset {id}. ` 含尾空格）、batch 引号与大小写（`"doc_ids"`、`"Status" …:{status}!`）、parse/stop 反引号与 ID 单引号、rename 文案族（`you don't own the dataset` / `the dataset doesn't own the document` / `Field: <name> … <None>`）、download/preview 文案族（`document not found`）与 `The dataset not own the document {id}.` 分支、delete 尾空格、images `Image not found.`、summary GET 鉴权（同族 `data_error` 200+102）、`selector` falsy 归一（`[]`/`""`/`0`/`false` → `{}`）。
+随批修复：`env_surface` 补 `RAYRAG_POSTGRES_USER` 豁免条目（`9288bbf` 漏登记 → 单测转红）。
+延后：metadata/config `metadata is required` 校验（需换 raw-body 提取器；归入批④同批）。
+验证：`cargo test --locked` **2271 passed / 0 failed / 27 ignored**；`cargo fmt --check` 干净。
