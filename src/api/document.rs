@@ -4,14 +4,15 @@
 
 use axum::{
     Json,
-    extract::{Extension, Path, State},
+    extract::{Extension, Path, RawQuery, State},
+    http::StatusCode,
     response::IntoResponse,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Mutex, RwLock};
 
-use crate::server::{AppState, AuthContext, kb_accessible, kb_manageable};
+use crate::server::{AppState, AuthContext, api_error_result, code, kb_accessible, kb_manageable};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocRecord {
@@ -265,66 +266,602 @@ impl DocStore {
     }
 }
 
+/// Upstream `TaskStatus.name` for each status this engine stores: fetch
+/// surfaces report `UNSTART` / `FAIL` / `CANCEL`, while the engine keeps the
+/// longer `UNSTARTED` / `FAILED` / `CANCELLED` spellings internally.
+pub(crate) fn run_api_text(run: &str) -> &str {
+    match run {
+        "UNSTARTED" => "UNSTART",
+        "RUNNING" => "RUNNING",
+        "CANCELLED" => "CANCEL",
+        "DONE" => "DONE",
+        "FAILED" => "FAIL",
+        _ => "UNSTART",
+    }
+}
+
+/// Internal status → upstream numeric `TaskStatus.value` (`"0".."5"`).
+fn run_numeric(run: &str) -> Option<&'static str> {
+    match run {
+        "UNSTARTED" => Some("0"),
+        "RUNNING" => Some("1"),
+        "CANCELLED" => Some("2"),
+        "DONE" => Some("3"),
+        "FAILED" => Some("4"),
+        _ => None,
+    }
+}
+
+/// `api/utils/file_utils.py::filename_type` — the `type` a row reports.
+fn filename_type(name: &str) -> &'static str {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or("").trim();
+    if base.is_empty() || base.chars().count() > 255 {
+        return "other";
+    }
+    let lower = base.to_lowercase();
+    if lower.ends_with(".pdf") {
+        return "pdf";
+    }
+    let ext = lower.rsplit_once('.').map(|(_, ext)| ext).unwrap_or("");
+    const DOC_EXTS: &[&str] = &[
+        "msg", "eml", "doc", "docx", "ppt", "pptx", "yml", "xml", "htm", "json", "jsonl", "ldjson",
+        "csv", "txt", "ini", "xls", "xlsx", "wps", "rtf", "hlp", "pages", "numbers", "key", "md",
+        "mdx", "py", "js", "java", "c", "cpp", "h", "php", "go", "ts", "sh", "cs", "kt", "html",
+        "sql", "epub",
+    ];
+    const AURAL_EXTS: &[&str] = &[
+        "wav", "flac", "ape", "alac", "wavpack", "wv", "mp3", "aac", "ogg", "vorbis", "opus",
+    ];
+    const VISUAL_EXTS: &[&str] = &[
+        "jpg", "jpeg", "png", "tif", "gif", "bmp", "pcx", "tga", "exif", "fpx", "svg", "psd",
+        "cdr", "pcd", "dxf", "ufo", "eps", "ai", "raw", "wmf", "webp", "avif", "apng", "icon",
+        "ico", "mpg", "mpeg", "avi", "rm", "rmvb", "mov", "wmv", "asf", "dat", "asx", "wvx", "mpe",
+        "mpa", "mp4", "mkv",
+    ];
+    if DOC_EXTS.contains(&ext) {
+        "doc"
+    } else if AURAL_EXTS.contains(&ext) {
+        "aural"
+    } else if VISUAL_EXTS.contains(&ext) {
+        "visual"
+    } else {
+        "other"
+    }
+}
+
+/// The stored `suffix`: the extension after the last dot, lowercased.
+fn doc_suffix(name: &str) -> String {
+    match name.rsplit_once('.') {
+        Some((_, ext)) if !ext.is_empty() && !ext.contains('/') => ext.to_lowercase(),
+        _ => String::new(),
+    }
+}
+
+/// The parsed query string as decoded `(name, value)` pairs (`getlist` order).
+fn query_pairs(raw: Option<&str>) -> Vec<(String, String)> {
+    raw.map(|raw| {
+        url::form_urlencoded::parse(raw.as_bytes())
+            .into_owned()
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+fn q_first<'a>(pairs: &'a [(String, String)], key: &str) -> Option<&'a str> {
+    pairs
+        .iter()
+        .find(|(name, _)| name == key)
+        .map(|(_, value)| value.as_str())
+}
+
+/// `request.args.getlist(key)`, including the `key[]` spelling upstream reads too.
+fn q_list(pairs: &[(String, String)], key: &str) -> Vec<String> {
+    let bracketed = format!("{key}[]");
+    pairs
+        .iter()
+        .filter(|(name, _)| *name == key || *name == bracketed)
+        .map(|(_, value)| value.clone())
+        .collect()
+}
+
+/// `int(q.get(key, 0))` — a malformed bound reads as "no bound".
+fn q_int(pairs: &[(String, String)], key: &str) -> i64 {
+    q_first(pairs, key)
+        .and_then(|value| value.trim().parse::<i64>().ok())
+        .unwrap_or(0)
+}
+
+/// `validate_rest_api_page`: silent fallback to `DEFAULT_PAGE`.
+fn validate_page(value: Option<&str>) -> usize {
+    value
+        .and_then(|value| value.trim().parse::<i64>().ok())
+        .filter(|page| *page >= 1)
+        .map(|page| page as usize)
+        .unwrap_or(1)
+}
+
+/// `validate_rest_api_page_size`: silent fallback to `DEFAULT_PAGE_SIZE`; the
+/// public maximum raises — upstream lets that exception reach the generic 500
+/// handler instead of shaping a business error.
+fn validate_page_size(value: Option<&str>) -> Result<usize, ()> {
+    match value.and_then(|value| value.trim().parse::<i64>().ok()) {
+        Some(size) if size > 100 => Err(()),
+        Some(size) if size >= 1 => Ok(size as usize),
+        _ => Ok(30),
+    }
+}
+
+/// `_parse_run_status_filter`: `TaskStatus` names map onto their numeric
+/// values; anything else must already be one of `"0".."5"`.
+fn parse_run_filter(values: &[String]) -> Result<Vec<String>, Vec<String>> {
+    let mut converted = Vec::new();
+    let mut invalid: Vec<String> = Vec::new();
+    for raw in values {
+        let value = raw.trim();
+        if value.is_empty() {
+            continue;
+        }
+        let numeric = match value.to_uppercase().as_str() {
+            "UNSTART" => "0",
+            "RUNNING" => "1",
+            "CANCEL" => "2",
+            "DONE" => "3",
+            "FAIL" => "4",
+            "SCHEDULE" => "5",
+            _ => value,
+        }
+        .to_string();
+        if !matches!(numeric.as_str(), "0" | "1" | "2" | "3" | "4" | "5")
+            && !invalid.contains(&numeric)
+        {
+            invalid.push(numeric.clone());
+        }
+        converted.push(numeric);
+    }
+    if invalid.is_empty() {
+        Ok(converted)
+    } else {
+        Err(invalid)
+    }
+}
+
+/// `VALID_FILE_TYPES` (api/db/__init__.py) — the `types` filter vocabulary.
+const VALID_FILE_TYPES: &[&str] = &[
+    "pdf", "doc", "visual", "aural", "virtual", "folder", "other",
+];
+
+/// Upstream's `str(vv)` rendering for numeric metadata values.
+fn python_str_number(number: &serde_json::Number) -> String {
+    if let Some(int) = number.as_i64() {
+        return int.to_string();
+    }
+    if let Some(uint) = number.as_u64() {
+        return uint.to_string();
+    }
+    match number.as_f64() {
+        Some(float) if float.fract() == 0.0 => format!("{float:.1}"),
+        Some(float) => float.to_string(),
+        None => number.to_string(),
+    }
+}
+
+/// `get_filter_by_kb_id`'s per-value expansion: scalars pass the non-blank
+/// check, lists expand; anything richer is skipped (upstream would `str()` it).
+fn metadata_value_strings(value: &serde_json::Value) -> Vec<String> {
+    match value {
+        serde_json::Value::String(text) => {
+            if text.trim().is_empty() {
+                Vec::new()
+            } else {
+                vec![text.clone()]
+            }
+        }
+        serde_json::Value::Number(number) => vec![python_str_number(number)],
+        serde_json::Value::Bool(flag) => vec![if *flag { "True" } else { "False" }.to_string()],
+        serde_json::Value::Array(items) => items.iter().flat_map(metadata_value_strings).collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// One document as the documents API reports it.
 ///
 /// The list endpoint's row shape, shared with the upload response — upstream feeds both from
 /// `map_doc_keys_with_run_status`, so a client moves a document between the two without
-/// learning a second field set.
+/// learning a second field set. The row speaks the upstream vocabulary: `run` in
+/// `TaskStatus` names, `dataset_id` alongside the legacy `kb_id`, `suffix`/`type` derived
+/// from the file name, and the parser face (`chunk_method` / `parser_config`) carried from
+/// the dataset.
 pub(crate) fn doc_list_entry(
     state: &crate::server::AppState,
     doc: &DocRecord,
+    token_count: usize,
 ) -> serde_json::Value {
     let meta_fields = state
         .document_metadata
         .get(&doc.id, &doc.kb_id)
         .unwrap_or_default();
+    let kb = state.kbs.get(&doc.kb_id);
+    let parser_config: serde_json::Value = kb
+        .as_ref()
+        .and_then(|kb| serde_json::from_str(&kb.parser_config).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    let chunk_method = parser_config
+        .get("chunk_method")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("naive")
+        .to_string();
+    // Document-level ownership is not recorded yet; the dataset owner is the
+    // closest honest value (it is the uploader for every single-owner dataset).
+    let owner_id = kb
+        .as_ref()
+        .map(|kb| kb.owner_id.clone())
+        .unwrap_or_default();
+    let nickname = if owner_id.is_empty() {
+        serde_json::Value::Null
+    } else {
+        state
+            .users
+            .get_user_by_id(&owner_id)
+            .map(|user| serde_json::Value::String(user.nickname))
+            .unwrap_or(serde_json::Value::Null)
+    };
     serde_json::json!({
         "id": doc.id,
         "name": doc.name,
         "kb_id": doc.kb_id,
+        "dataset_id": doc.kb_id,
         "size": doc.size,
         "storage_name": doc.storage_name,
         "content_hash": doc.content_hash,
         "indexed_content_hash": doc.indexed_content_hash,
-        "run": doc.run,
+        // `_process_run_mapping`: the REST surface reports TaskStatus names.
+        "run": run_api_text(&doc.run),
         "progress": doc.progress,
         "progress_msg": doc.progress_msg,
         "chunk_count": doc.chunk_count,
-        "created_at": doc.created_at,
-        "updated_at": doc.updated_at,
-        // Upstream `map_doc_keys_with_run_status` reports `status` on every row;
-        // the files page renders the enabled/disabled state from it.
+        "token_count": token_count,
+        // `_process_key_mappings`: parser_id → chunk_method.
+        "chunk_method": chunk_method,
+        "suffix": doc_suffix(&doc.name),
+        // `filename_type` value (pdf / doc / visual / aural / other).
+        "type": filename_type(&doc.name),
         "status": doc.status,
         "meta_fields": meta_fields,
+        "created_at": doc.created_at,
+        "updated_at": doc.updated_at,
+        "create_time": doc.created_at,
+        "update_time": doc.updated_at,
+        "create_date": crate::api::compat::ms_to_datetime_string(doc.created_at),
+        "update_date": crate::api::compat::ms_to_datetime_string(doc.updated_at),
+        "created_by": owner_id,
+        "nickname": nickname,
+        "parser_config": parser_config,
+        // The pipeline columns exist upstream; without a pipeline flow they are null.
+        "pipeline_id": serde_json::Value::Null,
+        "pipeline_name": serde_json::Value::Null,
+        // Parse timing is not tracked yet — the keys are present, honestly empty.
+        "process_begin_at": serde_json::Value::Null,
+        "process_duration": serde_json::Value::Null,
+        // Thumbnails are generated on demand and not recorded on the row.
+        "thumbnail": "",
     })
 }
 
 /// GET /api/v1/datasets/{kb_id}/documents — list docs in KB
+///
+/// The upstream query face (`_get_docs_with_request` / `_get_doc_filters_with_request`):
+/// page/page_size (silent fallbacks, public max 100), orderby/desc, keywords,
+/// suffix/types/run filters, id/name/ids addressing, the `create_time_from/to` window
+/// applied to the returned page, and the `type=filter` aggregation branch.
 pub async fn list_docs(
     State(state): State<std::sync::Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
     Path(kb_id): Path<String>,
-) -> impl IntoResponse {
+    RawQuery(raw): RawQuery,
+) -> axum::response::Response {
     if !kb_accessible(&state, &kb_id, &auth) {
-        return Json(
-            serde_json::json!({ "code": 102, "message": format!("You don't own the dataset {kb_id}. ") }),
+        return api_error_result(
+            StatusCode::OK,
+            code::INVALID_OR_MISSING_DATA,
+            &format!("You don't own the dataset {kb_id}. "),
         );
     }
-    let docs: Vec<_> = state
-        .docs
-        .list(&kb_id)
+    let pairs = query_pairs(raw.as_deref());
+    let page = validate_page(q_first(&pairs, "page"));
+    let page_size = match validate_page_size(q_first(&pairs, "page_size")) {
+        Ok(size) => size,
+        Err(()) => {
+            return api_error_result(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                code::SERVER_ERROR,
+                "page_size must be less than or equal to 100",
+            );
+        }
+    };
+    let orderby = q_first(&pairs, "orderby").unwrap_or("create_time");
+    if !matches!(orderby, "create_time" | "update_time" | "name") {
+        return api_error_result(
+            StatusCode::OK,
+            code::INVALID_ARGUMENT,
+            &format!("invalid orderby field: {orderby}"),
+        );
+    }
+    let desc = q_first(&pairs, "desc")
+        .map(|value| value.trim().to_lowercase() != "false")
+        .unwrap_or(true);
+    let keywords = q_first(&pairs, "keywords").unwrap_or("").to_string();
+    let suffix = q_list(&pairs, "suffix");
+    let types = q_list(&pairs, "types");
+    if !types.is_empty() {
+        let mut invalid: Vec<String> = Vec::new();
+        for value in &types {
+            if !VALID_FILE_TYPES.contains(&value.as_str()) && !invalid.contains(value) {
+                invalid.push(value.clone());
+            }
+        }
+        if !invalid.is_empty() {
+            let plural = if invalid.len() > 1 { "s" } else { "" };
+            return api_error_result(
+                StatusCode::OK,
+                code::INVALID_OR_MISSING_DATA,
+                &format!(
+                    "Invalid filter conditions: {} type{}",
+                    invalid.join(", "),
+                    plural
+                ),
+            );
+        }
+    }
+    let run_values: Vec<String> = q_list(&pairs, "run")
         .into_iter()
-        .map(|doc| doc_list_entry(&state, &doc))
+        .chain(q_list(&pairs, "run_status"))
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect();
+    let run_filter = match parse_run_filter(&run_values) {
+        Ok(values) => values,
+        Err(invalid) => {
+            return api_error_result(
+                StatusCode::OK,
+                code::INVALID_OR_MISSING_DATA,
+                &format!(
+                    "Invalid filter run status conditions: {}",
+                    invalid.join(", ")
+                ),
+            );
+        }
+    };
+    // (`metadata` / `metadata_condition` / `return_empty_metadata` are not read here — the
+    // metadata-condition filter family is deferred; unread parameters pass through.)
+    let doc_id_param = q_first(&pairs, "id")
+        .map(str::to_string)
+        .filter(|value| !value.is_empty());
+    let doc_name_param = q_first(&pairs, "name")
+        .map(str::to_string)
+        .filter(|value| !value.is_empty());
+    let docs = state.docs.list(&kb_id);
+    let mut doc_ids_filter: Option<Vec<String>> = None;
+    if let Some(doc_id) = doc_id_param.as_deref() {
+        if !docs.iter().any(|doc| doc.id == doc_id) {
+            return api_error_result(
+                StatusCode::OK,
+                code::INVALID_OR_MISSING_DATA,
+                &format!("you don't own the document {doc_id}"),
+            );
+        }
+        doc_ids_filter = Some(vec![doc_id.to_string()]);
+    }
+    if let Some(doc_name) = doc_name_param.as_deref() {
+        if !docs.iter().any(|doc| doc.name == doc_name) {
+            return api_error_result(
+                StatusCode::OK,
+                code::INVALID_OR_MISSING_DATA,
+                &format!("you don't own the document {doc_name}"),
+            );
+        }
+    }
+    let ids = q_list(&pairs, "ids");
+    if ids.len() > 100 {
+        return api_error_result(
+            StatusCode::OK,
+            code::INVALID_ARGUMENT,
+            "ids must contain at most 100 IDs",
+        );
+    }
+    if let Some(doc_id) = doc_id_param.as_deref() {
+        if !ids.is_empty() {
+            // Upstream renders the list with Python's `repr`: `['a', 'b']`.
+            let repr = format!(
+                "[{}]",
+                ids.iter()
+                    .map(|value| format!("'{value}'"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            return api_error_result(
+                StatusCode::OK,
+                code::INVALID_OR_MISSING_DATA,
+                &format!("Should not provide both 'id':{doc_id} and 'ids'{repr}"),
+            );
+        }
+    }
+    if !ids.is_empty() {
+        doc_ids_filter = Some(ids.clone());
+    }
+    let run_set: Option<HashSet<&str>> = if run_filter.is_empty() {
+        None
+    } else {
+        Some(run_filter.iter().map(String::as_str).collect())
+    };
+    let type_set: Option<HashSet<&str>> = if types.is_empty() {
+        None
+    } else {
+        Some(types.iter().map(String::as_str).collect())
+    };
+    let suffix_set: Option<HashSet<&str>> = if suffix.is_empty() {
+        None
+    } else {
+        Some(suffix.iter().map(String::as_str).collect())
+    };
+    let keywords_lower = keywords.to_lowercase();
+    let filtered: Vec<DocRecord> = docs
+        .into_iter()
+        .filter(|doc| {
+            if let Some(ids) = doc_ids_filter.as_ref() {
+                if !ids.iter().any(|id| id == &doc.id) {
+                    return false;
+                }
+            }
+            if let Some(name) = doc_name_param.as_deref() {
+                if doc.name != name {
+                    return false;
+                }
+            }
+            if !keywords_lower.is_empty() && !doc.name.to_lowercase().contains(&keywords_lower) {
+                return false;
+            }
+            if let Some(run_set) = run_set.as_ref() {
+                match run_numeric(&doc.run) {
+                    Some(numeric) if run_set.contains(numeric) => {}
+                    _ => return false,
+                }
+            }
+            if let Some(type_set) = type_set.as_ref() {
+                if !type_set.contains(filename_type(&doc.name)) {
+                    return false;
+                }
+            }
+            if let Some(suffix_set) = suffix_set.as_ref() {
+                let suffix = doc_suffix(&doc.name);
+                if !suffix_set.contains(suffix.as_str()) {
+                    return false;
+                }
+            }
+            true
+        })
+        .collect();
+    let total = filtered.len();
+    if q_first(&pairs, "type") == Some("filter") {
+        return list_docs_filter(&state, &kb_id, &filtered, total);
+    }
+    let mut sorted = filtered;
+    match orderby {
+        "name" => sorted.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id))),
+        "update_time" => {
+            sorted.sort_by(|a, b| {
+                a.updated_at
+                    .cmp(&b.updated_at)
+                    .then_with(|| a.id.cmp(&b.id))
+            });
+        }
+        _ => {
+            sorted.sort_by(|a, b| {
+                a.created_at
+                    .cmp(&b.created_at)
+                    .then_with(|| a.id.cmp(&b.id))
+            });
+        }
+    }
+    if desc {
+        sorted.reverse();
+    }
+    let start = page.saturating_sub(1).saturating_mul(page_size);
+    let mut page_docs: Vec<DocRecord> = sorted.into_iter().skip(start).take(page_size).collect();
+    // Upstream applies the time window to the rows it is about to return (after
+    // pagination), so an empty window narrows the page without re-filling it.
+    let create_time_from = q_int(&pairs, "create_time_from");
+    let create_time_to = q_int(&pairs, "create_time_to");
+    if create_time_from != 0 || create_time_to != 0 {
+        page_docs.retain(|doc| {
+            let created = doc.created_at as i64;
+            (create_time_from == 0 || created >= create_time_from)
+                && (create_time_to == 0 || created <= create_time_to)
+        });
+    }
+    let doc_ids: HashSet<String> = page_docs.iter().map(|doc| doc.id.clone()).collect();
+    let mut token_counts = state
+        .engine
+        .read()
+        .map(|engine| engine.token_counts_for(&kb_id, &doc_ids))
+        .unwrap_or_default();
+    let entries: Vec<serde_json::Value> = page_docs
+        .iter()
+        .map(|doc| {
+            let tokens = token_counts.remove(&doc.id).unwrap_or(0);
+            doc_list_entry(&state, doc, tokens)
+        })
         .collect();
     // The API guide's shape for this endpoint is `data: {"docs": [...], "total_datasets": n}`.
     // A bare array looks equivalent but breaks every client written against the guide, which reads
     // `data.docs` and would silently get null.
-    let total = docs.len();
-    let mut data = serde_json::json!({ "docs": docs, "total": total, "total_datasets": total });
+    let mut data = serde_json::json!({ "docs": entries, "total": total, "total_datasets": total });
     crate::api::compat::enrich_documents(&mut data["docs"]);
     // Upstream `get_json_result(data=…)` — the list envelope carries `message: "success"`
     // (probes `doc_list_filter` / `doc_list_page_neg` / `doc_list_numeric_run`).
-    Json(serde_json::json!({ "code": 0, "message": "success", "data": data }))
+    Json(serde_json::json!({ "code": 0, "message": "success", "data": data })).into_response()
+}
+
+/// The `type=filter` branch of the list endpoint: `_get_doc_filters_with_request` over
+/// `DocumentService.get_filter_by_kb_id` — suffix / run-status / metadata counters over
+/// the filtered set, with the always-present `empty_metadata` bucket.
+fn list_docs_filter(
+    state: &crate::server::AppState,
+    kb_id: &str,
+    filtered: &[DocRecord],
+    total: usize,
+) -> axum::response::Response {
+    let mut suffix_counter: BTreeMap<String, usize> = BTreeMap::new();
+    let mut run_status_counter: BTreeMap<String, usize> = BTreeMap::new();
+    let mut metadata_counter: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
+    let mut empty_metadata_count = 0usize;
+    for doc in filtered {
+        *suffix_counter.entry(doc_suffix(&doc.name)).or_insert(0) += 1;
+        if let Some(numeric) = run_numeric(&doc.run) {
+            *run_status_counter.entry(numeric.to_string()).or_insert(0) += 1;
+        }
+        let meta_fields = state
+            .document_metadata
+            .get(&doc.id, kb_id)
+            .unwrap_or_default();
+        if meta_fields.is_empty() {
+            empty_metadata_count += 1;
+            continue;
+        }
+        let mut has_valid = false;
+        for (key, value) in meta_fields.iter() {
+            for text in metadata_value_strings(value) {
+                *metadata_counter
+                    .entry(key.clone())
+                    .or_default()
+                    .entry(text)
+                    .or_insert(0) += 1;
+                has_valid = true;
+            }
+        }
+        if !has_valid {
+            empty_metadata_count += 1;
+        }
+    }
+    let mut metadata: serde_json::Map<String, serde_json::Value> = metadata_counter
+        .into_iter()
+        .map(|(key, values)| (key, serde_json::to_value(values).unwrap_or_default()))
+        .collect();
+    metadata.insert(
+        "empty_metadata".to_string(),
+        serde_json::json!({ "true": empty_metadata_count }),
+    );
+    let filter = serde_json::json!({
+        "metadata": metadata,
+        "run_status": run_status_counter,
+        "suffix": suffix_counter,
+    });
+    Json(
+        serde_json::json!({ "code": 0, "message": "success", "data": {
+        "total": total,
+        "filter": filter,
+    } }),
+    )
+    .into_response()
 }
 
 /// GET /api/v1/datasets/{kb_id}/documents/{doc_id} — get doc status

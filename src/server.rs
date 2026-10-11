@@ -1578,7 +1578,18 @@ pub(crate) fn register_document_upload(
     };
     upload.commit();
     tracing::info!(%task_id, %doc_id, "document uploaded");
-    Ok(crate::api::document::doc_list_entry(&state, &doc))
+    let tokens = {
+        let mut ids = std::collections::HashSet::new();
+        ids.insert(doc.id.clone());
+        state
+            .engine
+            .read()
+            .map(|engine| engine.token_counts_for(&doc.kb_id, &ids))
+            .unwrap_or_default()
+            .remove(&doc.id)
+            .unwrap_or(0)
+    };
+    Ok(crate::api::document::doc_list_entry(&state, &doc, tokens))
 }
 
 /// RAGFlow's business codes — the API guide's "Response body codes" table. The HTTP status and
@@ -12565,7 +12576,274 @@ mod tests {
         assert_eq!(doc.content_hash.len(), 32);
         assert!(doc.content_hash.chars().all(|ch| ch.is_ascii_hexdigit()));
         assert!(env.root.join("uploads").join(doc.storage_name).is_file());
-        assert_eq!(json["data"][0]["run"], "UNSTARTED", "response body: {json}");
+        assert_eq!(json["data"][0]["run"], "UNSTART", "response body: {json}");
+    }
+
+    fn seeded_doc(
+        state: &crate::server::AppState,
+        id: &str,
+        kb_id: &str,
+        name: &str,
+        run: &str,
+        created_at: u64,
+    ) -> crate::api::document::DocRecord {
+        let mut doc = stored_doc(id, kb_id, 0);
+        doc.name = name.into();
+        doc.storage_name = name.into();
+        doc.run = run.into();
+        doc.created_at = created_at;
+        doc.updated_at = created_at;
+        state.docs.insert(doc.clone()).unwrap();
+        doc
+    }
+
+    async fn list_json(env: &TestEnv, kb_id: &str, query: &str) -> (StatusCode, serde_json::Value) {
+        let uri = if query.is_empty() {
+            format!("/api/v1/datasets/{kb_id}/documents")
+        } else {
+            format!("/api/v1/datasets/{kb_id}/documents?{query}")
+        };
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        (status, response_json(response).await)
+    }
+
+    /// The list endpoint's query face: upstream defaults (page 1 / page_size 30), the
+    /// 100-row public maximum surfacing as a transport failure, orderby validation, and
+    /// the desc semantics (`false` — and only `false` — sorts ascending).
+    #[tokio::test]
+    async fn list_docs_paginates_sorts_and_bounds_like_upstream() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Query KB", "")
+            .unwrap();
+        for index in 0..35u64 {
+            seeded_doc(
+                &env.state,
+                &format!("doc-{index:02}"),
+                &kb.id,
+                &format!("doc-{index:02}.txt"),
+                "UNSTARTED",
+                1_000 + index,
+            );
+        }
+        let (status, body) = list_json(&env, &kb.id, "").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["message"], "success");
+        let docs = body["data"]["docs"].as_array().unwrap();
+        assert_eq!(docs.len(), 30, "default page size: {body}");
+        assert_eq!(body["data"]["total"], 35);
+        assert_eq!(body["data"]["total_datasets"], 35);
+        assert_eq!(docs[0]["id"], "doc-34", "newest first by default: {body}");
+        assert_eq!(docs[0]["run"], "UNSTART");
+
+        let (_, body) = list_json(&env, &kb.id, "page=2").await;
+        let docs = body["data"]["docs"].as_array().unwrap();
+        assert_eq!(docs.len(), 5);
+        assert_eq!(docs[0]["id"], "doc-04");
+
+        let (_, body) = list_json(&env, &kb.id, "orderby=name&desc=false&page_size=1").await;
+        assert_eq!(body["data"]["docs"][0]["id"], "doc-00");
+
+        let (_, body) = list_json(&env, &kb.id, "page_size=abc&page=-5").await;
+        assert_eq!(
+            body["data"]["docs"].as_array().unwrap().len(),
+            30,
+            "invalid page/page_size fall back silently: {body}"
+        );
+
+        let (status, body) = list_json(&env, &kb.id, "page_size=101").await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(body["code"], 500);
+        assert_eq!(
+            body["message"],
+            "page_size must be less than or equal to 100"
+        );
+
+        let (status, body) = list_json(&env, &kb.id, "orderby=bogus").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body,
+            serde_json::json!({ "code": 101, "message": "invalid orderby field: bogus" })
+        );
+    }
+
+    /// Filters and addressing: keywords / suffix / types / run (with their error texts),
+    /// the id / name ownership checks, the id+ids conflict, the ids ceiling, and the
+    /// create_time window applied to the returned page.
+    #[tokio::test]
+    async fn list_docs_filters_and_addressing_match_upstream() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Filter KB", "")
+            .unwrap();
+        seeded_doc(&env.state, "d-annual", &kb.id, "Annual.pdf", "DONE", 2_000);
+        seeded_doc(&env.state, "d-notes", &kb.id, "Notes.docx", "FAILED", 2_001);
+        seeded_doc(
+            &env.state,
+            "d-audio",
+            &kb.id,
+            "audio.mp3",
+            "UNSTARTED",
+            2_002,
+        );
+        seeded_doc(&env.state, "d-photo", &kb.id, "photo.png", "RUNNING", 2_003);
+
+        let (_, body) = list_json(&env, &kb.id, "keywords=ANNUAL").await;
+        assert_eq!(body["data"]["docs"].as_array().unwrap().len(), 1, "{body}");
+
+        let (_, body) = list_json(&env, &kb.id, "types=pdf").await;
+        assert_eq!(body["data"]["total"], 1);
+        assert_eq!(body["data"]["docs"][0]["type"], "pdf");
+
+        let (_, body) = list_json(&env, &kb.id, "types=aural").await;
+        assert_eq!(body["data"]["docs"][0]["id"], "d-audio");
+
+        let (_, body) = list_json(&env, &kb.id, "types=bogus").await;
+        assert_eq!(body["code"], 102);
+        assert_eq!(body["message"], "Invalid filter conditions: bogus type");
+        let (_, body) = list_json(&env, &kb.id, "types=bogus&types=weird").await;
+        assert_eq!(
+            body["message"],
+            "Invalid filter conditions: bogus, weird types"
+        );
+
+        let (_, body) = list_json(&env, &kb.id, "suffix=docx").await;
+        assert_eq!(body["data"]["docs"][0]["id"], "d-notes");
+        assert_eq!(body["data"]["docs"][0]["suffix"], "docx");
+
+        let (_, body) = list_json(&env, &kb.id, "run=DONE").await;
+        assert_eq!(body["data"]["docs"][0]["id"], "d-annual");
+        let (_, body) = list_json(&env, &kb.id, "run=4").await;
+        assert_eq!(body["data"]["docs"][0]["id"], "d-notes");
+        assert_eq!(body["data"]["docs"][0]["run"], "FAIL");
+        let (_, body) = list_json(&env, &kb.id, "run_status=FAIL").await;
+        assert_eq!(body["data"]["total"], 1);
+        let (_, body) = list_json(&env, &kb.id, "run=bogus").await;
+        assert_eq!(
+            body["message"],
+            "Invalid filter run status conditions: bogus"
+        );
+
+        let (_, body) = list_json(&env, &kb.id, "id=d-annual").await;
+        assert_eq!(body["data"]["docs"].as_array().unwrap().len(), 1);
+        let (_, body) = list_json(&env, &kb.id, "id=missing").await;
+        assert_eq!(body["code"], 102);
+        assert_eq!(body["message"], "you don't own the document missing");
+
+        let (_, body) = list_json(&env, &kb.id, "name=Notes.docx").await;
+        assert_eq!(body["data"]["docs"][0]["id"], "d-notes");
+        let (_, body) = list_json(&env, &kb.id, "name=missing.txt").await;
+        assert_eq!(body["message"], "you don't own the document missing.txt");
+
+        let (_, body) = list_json(&env, &kb.id, "id=d-annual&ids=d-annual&ids=missing").await;
+        assert_eq!(
+            body["message"],
+            "Should not provide both 'id':d-annual and 'ids'['d-annual', 'missing']"
+        );
+
+        let many_ids: Vec<String> = (0..101).map(|index| format!("id-{index}")).collect();
+        let query = format!("ids={}", many_ids.join("&ids="));
+        let (_, body) = list_json(&env, &kb.id, &query).await;
+        assert_eq!(body["message"], "ids must contain at most 100 IDs");
+
+        let (_, body) = list_json(&env, &kb.id, "create_time_from=2002").await;
+        assert_eq!(body["data"]["total"], 4);
+        assert_eq!(
+            body["data"]["docs"].as_array().unwrap().len(),
+            2,
+            "the window narrows the page without re-filling it: {body}"
+        );
+    }
+
+    /// The `type=filter` branch: suffix / run-status / metadata counters with the
+    /// always-present `empty_metadata` bucket.
+    #[tokio::test]
+    async fn list_filter_branch_aggregates_counters() {
+        let env = test_env();
+        let kb = env.state.kbs.create_for("test-user", "Agg KB", "").unwrap();
+        seeded_doc(&env.state, "f-a", &kb.id, "a.pdf", "DONE", 3_000);
+        seeded_doc(&env.state, "f-b", &kb.id, "b.pdf", "RUNNING", 3_001);
+        seeded_doc(&env.state, "f-c", &kb.id, "c.mp3", "UNSTARTED", 3_002);
+        env.state
+            .document_metadata
+            .replace(
+                "f-a",
+                &kb.id,
+                serde_json::json!({ "lake": "yueqing", "tags": ["oxygen", "water"] })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            )
+            .unwrap();
+        let (status, body) = list_json(&env, &kb.id, "type=filter").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["message"], "success");
+        let filter = &body["data"]["filter"];
+        assert_eq!(body["data"]["total"], 3);
+        assert_eq!(filter["suffix"]["pdf"], 2);
+        assert_eq!(filter["suffix"]["mp3"], 1);
+        assert_eq!(filter["run_status"]["3"], 1);
+        assert_eq!(filter["run_status"]["1"], 1);
+        assert_eq!(filter["run_status"]["0"], 1);
+        assert_eq!(filter["metadata"]["lake"]["yueqing"], 1);
+        assert_eq!(filter["metadata"]["tags"]["oxygen"], 1);
+        assert_eq!(filter["metadata"]["tags"]["water"], 1);
+        assert_eq!(filter["metadata"]["empty_metadata"]["true"], 2);
+    }
+
+    /// Every row speaks the upstream vocabulary: renamed keys, the parser face, the
+    /// derived `suffix` / `type`, the translated `run`, and token_count summed from
+    /// the search index.
+    #[tokio::test]
+    async fn document_rows_speak_the_upstream_vocabulary() {
+        let env = test_env();
+        let kb = env.state.kbs.create_for("test-user", "Row KB", "").unwrap();
+        seeded_doc(&env.state, "r-a", &kb.id, "Report.pdf", "DONE", 4_000);
+        {
+            let mut engine = env.state.engine.write().unwrap();
+            let mut chunk_a = search_chunk("row-chunk-a", &kb.id, "oxygen guide");
+            chunk_a.metadata.insert("doc_id".into(), "r-a".into());
+            let mut chunk_b = search_chunk("row-chunk-b", &kb.id, "water guide");
+            chunk_b.metadata.insert("doc_id".into(), "r-a".into());
+            engine.index(vec![chunk_a, chunk_b]);
+        }
+        let (_, body) = list_json(&env, &kb.id, "").await;
+        let row = &body["data"]["docs"][0];
+        assert_eq!(row["dataset_id"], kb.id);
+        assert_eq!(row["kb_id"], kb.id);
+        assert_eq!(row["chunk_method"], "naive");
+        assert_eq!(row["suffix"], "pdf");
+        assert_eq!(row["type"], "pdf");
+        assert_eq!(row["run"], "DONE");
+        assert_eq!(row["nickname"], "Test");
+        assert_eq!(row["created_by"], "test-user");
+        assert!(row["parser_config"].is_object());
+        assert_eq!(row["pipeline_id"], serde_json::Value::Null);
+        assert_eq!(row["pipeline_name"], serde_json::Value::Null);
+        assert_eq!(row["process_begin_at"], serde_json::Value::Null);
+        assert_eq!(row["process_duration"], serde_json::Value::Null);
+        assert_eq!(row["thumbnail"], "");
+        assert_eq!(row["token_count"], 4, "two chunks x 2 tokens: {body}");
+        let create_date = row["create_date"].as_str().unwrap();
+        assert_eq!(create_date.len(), 19, "YYYY-MM-DDTHH:MM:SS: {create_date}");
+        assert_eq!(row["create_time"], 4_000u64);
+        assert_eq!(row["update_time"], 4_000u64);
     }
 
     #[tokio::test]

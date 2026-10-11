@@ -243,6 +243,29 @@ impl SearchEngine {
         self.index(chunks);
     }
 
+    /// Summed `token_count` for the given documents of one KB — the `token_count`
+    /// column a document row reports on the REST surface.
+    pub fn token_counts_for(
+        &self,
+        kb_id: &str,
+        doc_ids: &std::collections::HashSet<String>,
+    ) -> std::collections::HashMap<String, usize> {
+        let mut counts = std::collections::HashMap::new();
+        for chunk in &self.chunks {
+            if chunk.metadata.get("kb_id").map(String::as_str) != Some(kb_id) {
+                continue;
+            }
+            let Some(doc_id) = chunk.metadata.get("doc_id") else {
+                continue;
+            };
+            if !doc_ids.contains(doc_id) {
+                continue;
+            }
+            *counts.entry(doc_id.clone()).or_insert(0) += chunk.token_count;
+        }
+        counts
+    }
+
     /// Number of indexed chunks.
     pub fn len(&self) -> usize {
         self.chunks.len()

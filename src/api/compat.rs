@@ -86,13 +86,33 @@ pub fn enrich_chats(value: &mut Value) {
     });
 }
 
+/// `create_date` / `update_date` as upstream renders them in rows: local time,
+/// `YYYY-MM-DDTHH:MM:SS` (probe `doc_list_page_neg`).
+pub(crate) fn ms_to_datetime_string(ms: u64) -> String {
+    use chrono::{Local, TimeZone};
+    match Local.timestamp_millis_opt(i64::try_from(ms).unwrap_or(i64::MAX)) {
+        chrono::LocalResult::Single(datetime) => datetime.format("%Y-%m-%dT%H:%M:%S").to_string(),
+        _ => String::new(),
+    }
+}
+
 /// `GET /api/v1/datasets/{id}/documents`.
 pub fn enrich_documents(value: &mut Value) {
     enrich(value, |object| {
         alias(object, "created_at", "create_time");
         alias(object, "updated_at", "update_time");
-        alias(object, "created_at", "create_date");
-        alias(object, "updated_at", "update_date");
+        if let Some(ms) = object.get("created_at").and_then(Value::as_u64) {
+            object.insert(
+                "create_date".to_string(),
+                Value::String(ms_to_datetime_string(ms)),
+            );
+        }
+        if let Some(ms) = object.get("updated_at").and_then(Value::as_u64) {
+            object.insert(
+                "update_date".to_string(),
+                Value::String(ms_to_datetime_string(ms)),
+            );
+        }
         alias(object, "storage_name", "location");
         alias(object, "owner_id", "created_by");
         // A document in this project is always a document fetched from a local upload; saying so
