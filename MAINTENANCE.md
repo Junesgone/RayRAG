@@ -1,3 +1,14 @@
+## 2026-10-08 第5轮（对标推进）：data-source index.tsx —— Available grid 几何 + 按源搜索死代码闭环（partial → aligned）
+
+- **目标文件**：`web/src/pages/user-setting/data-source/index.tsx`（150 行，台账 partial → aligned）。上一轮剩余项：「Exact React grid/card geometry and per-source search remain partial (v0.3.3cc)」。
+- **搜索死代码闭环**：v0.26.4 中本文件 `<TenantTable searchTerm={searchTerm}>` 为注释行、`searchTerm` 未定义、未渲染任何搜索框。故「按源搜索」属上游死代码 residual，RayRAG 正确地不加搜索框（不复现上游未启用行为）。
+- **grid 几何**：旧实现 `repeat(auto-fill,minmax(260px,1fr))`；上游为 `@container grid sm:grid-cols-1 lg:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-4 3xl:grid-cols-4 gap-4`。本轮：
+  - 新增 `<div class='ds-avail-container'>` 包裹 `<section id='dsAvailable'>`，style 加 `container-type:inline-size`（`@container` 查询生效前置条件）；
+  - 基础 `grid-template-columns:1fr`；顶级 `@container (min-width:1024px){.ds-available-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}` 与 `@container (min-width:1536px){…repeat(4,minmax(0,1fr))…}`；`gap:1rem`（16px，上游 gap-4）。
+- **card 几何（作用域限 `.ds-available-grid`，不碰 chat-channel 与 Added 行 32px 图标）**：padding 12→10px（p-2.5）、border-width 1→0.5（border-0.5）、`.cc-available-icon` 32→24px（w-6）、`h3` 14→16px（text-base）。
+- **验证**：`cargo test --release --lib` **2271 passed / 0 failed**（测试集较此前 1420 扩充）；`datasources_page_renders_available_cards_and_grouped_delete_modal` 补 6 个 marker（container wrapper / @container 两阈值 / padding 10px / icon 24px / h3 1rem），全过。
+- **台账**：index.tsx 行 partial→aligned 并补第 5 轮注记；`--write` 刷新汇总（预期 partial 44→43）。
+
 ## 2026-10-30 第4轮（对标推进）：data-source added-source-card.tsx —— Added sources 行操作一比一收敛
 
 - **目标文件**：`web/src/pages/user-setting/data-source/component/added-source-card.tsx`（70 行，台账 partial → aligned）。上游卡片结构：icon+name 头 + 每行 `item.name` 左侧、右侧仅 Settings(gear) 与 Trash2 两个 ghost 图标按钮；Settings→数据源详情页，Trash→删除确认模态。
