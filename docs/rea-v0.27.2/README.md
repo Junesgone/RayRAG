@@ -2,7 +2,7 @@
 
 > 本目录为 **内部资产**（发布时硬拒排除，不入公开快照）。
 > 来源：`morluto/rea` 对 v0.27.2 参考树（commit `a024bea0cd93`）+ 镜像前端产物（web-dist 707 JS）的逆向分析。
-> 工作笔记与原始证据：`~/.cache/rea/ragflow-v0.27.2/`（notes/01–09、round3–9-forensics/、round8-ui/、web-dist/）。
+> 工作笔记与原始证据：`~/.cache/rea/ragflow-v0.27.2/`（notes/01–10、round3–10-forensics/、round8-ui/、web-dist/）。
 
 ## 模块分析（REA 轮次 → 蒸馏件）
 
@@ -20,6 +20,7 @@
 
 | 10 | 应用交叉核对 | `apply-crosscheck-01.md` | 九模块契约 × Rust 实现对照；台账 7 行回写 + 陈旧注记修正 |
 | 11 | UI 路由对账 | `ui-route-crosscheck-v0.27.2.md` | 上游 3 形式浏览器实测 + RayRAG 51 探针；遍历增补建议 4+1 项 |
+| 12 | 文档面（document_api） | `document-surface-v0.27.2.md` | 19 路由全文 + 39 探针（全只读）；混合信封再确认；**应用侧交叉核对待做** |
 
 ## 资产
 
@@ -34,4 +35,5 @@
 - chat 成功形状（默认模型 MiniMax-M3 上游不可达）；
 - ~~记忆语义检索（实例记录 `embd_id` 陈旧格式，待 Boss 确认 DB 修复）~~ **2026-10-12 用户决定不需要修复，事项关闭**；
 - 音频成功形状（实例未配置默认 TTS/ASR）；
-- 文件提交 create/diff/tree 成功形状（需真实提交，未做写操作）。
+- 文件提交 create/diff/tree 成功形状（需真实提交，未做写操作）；
+- 文档面写路径成功形状（上传/解析/停止/删除、web/empty、ingest）——零污染政策下未取，需要时以临时文档净零一次。
