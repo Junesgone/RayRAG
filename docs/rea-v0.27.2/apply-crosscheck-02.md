@@ -111,3 +111,20 @@
 
 验证：`cargo test --locked`（zvec 0.7.2 + 清代理）**2271 passed / 0 failed / 27 ignored**；`cargo fmt --check` 干净；build ✓。UI 依赖核查：RayRAG 前端仅判 `code!==0`，无数字分支，收敛安全。
 
+## 批③ 执行记录（2026-10-12，提交 ac16591）
+
+已落地（仓库提交 `api: document-surface batch 3 — response shapes converge to the upstream envelope`）：
+
+- **list**：`data {docs, total, total_datasets}`（补 `total` 双键；探针 doc_list_filter / page_neg / numeric_run）+ `message:"success"`；行形状抽为 `doc_list_entry`（列表与上传共型）。
+- **delete**：成功 `{deleted, success_count}`（双键）；失败 → `{code:102, message:"<errors 连接>"}`（`FileService.delete_docs` 形态，无 data 键）。
+- **upload（create 路由 `/datasets/{id}/documents`）**：成功 = `{code:0, data:[doc…]}`（数组、无 message，`get_result(data=doc_data)`）；全失败 = `{code:500, message:"{name}: {msg}" 换行连接}`（`file_service.py` err 拼接逐字）；部分成功 = `{code:500, message, data:[ok…]}`（`construct_json_result` 混合信封）；HTTP 200 恒态。
+- **ingest**：成功/取消 = `{code:0, message:"success", data:true}`（消息语义差异仍冻结，归批④）。
+- **thumbnails**：未解析 / 不可解码 ID 出图外（省略键；探针 `thumb_fake`）；成功补 `message:"success"`。
+- **batch-update-status**：成功补 `message:"success"`（`get_json_result(data=result)`）。
+- **错误信封族（批中新增发现）**：新增 `api_error_result`（`get_error_data_result` 形态：`{code, message}` 无 `data` 键）并切换文档面错误族——create 路由 102/109、`No file part!`、upload SERVER_ERROR、`document_route_error` 全族（up_both / up_none / SSRF）、images `not_found`、artifacts 三拒绝。此前 `api_error_code` 会序列化 `"data": null`，与探针体（up_both / up_none / img_fake / art_badext / art_missing / del_nobody）不符。
+- **测试同步**：12 断言（upload 单 / 多 / 部分 / 拒收族、thumbnails、ingest ×2、delete 契约、list total、traversal）+ MIME 用例补漏 1 处。
+
+验证：`cargo test --locked`（zvec 0.7.2 + 清代理）**2271 passed / 0 failed / 27 ignored**；`cargo fmt --check` 干净；build ✓。
+
+未随批（在案）：ingest 消息语义归批④；附件上传（`/documents/upload`）成功形状为 RayRAG 附件语义——上游 `upload_info` 成功形状未取证（观察项）；batch 逐文档 docStore 错误串（内部不可触发分支）。
+
