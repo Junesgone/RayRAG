@@ -277,8 +277,9 @@ fn permission_error(auth: &AuthContext, kb_id: &str) -> Response {
 }
 
 /// A raised exception answered by the global handler: `{code:100, data:null, message}` at
-/// HTTP 200 (round12 probes `mcfg_put_bad` / `mcfg_put_arr`).
-fn raised_error(message: String) -> Response {
+/// HTTP 200 (round12 probes `mcfg_put_bad` / `mcfg_put_arr`; round13 `upd2_body_bad` /
+/// `upd2_body_arr` for the document route).
+pub(crate) fn raised_error(message: String) -> Response {
     Json(serde_json::json!({
         "code": EXCEPTION_ERROR,
         "data": serde_json::Value::Null,
@@ -288,7 +289,7 @@ fn raised_error(message: String) -> Response {
 }
 
 /// Python's `repr` for the value shapes that appear in the validation messages below.
-fn python_repr(value: &serde_json::Value) -> String {
+pub(crate) fn python_repr(value: &serde_json::Value) -> String {
     match value {
         serde_json::Value::Null => "None".to_string(),
         serde_json::Value::Bool(true) => "True".to_string(),
@@ -308,6 +309,16 @@ fn python_repr(value: &serde_json::Value) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+    }
+}
+
+/// Python's `str(value)` as `format_validation_error_message` renders the input value:
+/// a top-level string is its own text (no quotes), every other shape goes through the repr
+/// above (so nested strings inside lists/dicts keep their single quotes).
+pub(crate) fn py_value_str(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(text) => text.clone(),
+        other => python_repr(other),
     }
 }
 

@@ -1543,6 +1543,7 @@ pub(crate) fn register_document_upload(
         created_at: now,
         updated_at: now,
         status: crate::api::document::enabled_status(),
+        ..Default::default()
     };
     let doc = state.docs.insert_unique(doc)?;
     if let Err(error) = state.kbs.update_counts(dataset_id, 0, 1) {
@@ -4932,7 +4933,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/datasets/{id}/documents/{did}",
             get(crate::api::document::get_doc)
                 .delete(crate::api::document::delete_doc)
-                .patch(crate::api::document::rename_doc),
+                .patch(crate::api::document::update_document),
         )
         .route(
             "/api/v1/datasets/{id}/documents/{did}/reparse",
@@ -12984,6 +12985,7 @@ mod tests {
             created_at: 1,
             updated_at: 1,
             status: crate::api::document::enabled_status(),
+            ..Default::default()
         };
         env.state.docs.insert(doc).unwrap();
         std::fs::write(env.root.join("uploads/preview-doc.pdf"), b"%PDF-").unwrap();
@@ -13063,6 +13065,7 @@ mod tests {
                 created_at: 1,
                 updated_at: 1,
                 status: crate::api::document::enabled_status(),
+                ..Default::default()
             })
             .unwrap();
         std::fs::write(env.root.join("uploads/download-doc.md"), b"# hi\n").unwrap();
@@ -13230,6 +13233,7 @@ mod tests {
                     created_at: 1,
                     updated_at: 1,
                     status: crate::api::document::enabled_status(),
+                    ..Default::default()
                 })
                 .unwrap();
         }
@@ -13309,6 +13313,7 @@ mod tests {
             created_at: 1,
             updated_at: 1,
             status: crate::api::document::enabled_status(),
+            ..Default::default()
         };
         env.state.docs.insert(doc).unwrap();
         std::fs::write(env.root.join("uploads/indexed-doc.txt"), b"same").unwrap();
@@ -14540,6 +14545,7 @@ mod tests {
             created_at: 1,
             updated_at: 1,
             status: crate::api::document::enabled_status(),
+            ..Default::default()
         };
         env.state.docs.insert(doc).unwrap();
 
@@ -15509,6 +15515,7 @@ mod tests {
                 created_at: now,
                 updated_at: now,
                 status: crate::api::document::enabled_status(),
+                ..Default::default()
             })
             .unwrap();
         env.state
@@ -15849,6 +15856,7 @@ mod tests {
                 created_at: now,
                 updated_at: now,
                 status: crate::api::document::enabled_status(),
+                ..Default::default()
             })
             .unwrap();
         let override_saved = response_json(
@@ -16017,6 +16025,7 @@ mod tests {
                 created_at: now,
                 updated_at: now,
                 status: crate::api::document::enabled_status(),
+                ..Default::default()
             })
             .unwrap();
         // A text document, which has no thumbnail.
@@ -16038,6 +16047,7 @@ mod tests {
                 created_at: now,
                 updated_at: now,
                 status: crate::api::document::enabled_status(),
+                ..Default::default()
             })
             .unwrap();
 
@@ -18191,6 +18201,7 @@ mod tests {
                 created_at: 1,
                 updated_at: 1,
                 status: crate::api::document::enabled_status(),
+                ..Default::default()
             })
             .unwrap();
         let response = build_router(env.state.clone())
@@ -19015,6 +19026,346 @@ mod tests {
         }
     }
 
+    /// The PATCH /documents/{id} field face, byte-compared against the live v0.27.2 probes
+    /// (round13 `upd2_*` arms): the 26-key success dict, every validation wording, the
+    /// raised-body envelopes and the write arms.
+    #[tokio::test]
+    async fn document_update_field_face_matches_round13_probes() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Update KB", "")
+            .unwrap();
+        let doc_id = "93808be864d411f1a66de51aa552d498";
+        let mut doc = stored_doc(doc_id, &kb.id, 9);
+        doc.name = "ragflow_test_ocr(3).pdf".into();
+        doc.storage_name = "ragflow_test_ocr(3).pdf".into();
+        doc.run = "DONE".into();
+        doc.progress = 1.0;
+        doc.progress_msg = "Task done".into();
+        env.state.docs.insert(doc.clone()).unwrap();
+        let mut other = stored_doc("606d5b9664d411f1a66de51aa552d498", &kb.id, 1);
+        other.name = "ragflow_test_ocr(2).pdf".into();
+        env.state.docs.insert(other).unwrap();
+
+        let router = build_router(env.state.clone());
+        let uri = format!("/api/v1/datasets/{}/documents/{doc_id}", kb.id);
+        let patch = |body: Option<serde_json::Value>| {
+            let builder = Request::builder()
+                .method(Method::PATCH)
+                .uri(&uri)
+                .header(header::AUTHORIZATION, format!("Bearer {}", env.token));
+            match body {
+                Some(value) => builder
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(value.to_string()))
+                    .unwrap(),
+                None => builder.body(Body::empty()).unwrap(),
+            }
+        };
+
+        // No body at all: `{}` after `get_request_json()` — the no-op success carrying the
+        // full document dict in upstream's jsonify order.
+        let response = router.clone().oneshot(patch(None)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 0);
+        let data = body["data"].as_object().unwrap();
+        let keys: Vec<&str> = data.keys().map(String::as_str).collect();
+        let expected_keys: Vec<&str> = vec![
+            "chunk_count",
+            "chunk_method",
+            "content_hash",
+            "create_date",
+            "create_time",
+            "created_by",
+            "dataset_id",
+            "id",
+            "location",
+            "name",
+            "parser_config",
+            "pipeline_id",
+            "process_begin_at",
+            "process_duration",
+            "progress",
+            "progress_msg",
+            "run",
+            "size",
+            "source_type",
+            "status",
+            "suffix",
+            "thumbnail",
+            "token_count",
+            "type",
+            "update_date",
+            "update_time",
+        ];
+        assert_eq!(keys, expected_keys);
+        assert_eq!(data["run"], "DONE");
+        assert_eq!(data["location"], "ragflow_test_ocr(3).pdf");
+        assert_eq!(data["suffix"], "pdf");
+        assert_eq!(data["type"], "pdf");
+        assert_eq!(data["chunk_method"], "naive");
+        assert_eq!(data["pipeline_id"], serde_json::Value::Null);
+        assert_eq!(data["progress"], 1.0);
+        assert_eq!(data["status"], "1");
+        assert_eq!(data["source_type"], "local");
+        assert_eq!(data["token_count"], 0);
+
+        // Zero-write no-op arms: same name, an ignored extra field, the equal immutable pair.
+        for payload in [
+            serde_json::json!({}),
+            serde_json::json!({"name": "ragflow_test_ocr(3).pdf"}),
+            serde_json::json!({"bogus_field": 1}),
+            serde_json::json!({"chunk_count": 9}),
+            serde_json::json!({"progress": 1.0}),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(patch(Some(payload.clone())))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{payload}");
+            assert_eq!(response_json(response).await["code"], 0, "{payload}");
+        }
+
+        // Validation arms — byte-for-byte with the live probes.
+        let cases: Vec<(serde_json::Value, i64, &str)> = vec![
+            (
+                serde_json::json!({"name": serde_json::Value::Null}),
+                102,
+                "Field: <name> - Message: <Input should be a valid string> - Value: <None>",
+            ),
+            (
+                serde_json::json!({"name": 123}),
+                102,
+                "Field: <name> - Message: <Input should be a valid string> - Value: <123>",
+            ),
+            (
+                serde_json::json!({"name": "ragflow_test_ocr(3).docx"}),
+                101,
+                "The extension of file can't be changed",
+            ),
+            (
+                serde_json::json!({"name": format!("{}.pdf", "a".repeat(260))}),
+                101,
+                "File name must be 255 bytes or less.",
+            ),
+            (
+                serde_json::json!({"name": "ragflow_test_ocr(2).pdf"}),
+                102,
+                "Duplicated document name in the same dataset.",
+            ),
+            (
+                serde_json::json!({"chunk_method": "bogus"}),
+                102,
+                "Field: <chunk_method> - Message: <`chunk_method` bogus doesn't exist> - Value: <bogus>",
+            ),
+            (
+                serde_json::json!({"chunk_method": ""}),
+                102,
+                "`chunk_method` (empty string) is not valid",
+            ),
+            (
+                serde_json::json!({"chunk_method": 5}),
+                102,
+                "Field: <chunk_method> - Message: <Input should be a valid string> - Value: <5>",
+            ),
+            (
+                serde_json::json!({"enabled": 5}),
+                102,
+                "Field: <enabled> - Message: <Input should be less than or equal to 1> - Value: <5>",
+            ),
+            (
+                serde_json::json!({"enabled": "x"}),
+                102,
+                "Field: <enabled> - Message: <Input should be a valid integer> - Value: <x>",
+            ),
+            (
+                serde_json::json!({"chunk_count": 12345}),
+                102,
+                "can't change `chunk_count`",
+            ),
+            (
+                serde_json::json!({"token_count": 12345}),
+                102,
+                "can't change `token_count`",
+            ),
+            (
+                serde_json::json!({"progress": 0.31337}),
+                102,
+                "can't change `progress`",
+            ),
+            (
+                serde_json::json!({"meta_fields": {"a": {"x": 1}}}),
+                102,
+                "Field: <meta_fields> - Message: <The type is not supported: {'x': 1}> - Value: <{'a': {'x': 1}}>",
+            ),
+            (
+                serde_json::json!({"meta_fields": {"a": [{"x": 1}]}}),
+                102,
+                "Field: <meta_fields> - Message: <The type is not supported in list: [{'x': 1}]> - Value: <{'a': [{'x': 1}]}>",
+            ),
+            (
+                serde_json::json!({"meta_fields": "nope"}),
+                102,
+                "Field: <meta_fields> - Message: <Input should be a valid dictionary> - Value: <nope>",
+            ),
+            (
+                serde_json::json!({"parser_config": {"ext": {"x": 1}}}),
+                102,
+                "Field: <parser_config> - Message: <Value error, parser_config.ext is not supported; send parser configuration fields directly> - Value: <{'ext': {'x': 1}}>",
+            ),
+            (
+                serde_json::json!({"parser_config": {"chunk_token_num": "x"}}),
+                102,
+                "Field: <parser_config.chunk_token_num> - Message: <Input should be a valid integer> - Value: <x>",
+            ),
+            (
+                serde_json::json!({"parser_config": {"auto_keywords": 99}}),
+                102,
+                "Field: <parser_config.auto_keywords> - Message: <Input should be less than or equal to 32> - Value: <99>",
+            ),
+            (
+                serde_json::json!({"pipeline_id": 123}),
+                102,
+                "Field: <pipeline_id> - Message: <Input should be a valid string> - Value: <123>",
+            ),
+        ];
+        for (payload, expected_code, expected_message) in cases {
+            let response = router
+                .clone()
+                .oneshot(patch(Some(payload.clone())))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{payload}");
+            let body = response_json(response).await;
+            assert_eq!(body["code"], expected_code, "{payload}: {body}");
+            assert_eq!(body["message"], expected_message, "{payload}: {body}");
+            assert!(body.get("data").is_none(), "{payload}: {body}");
+        }
+
+        // Raised envelopes for unreadable bodies.
+        for (raw, expected_message) in [
+            ("{bad", "<BadRequest '400: Bad Request'>"),
+            ("[1,2]", "TypeError('JSON payload must be an object.')"),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::PATCH)
+                        .uri(&uri)
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(raw))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{raw}");
+            let body = response_json(response).await;
+            assert_eq!(body["code"], 100, "{raw}");
+            assert_eq!(body.get("data"), Some(&serde_json::Value::Null), "{raw}");
+            assert_eq!(body["message"], expected_message, "{raw}");
+        }
+
+        // Write arms: enabled toggles, meta_fields, parser_config, chunk_method reset, rename.
+        let response = router
+            .clone()
+            .oneshot(patch(Some(serde_json::json!({"enabled": 0}))))
+            .await
+            .unwrap();
+        assert_eq!(response_json(response).await["code"], 0);
+        assert_eq!(env.state.docs.get(doc_id).unwrap().status, "0");
+        let response = router
+            .clone()
+            .oneshot(patch(Some(serde_json::json!({"enabled": 1}))))
+            .await
+            .unwrap();
+        assert_eq!(response_json(response).await["code"], 0);
+        assert_eq!(env.state.docs.get(doc_id).unwrap().status, "1");
+
+        let response = router
+            .clone()
+            .oneshot(patch(Some(
+                serde_json::json!({"meta_fields": {"owner": "Farm B"}}),
+            )))
+            .await
+            .unwrap();
+        assert_eq!(response_json(response).await["code"], 0);
+        assert_eq!(
+            env.state.document_metadata.get(doc_id, &kb.id).unwrap()["owner"],
+            "Farm B"
+        );
+
+        let response = router
+            .clone()
+            .oneshot(patch(Some(
+                serde_json::json!({"parser_config": {"chunk_token_num": 1024}}),
+            )))
+            .await
+            .unwrap();
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["data"]["parser_config"]["chunk_token_num"], 1024);
+
+        // A chunk-method change resets the document for reparse
+        // (`reset_document_for_reparse`) and stores the document-scoped method.
+        let response = router
+            .clone()
+            .oneshot(patch(Some(serde_json::json!({"chunk_method": "qa"}))))
+            .await
+            .unwrap();
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["data"]["chunk_method"], "qa");
+        assert_eq!(body["data"]["run"], "UNSTART");
+        assert_eq!(body["data"]["progress"], 0.0);
+        // A method change without a parser_config replaces it with the deployment defaults
+        // (`get_parser_config` fallback — the earlier 1024 does not survive).
+        assert_eq!(
+            body["data"]["parser_config"]["chunk_token_num"],
+            serde_json::Value::Null
+        );
+        assert_eq!(body["data"]["parser_config"]["table_context_size"], 0);
+        assert_eq!(body["data"]["parser_config"]["image_context_size"], 0);
+        let stored = env.state.docs.get(doc_id).unwrap();
+        assert_eq!(stored.parser_id.as_deref(), Some("qa"));
+        assert_eq!(stored.run, "UNSTARTED");
+        assert_eq!(stored.progress, 0.0);
+        assert!(stored.progress_msg.is_empty());
+
+        // An explicit null pipeline_id clears the pipeline and resets as well.
+        let response = router
+            .clone()
+            .oneshot(patch(Some(
+                serde_json::json!({"pipeline_id": serde_json::Value::Null}),
+            )))
+            .await
+            .unwrap();
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["data"]["pipeline_id"], serde_json::Value::Null);
+
+        // The rename arm finishes the field face.
+        let response = router
+            .clone()
+            .oneshot(patch(Some(
+                serde_json::json!({"name": "renamed_report.pdf"}),
+            )))
+            .await
+            .unwrap();
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["data"]["name"], "renamed_report.pdf");
+        assert_eq!(
+            env.state.docs.get(doc_id).unwrap().name,
+            "renamed_report.pdf"
+        );
+    }
+
     fn stored_doc(id: &str, kb_id: &str, chunk_count: usize) -> crate::api::document::DocRecord {
         crate::api::document::DocRecord {
             id: id.into(),
@@ -19031,6 +19382,7 @@ mod tests {
             created_at: 1,
             updated_at: 1,
             status: crate::api::document::enabled_status(),
+            ..Default::default()
         }
     }
 
@@ -22638,6 +22990,7 @@ mod tests {
             created_at: 1,
             updated_at: 1,
             status: crate::api::document::enabled_status(),
+            ..Default::default()
         };
         env.state.docs.insert(doc.clone()).unwrap();
         // `get_ingestion_summary` reports the dataset row's denormalized

@@ -4,17 +4,19 @@
 
 use axum::{
     Json,
+    body::Bytes,
     extract::{Extension, Path, RawQuery, State},
     http::StatusCode,
-    response::IntoResponse,
+    response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Mutex, RwLock};
 
+use crate::api::metadata_config::{py_value_str, python_repr, raised_error};
 use crate::server::{AppState, AuthContext, api_error_result, code, kb_accessible, kb_manageable};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DocRecord {
     pub id: String,
     pub name: String,
@@ -41,6 +43,18 @@ pub struct DocRecord {
     /// existed are enabled, which is what they were.
     #[serde(default = "enabled_status")]
     pub status: String,
+    /// Upstream `Document.parser_id`: the document-scoped chunk method a PATCH may set.
+    /// `None` keeps following the dataset's parser face, which is what every upload does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parser_id: Option<String>,
+    /// Upstream `Document.parser_config`: the document-scoped parser configuration a PATCH
+    /// may replace, stored as sent after the request-level legacy normalization.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parser_config: Option<serde_json::Value>,
+    /// Upstream `Document.pipeline_id`. Stored for parity; pipeline execution is not
+    /// implemented in this engine, so the value round-trips without changing parsing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline_id: Option<String>,
 }
 
 /// Default document status: enabled (upstream stores `"1"`).
@@ -165,6 +179,55 @@ impl DocStore {
                 return Ok((false, false));
             };
             d.name = new_name.to_string();
+            Ok((true, true))
+        })
+    }
+
+    /// `reset_document_for_reparse`: progress fields back to zero, optionally a new parser
+    /// face. `pipeline_id` always carries the upstream call's value — the empty string clears
+    /// the pipeline; `parser_id` is only overwritten when a new method is given.
+    pub fn reset_for_reparse(
+        &self,
+        id: &str,
+        parser_id: Option<&str>,
+        pipeline_id: &str,
+    ) -> anyhow::Result<bool> {
+        self.mutate_if_changed(|docs| {
+            let Some(d) = docs.get_mut(id) else {
+                return Ok((false, false));
+            };
+            d.run = "UNSTARTED".to_string();
+            d.progress = 0.0;
+            d.progress_msg = String::new();
+            if let Some(parser) = parser_id {
+                d.parser_id = Some(parser.to_string());
+            }
+            d.pipeline_id = if pipeline_id.is_empty() {
+                None
+            } else {
+                Some(pipeline_id.to_string())
+            };
+            d.updated_at = now_ms();
+            Ok((true, true))
+        })
+    }
+
+    /// Replace the document-scoped parser configuration
+    /// (`DocumentService.update_parser_config`).
+    pub fn set_parser_config(
+        &self,
+        id: &str,
+        parser_config: serde_json::Value,
+    ) -> anyhow::Result<bool> {
+        self.mutate_if_changed(|docs| {
+            let Some(d) = docs.get_mut(id) else {
+                return Ok((false, false));
+            };
+            if d.parser_config.as_ref() == Some(&parser_config) {
+                return Ok((true, false));
+            }
+            d.parser_config = Some(parser_config);
+            d.updated_at = now_ms();
             Ok((true, true))
         })
     }
@@ -463,6 +526,882 @@ fn metadata_value_strings(value: &serde_json::Value) -> Vec<String> {
     }
 }
 
+/// The `chunk_method` names `UpdateDocumentReq` accepts
+/// (`validation_utils.UpdateDocumentReq.validate_document_chunk_method`).
+const VALID_CHUNK_METHODS: [&str; 14] = [
+    "naive",
+    "manual",
+    "qa",
+    "table",
+    "paper",
+    "book",
+    "laws",
+    "presentation",
+    "picture",
+    "one",
+    "knowledge_graph",
+    "email",
+    "audio",
+    "tag",
+];
+
+/// The document-scoped business errors: `get_error_data_result` shape — HTTP 200, two keys,
+/// no `data` (round13 probes `upd2_name_ext` / `upd2_cc_wrong` / …).
+fn update_data_error(message: &str) -> Response {
+    api_error_result(StatusCode::OK, code::INVALID_OR_MISSING_DATA, message)
+}
+
+/// `format_validation_error_message` for one pydantic field error.
+fn field_error(location: &str, message: &str, value: &serde_json::Value) -> String {
+    format!(
+        "Field: <{location}> - Message: <{message}> - Value: <{}>",
+        py_value_str(value)
+    )
+}
+
+/// `_normalize_legacy_raptor_config`: drop the RAPTOR fields the current schema removed and
+/// lift a sub-512 `max_token` back to the floor. Runs on the request body in place.
+fn normalize_legacy_raptor_config(request: &mut serde_json::Map<String, serde_json::Value>) {
+    let Some(raptor) = request
+        .get_mut("parser_config")
+        .and_then(serde_json::Value::as_object_mut)
+        .and_then(|config| config.get_mut("raptor"))
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return;
+    };
+    raptor.remove("threshold");
+    raptor.remove("clustering_method");
+    raptor.remove("tree_builder");
+    let lift = raptor
+        .get("max_token")
+        .and_then(serde_json::Value::as_f64)
+        .map(|number| number < 512.0)
+        .unwrap_or(false);
+    if lift {
+        raptor.insert("max_token".into(), serde_json::json!(512));
+    }
+}
+
+/// Lax integer coercion with pydantic's wording for the failure case
+/// (`UpdateDocumentReq.enabled` / `chunk_count` / `token_count` are plain `int` fields).
+fn coerce_int(value: &serde_json::Value) -> Result<i64, &'static str> {
+    match value {
+        serde_json::Value::Number(number) => {
+            if let Some(int) = number.as_i64() {
+                Ok(int)
+            } else if let Some(float) = number.as_f64() {
+                if float.fract() == 0.0 && float.abs() <= i64::MAX as f64 {
+                    Ok(float as i64)
+                } else {
+                    Err("Input should be a valid integer, got a number with a fractional part")
+                }
+            } else {
+                Ok(0)
+            }
+        }
+        serde_json::Value::Bool(flag) => Ok(i64::from(*flag)),
+        serde_json::Value::String(text) => text
+            .trim()
+            .parse::<i64>()
+            .map_err(|_| "Input should be a valid integer"),
+        _ => Err("Input should be a valid integer"),
+    }
+}
+
+/// Lax float coercion (`UpdateDocumentReq.progress`, `ParserConfig.filename_embd_weight`).
+fn coerce_float(value: &serde_json::Value) -> Result<f64, &'static str> {
+    match value {
+        serde_json::Value::Number(number) => {
+            number.as_f64().ok_or("Input should be a valid number")
+        }
+        serde_json::Value::String(text) => text
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| "Input should be a valid number"),
+        _ => Err("Input should be a valid number"),
+    }
+}
+
+/// Python's `math.isclose` with the default tolerances (rel 1e-09, abs 0.0).
+fn py_isclose(left: f64, right: f64) -> bool {
+    (left - right).abs() <= 1e-9_f64 * left.abs().max(right.abs())
+}
+
+/// `pathlib.Path(name).suffix`: the last path component's final dot-segment, empty for
+/// dotfiles, trailing dots and no-dot names. Callers lowercase first, as upstream does.
+fn python_suffix(name: &str) -> String {
+    let base = name.rsplit('/').next().unwrap_or("");
+    match base.rfind('.') {
+        Some(index) if index > 0 && index + 1 < base.len() => base[index..].to_string(),
+        _ => String::new(),
+    }
+}
+
+/// `UpdateDocumentReq` validation in declaration order, joined the way
+/// `format_validation_error_message` joins pydantic's report.
+fn pydantic_update_errors(request: &serde_json::Map<String, serde_json::Value>) -> Vec<String> {
+    let mut errors = Vec::new();
+    // name: `str | None`, `max_length=65535`.
+    if let Some(value) = request.get("name")
+        && !value.is_null()
+    {
+        match value.as_str() {
+            None => errors.push(field_error("name", "Input should be a valid string", value)),
+            Some(text) if text.chars().count() > 65535 => errors.push(field_error(
+                "name",
+                "String should have at most 65535 characters",
+                value,
+            )),
+            Some(_) => {}
+        }
+    }
+    // chunk_method: type, length, then the enum validator's wording
+    // (`field_validator(mode="after")` with a PydanticCustomError — no "Value error, " prefix).
+    if let Some(value) = request.get("chunk_method")
+        && !value.is_null()
+    {
+        match value.as_str() {
+            None => errors.push(field_error(
+                "chunk_method",
+                "Input should be a valid string",
+                value,
+            )),
+            Some(method) => {
+                if method.chars().count() > 65535 {
+                    errors.push(field_error(
+                        "chunk_method",
+                        "String should have at most 65535 characters",
+                        value,
+                    ));
+                }
+                if !method.is_empty() && !VALID_CHUNK_METHODS.contains(&method) {
+                    errors.push(format!(
+                        "Field: <chunk_method> - Message: <`chunk_method` {method} doesn't exist> - Value: <{method}>"
+                    ));
+                }
+            }
+        }
+    }
+    // pipeline_id: `str | None`, `max_length=65535`.
+    if let Some(value) = request.get("pipeline_id")
+        && !value.is_null()
+    {
+        match value.as_str() {
+            None => errors.push(field_error(
+                "pipeline_id",
+                "Input should be a valid string",
+                value,
+            )),
+            Some(text) if text.chars().count() > 65535 => errors.push(field_error(
+                "pipeline_id",
+                "String should have at most 65535 characters",
+                value,
+            )),
+            Some(_) => {}
+        }
+    }
+    // enabled: int, 0..=1.
+    if let Some(value) = request.get("enabled").filter(|value| !value.is_null()) {
+        match coerce_int(value) {
+            Err(message) => errors.push(field_error("enabled", message, value)),
+            Ok(number) if number > 1 => errors.push(field_error(
+                "enabled",
+                "Input should be less than or equal to 1",
+                value,
+            )),
+            Ok(number) if number < 0 => errors.push(field_error(
+                "enabled",
+                "Input should be greater than or equal to 0",
+                value,
+            )),
+            Ok(_) => {}
+        }
+    }
+    // chunk_count / token_count: int, ge=0.
+    for field in ["chunk_count", "token_count"] {
+        if let Some(value) = request.get(field).filter(|value| !value.is_null()) {
+            match coerce_int(value) {
+                Err(message) => errors.push(field_error(field, message, value)),
+                Ok(number) if number < 0 => errors.push(field_error(
+                    field,
+                    "Input should be greater than or equal to 0",
+                    value,
+                )),
+                Ok(_) => {}
+            }
+        }
+    }
+    // progress: float, 0..=1.
+    if let Some(value) = request.get("progress").filter(|value| !value.is_null()) {
+        match coerce_float(value) {
+            Err(message) => errors.push(field_error("progress", message, value)),
+            Ok(number) if number > 1.0 => errors.push(field_error(
+                "progress",
+                "Input should be less than or equal to 1",
+                value,
+            )),
+            Ok(number) if number < 0.0 => errors.push(field_error(
+                "progress",
+                "Input should be greater than or equal to 0",
+                value,
+            )),
+            Ok(_) => {}
+        }
+    }
+    // parser_config: reject_ext first (model_validator before), then the strict nested checks.
+    if let Some(value) = request
+        .get("parser_config")
+        .filter(|value| !value.is_null())
+    {
+        if let Some(config) = value.as_object() {
+            if config.contains_key("ext") {
+                errors.push(format!(
+                    "Field: <parser_config> - Message: <Value error, parser_config.ext is not supported; send parser configuration fields directly> - Value: <{}>",
+                    python_repr(value)
+                ));
+            } else {
+                pydantic_parser_config_errors(config, &mut errors);
+            }
+        } else {
+            errors.push(field_error(
+                "parser_config",
+                "Input should be a valid dictionary or instance of ParserConfig",
+                value,
+            ));
+        }
+    }
+    // meta_fields: dict type first, then the value-shape validator (one error, first offender).
+    if let Some(value) = request.get("meta_fields").filter(|value| !value.is_null()) {
+        if let Some(fields) = value.as_object() {
+            for field_value in fields.values() {
+                if let Some(items) = field_value.as_array() {
+                    let scalars = items
+                        .iter()
+                        .all(|item| item.is_string() || item.is_number() || item.is_boolean());
+                    if !scalars {
+                        errors.push(format!(
+                            "Field: <meta_fields> - Message: <The type is not supported in list: {}> - Value: <{}>",
+                            python_repr(field_value),
+                            python_repr(value)
+                        ));
+                        break;
+                    }
+                } else if !(field_value.is_string()
+                    || field_value.is_number()
+                    || field_value.is_boolean())
+                {
+                    errors.push(format!(
+                        "Field: <meta_fields> - Message: <The type is not supported: {}> - Value: <{}>",
+                        python_repr(field_value),
+                        python_repr(value)
+                    ));
+                    break;
+                }
+            }
+        } else {
+            errors.push(field_error(
+                "meta_fields",
+                "Input should be a valid dictionary",
+                value,
+            ));
+        }
+    }
+    errors
+}
+
+/// The strict nested checks of `ParserConfig` (`extra="allow"`), in the model's declaration
+/// order so multi-error reports keep pydantic's sequence.
+fn pydantic_parser_config_errors(
+    config: &serde_json::Map<String, serde_json::Value>,
+    errors: &mut Vec<String>,
+) {
+    fn int_field(
+        config: &serde_json::Map<String, serde_json::Value>,
+        name: &str,
+        min: i64,
+        max: i64,
+        errors: &mut Vec<String>,
+    ) {
+        let Some(value) = config.get(name) else {
+            return;
+        };
+        let location = format!("parser_config.{name}");
+        match value.as_i64() {
+            Some(number) if number < min => errors.push(field_error(
+                &location,
+                &format!("Input should be greater than or equal to {min}"),
+                value,
+            )),
+            Some(number) if number > max => errors.push(field_error(
+                &location,
+                &format!("Input should be less than or equal to {max}"),
+                value,
+            )),
+            Some(_) => {}
+            None => match value {
+                serde_json::Value::Number(number) if number.as_f64().is_some() => {
+                    errors.push(field_error(
+                        &location,
+                        "Input should be a valid integer, got a number with a fractional part",
+                        value,
+                    ))
+                }
+                _ => errors.push(field_error(
+                    &location,
+                    "Input should be a valid integer",
+                    value,
+                )),
+            },
+        }
+    }
+
+    int_field(config, "auto_keywords", 0, 32, errors);
+    int_field(config, "auto_questions", 0, 10, errors);
+    int_field(config, "chunk_token_num", 1, 2048, errors);
+    if let Some(value) = config.get("delimiter") {
+        match value.as_str() {
+            None => errors.push(field_error(
+                "parser_config.delimiter",
+                "Input should be a valid string",
+                value,
+            )),
+            Some("") => errors.push(field_error(
+                "parser_config.delimiter",
+                "String should have at least 1 character",
+                value,
+            )),
+            Some(_) => {}
+        }
+    }
+    for (name, instance) in [
+        ("graphrag", "GraphragConfig"),
+        ("parent_child", "ParentChildConfig"),
+        ("raptor", "RaptorConfig"),
+    ] {
+        if let Some(value) = config.get(name)
+            && !value.is_object()
+        {
+            errors.push(field_error(
+                &format!("parser_config.{name}"),
+                &format!("Input should be a valid dictionary or instance of {instance}"),
+                value,
+            ));
+        }
+    }
+    if let Some(value) = config.get("html4excel").filter(|value| !value.is_boolean()) {
+        errors.push(field_error(
+            "parser_config.html4excel",
+            "Input should be a valid boolean",
+            value,
+        ));
+    }
+    if let Some(value) = config.get("layout_recognize")
+        && !value.is_string()
+    {
+        errors.push(field_error(
+            "parser_config.layout_recognize",
+            "Input should be a valid string",
+            value,
+        ));
+    }
+    if let Some(value) = config
+        .get("enable_children")
+        .filter(|value| !value.is_boolean())
+    {
+        errors.push(field_error(
+            "parser_config.enable_children",
+            "Input should be a valid boolean",
+            value,
+        ));
+    }
+    if let Some(value) = config.get("children_delimiter")
+        && !value.is_string()
+    {
+        errors.push(field_error(
+            "parser_config.children_delimiter",
+            "Input should be a valid string",
+            value,
+        ));
+    }
+    int_field(config, "topn_tags", 1, 10, errors);
+    if let Some(value) = config
+        .get("filename_embd_weight")
+        .filter(|value| !value.is_null())
+    {
+        match coerce_float(value) {
+            Err(message) => errors.push(field_error(
+                "parser_config.filename_embd_weight",
+                message,
+                value,
+            )),
+            Ok(number) if number > 1.0 => errors.push(field_error(
+                "parser_config.filename_embd_weight",
+                "Input should be less than or equal to 1",
+                value,
+            )),
+            Ok(number) if number < 0.0 => errors.push(field_error(
+                "parser_config.filename_embd_weight",
+                "Input should be greater than or equal to 0",
+                value,
+            )),
+            Ok(_) => {}
+        }
+    }
+    if let Some(value) = config
+        .get("task_page_size")
+        .filter(|value| !value.is_null())
+    {
+        match value.as_i64() {
+            Some(number) if number < 1 => errors.push(field_error(
+                "parser_config.task_page_size",
+                "Input should be greater than or equal to 1",
+                value,
+            )),
+            Some(_) => {}
+            None => errors.push(field_error(
+                "parser_config.task_page_size",
+                "Input should be a valid integer",
+                value,
+            )),
+        }
+    }
+    if let Some(value) = config.get("pages").filter(|value| !value.is_null()) {
+        if let Some(rows) = value.as_array() {
+            for (row_index, row) in rows.iter().enumerate() {
+                if let Some(cells) = row.as_array() {
+                    for (cell_index, cell) in cells.iter().enumerate() {
+                        if cell.as_i64().is_none() {
+                            errors.push(field_error(
+                                &format!("parser_config.pages.{row_index}.{cell_index}"),
+                                "Input should be a valid integer",
+                                cell,
+                            ));
+                        }
+                    }
+                } else {
+                    errors.push(field_error(
+                        &format!("parser_config.pages.{row_index}"),
+                        "Input should be a valid list",
+                        row,
+                    ));
+                }
+            }
+        } else {
+            errors.push(field_error(
+                "parser_config.pages",
+                "Input should be a valid list",
+                value,
+            ));
+        }
+    }
+    if let Some(value) = config.get("tag_kb_ids") {
+        if let Some(items) = value.as_array() {
+            for (index, item) in items.iter().enumerate() {
+                if !item.is_string() {
+                    errors.push(field_error(
+                        &format!("parser_config.tag_kb_ids.{index}"),
+                        "Input should be a valid string",
+                        item,
+                    ));
+                }
+            }
+        } else {
+            errors.push(field_error(
+                "parser_config.tag_kb_ids",
+                "Input should be a valid list",
+                value,
+            ));
+        }
+    }
+    if let Some(value) = config
+        .get("table_column_mode")
+        .filter(|value| !value.is_null())
+    {
+        match value.as_str() {
+            Some("auto") | Some("manual") => {}
+            _ => errors.push(field_error(
+                "parser_config.table_column_mode",
+                "Input should be 'auto' or 'manual'",
+                value,
+            )),
+        }
+    }
+    if let Some(value) = config
+        .get("table_column_roles")
+        .filter(|value| !value.is_null())
+    {
+        if let Some(roles) = value.as_object() {
+            for (column, role) in roles {
+                let normalized = match role.as_str() {
+                    Some("vectorize") => Some("indexing"),
+                    other => other,
+                };
+                if !matches!(
+                    normalized,
+                    Some("indexing") | Some("metadata") | Some("both")
+                ) {
+                    errors.push(field_error(
+                        &format!("parser_config.table_column_roles.{column}"),
+                        "Input should be 'indexing', 'metadata' or 'both'",
+                        role,
+                    ));
+                }
+            }
+        } else {
+            errors.push(field_error(
+                "parser_config.table_column_roles",
+                "Input should be a valid dictionary",
+                value,
+            ));
+        }
+    }
+    if let Some(value) = config
+        .get("table_column_names")
+        .filter(|value| !value.is_null())
+    {
+        if let Some(items) = value.as_array() {
+            for (index, item) in items.iter().enumerate() {
+                if !item.is_string() {
+                    errors.push(field_error(
+                        &format!("parser_config.table_column_names.{index}"),
+                        "Input should be a valid string",
+                        item,
+                    ));
+                }
+            }
+        } else {
+            errors.push(field_error(
+                "parser_config.table_column_names",
+                "Input should be a valid list",
+                value,
+            ));
+        }
+    }
+}
+
+/// `validate_document_update_fields`: immutable values, the rename rules and the chunk-method
+/// restrictions — the first failure wins, with upstream's code (101 argument / 102 data).
+fn validate_update_fields(
+    state: &crate::server::AppState,
+    request: &serde_json::Map<String, serde_json::Value>,
+    doc: &DocRecord,
+    current_token_count: i64,
+) -> Option<(String, i32)> {
+    if let Some(value) = request.get("chunk_count").filter(|value| !value.is_null())
+        && let Ok(requested) = coerce_int(value)
+        && requested != doc.chunk_count as i64
+    {
+        return Some((
+            "can't change `chunk_count`".to_string(),
+            code::INVALID_OR_MISSING_DATA,
+        ));
+    }
+    if let Some(value) = request.get("token_count").filter(|value| !value.is_null())
+        && let Ok(requested) = coerce_int(value)
+        && requested != current_token_count
+    {
+        return Some((
+            "can't change `token_count`".to_string(),
+            code::INVALID_OR_MISSING_DATA,
+        ));
+    }
+    if let Some(value) = request.get("progress").filter(|value| !value.is_null())
+        && let Ok(requested) = coerce_float(value)
+        && !py_isclose(requested, f64::from(doc.progress))
+    {
+        return Some((
+            "can't change `progress`".to_string(),
+            code::INVALID_OR_MISSING_DATA,
+        ));
+    }
+    if let Some(serde_json::Value::String(new_name)) = request.get("name")
+        && new_name != &doc.name
+    {
+        if new_name.len() > 255 {
+            return Some((
+                "File name must be 255 bytes or less.".to_string(),
+                code::INVALID_ARGUMENT,
+            ));
+        }
+        if python_suffix(&new_name.to_lowercase()) != python_suffix(&doc.name.to_lowercase()) {
+            return Some((
+                "The extension of file can't be changed".to_string(),
+                code::INVALID_ARGUMENT,
+            ));
+        }
+        let duplicated = state
+            .docs
+            .list(&doc.kb_id)
+            .iter()
+            .any(|existing| existing.name == *new_name);
+        if duplicated {
+            return Some((
+                "Duplicated document name in the same dataset.".to_string(),
+                code::INVALID_OR_MISSING_DATA,
+            ));
+        }
+    }
+    if request.contains_key("chunk_method") {
+        let method = request
+            .get("chunk_method")
+            .and_then(serde_json::Value::as_str);
+        if let Some(text) = method
+            && text.is_empty()
+        {
+            return Some((
+                "`chunk_method` (empty string) is not valid".to_string(),
+                code::INVALID_OR_MISSING_DATA,
+            ));
+        }
+        let file_type = filename_type(&doc.name);
+        // The suffix patterns are case-sensitive upstream
+        // (`re.search(r"\.(ppt|pptx|pages)$", doc.name)`).
+        let presentation = doc.name.ends_with(".ppt")
+            || doc.name.ends_with(".pptx")
+            || doc.name.ends_with(".pages");
+        let mail = doc.name.ends_with(".msg") || doc.name.ends_with(".eml");
+        let wrong = |expected: &str| method != Some(expected);
+        if (file_type == "visual" && wrong("picture"))
+            || (file_type == "aural" && wrong("audio"))
+            || (presentation && wrong("presentation"))
+            || (mail && wrong("email"))
+        {
+            return Some((
+                "the automatically detected parser type cannot be changed".to_string(),
+                code::INVALID_OR_MISSING_DATA,
+            ));
+        }
+    }
+    None
+}
+
+/// The legacy `parser_id` guard that runs after the rename branch upstream.
+fn legacy_parser_id_refused(name: &str, requested: &str) -> bool {
+    let file_type = filename_type(name);
+    // Case-sensitive, matching the upstream regex `re.search(r"\.(ppt|pptx|pages)$", doc.name)`.
+    let presentation =
+        name.ends_with(".ppt") || name.ends_with(".pptx") || name.ends_with(".pages");
+    (file_type == "visual" && requested != "picture")
+        || (presentation && requested != "presentation")
+}
+
+/// `strip_graphrag_raptor_config`: the two heavy-machinery keys never leave the server
+/// (upstream removes them from every `parser_config` the API serializes).
+fn strip_graphrag_raptor(parser_config: &serde_json::Value) -> serde_json::Value {
+    let Some(object) = parser_config.as_object() else {
+        return parser_config.clone();
+    };
+    serde_json::Value::Object(
+        object
+            .iter()
+            .filter(|(key, _)| !matches!(key.as_str(), "graphrag" | "raptor"))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
+    )
+}
+
+/// The document's effective parser face: its own overrides when a PATCH set any, the
+/// dataset's values otherwise (the upload-time behavior every existing document keeps).
+fn document_parser_face(
+    state: &crate::server::AppState,
+    doc: &DocRecord,
+) -> (String, serde_json::Value, serde_json::Value) {
+    let kb = state.kbs.get(&doc.kb_id);
+    let parser_config = doc
+        .parser_config
+        .clone()
+        .or_else(|| {
+            kb.as_ref()
+                .and_then(|kb| serde_json::from_str(&kb.parser_config).ok())
+        })
+        .unwrap_or_else(|| serde_json::json!({}));
+    let parser_config = strip_graphrag_raptor(&parser_config);
+    let chunk_method = doc
+        .parser_id
+        .clone()
+        .or_else(|| {
+            parser_config
+                .get("chunk_method")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "naive".to_string());
+    let pipeline_id = match &doc.pipeline_id {
+        Some(value) => serde_json::Value::String(value.clone()),
+        None => serde_json::Value::Null,
+    };
+    (chunk_method, parser_config, pipeline_id)
+}
+
+/// `get_parser_config(method, None)` for the methods a PATCH may select: the deployment
+/// defaults a document falls back to when a chunk method changes without a parser config.
+fn default_parser_config(chunk_method: &str) -> serde_json::Value {
+    let mut config = serde_json::json!({
+        "table_context_size": 0,
+        "image_context_size": 0,
+    });
+    let object = config.as_object_mut().unwrap();
+    match chunk_method {
+        "naive" => {
+            object.insert("layout_recognize".into(), serde_json::json!("DeepDOC"));
+            object.insert("chunk_token_num".into(), serde_json::json!(512));
+            object.insert("delimiter".into(), serde_json::json!("\n"));
+            object.insert("auto_keywords".into(), serde_json::json!(0));
+            object.insert("auto_questions".into(), serde_json::json!(0));
+            object.insert("html4excel".into(), serde_json::json!(false));
+            object.insert("topn_tags".into(), serde_json::json!(3));
+            object.insert(
+                "parent_child".into(),
+                serde_json::json!({"use_parent_child": false, "children_delimiter": "\n"}),
+            );
+            // `get_parser_config` flattens parent_child into children_delimiter.
+            object.insert("children_delimiter".into(), serde_json::json!(""));
+        }
+        "knowledge_graph" => {
+            object.insert("chunk_token_num".into(), serde_json::json!(8192));
+            object.insert("delimiter".into(), serde_json::json!("\n"));
+            object.insert(
+                "entity_types".into(),
+                serde_json::json!(["organization", "person", "location", "event", "time"]),
+            );
+        }
+        _ => {}
+    }
+    config
+}
+
+/// `normalize_compilation_template_group_ids`: one id, a list of ids or nothing — trimmed,
+/// string-only, deduplicated (`ParserConfig` before-validator).
+fn normalize_compilation_template_group_ids(config: &mut serde_json::Value) {
+    let Some(object) = config.as_object_mut() else {
+        return;
+    };
+    if !object.contains_key("compilation_template_group_id") {
+        return;
+    }
+    let raw: Vec<&serde_json::Value> = match object.get("compilation_template_group_id") {
+        Some(serde_json::Value::String(_)) => object
+            .get("compilation_template_group_id")
+            .into_iter()
+            .collect(),
+        Some(serde_json::Value::Array(items)) => items.iter().collect(),
+        _ => Vec::new(),
+    };
+    let mut ids: Vec<String> = Vec::new();
+    for item in raw {
+        let Some(text) = item.as_str() else {
+            continue;
+        };
+        let text = text.trim();
+        if !text.is_empty() && !ids.iter().any(|known| known == text) {
+            ids.push(text.to_string());
+        }
+    }
+    object.insert(
+        "compilation_template_group_id".into(),
+        serde_json::json!(ids),
+    );
+}
+
+/// Summed `token_count` for one document (the same aggregation the list rows use).
+fn document_token_count(state: &crate::server::AppState, kb_id: &str, doc_id: &str) -> usize {
+    state
+        .engine
+        .read()
+        .map(|engine| {
+            let ids: HashSet<String> = std::iter::once(doc_id.to_string()).collect();
+            engine
+                .token_counts_for(kb_id, &ids)
+                .remove(doc_id)
+                .unwrap_or(0)
+        })
+        .unwrap_or(0)
+}
+
+/// `reset_document_for_reparse`: back to an unparsed document — progress fields zeroed, the
+/// document-store chunks and the knowledgebase counters released (the same steps the reparse
+/// route already takes), and the parser face takes the new values when given.
+fn reset_document_for_reparse(
+    state: &crate::server::AppState,
+    doc: &DocRecord,
+    parser_id: Option<&str>,
+    pipeline_id: &str,
+) -> anyhow::Result<()> {
+    if !state
+        .docs
+        .reset_for_reparse(&doc.id, parser_id, pipeline_id)?
+    {
+        anyhow::bail!("document not found");
+    }
+    match reparse_counter_release(&state.docs, &doc.id) {
+        Ok(Some(release)) => {
+            if let Err(error) = state
+                .kbs
+                .update_counts(&release.kb_id, release.chunk_delta, 0)
+            {
+                tracing::warn!(%error, doc_id = %doc.id, "reparse: KB chunk counter release failed");
+            }
+            if let Err(error) = state.docs.set_chunk_count(&doc.id, 0) {
+                tracing::warn!(%error, doc_id = %doc.id, "reparse: document chunk count reset failed");
+            }
+        }
+        Ok(None) => {}
+        Err(error) => {
+            tracing::warn!(%error, doc_id = %doc.id, "reparse counter release skipped");
+        }
+    }
+    let _commit_guard = state.document_commit_lock.lock().unwrap();
+    let mut engine = state.engine.write().unwrap();
+    let previous = engine.to_vec();
+    engine.remove_document(&doc.id);
+    crate::server::persist_index_change(state, &mut engine, &previous)?;
+    Ok(())
+}
+
+/// The document dict `get_result(data=…)` returns: `map_doc_keys`' key set in upstream's
+/// jsonify order (alphabetical — round13 `upd2_cc_eq` measured all 26 keys).
+fn document_update_entry(
+    state: &crate::server::AppState,
+    doc: &DocRecord,
+    token_count: usize,
+) -> serde_json::Value {
+    let (chunk_method, parser_config, pipeline_id) = document_parser_face(state, doc);
+    let owner_id = state
+        .kbs
+        .get(&doc.kb_id)
+        .map(|kb| kb.owner_id.clone())
+        .unwrap_or_default();
+    serde_json::json!({
+        "chunk_count": doc.chunk_count,
+        "chunk_method": chunk_method,
+        "content_hash": doc.content_hash,
+        "create_date": crate::api::compat::ms_to_datetime_string(doc.created_at),
+        "create_time": doc.created_at,
+        "created_by": owner_id,
+        "dataset_id": doc.kb_id,
+        "id": doc.id,
+        "location": doc.name,
+        "name": doc.name,
+        "parser_config": parser_config,
+        "pipeline_id": pipeline_id,
+        "process_begin_at": serde_json::Value::Null,
+        "process_duration": serde_json::Value::Null,
+        "progress": doc.progress,
+        "progress_msg": doc.progress_msg,
+        "run": run_api_text(&doc.run),
+        "size": doc.size,
+        "source_type": "local",
+        "status": doc.status,
+        "suffix": doc_suffix(&doc.name),
+        "thumbnail": "",
+        "token_count": token_count,
+        "type": filename_type(&doc.name),
+        "update_date": crate::api::compat::ms_to_datetime_string(doc.updated_at),
+        "update_time": doc.updated_at,
+    })
+}
+
 /// One document as the documents API reports it.
 ///
 /// The list endpoint's row shape, shared with the upload response — upstream feeds both from
@@ -481,15 +1420,7 @@ pub(crate) fn doc_list_entry(
         .get(&doc.id, &doc.kb_id)
         .unwrap_or_default();
     let kb = state.kbs.get(&doc.kb_id);
-    let parser_config: serde_json::Value = kb
-        .as_ref()
-        .and_then(|kb| serde_json::from_str(&kb.parser_config).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
-    let chunk_method = parser_config
-        .get("chunk_method")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("naive")
-        .to_string();
+    let (chunk_method, parser_config, pipeline_id) = document_parser_face(state, doc);
     // Document-level ownership is not recorded yet; the dataset owner is the
     // closest honest value (it is the uploader for every single-owner dataset).
     let owner_id = kb
@@ -537,7 +1468,7 @@ pub(crate) fn doc_list_entry(
         "nickname": nickname,
         "parser_config": parser_config,
         // The pipeline columns exist upstream; without a pipeline flow they are null.
-        "pipeline_id": serde_json::Value::Null,
+        "pipeline_id": pipeline_id,
         "pipeline_name": serde_json::Value::Null,
         // Parse timing is not tracked yet — the keys are present, honestly empty.
         "process_begin_at": serde_json::Value::Null,
@@ -1540,36 +2471,162 @@ pub async fn stop_parse_documents(
 }
 
 /// DELETE /api/v1/datasets/{kb_id}/documents/{doc_id} — delete doc
-/// PATCH /api/v1/datasets/{id}/documents/{did} — rename a document.
-pub async fn rename_doc(
+/// PATCH /api/v1/datasets/{dataset_id}/documents/{document_id} — upstream
+/// `document_api.update_document`: the route's whole field face, not just a rename.
+///
+/// Replicated from the v0.27.2 source and the round13 probes (`upd2_*` arms): an explicit
+/// null name is a type error before ownership is checked; `UpdateDocumentReq`'s pydantic
+/// wording is reproduced field by field (the names show no "Value error, " prefix for
+/// PydanticCustomError); immutable values (`chunk_count` / `token_count` / `progress`)
+/// refuse to change; and the update branches run in the service layer's order —
+/// meta_fields → name → the legacy `parser_id` guard → parser_config → pipeline_id
+/// (which wins over chunk_method) → enabled, each reset releasing the parse counters and
+/// dropping the document-store chunks. The answer is the full document dict `get_result`
+/// returns after the reload.
+pub async fn update_document(
     State(state): State<std::sync::Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
     Path((kb_id, doc_id)): Path<(String, String)>,
-    axum::Json(body): axum::Json<serde_json::Value>,
-) -> impl IntoResponse {
-    if !kb_manageable(&state, &kb_id, &auth) {
-        return Json(serde_json::json!({ "code": 102, "message": "you don't own the dataset" }));
-    }
-    let Some(name) = body.get("name").and_then(|value| value.as_str()) else {
-        return Json(
-            serde_json::json!({ "code": 102, "message": "Field: <name> - Message: <Input should be a valid string> - Value: <None>" }),
-        );
+    body: Bytes,
+) -> Response {
+    // `get_request_json()`: an empty body normalises to `{}`, a malformed body and a
+    // non-object payload surface as raised exceptions through the global handler
+    // (round13 probes `upd2_nobody` / `upd2_body_bad` / `upd2_body_arr`).
+    let request: serde_json::Value = if body.is_empty() {
+        serde_json::json!({})
+    } else {
+        match serde_json::from_slice(&body) {
+            Ok(value) => value,
+            Err(_) => return raised_error("<BadRequest '400: Bad Request'>".to_string()),
+        }
     };
-    if state
-        .docs
-        .get(&doc_id)
-        .filter(|doc| doc.kb_id == kb_id)
-        .is_none()
-    {
-        return Json(
-            serde_json::json!({ "code": 102, "message": "the dataset doesn't own the document" }),
+    let serde_json::Value::Object(mut request) = request else {
+        return raised_error("TypeError('JSON payload must be an object.')".to_string());
+    };
+    normalize_legacy_raptor_config(&mut request);
+
+    // An explicit null name is a type error, not an unset field.
+    if matches!(request.get("name"), Some(serde_json::Value::Null)) {
+        return update_data_error(
+            "Field: <name> - Message: <Input should be a valid string> - Value: <None>",
         );
     }
-    match state.docs.rename(&doc_id, name) {
-        Ok(true) => Json(serde_json::json!({ "code": 0, "message": "Renamed" })),
-        Ok(false) => Json(serde_json::json!({ "code": 102, "message": "Not found" })),
-        Err(error) => Json(serde_json::json!({ "code": 101, "message": error.to_string() })),
+
+    // Ownership and existence of dataset and document.
+    if !kb_manageable(&state, &kb_id, &auth) {
+        return update_data_error("you don't own the dataset");
     }
+    let Some(doc) = state.docs.get(&doc_id).filter(|doc| doc.kb_id == kb_id) else {
+        return update_data_error("the dataset doesn't own the document");
+    };
+
+    let current_token_count = document_token_count(&state, &kb_id, &doc_id) as i64;
+
+    let pydantic_errors = pydantic_update_errors(&request);
+    if !pydantic_errors.is_empty() {
+        return update_data_error(&pydantic_errors.join("\n"));
+    }
+    if let Some((message, business_code)) =
+        validate_update_fields(&state, &request, &doc, current_token_count)
+    {
+        return api_error_result(StatusCode::OK, business_code, &message);
+    }
+
+    // All validations passed — the updates, in the service layer's order.
+    if request.contains_key("meta_fields")
+        && let Some(serde_json::Value::Object(fields)) = request.get("meta_fields")
+        && state
+            .document_metadata
+            .replace(&doc_id, &kb_id, fields.clone())
+            .is_err()
+    {
+        return update_data_error("Failed to update metadata");
+    }
+    if let Some(serde_json::Value::String(new_name)) = request.get("name")
+        && new_name != &doc.name
+        && let Err(error) = state.docs.rename(&doc_id, new_name)
+    {
+        return update_data_error(&error.to_string());
+    }
+    if request.contains_key("parser_id") {
+        let requested = request
+            .get("parser_id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        if legacy_parser_id_refused(&doc.name, requested) {
+            return update_data_error("Not supported yet!");
+        }
+    }
+    if let Some(value) = request
+        .get("parser_config")
+        .filter(|value| !value.is_null())
+    {
+        let mut stored = value.clone();
+        normalize_compilation_template_group_ids(&mut stored);
+        if let Err(error) = state.docs.set_parser_config(&doc_id, stored) {
+            return update_data_error(&error.to_string());
+        }
+    }
+    if let Some(value) = request.get("pipeline_id") {
+        let pipeline_id = value.as_str().unwrap_or("");
+        if let Err(error) = reset_document_for_reparse(&state, &doc, None, pipeline_id) {
+            return update_data_error(&error.to_string());
+        }
+    } else if let Some(method) = request
+        .get("chunk_method")
+        .and_then(serde_json::Value::as_str)
+    {
+        if !method.is_empty() {
+            let (current_method, _, _) = document_parser_face(&state, &doc);
+            if !current_method.eq_ignore_ascii_case(method) {
+                if let Err(error) = reset_document_for_reparse(&state, &doc, Some(method), "") {
+                    return update_data_error(&error.to_string());
+                }
+            } else if doc.pipeline_id.is_some()
+                && let Err(error) = reset_document_for_reparse(&state, &doc, None, "")
+            {
+                return update_data_error(&error.to_string());
+            }
+            let parser_config_absent = request
+                .get("parser_config")
+                .map(|value| {
+                    value.is_null()
+                        || value
+                            .as_object()
+                            .map(|object| object.is_empty())
+                            .unwrap_or(false)
+                })
+                .unwrap_or(true);
+            if parser_config_absent {
+                let defaults = default_parser_config(method);
+                if let Err(error) = state.docs.set_parser_config(&doc_id, defaults) {
+                    return update_data_error(&error.to_string());
+                }
+            }
+        }
+    }
+    if let Some(value) = request.get("enabled").filter(|value| !value.is_null())
+        && let Ok(requested) = coerce_int(value)
+    {
+        let status = requested.to_string();
+        if doc.status != status
+            && let Err(error) = state
+                .docs
+                .set_status(std::slice::from_ref(&doc_id), &status)
+        {
+            return update_data_error(&error.to_string());
+        }
+    }
+
+    let Some(fresh) = state.docs.get(&doc_id) else {
+        return update_data_error(&format!("Can not get document by id:{doc_id}"));
+    };
+    let token_count = document_token_count(&state, &kb_id, &doc_id);
+    Json(serde_json::json!({
+        "code": 0,
+        "data": document_update_entry(&state, &fresh, token_count),
+    }))
+    .into_response()
 }
 
 /// Download the original file of a document (RAGFlow-compatible:
@@ -1856,6 +2913,17 @@ mod store_tests {
         let _ = std::fs::remove_file(path);
     }
 
+    #[test]
+    fn python_suffix_follows_pathlib_semantics() {
+        assert_eq!(python_suffix("a.tar.gz"), ".gz");
+        assert_eq!(python_suffix("dir.with.dots/a.b"), ".b");
+        assert_eq!(python_suffix("a."), "");
+        assert_eq!(python_suffix(".bashrc"), "");
+        assert_eq!(python_suffix("noext"), "");
+        // The extension guard compares lowercased names on both sides.
+        assert_eq!(python_suffix(&"A.PDF".to_lowercase()), ".pdf");
+    }
+
     fn sample_doc(id: &str) -> DocRecord {
         DocRecord {
             id: id.into(),
@@ -1872,6 +2940,7 @@ mod store_tests {
             created_at: 1,
             updated_at: 1,
             status: enabled_status(),
+            ..Default::default()
         }
     }
 

@@ -18954,6 +18954,7 @@ connection: close
                 created_at: 1,
                 updated_at: 1,
                 status: crate::api::document::enabled_status(),
+                ..Default::default()
             })
             .unwrap();
         let request = Request::builder()
@@ -19251,6 +19252,7 @@ connection: close
                 created_at: 1_700_000_000_000,
                 updated_at: 1_700_000_000_000,
                 status: crate::api::document::enabled_status(),
+                ..Default::default()
             })
             .unwrap();
         let query = |pairs: &[(&str, &str)]| {
@@ -19374,6 +19376,7 @@ connection: close
                     created_at: 1_700_000_000_000,
                     updated_at: 1_700_000_000_000,
                     status: crate::api::document::enabled_status(),
+                    ..Default::default()
                 })
                 .unwrap();
         }
