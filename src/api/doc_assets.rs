@@ -219,9 +219,11 @@ pub async fn document_image(
     Extension(auth): Extension<AuthContext>,
     Path(image_id): Path<String>,
 ) -> Response {
+    // Upstream answers a missing image on HTTP 200 with 102 (probes `img_fake` /
+    // `img_nohyphen`); the transport status is not part of the contract here.
     let not_found = || {
         crate::server::api_error_code(
-            axum::http::StatusCode::NOT_FOUND,
+            axum::http::StatusCode::OK,
             code::INVALID_OR_MISSING_DATA,
             "Image not found.",
         )

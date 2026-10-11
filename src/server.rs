@@ -1421,8 +1421,17 @@ async fn upload_document(
     Path(dataset_id): Path<String>,
     mut multipart: Multipart,
 ) -> Response {
+    if state.kbs.get(&dataset_id).is_none() {
+        // Upstream: `Can't find the dataset with ID …!` (DATA_ERROR), delivered on HTTP 200.
+        return api_error_code(
+            StatusCode::OK,
+            code::INVALID_OR_MISSING_DATA,
+            &format!("Can't find the dataset with ID {dataset_id}!"),
+        );
+    }
     if !kb_manageable(&state, &dataset_id, &auth) {
-        return api_error(StatusCode::NOT_FOUND, "Knowledge base not found");
+        // Upstream: `no authorization` (AUTHENTICATION_ERROR), also on HTTP 200.
+        return api_error_code(StatusCode::OK, code::UNAUTHENTICATED, "no authorization");
     }
     let upload_dir = FsPath::new(&state.static_dir).join("../uploads");
     let mut succeeded = Vec::new();
@@ -1468,10 +1477,8 @@ async fn upload_document(
         }
     }
     if file_count == 0 {
-        return api_error(
-            StatusCode::BAD_REQUEST,
-            "multipart field 'file' is required",
-        );
+        // Upstream: `No file part!` (ARGUMENT_ERROR) on HTTP 200.
+        return api_error_code(StatusCode::OK, code::INVALID_ARGUMENT, "No file part!");
     }
     if file_count == 1 && failed.is_empty() {
         let data = succeeded.pop().expect("one successful upload");
@@ -11682,7 +11689,7 @@ mod tests {
             .unwrap();
         assert_eq!(forbidden.status(), StatusCode::OK);
         let forbidden_json = response_json(forbidden).await;
-        assert_eq!(forbidden_json["code"], 404);
+        assert_eq!(forbidden_json["code"], 102);
     }
 
     /// Upstream `admin/server/routes.py` user surfaces: the detail payload is a
@@ -12730,7 +12737,7 @@ mod tests {
             .await
             .unwrap();
         let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(payload["code"], 404);
+        assert_eq!(payload["code"], 102);
     }
 
     /// Upstream `document_api.py::download_document` (`GET /api/v1/documents/<id>`,
@@ -15461,9 +15468,11 @@ mod tests {
             Some(r#"{"metadata":[{"key":"author","type":"string"}]}"#),
         )
         .await;
-        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        assert_eq!(missing.status(), StatusCode::OK);
+        let missing = response_json(missing).await;
+        assert_eq!(missing["code"], 102);
         assert_eq!(
-            response_json(missing).await["message"],
+            missing["message"],
             format!("document no-such-doc not found in dataset {}", kb.id)
         );
 
@@ -15700,7 +15709,12 @@ mod tests {
                 )
                 .await
                 .unwrap();
-            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{uri}");
+            assert_eq!(response.status(), StatusCode::OK, "{uri}");
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(payload["code"], 102, "{uri}");
         }
     }
 
@@ -18193,7 +18207,7 @@ mod tests {
             assert_eq!(response.status(), StatusCode::OK);
             let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
             let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
-            assert_eq!(body["code"], 400);
+            assert_eq!(body["code"], 101);
             assert!(
                 body["message"].as_str().is_some_and(|m| m.contains(needle)),
                 "{body}"
@@ -18309,7 +18323,7 @@ mod tests {
             assert_eq!(response.status(), StatusCode::OK);
             let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
             let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
-            assert_eq!(body["code"], 400, "{body}");
+            assert_eq!(body["code"], 102, "{body}");
             assert!(
                 body["message"].as_str().is_some_and(|m| m.contains(needle)),
                 "{body}"
@@ -21209,7 +21223,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(response_json(stop).await["code"], 400);
+        assert_eq!(response_json(stop).await["code"], 102);
 
         let flattened = router
             .clone()

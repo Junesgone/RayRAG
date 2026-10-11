@@ -273,7 +273,7 @@ pub async fn list_docs(
 ) -> impl IntoResponse {
     if !kb_accessible(&state, &kb_id, &auth) {
         return Json(
-            serde_json::json!({ "code": 404, "message": format!("You don't own the dataset {kb_id}. ") }),
+            serde_json::json!({ "code": 102, "message": format!("You don't own the dataset {kb_id}. ") }),
         );
     }
     let docs: Vec<_> = state
@@ -322,7 +322,7 @@ pub async fn get_doc(
     Path((kb_id, doc_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
     if !kb_accessible(&state, &kb_id, &auth) {
-        return Json(serde_json::json!({ "code": 404, "message": "Not found" }));
+        return Json(serde_json::json!({ "code": 102, "message": "Not found" }));
     }
     match state.docs.get(&doc_id).filter(|doc| doc.kb_id == kb_id) {
         Some(d) => {
@@ -347,7 +347,7 @@ pub async fn get_doc(
                 "meta_fields": meta_fields,
             } }))
         }
-        None => Json(serde_json::json!({ "code": 404, "message": "Not found" })),
+        None => Json(serde_json::json!({ "code": 102, "message": "Not found" })),
     }
 }
 
@@ -404,13 +404,13 @@ pub async fn reparse_doc(
     Path((kb_id, doc_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
     if !kb_manageable(&state, &kb_id, &auth) {
-        return Json(serde_json::json!({ "code": 404, "message": "Not found" }));
+        return Json(serde_json::json!({ "code": 102, "message": "Not found" }));
     }
     let Some(doc) = state.docs.get(&doc_id) else {
-        return Json(serde_json::json!({ "code": 404, "message": "Not found" }));
+        return Json(serde_json::json!({ "code": 102, "message": "Not found" }));
     };
     if doc.kb_id != kb_id {
-        return Json(serde_json::json!({ "code": 404, "message": "Not found" }));
+        return Json(serde_json::json!({ "code": 102, "message": "Not found" }));
     }
     // Upstream `release_reparse_counters`: zero the document counters and
     // subtract them from the owning KB before the new parse starts.
@@ -460,7 +460,7 @@ pub async fn batch_update_document_status(
     axum::Json(body): axum::Json<serde_json::Value>,
 ) -> impl IntoResponse {
     if !kb_manageable(&state, &kb_id, &auth) {
-        return Json(serde_json::json!({ "code": 404, "message": "you don't own the dataset" }));
+        return Json(serde_json::json!({ "code": 102, "message": "you don't own the dataset" }));
     }
     let doc_ids: Vec<String> = body
         .get("doc_ids")
@@ -476,7 +476,7 @@ pub async fn batch_update_document_status(
         .unwrap_or_default();
     if doc_ids.is_empty() {
         return Json(serde_json::json!({
-            "code": 400,
+            "code": 101,
             "message": "\"doc_ids\" must be a non-empty list."
         }));
     }
@@ -487,7 +487,7 @@ pub async fn batch_update_document_status(
     };
     if !matches!(status.as_str(), "0" | "1") {
         return Json(serde_json::json!({
-            "code": 400,
+            "code": 101,
             "message": format!("\"Status\" must be either 0 or 1:{status}!")
         }));
     }
@@ -559,7 +559,7 @@ pub async fn delete_docs_bulk(
 ) -> impl IntoResponse {
     if !kb_manageable(&state, &kb_id, &auth) {
         return Json(
-            serde_json::json!({ "code": 404, "message": format!("You don't own the dataset {kb_id}. ") }),
+            serde_json::json!({ "code": 102, "message": format!("You don't own the dataset {kb_id}. ") }),
         );
     }
     let delete_all = body
@@ -579,13 +579,13 @@ pub async fn delete_docs_bulk(
         .unwrap_or_default();
     if doc_ids.is_empty() && !delete_all {
         return Json(serde_json::json!({
-            "code": 400,
+            "code": 102,
             "message": format!("should either provide doc ids or set delete_all(true), dataset: {kb_id}. "),
         }));
     }
     if !doc_ids.is_empty() && delete_all {
         return Json(serde_json::json!({
-            "code": 400,
+            "code": 102,
             "message": format!("should not provide both doc ids and delete_all(true), dataset: {kb_id}. "),
         }));
     }
@@ -609,7 +609,7 @@ pub async fn delete_docs_bulk(
             .collect::<Vec<_>>()
             .join(", ");
         return Json(serde_json::json!({
-            "code": 400,
+            "code": 102,
             "message": format!(
                 "These documents do not belong to dataset {kb_id} or Document not found: {list}"
             ),
@@ -835,12 +835,12 @@ pub async fn parse_documents(
 ) -> impl IntoResponse {
     if !kb_manageable(&state, &kb_id, &auth) {
         return Json(
-            serde_json::json!({ "code": 404, "message": format!("You don't own the dataset {kb_id}.") }),
+            serde_json::json!({ "code": 102, "message": format!("You don't own the dataset {kb_id}.") }),
         );
     }
     let doc_ids = upstream_document_ids(&body);
     if doc_ids.is_empty() {
-        return Json(serde_json::json!({ "code": 400, "message": "`document_ids` is required" }));
+        return Json(serde_json::json!({ "code": 102, "message": "`document_ids` is required" }));
     }
     let documents = match resolve_dataset_documents(&state, &auth, &kb_id, &doc_ids) {
         Ok(documents) => documents,
@@ -892,12 +892,12 @@ pub async fn stop_parse_documents(
 ) -> impl IntoResponse {
     if !kb_manageable(&state, &kb_id, &auth) {
         return Json(
-            serde_json::json!({ "code": 404, "message": format!("You don't own the dataset {kb_id}.") }),
+            serde_json::json!({ "code": 102, "message": format!("You don't own the dataset {kb_id}.") }),
         );
     }
     let doc_ids = upstream_document_ids(&body);
     if doc_ids.is_empty() {
-        return Json(serde_json::json!({ "code": 400, "message": "`document_ids` is required" }));
+        return Json(serde_json::json!({ "code": 102, "message": "`document_ids` is required" }));
     }
     let documents = match resolve_dataset_documents(&state, &auth, &kb_id, &doc_ids) {
         Ok(documents) => documents,
@@ -943,11 +943,11 @@ pub async fn rename_doc(
     axum::Json(body): axum::Json<serde_json::Value>,
 ) -> impl IntoResponse {
     if !kb_manageable(&state, &kb_id, &auth) {
-        return Json(serde_json::json!({ "code": 404, "message": "you don't own the dataset" }));
+        return Json(serde_json::json!({ "code": 102, "message": "you don't own the dataset" }));
     }
     let Some(name) = body.get("name").and_then(|value| value.as_str()) else {
         return Json(
-            serde_json::json!({ "code": 400, "message": "Field: <name> - Message: <Input should be a valid string> - Value: <None>" }),
+            serde_json::json!({ "code": 102, "message": "Field: <name> - Message: <Input should be a valid string> - Value: <None>" }),
         );
     };
     if state
@@ -957,13 +957,13 @@ pub async fn rename_doc(
         .is_none()
     {
         return Json(
-            serde_json::json!({ "code": 404, "message": "the dataset doesn't own the document" }),
+            serde_json::json!({ "code": 102, "message": "the dataset doesn't own the document" }),
         );
     }
     match state.docs.rename(&doc_id, name) {
         Ok(true) => Json(serde_json::json!({ "code": 0, "message": "Renamed" })),
-        Ok(false) => Json(serde_json::json!({ "code": 404, "message": "Not found" })),
-        Err(error) => Json(serde_json::json!({ "code": 400, "message": error.to_string() })),
+        Ok(false) => Json(serde_json::json!({ "code": 102, "message": "Not found" })),
+        Err(error) => Json(serde_json::json!({ "code": 101, "message": error.to_string() })),
     }
 }
 
@@ -975,16 +975,16 @@ pub async fn download_doc(
     Path((kb_id, doc_id)): Path<(String, String)>,
 ) -> axum::response::Response {
     if !kb_accessible(&state, &kb_id, &auth) {
-        return Json(serde_json::json!({ "code": 404, "message": "document not found" }))
+        return Json(serde_json::json!({ "code": 102, "message": "document not found" }))
             .into_response();
     }
     let Some(doc) = state.docs.get(&doc_id) else {
-        return Json(serde_json::json!({ "code": 404, "message": "document not found" }))
+        return Json(serde_json::json!({ "code": 102, "message": "document not found" }))
             .into_response();
     };
     if doc.kb_id != kb_id {
         return Json(serde_json::json!({
-            "code": 404,
+            "code": 102,
             "message": format!("The dataset not own the document {doc_id}.")
         }))
         .into_response();
@@ -997,7 +997,7 @@ pub async fn download_doc(
         &physical,
         "application/octet-stream",
         &disposition,
-        "File content missing",
+        "This file is empty.",
     )
     .await
 }
@@ -1013,11 +1013,11 @@ pub async fn preview_doc(
     Path(doc_id): Path<String>,
 ) -> axum::response::Response {
     let Some(doc) = state.docs.get(&doc_id) else {
-        return Json(serde_json::json!({ "code": 404, "message": "document not found" }))
+        return Json(serde_json::json!({ "code": 102, "message": "document not found" }))
             .into_response();
     };
     if !kb_accessible(&state, &doc.kb_id, &auth) {
-        return Json(serde_json::json!({ "code": 404, "message": "document not found" }))
+        return Json(serde_json::json!({ "code": 102, "message": "document not found" }))
             .into_response();
     }
     let uploads = std::path::Path::new(&state.static_dir).join("../uploads");
@@ -1047,11 +1047,11 @@ pub async fn download_document(
     Path(doc_id): Path<String>,
 ) -> axum::response::Response {
     let Some(doc) = state.docs.get(&doc_id) else {
-        return Json(serde_json::json!({ "code": 404, "message": "document not found" }))
+        return Json(serde_json::json!({ "code": 102, "message": "document not found" }))
             .into_response();
     };
     if !kb_accessible(&state, &doc.kb_id, &auth) {
-        return Json(serde_json::json!({ "code": 404, "message": "document not found" }))
+        return Json(serde_json::json!({ "code": 102, "message": "document not found" }))
             .into_response();
     }
     let uploads = std::path::Path::new(&state.static_dir).join("../uploads");
@@ -1085,17 +1085,17 @@ pub async fn preview_sheets(
     const MAX_ROWS: usize = 500;
     const MAX_COLUMNS: usize = 64;
     let Some(doc) = state.docs.get(&doc_id) else {
-        return Json(serde_json::json!({ "code": 404, "message": "Document not found" }))
+        return Json(serde_json::json!({ "code": 102, "message": "document not found" }))
             .into_response();
     };
     if !kb_accessible(&state, &doc.kb_id, &auth) {
-        return Json(serde_json::json!({ "code": 404, "message": "Document not found" }))
+        return Json(serde_json::json!({ "code": 102, "message": "document not found" }))
             .into_response();
     }
     let uploads = std::path::Path::new(&state.static_dir).join("../uploads");
     let physical = uploads.join(&doc.storage_name);
     let Ok(bytes) = tokio::fs::read(&physical).await else {
-        return Json(serde_json::json!({ "code": 404, "message": "File content missing" }))
+        return Json(serde_json::json!({ "code": 102, "message": "This file is empty." }))
             .into_response();
     };
     let sheets = match crate::parser::excel::read_xlsx_sheets(&bytes, MAX_ROWS) {
@@ -1146,17 +1146,17 @@ pub async fn preview_slides(
     Path(doc_id): Path<String>,
 ) -> axum::response::Response {
     let Some(doc) = state.docs.get(&doc_id) else {
-        return Json(serde_json::json!({ "code": 404, "message": "Document not found" }))
+        return Json(serde_json::json!({ "code": 102, "message": "document not found" }))
             .into_response();
     };
     if !kb_accessible(&state, &doc.kb_id, &auth) {
-        return Json(serde_json::json!({ "code": 404, "message": "Document not found" }))
+        return Json(serde_json::json!({ "code": 102, "message": "document not found" }))
             .into_response();
     }
     let uploads = std::path::Path::new(&state.static_dir).join("../uploads");
     let physical = uploads.join(&doc.storage_name);
     let Ok(bytes) = tokio::fs::read(&physical).await else {
-        return Json(serde_json::json!({ "code": 404, "message": "File content missing" }))
+        return Json(serde_json::json!({ "code": 102, "message": "This file is empty." }))
             .into_response();
     };
     let slides = match crate::parser::ppt::slide_texts(&bytes) {
@@ -1201,10 +1201,10 @@ pub async fn delete_doc(
     Path((kb_id, doc_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
     if !kb_manageable(&state, &kb_id, &auth) {
-        return Json(serde_json::json!({ "code": 404, "message": "Not found" }));
+        return Json(serde_json::json!({ "code": 102, "message": "Not found" }));
     }
     let Some(doc) = state.docs.get(&doc_id).filter(|doc| doc.kb_id == kb_id) else {
-        return Json(serde_json::json!({ "code": 404, "message": "Not found" }));
+        return Json(serde_json::json!({ "code": 102, "message": "Not found" }));
     };
     match crate::server::delete_document_data(&state, &doc) {
         Ok(()) => Json(serde_json::json!({ "code": 0, "message": "Deleted" })),

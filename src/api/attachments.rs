@@ -338,6 +338,13 @@ fn not_found(message: &str) -> Response {
     )
 }
 
+/// Upstream answers `/documents/upload` business errors on HTTP 200 with a business code
+/// (`101` argument); a client branches on `code`, not the transport status. The canvas route
+/// keeps the real 400 — its contract was not audited against upstream.
+fn document_route_error(message: &str) -> Response {
+    api_error_code(axum::http::StatusCode::OK, code::INVALID_ARGUMENT, message)
+}
+
 /// `POST /api/v1/documents/upload` — multipart `file`(s) or `?url=`, and not both.
 ///
 /// The body is taken as a raw request rather than as a `Multipart` extractor: axum rejects a
@@ -356,13 +363,18 @@ pub async fn upload_document(
     match Multipart::from_request(request, &state).await {
         Ok(multipart) => upload_parts(&state, &auth, None, url, multipart).await,
         Err(_) => match url {
-            Some(url) => upload_by_url(&state, &auth, url).await,
-            None => argument_error("Missing input: provide multipart file(s) or url"),
+            Some(url) => upload_by_url(&state, &auth, url, true).await,
+            None => document_route_error("Missing input: provide multipart file(s) or url"),
         },
     }
 }
 
-async fn upload_by_url(state: &AppState, auth: &AuthContext, url: &str) -> Response {
+async fn upload_by_url(
+    state: &AppState,
+    auth: &AuthContext,
+    url: &str,
+    document_route: bool,
+) -> Response {
     match fetch_url(url, state.max_upload_bytes).await {
         Ok((bytes, name, content_type)) => {
             match store_attachment(
@@ -389,7 +401,13 @@ async fn upload_by_url(state: &AppState, auth: &AuthContext, url: &str) -> Respo
                 ),
             }
         }
-        Err(message) => argument_error(&message),
+        Err(message) => {
+            if document_route {
+                document_route_error(&message)
+            } else {
+                argument_error(&message)
+            }
+        }
     }
 }
 
@@ -405,6 +423,16 @@ pub(crate) async fn upload_parts(
 ) -> Response {
     let mut files: Vec<(String, String, Vec<u8>)> = Vec::new();
     let mut multipart = multipart;
+    // The document route answers business errors on HTTP 200 with a business code
+    // (upstream style); the canvas route keeps the real status. The route is the
+    // discriminator: the document route is the one without an agent id.
+    let reject = |message: &str| -> Response {
+        if agent_id.is_none() {
+            document_route_error(message)
+        } else {
+            argument_error(message)
+        }
+    };
     loop {
         match multipart.next_field().await {
             Ok(Some(field)) => {
@@ -419,7 +447,7 @@ pub(crate) async fn upload_parts(
                 match field.bytes().await {
                     Ok(bytes) => {
                         if bytes.len() > state.max_upload_bytes {
-                            return argument_error(&format!(
+                            return reject(&format!(
                                 "The uploaded file is larger than the {} byte limit",
                                 state.max_upload_bytes
                             ));
@@ -427,24 +455,22 @@ pub(crate) async fn upload_parts(
                         files.push((name, declared, bytes.to_vec()));
                     }
                     Err(error) => {
-                        return argument_error(&format!(
-                            "Could not read the uploaded file: {error}"
-                        ));
+                        return reject(&format!("Could not read the uploaded file: {error}"));
                     }
                 }
             }
             Ok(None) => break,
-            Err(error) => return argument_error(&format!("Malformed multipart body: {error}")),
+            Err(error) => return reject(&format!("Malformed multipart body: {error}")),
         }
     }
 
     if !files.is_empty() && url.is_some() {
-        return argument_error("Provide either multipart file(s) or ?url=..., not both.");
+        return reject("Provide either multipart file(s) or ?url=..., not both.");
     }
     if files.is_empty() {
         return match url {
-            Some(url) => upload_by_url(state, auth, url).await,
-            None => argument_error("Missing input: provide multipart file(s) or url"),
+            Some(url) => upload_by_url(state, auth, url, agent_id.is_none()).await,
+            None => reject("Missing input: provide multipart file(s) or url"),
         };
     }
 

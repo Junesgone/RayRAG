@@ -261,6 +261,16 @@ fn not_found(message: &str) -> Response {
     )
 }
 
+/// The document-scoped config route answers errors the upstream way: HTTP 200 with the
+/// numeric code in the body (`get_error_data_result`), not a 404 transport status.
+fn data_error(message: &str) -> Response {
+    api_error_code(
+        axum::http::StatusCode::OK,
+        code::INVALID_OR_MISSING_DATA,
+        message,
+    )
+}
+
 fn config_json(config: &AutoMetadataConfig) -> serde_json::Value {
     serde_json::json!({
         "metadata": config.metadata,
@@ -316,11 +326,11 @@ pub async fn update_document_metadata_config(
     Json(body): Json<DocumentMetadataConfig>,
 ) -> Response {
     if visible_kb(&state, &auth, &kb_id).is_none() {
-        return not_found("you don't own the dataset");
+        return data_error("you don't own the dataset");
     }
     match state.docs.get(&doc_id) {
         Some(doc) if doc.kb_id == kb_id => {}
-        _ => return not_found(&format!("document {doc_id} not found in dataset {kb_id}")),
+        _ => return data_error(&format!("document {doc_id} not found in dataset {kb_id}")),
     }
     if let Err(message) = validate_fields(&body.metadata) {
         return argument_error(&message);
