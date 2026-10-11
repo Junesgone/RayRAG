@@ -19,7 +19,7 @@
 - 上游（轮⑦实测）：`get_data_error_result("Commit not found")` → **HTTP 200** + `{"code":"Commit not found","message":"Sorry! Data missing!"}`（字符串 code 怪癖）。
 - RayRAG：`api_error_code(StatusCode::NOT_FOUND, 102, …)`（`src/api/workspaces.rs:377-383`）→ **真实 HTTP 状态** + `code: i32`。
 - 定性：RayRAG 响应模型 `code` 为 i32（`server.rs:1607-1617`），结构上无法承载字符串 code。属**系统性归一化**，与台账政策「aligned means audited behavior, not a literal Python-to-Rust transliteration」一致。
-- **待决**：是否需要为严格逐字兼容复刻 string-code 怪癖（影响面：仅个别路径；上游前端不依赖）。记入后续决策项。
+- **已决（2026-10-12，owner）**：file-commit 家族**逐字复刻** string-code 怪癖（以轮⑦实测体为准，含 `Sorry! Data missing!` 恒文案与恒 HTTP 200）——落地见 `apply-crosscheck-02.md` 批④ 执行记录与 `file-commit-surface-v0.27.2.md` 落章节（提交 `31815fe`）。
 
 ## 台账动作（本轮）
 
@@ -29,5 +29,5 @@
 
 ## 后续
 
-- ~~RetCode 全表逐项对照~~ ✓（本轮完成，见上表）；**file-commit 信封逐字复刻决策**；轮⑧ UI 地图 → 任务-3 CDP 批次输入清单 ✓（`ui-route-crosscheck-v0.27.2.md`，2026-10-12）。
+- ~~RetCode 全表逐项对照~~ ✓（本轮完成，见上表）；~~**file-commit 信封逐字复刻决策**~~ ✓（2026-10-12 已决：逐字复刻；批④d 落地 `31815fe`）；轮⑧ UI 地图 → 任务-3 CDP 批次输入清单 ✓（`ui-route-crosscheck-v0.27.2.md`，2026-10-12）。
 - **实例记忆缺陷修复**：用户 2026-10-12 决定不需要，事项关闭（不做 DB 写，实例保持原样）。

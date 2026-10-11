@@ -19,3 +19,10 @@
 ## 对标增量（待入实施队列）
 
 file-commit git-like 模型（parent/tree_state）、三态错误信封与 RetCode 全表、分页信封、artifact/workspace 域判别。
+
+## 落地（批④d，2026-10-12，提交 `31815fe`）
+
+owner 决策（2026-10-12）：**逐字复刻**。已落盘：字符串 code 怪癖（`string_code_error`，恒 `"Sorry! Data missing!"` + HTTP 200）、异常 repr 信封（`raised_value_error`，100 + `data:null` + `ValueError("…")`）、缺参合集（`missing_arguments`，尾 `"; "`）、`find_any` 两段式归域文案、versions 文件前置解析、`page_size` 30/>100 边界、提交/文件三形态键集与字母序。测试：workspace 两用例扩展断言（字符串 code、ValueError 两域、缺参、versions、page_size）。验证：`cargo test --locked`（zvec 0.7.2 + 清代理）**2276 passed / 0 failed / 27 ignored**。
+
+留观：create 的 `operation` 校验为 RayRAG 既有扩展（保留）；tree/diff 成功形状属写路径未取证；上游 jsonify 大对象键序亦为字母序（构建器已按序书写）。
+
