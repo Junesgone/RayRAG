@@ -67,7 +67,7 @@ recorded here rather than left for a user to discover.
 - The new test runs the page's own payload builder in node against a stubbed DOM and checks all four
   combinations above. Proven by restoring the old one-line payload: the test fails on the tick case.
 - The control and its Chinese label (`清除已保存的凭证`) are asserted on the rendered page.
-- Walked in the browser against a real source afterwards; recorded in the repository's operations ledger.
+- Walked in the browser against a real source afterwards.
 
 ### Upgrading
 
@@ -144,8 +144,7 @@ credential on every save, which is far worse. Left for the next round rather tha
   removing the rule: the update returns `code 0` and the test fails.
 - A second test pins all four pairs, asserts that half a pair falls through to the single-key list, and fails
   when the pair mapping is removed.
-- The detail form's Save was then walked in the browser for both a valid and an invalid change; recorded in the
-  repository's operations ledger.
+- The detail form's Save was then walked in the browser for both a valid and an invalid change.
 
 ### Upgrading
 
