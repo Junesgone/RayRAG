@@ -16432,6 +16432,22 @@ mod tests {
             "{diff}"
         );
 
+        // The version route resolves the file first, as upstream does; register the file the
+        // commits above recorded.
+        env.state
+            .files
+            .add(crate::api::file_mgr::FileRecord {
+                id: "file-1".into(),
+                name: "a.txt".into(),
+                owner_id: "test-user".into(),
+                parent_id: "root".into(),
+                size: 12,
+                content_hash: String::new(),
+                file_type: "file".into(),
+                created_at: 1,
+            })
+            .unwrap();
+
         let versions = response_json(
             call(
                 Method::GET,
@@ -16449,22 +16465,44 @@ mod tests {
         assert_eq!(versions["data"][0]["operation"], "modify", "{versions}");
         assert_eq!(versions["data"][1]["operation"], "add", "{versions}");
 
-        // Failures are named, per the guide's wording.
+        // Failures answer the verbatim upstream envelopes (round⑦ probes): the missing-argument
+        // answer lists every missing name at once, the resolver failure is a raised ValueError,
+        // and the commit family answers the string-code quirk at HTTP 200.
         let missing_message = call(
             Method::POST,
             "/api/v1/workspaces/root/commits".into(),
             Some(r#"{"files":[{"file_id":"x","operation":"add"}]}"#),
         )
         .await;
-        assert_eq!(missing_message.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(missing_message.status(), StatusCode::OK);
         let body = response_json(missing_message).await;
         assert_eq!(body["code"], 101, "{body}");
-        assert_eq!(body["message"], "required argument are missing: message");
+        assert_eq!(body["message"], "required argument are missing: message; ");
+        assert!(body["data"].is_null(), "{body}");
+
+        let missing_both = call(
+            Method::POST,
+            "/api/v1/workspaces/root/commits".into(),
+            Some("{}"),
+        )
+        .await;
+        assert_eq!(missing_both.status(), StatusCode::OK);
+        let body = response_json(missing_both).await;
+        assert_eq!(
+            body["message"], "required argument are missing: message,files; ",
+            "{body}"
+        );
+        assert!(body["data"].is_null(), "{body}");
 
         let unknown_scope = call(Method::GET, "/api/v1/workspaces/nope/commits".into(), None).await;
-        assert_eq!(unknown_scope.status(), StatusCode::NOT_FOUND);
+        assert_eq!(unknown_scope.status(), StatusCode::OK);
         let body = response_json(unknown_scope).await;
-        assert_eq!(body["message"], "Could not resolve folder 'nope'");
+        assert_eq!(body["code"], 100, "{body}");
+        assert_eq!(
+            body["message"], "ValueError(\"Could not resolve folder 'nope'\")",
+            "{body}"
+        );
+        assert!(body["data"].is_null(), "{body}");
 
         let unknown_commit = call(
             Method::GET,
@@ -16472,10 +16510,48 @@ mod tests {
             None,
         )
         .await;
-        assert_eq!(unknown_commit.status(), StatusCode::NOT_FOUND);
+        assert_eq!(unknown_commit.status(), StatusCode::OK);
+        let body = response_json(unknown_commit).await;
+        assert_eq!(body["code"], "Commit not found", "{body}");
+        assert_eq!(body["message"], "Sorry! Data missing!", "{body}");
+
+        let diff_missing = call(
+            Method::GET,
+            "/api/v1/workspaces/root/commits/diff".into(),
+            None,
+        )
+        .await;
+        assert_eq!(diff_missing.status(), StatusCode::OK);
+        let body = response_json(diff_missing).await;
         assert_eq!(
-            response_json(unknown_commit).await["message"],
-            "Commit not found in workspace"
+            body["code"], "'from' and 'to' parameters are required",
+            "{body}"
+        );
+        assert_eq!(body["message"], "Sorry! Data missing!", "{body}");
+
+        let unknown_versions = call(
+            Method::GET,
+            "/api/v1/workspace-files/never-was-a-file/versions".into(),
+            None,
+        )
+        .await;
+        assert_eq!(unknown_versions.status(), StatusCode::OK);
+        let body = response_json(unknown_versions).await;
+        assert_eq!(body["code"], "File not found", "{body}");
+        assert_eq!(body["message"], "Sorry! Data missing!", "{body}");
+
+        let too_many = call(
+            Method::GET,
+            "/api/v1/workspaces/root/commits?page_size=101".into(),
+            None,
+        )
+        .await;
+        assert_eq!(too_many.status(), StatusCode::OK);
+        let body = response_json(too_many).await;
+        assert_eq!(body["code"], 100, "{body}");
+        assert_eq!(
+            body["message"], "ValueError('page_size must be less than or equal to 100')",
+            "{body}"
         );
     }
 
@@ -16529,10 +16605,12 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+        assert_eq!(unknown.status(), StatusCode::OK);
+        let body = response_json(unknown).await;
+        assert_eq!(body["code"], 100, "{body}");
         assert_eq!(
-            response_json(unknown).await["message"],
-            "Could not resolve datasets 'nope' to a folder"
+            body["message"], "ValueError(\"Could not resolve datasets 'nope' to a folder\")",
+            "{body}"
         );
     }
 

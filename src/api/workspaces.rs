@@ -29,6 +29,7 @@ use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 
 use crate::server::{AppState, AuthContext, api_error_code, code};
+use crate::user_register::EXCEPTION_ERROR;
 
 /// A snapshot of one scope.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -144,6 +145,20 @@ impl WorkspaceCommitStore {
             .unwrap()
             .iter()
             .find(|commit| commit.folder_id == scope_id && commit.id == commit_id)
+            .cloned()
+    }
+
+    /// Any commit with this id, whichever scope it belongs to.
+    ///
+    /// Upstream looks a commit up by id first and compares its folder after, so "no such commit"
+    /// and "commit belongs to another workspace" are different answers with different envelopes
+    /// (round⑦ probes).
+    pub fn find_any(&self, commit_id: &str) -> Option<WorkspaceCommit> {
+        self.commits
+            .read()
+            .unwrap()
+            .iter()
+            .find(|commit| commit.id == commit_id)
             .cloned()
     }
 
@@ -374,16 +389,46 @@ fn bad_request(code_value: i32, message: &str) -> Response {
     api_error_code(axum::http::StatusCode::BAD_REQUEST, code_value, message)
 }
 
-fn not_found(message: &str) -> Response {
-    api_error_code(
-        axum::http::StatusCode::NOT_FOUND,
-        code::INVALID_OR_MISSING_DATA,
-        message,
-    )
+/// The file-commit family's error answer, replicated character-for-character from upstream.
+///
+/// Every failing route in this family answers through `get_data_error_result("<message>")`, whose
+/// signature is `(code, message)`: the string lands in the `code` field and `message` keeps its
+/// default. The round⑦ probes of v0.27.2 captured the result — HTTP 200 with
+/// `{"code":"<message>","message":"Sorry! Data missing!"}` (`fc_fake_commit`, `fc_fake_commit_fls`,
+/// `fc_diff_missing`, `wf_fake_versions`) — and the 2026-10-12 parity decision is to replicate the
+/// quirk rather than normalise it (the ledger's "aligned means audited behavior" reading).
+fn string_code_error(message: &str) -> Response {
+    Json(serde_json::json!({ "code": message, "message": "Sorry! Data missing!" })).into_response()
 }
 
-/// Resolve the `{workspace_id}` / `{dataset_id}` path parameter, answering upstream's wording when it
-/// cannot be resolved. `dataset: true` selects the dataset reading of the id.
+/// An exception answered through `server_error_response`, verbatim: HTTP 200 with
+/// `{"code":100,"data":null,"message":"ValueError(\"…\")"}`, `message` being the Python `repr` of
+/// the exception (`fc_fake_dataset` probe).
+fn raised_value_error(python_repr: String) -> Response {
+    Json(serde_json::json!({
+        "code": EXCEPTION_ERROR,
+        "data": serde_json::Value::Null,
+        "message": python_repr,
+    }))
+    .into_response()
+}
+
+/// Upstream `validate_request` lists every missing argument in one answer:
+/// `"required argument are missing: {}; ".format(",".join(no_arguments))` — answered as
+/// `{"code":101,"data":null,"message":"…"}` (`fc_create_missing` probe).
+fn missing_arguments(no_arguments: &[&str]) -> Response {
+    Json(serde_json::json!({
+        "code": code::INVALID_ARGUMENT,
+        "data": serde_json::Value::Null,
+        "message": format!("required argument are missing: {}; ", no_arguments.join(",")),
+    }))
+    .into_response()
+}
+
+/// Resolve the `{workspace_id}` / `{dataset_id}` path parameter. When it cannot be resolved,
+/// upstream raises `ValueError` from the resolver and answers `server_error_response(e)`; the
+/// envelope (including the Python `repr` carried in `message`) is replicated here.
+/// `dataset: true` selects the dataset reading of the id.
 fn resolve_scope(
     state: &AppState,
     auth: &AuthContext,
@@ -391,40 +436,89 @@ fn resolve_scope(
     dataset: bool,
 ) -> Result<Scope, Response> {
     if dataset {
-        return dataset_scope(state, auth, id)
-            .ok_or_else(|| not_found(&format!("Could not resolve datasets '{id}' to a folder")));
+        return dataset_scope(state, auth, id).ok_or_else(|| {
+            raised_value_error(format!(
+                "ValueError(\"Could not resolve datasets '{id}' to a folder\")"
+            ))
+        });
     }
-    folder_scope(state, auth, id)
-        .ok_or_else(|| not_found(&format!("Could not resolve folder '{id}'")))
-}
-
-fn commit_json(commit: &WorkspaceCommit) -> serde_json::Value {
-    serde_json::json!({
-        "id": commit.id,
-        "folder_id": commit.folder_id,
-        "parent_id": commit.parent_id,
-        "message": commit.message,
-        "author_id": commit.author_id,
-        "file_count": commit.file_count,
-        "tree_state": commit.tree_state,
-        "create_time": commit.create_time,
-        // Upstream's artifact-commit extension fields, null for workspace commits.
-        "title": serde_json::Value::Null,
-        "comments": serde_json::Value::Null,
+    folder_scope(state, auth, id).ok_or_else(|| {
+        raised_value_error(format!("ValueError(\"Could not resolve folder '{id}'\")"))
     })
 }
 
-fn item_json(item: &CommitItem) -> serde_json::Value {
+/// The create-commit answer's commit object (upstream's `create_commit` key set, no `title`/
+/// `comments`). Keys are written in the alphabetical order upstream's jsonify emits.
+fn commit_created_json(commit: &WorkspaceCommit) -> serde_json::Value {
     serde_json::json!({
-        "id": item.id,
+        "author_id": commit.author_id,
+        "create_time": commit.create_time,
+        "file_count": commit.file_count,
+        "folder_id": commit.folder_id,
+        "id": commit.id,
+        "message": commit.message,
+        "parent_id": commit.parent_id,
+        "tree_state": commit.tree_state,
+    })
+}
+
+/// The list answer's row (upstream's `list_commits` key set — no `tree_state`, plus the
+/// artifact-commit extension fields, null for workspace commits).
+fn commit_row_json(commit: &WorkspaceCommit) -> serde_json::Value {
+    serde_json::json!({
+        "author_id": commit.author_id,
+        "comments": serde_json::Value::Null,
+        "create_time": commit.create_time,
+        "file_count": commit.file_count,
+        "folder_id": commit.folder_id,
+        "id": commit.id,
+        "message": commit.message,
+        "parent_id": commit.parent_id,
+        "title": serde_json::Value::Null,
+    })
+}
+
+/// The single-commit detail body (upstream's `get_commit`: no `tree_state`, no `title`).
+fn commit_detail_json(
+    commit: &WorkspaceCommit,
+    files: Vec<serde_json::Value>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "author_id": commit.author_id,
+        "create_time": commit.create_time,
+        "file_count": commit.file_count,
+        "files": files,
+        "folder_id": commit.folder_id,
+        "id": commit.id,
+        "message": commit.message,
+        "parent_id": commit.parent_id,
+    })
+}
+
+/// A file change as the single-commit detail lists it (upstream maps six fields there).
+fn detail_item_json(item: &CommitItem) -> serde_json::Value {
+    serde_json::json!({
         "file_id": item.file_id,
-        "operation": item.operation,
-        "old_hash": item.old_hash,
         "new_hash": item.new_hash,
-        "old_location": item.old_location,
-        "new_location": item.new_location,
-        "old_name": item.old_name,
         "new_name": item.new_name,
+        "old_hash": item.old_hash,
+        "old_name": item.old_name,
+        "operation": item.operation,
+    })
+}
+
+/// A file change as `/commits/{id}/files` lists it (upstream's full nine-field mapping).
+fn list_item_json(item: &CommitItem) -> serde_json::Value {
+    serde_json::json!({
+        "file_id": item.file_id,
+        "id": item.id,
+        "new_hash": item.new_hash,
+        "new_location": item.new_location,
+        "new_name": item.new_name,
+        "old_hash": item.old_hash,
+        "old_location": item.old_location,
+        "old_name": item.old_name,
+        "operation": item.operation,
     })
 }
 
@@ -449,22 +543,21 @@ pub(crate) async fn create_commit_in(
         Ok(scope) => scope,
         Err(response) => return response,
     };
-    let message = body.message.unwrap_or_default().trim().to_string();
-    if message.is_empty() {
-        return bad_request(
-            code::INVALID_ARGUMENT,
-            "required argument are missing: message",
-        );
+    // Upstream `validate_request("message","files")`: an argument counts as supplied by the key
+    // being present, and every missing one is listed in a single answer, in declaration order
+    // (`{}` → "required argument are missing: message,files; ").
+    let mut missing: Vec<&str> = Vec::new();
+    if body.message.is_none() {
+        missing.push("message");
     }
-    let changes = match body.files {
-        Some(changes) if !changes.is_empty() => changes,
-        _ => {
-            return bad_request(
-                code::INVALID_ARGUMENT,
-                "required argument are missing: files",
-            );
-        }
-    };
+    if body.files.is_none() {
+        missing.push("files");
+    }
+    if !missing.is_empty() {
+        return missing_arguments(&missing);
+    }
+    let message = body.message.unwrap_or_default();
+    let changes = body.files.unwrap_or_default();
     for change in &changes {
         if !matches!(
             change.operation.as_str(),
@@ -593,7 +686,7 @@ pub(crate) async fn create_commit_in(
         tree_state: tree_state_json(&head_state),
         create_time: crate::api::utils::datetime::now_ms(),
     };
-    let payload = commit_json(&commit);
+    let payload = commit_created_json(&commit);
     if let Err(error) = state.workspace_commits.insert(commit, items) {
         return api_error_code(
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -621,12 +714,20 @@ pub(crate) fn list_commits_in(
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(1);
-    let page_size = query
+    // Upstream `validate_rest_api_page_size`: junk and non-positive values fall back to the
+    // default (30) silently; above the public maximum it raises, and the route answers the repr.
+    let page_size = match query
         .get("page_size")
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(15)
-        .min(100);
+        .and_then(|value| value.trim().parse::<i64>().ok())
+    {
+        Some(value) if value > 100 => {
+            return raised_value_error(
+                "ValueError('page_size must be less than or equal to 100')".to_string(),
+            );
+        }
+        Some(value) if value >= 1 => value as usize,
+        _ => 30,
+    };
     let order_by = query
         .get("order_by")
         .map(String::as_str)
@@ -641,11 +742,11 @@ pub(crate) fn list_commits_in(
         .into_iter()
         .skip(start)
         .take(page_size)
-        .map(|commit| commit_json(&commit))
+        .map(|commit| commit_row_json(&commit))
         .collect();
     Json(serde_json::json!({
         "code": 0,
-        "data": { "total": total, "page": page, "page_size": page_size, "commits": rows },
+        "data": { "commits": rows, "page": page, "page_size": page_size, "total": total },
         "message": "success",
     }))
     .into_response()
@@ -660,7 +761,7 @@ pub async fn list_commits(
     list_commits_in(&state, &auth, &id, false, &query)
 }
 
-fn commit_or_404(
+fn commit_in_scope(
     state: &AppState,
     auth: &AuthContext,
     id: &str,
@@ -668,9 +769,12 @@ fn commit_or_404(
     commit_id: &str,
 ) -> Result<(Scope, WorkspaceCommit), Response> {
     let scope = resolve_scope(state, auth, id, dataset)?;
-    match state.workspace_commits.get(scope.id(), commit_id) {
+    match state.workspace_commits.find_any(commit_id) {
+        None => Err(string_code_error("Commit not found")),
+        Some(commit) if commit.folder_id != scope.id() => {
+            Err(string_code_error("Commit not found in workspace"))
+        }
         Some(commit) => Ok((scope, commit)),
-        None => Err(not_found("Commit not found in workspace")),
     }
 }
 
@@ -682,7 +786,7 @@ pub(crate) fn get_commit_in(
     dataset: bool,
     commit_id: &str,
 ) -> Response {
-    let (_, commit) = match commit_or_404(state, auth, id, dataset, commit_id) {
+    let (_, commit) = match commit_in_scope(state, auth, id, dataset, commit_id) {
         Ok(found) => found,
         Err(response) => return response,
     };
@@ -690,13 +794,14 @@ pub(crate) fn get_commit_in(
         .workspace_commits
         .items_of(&commit.id)
         .iter()
-        .map(item_json)
+        .map(detail_item_json)
         .collect();
-    let mut payload = commit_json(&commit);
-    if let Some(object) = payload.as_object_mut() {
-        object.insert("files".into(), serde_json::Value::Array(files));
-    }
-    Json(serde_json::json!({ "code": 0, "data": payload, "message": "success" })).into_response()
+    Json(serde_json::json!({
+        "code": 0,
+        "data": commit_detail_json(&commit, files),
+        "message": "success",
+    }))
+    .into_response()
 }
 
 pub async fn get_commit(
@@ -715,7 +820,7 @@ pub(crate) fn list_commit_files_in(
     dataset: bool,
     commit_id: &str,
 ) -> Response {
-    let (_, commit) = match commit_or_404(state, auth, id, dataset, commit_id) {
+    let (_, commit) = match commit_in_scope(state, auth, id, dataset, commit_id) {
         Ok(found) => found,
         Err(response) => return response,
     };
@@ -723,7 +828,7 @@ pub(crate) fn list_commit_files_in(
         .workspace_commits
         .items_of(&commit.id)
         .iter()
-        .map(item_json)
+        .map(list_item_json)
         .collect();
     Json(serde_json::json!({ "code": 0, "data": files, "message": "success" })).into_response()
 }
@@ -751,19 +856,20 @@ pub(crate) fn diff_commits_in(
     let from_id = query.get("from").map(String::as_str).unwrap_or("");
     let to_id = query.get("to").map(String::as_str).unwrap_or("");
     if from_id.is_empty() || to_id.is_empty() {
-        return bad_request(
-            code::INVALID_ARGUMENT,
-            "required argument are missing: from, to",
-        );
+        return string_code_error("'from' and 'to' parameters are required");
     }
-    let from = match state.workspace_commits.get(scope.id(), from_id) {
-        Some(commit) => commit,
-        None => return not_found("Commit not found in workspace"),
+    // Upstream checks that both commits exist first, then that both belong to the scope; the two
+    // failures answer different quirk strings.
+    let (from, to) = match (
+        state.workspace_commits.find_any(from_id),
+        state.workspace_commits.find_any(to_id),
+    ) {
+        (Some(from), Some(to)) => (from, to),
+        _ => return string_code_error("Commit not found"),
     };
-    let to = match state.workspace_commits.get(scope.id(), to_id) {
-        Some(commit) => commit,
-        None => return not_found("Commit not found in workspace"),
-    };
+    if from.folder_id != scope.id() || to.folder_id != scope.id() {
+        return string_code_error("Commit not found in workspace");
+    }
     let before = tree_state_of(&from);
     let after = tree_state_of(&to);
     let mut file_ids: Vec<String> = before.keys().chain(after.keys()).cloned().collect();
@@ -783,11 +889,11 @@ pub(crate) fn diff_commits_in(
         changes.push(serde_json::json!({
             "file_id": file_id,
             "file_name": right.map(|entry| entry.name.clone()).or_else(|| left.map(|entry| entry.name.clone())),
-            "operation": operation,
-            "old_hash": left.map(|entry| entry.hash.clone()),
             "new_hash": right.map(|entry| entry.hash.clone()),
-            "old_location": left.map(|entry| entry.location.clone()),
             "new_location": right.map(|entry| entry.location.clone()),
+            "old_hash": left.map(|entry| entry.hash.clone()),
+            "old_location": left.map(|entry| entry.location.clone()),
+            "operation": operation,
         }));
     }
     Json(serde_json::json!({ "code": 0, "data": changes, "message": "success" })).into_response()
@@ -857,7 +963,7 @@ pub(crate) fn commit_tree_in(
     dataset: bool,
     commit_id: &str,
 ) -> Response {
-    let (scope, commit) = match commit_or_404(state, auth, id, dataset, commit_id) {
+    let (scope, commit) = match commit_in_scope(state, auth, id, dataset, commit_id) {
         Ok(found) => found,
         Err(response) => return response,
     };
@@ -945,7 +1051,7 @@ pub(crate) async fn commit_file_content_in(
     commit_id: &str,
     file_id: &str,
 ) -> Response {
-    let (_, commit) = match commit_or_404(state, auth, id, dataset, commit_id) {
+    let (_, commit) = match commit_in_scope(state, auth, id, dataset, commit_id) {
         Ok(found) => found,
         Err(response) => return response,
     };
@@ -987,7 +1093,7 @@ pub(crate) async fn commit_file_content_in(
         }
     }
     let _ = item;
-    not_found("File not found in this commit")
+    string_code_error("File not found in this commit")
 }
 
 pub async fn commit_file_content(
@@ -999,11 +1105,30 @@ pub async fn commit_file_content(
 }
 
 /// `GET /api/v1/workspace-files/{file_id}/versions`.
+/// Whether the caller can see the file a version history is asked about. Workspace files are the
+/// file records; documents stand in for upstream's file rows under a dataset, so a document id is
+/// visible when its dataset is.
+fn file_or_document_visible(state: &AppState, auth: &AuthContext, file_id: &str) -> bool {
+    if let Some(record) = state.files.get(file_id) {
+        if record.owner_id == auth.user_id || auth.is_admin || record.owner_id.is_empty() {
+            return true;
+        }
+    }
+    if let Some(document) = state.docs.get(file_id) {
+        return dataset_scope(state, auth, &document.kb_id).is_some();
+    }
+    false
+}
+
 pub(crate) fn file_versions_in(state: &AppState, auth: &AuthContext, file_id: &str) -> Response {
+    // Upstream resolves the file first and answers the string-code quirk `"File not found"` for a
+    // file that is not there or not this caller's (probe `wf_fake_versions`); a file it can see but
+    // that was never committed answers an empty list.
+    if !file_or_document_visible(state, auth, file_id) {
+        return string_code_error("File not found");
+    }
     let history = state.workspace_commits.versions(file_id);
     if history.is_empty() {
-        // An unknown file, or a file that was never committed: upstream answers an empty list for a
-        // file it cannot see, so the two cases are not distinguished here either.
         return Json(serde_json::json!({ "code": 0, "data": [], "message": "success" }))
             .into_response();
     }
@@ -1017,12 +1142,20 @@ pub(crate) fn file_versions_in(state: &AppState, auth: &AuthContext, file_id: &s
             }
         })
         .map(|(item, commit)| {
+            // Upstream `hash = item.new_hash or item.old_hash or ""` — Python truthiness, so an
+            // empty string falls through as well.
+            let hash = item
+                .new_hash
+                .clone()
+                .filter(|value| !value.is_empty())
+                .or_else(|| item.old_hash.clone().filter(|value| !value.is_empty()))
+                .unwrap_or_default();
             serde_json::json!({
                 "commit_id": commit.id,
-                "operation": item.operation,
-                "hash": item.new_hash,
                 "create_time": commit.create_time,
+                "hash": hash,
                 "message": commit.message,
+                "operation": item.operation,
             })
         })
         .collect();
