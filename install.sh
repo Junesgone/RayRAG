@@ -2,7 +2,7 @@
 #
 # RayRAG one-command deployment (written for first-time users).
 #
-#   ./install.sh                  # generate passwords -> build -> start -> print URL
+#   ./install.sh                  # write .env -> build -> start -> print URL
 #   ./install.sh --port 8080      # web port (default 9380)
 #   ./install.sh --no-build       # start without rebuilding the image
 #   ./install.sh --global-mirror  # build against upstream mirrors (default: CN mirrors)
@@ -10,7 +10,7 @@
 #   ./install.sh --dry-run        # checks and .env only, no build, no start
 #   ./install.sh --help
 #
-# Idempotent: re-running never overwrites an existing .env, so your passwords
+# Idempotent: re-running never overwrites an existing .env, so your credentials
 # and settings survive. Messages follow the system locale (zh* -> Chinese).
 set -euo pipefail
 
@@ -100,18 +100,6 @@ fi
 green "    $(m "Docker 正常" "Docker OK"): $(${COMPOSE[*]} version --short 2>/dev/null || echo ok)"
 
 # ---------------------------------------------------------------- .env
-random_secret() {
-    # 24 chars of [A-Za-z0-9]. Deliberately avoids `tr </dev/urandom | head`:
-    # head exiting early sends SIGPIPE to tr, which `set -o pipefail` reports as
-    # a failure of the whole pipeline.
-    local value=""
-    while [ "${#value}" -lt 24 ]; do
-        value="${value}$(LC_ALL=C dd if=/dev/urandom bs=64 count=1 2>/dev/null |
-            LC_ALL=C tr -dc 'A-Za-z0-9' || true)"
-    done
-    printf '%s' "${value:0:24}"
-}
-
 set_env() {
     # set_env KEY VALUE -- replace in place, or append when the key is absent
     local key="$1" value="$2"
@@ -137,21 +125,20 @@ PY
 }
 
 blue "$(m "==> 准备配置文件 .env" "==> Preparing .env")"
-NEW_PASSWORDS=0
 # The compose file bind-mounts `.env` into the container so the first-login setup page
 # writes the file the operator edits; the file must therefore exist before `up`.
 if [ -f .env ]; then
-    green "    $(m "已有 .env，保留现有密码与配置" "existing .env kept (passwords and settings preserved)")"
+    green "    $(m "已存在 .env，保留现有密码与设置。" "existing .env kept (passwords and settings preserved)")"
+    # 0.45.0 之前的 compose 默认数据库用户是 rayrag，数据库卷也是用它建的。
+    # 老 .env 没有这一行时补记成 rayrag，避免升级后默认值变成 admin 连不上。
+    if ! grep -qE '^RAYRAG_POSTGRES_USER=.+' .env; then
+        set_env RAYRAG_POSTGRES_USER "rayrag"
+        green "    $(m "已为现有部署补记 RAYRAG_POSTGRES_USER=rayrag（旧版默认用户）" "recorded RAYRAG_POSTGRES_USER=rayrag for the existing deployment (the previous default)")"
+    fi
 else
     [ -f .env.example ] || die "$(m "找不到 .env.example，请在 RayRAG 项目根目录执行本脚本" "no .env.example here; run this script from the RayRAG project root")"
     cp .env.example .env
-    PG_PASSWORD="$(random_secret)"
-    ADMIN_PASSWORD="$(random_secret)"
-    set_env RAYRAG_POSTGRES_PASSWORD "$PG_PASSWORD"
-    set_env RAYRAG_ADMIN_PASSWORD "$ADMIN_PASSWORD"
-    set_env RAYRAG_POSTGRES_URL "postgresql://rayrag:${PG_PASSWORD}@127.0.0.1:5432/rayrag"
-    NEW_PASSWORDS=1
-    green "    $(m "已生成 .env，并随机生成两个密码（各 24 位）" "created .env with two randomly generated 24-character passwords")"
+    green "    $(m "已生成 .env：数据库与首次登录的初始凭据都是 admin（登录后会引导你立即修改）" "created .env: the database and the first login both start at admin (the first-run guide asks you to change them)")"
 fi
 
 if [ -n "$PORT" ]; then
@@ -165,8 +152,16 @@ ADMIN_PASSWORD_VALUE="$(grep -E '^RAYRAG_ADMIN_PASSWORD=' .env | head -1 | cut -
 LISTEN_PORT="$(grep -E '^RAYRAG_PORT=' .env | head -1 | cut -d= -f2- || true)"
 LISTEN_PORT="${LISTEN_PORT:-9380}"
 
-if [ "${#ADMIN_PASSWORD_VALUE}" -lt 12 ]; then
-    die "$(m ".env 里的 RAYRAG_ADMIN_PASSWORD 少于 12 位，RayRAG 会拒绝启动。请改成至少 12 位后重试。" "RAYRAG_ADMIN_PASSWORD in .env is shorter than 12 characters and RayRAG will refuse to start. Use at least 12 and retry.")"
+# A set password must satisfy the 12-character rule; unset keeps the admin/admin
+# first login, so an empty value is the normal fresh-install state.
+if [ -n "$ADMIN_PASSWORD_VALUE" ] && [ "${#ADMIN_PASSWORD_VALUE}" -lt 12 ]; then
+    die "$(m ".env 里设置了 RAYRAG_ADMIN_PASSWORD 但少于 12 位（密码规则至少 12 位）。改成长一点的密码，或删掉这一行——不设置时初始登录是 admin/admin。" "RAYRAG_ADMIN_PASSWORD is set but shorter than 12 characters (the rule is at least 12). Set a longer one, or remove the line — unset keeps the admin/admin first login.")"
+fi
+
+if [ -n "$ADMIN_PASSWORD_VALUE" ]; then
+    PASS_HINT="$(m "见 .env 文件里的 RAYRAG_ADMIN_PASSWORD" "see RAYRAG_ADMIN_PASSWORD in .env")"
+else
+    PASS_HINT="$(m "admin（初始值，首次登录会引导修改）" "admin (initial; the first-run guide asks you to change it)")"
 fi
 
 if [ -n "$MIRROR" ]; then
@@ -191,6 +186,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
     echo  "    $(m "去掉 --dry-run 即可正式部署。当前配置：" "Drop --dry-run to deploy. Current settings:")"
     echo  "      $(m "网页端口" "web port") : ${LISTEN_PORT}"
     echo  "      $(m "登录邮箱" "login")    : ${ADMIN_EMAIL}"
+    echo  "      $(m "初始密码" "password") : ${PASS_HINT}"
     echo  "      $(m "构建镜像" "build")    : $(if [ "$BUILD" -eq 1 ]; then m "是" "yes"; else m "否" "no"; fi)"
     exit 0
 fi
@@ -230,11 +226,7 @@ if [ "$READY" -eq 1 ]; then
     echo  "  $(m "网页地址" "Web UI")   : http://${LAN_IP}:${LISTEN_PORT}"
     echo  "  $(m "本机访问" "Local")    : http://127.0.0.1:${LISTEN_PORT}"
     echo  "  $(m "登录邮箱" "Login")    : ${ADMIN_EMAIL}"
-    if [ "$NEW_PASSWORDS" -eq 1 ]; then
-        echo  "  $(m "登录密码" "Password") : ${ADMIN_PASSWORD_VALUE}   $(m "（已写入 .env，请妥善保存）" "(saved in .env, keep it safe)")"
-    else
-        echo  "  $(m "登录密码" "Password") : $(m "见 .env 文件里的 RAYRAG_ADMIN_PASSWORD" "see RAYRAG_ADMIN_PASSWORD in .env")"
-    fi
+    echo  "  $(m "登录密码" "Password") : ${PASS_HINT}"
     green "------------------------------------------------------------"
     echo  "  $(m "查看日志" "Logs")    : ${COMPOSE[*]} logs -f rayrag"
     echo  "  $(m "停止服务" "Stop")    : ${COMPOSE[*]} down"

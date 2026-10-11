@@ -4,8 +4,10 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${RAYRAG_POSTGRES_DATABASE:-rayrag}
-      POSTGRES_USER: ${RAYRAG_POSTGRES_USER:-rayrag}
-      POSTGRES_PASSWORD: ${RAYRAG_POSTGRES_PASSWORD:?set RAYRAG_POSTGRES_PASSWORD}
+      # The database and the first login start out the same: admin/admin.
+      # Edit the pair in .env; this service and rayrag's DSN both follow it.
+      POSTGRES_USER: ${RAYRAG_POSTGRES_USER:-admin}
+      POSTGRES_PASSWORD: ${RAYRAG_POSTGRES_PASSWORD:-admin}
     ports:
       - "${RAYRAG_POSTGRES_PORT:-5432}:5432"
     volumes:
@@ -57,7 +59,7 @@ services:
       # Container-local wall clock; RAGFlow's compose exposes the same knob as
       # TIMEZONE. Date filters and log timestamps use it.
       TZ: ${RAYRAG_TIMEZONE:-Asia/Shanghai}
-      RAYRAG_POSTGRES_URL: postgresql://${RAYRAG_POSTGRES_USER:-rayrag}:${RAYRAG_POSTGRES_PASSWORD}@postgres:5432/${RAYRAG_POSTGRES_DATABASE:-rayrag}
+      RAYRAG_POSTGRES_URL: postgresql://${RAYRAG_POSTGRES_USER:-admin}:${RAYRAG_POSTGRES_PASSWORD:-admin}@postgres:5432/${RAYRAG_POSTGRES_DATABASE:-rayrag}
       RAYRAG_POSTGRES_REQUIRED_VERSION: "18.4"
       RAYRAG_POSTGRES_NAMESPACE: ${RAYRAG_POSTGRES_NAMESPACE:-default}
       RAYRAG_VECTOR_BACKEND: ${RAYRAG_VECTOR_BACKEND:-zvec}
@@ -120,7 +122,8 @@ services:
       SOMARK_SUBMIT_BUDGET_SECONDS: ${SOMARK_SUBMIT_BUDGET_SECONDS:-600}
       SOMARK_POLL_BUDGET_SECONDS: ${SOMARK_POLL_BUDGET_SECONDS:-600}
       RAYRAG_ADMIN_EMAIL: ${RAYRAG_ADMIN_EMAIL:-admin@rayrag.local}
-      RAYRAG_ADMIN_PASSWORD: ${RAYRAG_ADMIN_PASSWORD:?set RAYRAG_ADMIN_PASSWORD}
+      # First login is admin/admin unless a value is set here (12+ characters).
+      RAYRAG_ADMIN_PASSWORD: ${RAYRAG_ADMIN_PASSWORD:-admin}
       # Optional RAGFlow-compatible RSA password transport. The path must be
       # mounted into the container by an operator-owned Compose override.
       RAYRAG_PASSWORD_PRIVATE_KEY_FILE: ${RAYRAG_PASSWORD_PRIVATE_KEY_FILE:-}

@@ -57,7 +57,7 @@ cd RayRAG
 
 `install.sh` does everything else for you:
 
-1. creates `.env` and generates **two random passwords** (PostgreSQL + admin login);
+1. writes `.env` — the **database and the first login both start as `admin`**; nothing generated, nothing to hunt for;
 2. pulls base images and dependencies through **mirrors that work in mainland China**
    (the first run takes 5–15 minutes depending on your connection);
 3. starts the database and the application and waits until the service is really healthy;
@@ -71,7 +71,7 @@ When it finishes you will see something like:
 ------------------------------------------------------------
   Web UI   : http://192.168.1.10:9380
   Login    : admin / admin  (username and password are both 'admin' at first)
-  Password : see RAYRAG_ADMIN_PASSWORD in the .env file
+  Password : admin (initial; the first-run guide walks you through changing it)
 ------------------------------------------------------------
   Logs     : docker compose logs -f rayrag
   Stop     : docker compose down
@@ -79,7 +79,7 @@ When it finishes you will see something like:
 ============================================================
 ```
 
-> **Write the password down: it only exists in the `.env` file.**
+> **Sign in with `admin`/`admin`, then change the password — the first-run guide walks you through it.**
 
 ### Useful flags
 
@@ -95,8 +95,9 @@ When it finishes you will see something like:
 
 ```bash
 cp .env.example .env
-# Open .env in an editor and replace RAYRAG_ADMIN_PASSWORD and
-# RAYRAG_POSTGRES_PASSWORD with your own (at least 12 characters each), then save.
+# Optional: RAYRAG_POSTGRES_USER / RAYRAG_POSTGRES_PASSWORD start as admin/admin (like the
+# first login); RAYRAG_ADMIN_PASSWORD is unset for the admin first login — set it (12+ chars)
+# if you want your own password up front. Save, then:
 docker compose up -d --build
 ```
 
@@ -251,16 +252,25 @@ Pick another port: `./install.sh --port 8080`. Already deployed? Change `RAYRAG_
 and run `docker compose up -d`.
 
 **Q3 — are there password rules?**
-Yes: at least **12 characters**. A shorter one makes startup fail with
-`RAYRAG_ADMIN_PASSWORD must be at least 12 characters`.
+The first login starts as `admin`/`admin`; the first-run guide asks you to change it, and anything
+you set (or later change in the UI) must be at least **12 characters**. If you pre-set
+`RAYRAG_ADMIN_PASSWORD` in `.env`, a shorter value stops `install.sh` before it starts anything.
 
 **Q4 — I forgot the login password.**
-Change `RAYRAG_ADMIN_PASSWORD` in `.env`, then:
+Change `RAYRAG_ADMIN_PASSWORD` in `.env` (set one if it was unset), then:
 ```bash
 docker compose down && docker volume rm rayrag-state && ./install.sh
 ```
 > This **wipes existing data**. To only change the password, log in and use
 > avatar → `Profile` → `Password`.
+
+**Q4b — how do I change the database credentials?**
+Fresh deployment: edit `RAYRAG_POSTGRES_USER` / `RAYRAG_POSTGRES_PASSWORD` in `.env` before the
+first `docker compose up` — the database is created, and RayRAG connects, with exactly those
+values. Already running: rotate the same password inside the database
+(`docker compose exec postgres psql -U admin -c "ALTER USER admin WITH PASSWORD 'your-new-password'"`),
+edit `.env` to match, then `docker compose up -d rayrag` so it reconnects (or recreate the
+`rayrag-postgres-data` volume to start clean).
 
 **Q5 — builds or image pulls are slow.**
 CN mirrors are already the default (DaoCloud images, Tsinghua apt, a CN crates mirror).
@@ -366,8 +376,9 @@ export ZVEC_LIB_DIR="$HOME/.local/lib/zvec/0.7.2"   # any version present under 
 cargo build --release --locked
 
 # 3) configure
-export RAYRAG_POSTGRES_URL=postgresql://rayrag:YOUR-PASSWORD@127.0.0.1:5432/rayrag
+export RAYRAG_POSTGRES_URL=postgresql://admin:admin@127.0.0.1:5432/rayrag    # same pair as the first login
 export RAYRAG_ADMIN_EMAIL=admin          # username of the first account (default: admin)
+# unset keeps the admin first login; when set, at least 12 characters
 export RAYRAG_ADMIN_PASSWORD='at-least-12-characters'
 
 # 4) run — flag first, then RAYRAG_PORT from .env, then 9380

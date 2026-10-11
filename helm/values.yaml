@@ -30,12 +30,12 @@ postgres:
   # host: postgres
   # port: 5432
   database: rayrag
-  user: rayrag
+  user: admin
   # password: changeme   # prefer a Kubernetes Secret; plain env is minimal-chart default
 
 config:
   # Minimal env surface; extend freely (mirrors docker-compose.yml env).
-  rayragPostgresUrl: "postgresql://rayrag:changeme@postgres:5432/rayrag"
+  rayragPostgresUrl: "postgresql://admin:admin@postgres:5432/rayrag"
   rayragPostgresRequiredVersion: "18.4"
   rayragVectorBackend: "zvec"
   rayragEmbeddingDimension: "384"

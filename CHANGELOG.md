@@ -2,6 +2,29 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.45.0] - 2026-10-11
+
+### The database starts where the first login does: admin
+
+The database credentials now follow the first account's rule: the deployment opens with
+`admin` / `admin` on both sides, and the operator changes them — from one place, `.env`.
+
+- `docker-compose.yml` no longer needs a generated password to interpolate. The PostgreSQL
+  service initialises, and the application connects, from the same
+  `RAYRAG_POSTGRES_USER` / `RAYRAG_POSTGRES_PASSWORD` pair (defaults `admin`/`admin`), so a
+  change in `.env` keeps both sides in step (plain-Linux deployments keep the matching DSN).
+- `install.sh` stopped generating and printing random passwords. It writes `.env`, reports
+  the initial `admin`/`admin` credentials and points at the first-run guide.
+- Existing deployments migrate gently: a `.env` without `RAYRAG_POSTGRES_USER` gets the
+  previous default (`rayrag`) recorded, so the running database keeps being reached under
+  its original user.
+- The admin login password stays **optional**: unset keeps the `admin` first login; when set
+  it must be at least 12 characters, and the install precheck enforces the floor only for a
+  value that is actually set.
+- README (EN/zh) and `.env.example` reconciled with the above — the older "two random
+  passwords" wording is gone — and the FAQ covers rotating database credentials on a running
+  deployment.
+
 ## [0.44.0] - 2026-10-04
 
 ### A credential could not be removed from the UI

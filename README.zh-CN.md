@@ -54,10 +54,10 @@ cd RayRAG
 
 `install.sh` 会自动帮你做完剩下的事：
 
-1. 生成配置文件 `.env`，并**随机生成两个密码**（PostgreSQL 密码、管理员登录密码）；
+1. 生成配置文件 `.env`——**数据库和首次登录的初始凭据都是 `admin`**（之后随时可改）；
 2. 用**国内镜像源**拉取基础镜像、下载依赖（首次约 5～15 分钟，取决于网速）；
 3. 启动数据库和应用，并等待服务真正健康；
-4. 在屏幕上打印访问地址和登录账号密码。
+4. 在屏幕上打印访问地址与初始登录方式（admin / admin）。
 
 跑完后你会看到类似这样的提示（脚本会跟随系统语言，英文环境输出英文）：
 
@@ -67,8 +67,7 @@ cd RayRAG
 ------------------------------------------------------------
   网页地址 : http://192.168.1.10:9380
   本机访问 : http://127.0.0.1:9380
-  登录邮箱 : admin@rayrag.local
-  登录密码 : xxxxxxxxxxxxxxxxxxxxxxxx   （已写入 .env，请妥善保存）
+  登录账号 : admin / admin   （初始值，登录后会引导你立即修改）
 ------------------------------------------------------------
   查看日志 : docker compose logs -f rayrag
   停止服务 : docker compose down
@@ -76,7 +75,7 @@ cd RayRAG
 ============================================================
 ```
 
-> **重要：把这个地址和密码记下来，登录密码只存在 `.env` 文件里。**
+> **重要：初始登录是 admin/admin，登录后请按引导立即修改密码。**
 
 ### 常用参数（可选）
 
@@ -92,8 +91,8 @@ cd RayRAG
 
 ```bash
 cp .env.example .env
-# 用编辑器打开 .env，把 RAYRAG_ADMIN_PASSWORD 和 RAYRAG_POSTGRES_PASSWORD
-# 改成你自己的密码（各至少 12 位），保存
+# （可选）数据库凭据初始 admin/admin，与首次登录一致；
+# RAYRAG_ADMIN_PASSWORD 不设置 = 初始 admin 登录，设置则至少 12 位
 docker compose up -d --build
 ```
 
@@ -103,7 +102,7 @@ docker compose up -d --build
 
 1. **打开浏览器**，访问 `http://你的主机IP:9380`
    （本机就是 `http://127.0.0.1:9380`）。
-2. **登录**：邮箱 `admin@rayrag.local`，密码是 `.env` 里的 `RAYRAG_ADMIN_PASSWORD`。
+2. **登录**：账号 `admin`，初始密码 `admin`（登录后按引导立即修改）。
 3. **建知识库**：左侧菜单 `Knowledge Base` → `Create knowledge base` → 填名字 → 保存。
 4. **传文档**：进入刚建的知识库 → `Files` 页签 → `+ Add file` 拖入 PDF/Word/Excel/图片 → 确定。
 5. **解析**：勾选文件 → 点 `Parse`（绿色播放按钮）→ 等状态变成 `DONE`。
@@ -195,15 +194,21 @@ RERANK_MODEL=bge-reranker-v2-m3
 `docker compose up -d`。
 
 **Q3：管理员密码有要求吗？**
-至少 **12 位**。太短会启动失败并提示
-`RAYRAG_ADMIN_PASSWORD must be at least 12 characters`。
+首次登录是 `admin`/`admin`，登录后引导你立即修改；之后设置的密码（或在网页里修改的）至少
+**12 位**。如果你在 `.env` 里预置了 `RAYRAG_ADMIN_PASSWORD`，太短会让 `install.sh` 在启动前直接停下。
 
 **Q4：忘记登录密码 / 密码写错了？**
-改 `.env` 里的 `RAYRAG_ADMIN_PASSWORD` 后执行：
+改 `.env` 里的 `RAYRAG_ADMIN_PASSWORD`（原来没设置就现在设一个）后执行：
 ```bash
 docker compose down && docker volume rm rayrag-state && ./install.sh
 ```
 > 注意：这样会**清空已有数据**。只想改密码请到网页里 头像 → `Profile` → `Password`。
+
+**Q4b：怎么修改数据库账号密码？**
+新部署：第一次 `docker compose up` 之前，直接改 `.env` 里的 `RAYRAG_POSTGRES_USER` /
+`RAYRAG_POSTGRES_PASSWORD`——建库和 RayRAG 连接用的是同一组值。已经跑起来的：先在运行中的数据库里同步改口令
+（`docker compose exec postgres psql -U admin -c "ALTER USER admin WITH PASSWORD '新密码'"`），
+再把 `.env` 改成一致，然后 `docker compose up -d rayrag` 让它用新凭据重连（或删掉 `rayrag-postgres-data` 卷重新初始化）。
 
 **Q5：构建/拉镜像太慢，或者卡在下载？**
 默认已经走国内镜像（DaoCloud + 清华 apt 源 + 国内 crates 源）。
@@ -285,9 +290,10 @@ export ZVEC_LIB_DIR="$HOME/.local/lib/zvec/0.7.1"
 cargo build --release --locked
 
 # 3) 配置
-export RAYRAG_POSTGRES_URL=postgresql://rayrag:你的密码@127.0.0.1:5432/rayrag
+export RAYRAG_POSTGRES_URL=postgresql://admin:admin@127.0.0.1:5432/rayrag   # 初始与首个登录一致
 export RAYRAG_ADMIN_EMAIL=admin@rayrag.local
-export RAYRAG_ADMIN_PASSWORD='至少12位的密码'
+# 不设置则初始登录 admin/admin；设置则至少 12 位
+export RAYRAG_ADMIN_PASSWORD='你的至少12位密码'
 
 # 4) 启动
 ./target/release/rayrag serve --port 9380

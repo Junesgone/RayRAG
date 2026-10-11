@@ -10,7 +10,7 @@ targets the container port **8080** (the image default `serve --port 8080`).
 ```bash
 docker build -t rayrag:local .          # or: docker compose build rayrag
 helm install rayrag ./helm \
-  --set config.rayragPostgresUrl="postgresql://rayrag:PASSWORD@postgres:5432/rayrag"
+  --set config.rayragPostgresUrl="postgresql://admin:admin@postgres:5432/rayrag"
 ```
 
 ## PostgreSQL dependency (required)
@@ -25,8 +25,8 @@ Bring your own PostgreSQL:
 ```bash
 helm repo add bitnami https://charts.bitnami.com/bitnami
 helm install postgres bitnami/postgresql \
-  --set auth.database=rayrag --set auth.username=rayrag \
-  --set auth.password=PASSWORD --set image.tag=18.4
+  --set auth.database=rayrag --set auth.username=admin \
+  --set auth.password=admin --set image.tag=18.4
 ```
 
 then point `config.rayragPostgresUrl` at it. For production, move the password

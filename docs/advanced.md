@@ -729,11 +729,12 @@ PostgreSQL `ON CONFLICT` 原子 upsert，并按快照键获取事务级 advisory
 纯 Linux 模式使用宿主 Rust 二进制、外部或容器 PostgreSQL，以及宿主 zvec native library：
 
 ```bash
-export RAYRAG_POSTGRES_URL=postgresql://rayrag:password@127.0.0.1:5432/rayrag
+export RAYRAG_POSTGRES_URL=postgresql://admin:admin@127.0.0.1:5432/rayrag   # 初始与首个登录一致
 export RAYRAG_VECTOR_BACKEND=zvec
 export RAYRAG_ZVEC_DIR=/var/lib/rayrag/zvec
 export ZVEC_LIB_DIR=/path/to/zvec/build/lib
 export RAYRAG_ADMIN_EMAIL=admin@rayrag.local
+# 不设置则初始登录 admin/admin；设置则至少 12 位
 export RAYRAG_ADMIN_PASSWORD='replace-with-a-strong-admin-password'
 cargo build --release --locked   # postgres-backend + zvec-backend 都是默认 feature
 ./target/release/rayrag serve --port 9380
