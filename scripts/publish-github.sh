@@ -290,13 +290,28 @@ if [ ! -d "$PUB_DIR/.git" ]; then
 fi
 
 echo "==> syncing into $PUB_DIR"
+# The runtime `data/`/`logs/` stores are excluded by ANCHORED path: the bare
+# `data` pattern this line used to carry also matched `src/data/`, whose files
+# are compile-time `include_str!` inputs. The v0.43.0 snapshot shipped without
+# them and could not build; only the root directories are runtime state.
 rsync -a --delete \
     --exclude '.git' \
     --exclude 'target' \
-    --exclude 'data' \
-    --exclude 'logs' \
+    --exclude '/data' \
+    --exclude '/logs' \
     --exclude '.env' \
     "$WORK"/ "$PUB_DIR"/
+# The exclusion list is written by hand and has no memory of files added
+# later: diff the synced tree against the export, so a pattern that matches
+# more than intended -- or a file the list forgot -- fails here instead of
+# shipping a snapshot that cannot build.
+if ! diff -q <(cd "$WORK" && find . -type f | sort) \
+             <(cd "$PUB_DIR" && find . -type f -not -path './.git/*' | sort) >/dev/null; then
+    echo "FATAL: the synced tree does not match the export:" >&2
+    diff <(cd "$WORK" && find . -type f | sort) \
+         <(cd "$PUB_DIR" && find . -type f -not -path './.git/*' | sort) | head -40 >&2
+    exit 1
+fi
 
 cd "$PUB_DIR"
 # The published repository carries a single snapshot commit: earlier snapshots
