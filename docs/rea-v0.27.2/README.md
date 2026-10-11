@@ -18,6 +18,9 @@
 | 08 | UI 面 | `ui-map-v0.27.2.md` | 侧栏 7 项；65 路由/55 块；en·zh 标签 |
 | 09 | sessions/audio | `sessions-audio-surface-v0.27.2.md` | 109+data:false 统一形；双风格定型 |
 
+| 10 | 应用交叉核对 | `apply-crosscheck-01.md` | 九模块契约 × Rust 实现对照；台账 7 行回写 + 陈旧注记修正 |
+| 11 | UI 路由对账 | `ui-route-crosscheck-v0.27.2.md` | 上游 3 形式浏览器实测 + RayRAG 51 探针；遍历增补建议 4+1 项 |
+
 ## 资产
 
 - `memory-default-system-prompt.txt` — 记忆默认提取系统提示词（3604 字符，源自实例真实配置）。
