@@ -1211,63 +1211,89 @@ pub async fn ingest_documents(
     Extension(auth): Extension<AuthContext>,
     axum::Json(body): axum::Json<serde_json::Value>,
 ) -> impl IntoResponse {
-    let doc_ids: Vec<String> = body
-        .get("doc_ids")
-        .and_then(|value| value.as_array())
-        .map(|values| {
-            values
-                .iter()
-                .filter_map(|value| value.as_str())
-                .filter(|value| !value.is_empty())
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default();
-    if doc_ids.is_empty() {
-        return Json(serde_json::json!({ "code": 400, "message": "'doc_ids' is required" }));
-    }
-    let run = match body.get("run") {
-        Some(serde_json::Value::Number(number)) => number.to_string(),
-        Some(serde_json::Value::String(value)) => value.clone(),
-        _ => String::new(),
+    // Upstream `_run_sync` walks `req["doc_ids"]` directly: a missing key surfaces as
+    // `KeyError('doc_ids')` (`ingest_none` probe), a JSON null as the TypeError Python
+    // raises while iterating, and an empty list never reaches the accessibility check
+    // (`ingest_empty` probe → success). Errors use `get_json_result(code, message)` —
+    // the three-key envelope with `data: null`.
+    let doc_ids: Vec<String> = match body.get("doc_ids") {
+        None => return ingest_error(100, "KeyError('doc_ids')"),
+        Some(serde_json::Value::Null) => {
+            return ingest_error(100, "TypeError(\"'NoneType' object is not iterable\")");
+        }
+        Some(serde_json::Value::Array(values)) => values
+            .iter()
+            .filter_map(|value| value.as_str())
+            .map(str::to_string)
+            .collect(),
+        // A scalar is not iterable; the closest observable is the first accessibility
+        // refusal.
+        Some(_) => return ingest_error(109, "no authorization"),
     };
-    if !matches!(run.as_str(), "1" | "2") {
+    if doc_ids.is_empty() {
         return Json(serde_json::json!({
-            "code": 400,
-            "message": format!("'run' must be either 0 or 1: {run}")
+            "code": 0,
+            "message": "success",
+            "data": true,
         }));
     }
+    // First pass: every id must be accessible before any work happens (`ingest_fakeid`
+    // probe → `no authorization`).
+    for doc_id in &doc_ids {
+        let accessible = state
+            .docs
+            .get(doc_id)
+            .is_some_and(|doc| kb_accessible(&state, &doc.kb_id, &auth));
+        if !accessible {
+            return ingest_error(109, "no authorization");
+        }
+    }
+    // `str(req["run"])` — the key is required (`KeyError('run')`), a JSON null becomes
+    // the string "None", and the value is otherwise used raw.
+    let run = match body.get("run") {
+        None => return ingest_error(100, "KeyError('run')"),
+        Some(serde_json::Value::Number(number)) => number.to_string(),
+        Some(serde_json::Value::String(value)) => value.clone(),
+        Some(serde_json::Value::Null) => "None".to_string(),
+        Some(serde_json::Value::Bool(true)) => "True".to_string(),
+        Some(serde_json::Value::Bool(false)) => "False".to_string(),
+        Some(other) => other.to_string(),
+    };
     let clear_chunks = body
         .get("delete")
         .and_then(|value| value.as_bool())
         .unwrap_or(false);
-    let mut accepted = Vec::new();
-    for doc_id in &doc_ids {
-        let Some(doc) = state.docs.get(doc_id) else {
-            return Json(serde_json::json!({
-                "code": 404,
-                "message": format!("Document not found: {doc_id}")
-            }));
-        };
-        if !kb_manageable(&state, &doc.kb_id, &auth) {
-            return Json(serde_json::json!({ "code": 404, "message": "Not found" }));
-        }
-        accepted.push(doc);
-    }
+    let accepted: Vec<_> = doc_ids
+        .iter()
+        .filter_map(|doc_id| state.docs.get(doc_id))
+        .collect();
     if run == "2" {
         let mut cancelled = 0usize;
         for doc in &accepted {
+            let current = state.docs.get(&doc.id).unwrap_or_else(|| doc.clone());
             match state.tasks.cancel_document(&doc.id) {
-                Ok(count) => cancelled += count,
-                Err(error) => {
-                    return Json(serde_json::json!({ "code": 500, "message": error.to_string() }));
+                Ok(count) => {
+                    // Upstream cancels a RUNNING/CANCEL document or one with unfinished
+                    // tasks; anything else is a DATA_ERROR.
+                    let running = matches!(current.run.as_str(), "RUNNING" | "CANCELLED");
+                    if count == 0 && !running {
+                        return ingest_error(
+                            102,
+                            "Cannot cancel a task that is not in RUNNING status",
+                        );
+                    }
+                    cancelled += count;
                 }
+                Err(error) => return ingest_error(500, &error.to_string()),
             }
-            if let Err(error) =
-                state
-                    .docs
-                    .update_status(&doc.id, "CANCELLED", 1.0, "Processing cancelled")
-            {
+            // The "stopped by user" marker is appended to `progress_msg` and the row's
+            // progress resets to 0 (`info = {"run": …, "progress": 0}` + marker).
+            let marker = format!(
+                "{}\n{} Task stopped by user.",
+                current.progress_msg,
+                chrono::Local::now().format("%H:%M:%S")
+            );
+            if let Err(error) = state.docs.update_status(&doc.id, "CANCELLED", 0.0, &marker) {
                 tracing::warn!(%error, doc_id = %doc.id, "cancel: document status write failed");
             }
         }
@@ -1284,8 +1310,32 @@ pub async fn ingest_documents(
             "data": true,
         }));
     }
+    if run != "1" {
+        // Any other `run` value still writes through (`update_by_id(info)` — status and
+        // progress are persisted without queueing).
+        let mapped = match run.as_str() {
+            "0" => "UNSTARTED",
+            "3" => "DONE",
+            "4" => "FAILED",
+            other => other,
+        };
+        for doc in &accepted {
+            let current = state.docs.get(&doc.id).unwrap_or_else(|| doc.clone());
+            if let Err(error) =
+                state
+                    .docs
+                    .update_status(&doc.id, mapped, 0.0, &current.progress_msg)
+            {
+                tracing::warn!(%error, doc_id = %doc.id, "ingest: write-through failed");
+            }
+        }
+        return Json(serde_json::json!({
+            "code": 0,
+            "message": "success",
+            "data": true,
+        }));
+    }
     let mut queued = Vec::new();
-    let mut errors: Vec<serde_json::Value> = Vec::new();
     for doc in accepted {
         if clear_chunks {
             // Upstream's `redo` checkbox: drop the chunks this document already
@@ -1301,12 +1351,7 @@ pub async fn ingest_documents(
                         tracing::error!(%error, doc_id = %doc.id, "redo: chunk count reset failed");
                     }
                 }
-                Err(error) => {
-                    errors.push(
-                        serde_json::json!({ "document_id": doc.id, "error": error.to_string() }),
-                    );
-                    continue;
-                }
+                Err(error) => return ingest_error(100, &error.to_string()),
             }
         }
         match state
@@ -1324,25 +1369,22 @@ pub async fn ingest_documents(
             Ok(task_id) => {
                 queued.push(serde_json::json!({ "document_id": doc.id, "task_id": task_id }))
             }
-            Err(error) => errors
-                .push(serde_json::json!({ "document_id": doc.id, "error": error.to_string() })),
+            // Upstream aborts the whole request on the first per-document failure
+            // (`_run_sync` raises → EXCEPTION_ERROR with the message).
+            Err(error) => return ingest_error(100, &error.to_string()),
         }
     }
-    tracing::info!(
-        queued = queued.len(),
-        failures = errors.len(),
-        "Documents queued for parsing"
-    );
-    if errors.is_empty() {
-        // Upstream answers `get_json_result(data=True)` — the per-document task ids are not
-        // part of the response.
-        return Json(serde_json::json!({ "code": 0, "message": "success", "data": true }));
-    }
-    Json(serde_json::json!({
-        "code": 500,
-        "message": "Partial failure",
-        "data": { "queued": queued, "errors": errors },
-    }))
+    tracing::info!(queued = queued.len(), "Documents queued for parsing");
+    // Upstream answers `get_json_result(data=True)` — the per-document task ids are not
+    // part of the response.
+    Json(serde_json::json!({ "code": 0, "message": "success", "data": true }))
+}
+
+/// `get_json_result(code, message)` — the ingest family's error envelope keeps the
+/// `data` key (null), unlike the `get_error_data_result` family the document surface
+/// otherwise uses.
+fn ingest_error(code: i64, message: &str) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "code": code, "message": message, "data": null }))
 }
 
 /// The document selection upstream's `/documents/parse` and `/documents/stop` accept.

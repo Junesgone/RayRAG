@@ -18523,10 +18523,11 @@ mod tests {
             );
         }
 
-        // Parsing a selection: `run` is validated, a document whose upload is missing
-        // reports its own error instead of a blanket success, and a real document is
-        // queued once its file exists.
-        let invalid_run = router
+        // Parsing a selection: a non-parse `run` value writes through (`update_by_id` —
+        // status persisted without queueing), a document whose upload is missing reports
+        // its own error instead of a blanket success, and a real document is queued once
+        // its file exists.
+        let write_through = router
             .clone()
             .oneshot(post(
                 "/api/v1/documents/ingest",
@@ -18534,15 +18535,13 @@ mod tests {
             ))
             .await
             .unwrap();
-        let payload = to_bytes(invalid_run.into_body(), 64 * 1024).await.unwrap();
+        let payload = to_bytes(write_through.into_body(), 64 * 1024)
+            .await
+            .unwrap();
         let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
-        assert_eq!(body["code"], 400, "{body}");
-        assert!(
-            body["message"]
-                .as_str()
-                .is_some_and(|message| message.contains("'run' must be either 0 or 1")),
-            "{body}"
-        );
+        assert_eq!(body["code"], 0, "{body}");
+        assert_eq!(body["data"], true, "{body}");
+        assert_eq!(env.state.docs.get("bulk-doc-b").unwrap().run, "DONE");
 
         let missing_file = router
             .clone()
@@ -18555,11 +18554,11 @@ mod tests {
         let payload = to_bytes(missing_file.into_body(), 64 * 1024).await.unwrap();
         let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
         assert_eq!(
-            body["code"], 500,
-            "a missing upload must not be a success: {body}"
+            body["code"], 100,
+            "a missing upload aborts the request like upstream: {body}"
         );
         assert!(
-            body["data"]["errors"][0]["error"]
+            body["message"]
                 .as_str()
                 .is_some_and(|message| message.contains("missing")),
             "{body}"
@@ -18656,6 +18655,103 @@ mod tests {
         assert_eq!(body["data"]["deleted"], 1);
         assert!(env.state.docs.get("bulk-doc-a").is_none());
         assert!(env.state.docs.get("bulk-doc-b").is_some());
+    }
+
+    async fn ingest_json(
+        env: &TestEnv,
+        body: serde_json::Value,
+    ) -> (StatusCode, serde_json::Value) {
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/api/v1/documents/ingest")
+            .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let response = build_router(env.state.clone())
+            .oneshot(request)
+            .await
+            .unwrap();
+        let status = response.status();
+        let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        (status, serde_json::from_slice(&payload).unwrap())
+    }
+
+    /// The ingest contract the round-11 probes pinned down: `KeyError('doc_ids')` for an
+    /// absent key, a success for an empty list, `no authorization` for unreachable ids,
+    /// `KeyError('run')` for a missing run, the cancel guard, and the "stopped by user"
+    /// marker — every failure in the three-key `get_json_result` envelope on HTTP 200.
+    #[tokio::test]
+    async fn ingest_matches_the_probed_upstream_semantics() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Ingest KB", "")
+            .unwrap();
+        seeded_doc(&env.state, "ing-doc", &kb.id, "ing.txt", "UNSTARTED", 5_000);
+
+        // `ingest_none`: the error is a Python KeyError rendered by `repr()`.
+        let (status, body) = ingest_json(&env, serde_json::json!({})).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body,
+            serde_json::json!({"code": 100, "message": "KeyError('doc_ids')", "data": null})
+        );
+
+        // `ingest_empty`: an empty list never reaches the accessibility check.
+        let (_, body) = ingest_json(&env, serde_json::json!({"doc_ids": []})).await;
+        assert_eq!(body["code"], 0, "{body}");
+        assert_eq!(body["data"], true, "{body}");
+
+        // `ingest_fakeid`: unreachable ids answer `no authorization`, not a 404.
+        let (_, body) =
+            ingest_json(&env, serde_json::json!({"doc_ids": ["missing"], "run": 1})).await;
+        assert_eq!(
+            body,
+            serde_json::json!({"code": 109, "message": "no authorization", "data": null})
+        );
+
+        // The run key is required once the ids pass the accessibility check.
+        let (_, body) = ingest_json(&env, serde_json::json!({"doc_ids": ["ing-doc"]})).await;
+        assert_eq!(
+            body,
+            serde_json::json!({"code": 100, "message": "KeyError('run')", "data": null})
+        );
+
+        // Cancelling a document that is neither RUNNING nor has unfinished tasks fails.
+        let (_, body) =
+            ingest_json(&env, serde_json::json!({"doc_ids": ["ing-doc"], "run": 2})).await;
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "code": 102,
+                "message": "Cannot cancel a task that is not in RUNNING status",
+                "data": null
+            })
+        );
+
+        // A RUNNING document cancels, and the marker lands in its progress message.
+        env.state
+            .docs
+            .update_status("ing-doc", "RUNNING", 0.5, "embedding (1/2)")
+            .unwrap();
+        let (_, body) =
+            ingest_json(&env, serde_json::json!({"doc_ids": ["ing-doc"], "run": 2})).await;
+        assert_eq!(body["code"], 0, "{body}");
+        let doc = env.state.docs.get("ing-doc").unwrap();
+        assert_eq!(doc.run, "CANCELLED");
+        assert_eq!(doc.progress, 0.0);
+        assert!(
+            doc.progress_msg.contains("Task stopped by user."),
+            "{}",
+            doc.progress_msg
+        );
+        assert!(
+            doc.progress_msg.contains("embedding (1/2)"),
+            "{}",
+            doc.progress_msg
+        );
     }
 
     #[tokio::test]
