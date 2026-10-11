@@ -90,3 +90,24 @@
 随批修复：`env_surface` 补 `RAYRAG_POSTGRES_USER` 豁免条目（`9288bbf` 漏登记 → 单测转红）。
 延后：metadata/config `metadata is required` 校验（需换 raw-body 提取器；归入批④同批）。
 验证：`cargo test --locked` **2271 passed / 0 failed / 27 ignored**；`cargo fmt --check` 干净。
+
+## 批② 执行记录（2026-10-12，提交 f9584d2）
+
+已落地（仓库提交 `api: document-surface batch 2 — business codes converge to the upstream envelope`）：
+
+- **document.rs（30 处）**：list/delete 鉴权 404→102；get_doc/reparse/rename/delete_doc 的 `Not found` →102（8 处；ingest 1 处冻结保留）；batch/rename 鉴权→102；rename 空名分支 400→101（推定参数族，字段面归批④）；download/preview 族 404→102（6 处）；跨数据集分支→102；sheets/slides：404→102 且 `Document not found`→`document not found`、`File content missing`→`This file is empty.`；download_doc 流文案→`This file is empty.`；batch 校验 400→101（2 处）；delete 校验 400→102（3 处）；parse/stop 空选择 400→102（2 处）。
+- **server.rs create 路由**：kb 不存在 → `Can't find the dataset with ID {id}!`（102）；存在但无管理权 → `no authorization`（109）——均 HTTP 200；无文件 → `No file part!`（101）HTTP 200。
+- **attachments.rs**：`/documents/upload` 文档路由业务错误统一 HTTP 200（新增 `document_route_error` 与 `reject` 分流、`upload_by_url` 增 `document_route` 参数）；canvas 路由保持 400（合同未审计）。
+- **doc_assets.rs**：images `not_found` 闭包 404→200+102（`img_fake` / `img_nohyphen` 证据）。
+- **metadata_config.rs**：doc 级 metadata/config 两条（`you don't own the dataset` / `document … not found…`）404→200+102（`mcfg_fake` 证据）；dataset 级保留（上游 service 文案未审计，后补）。
+
+未随批（记录在案）：
+
+- **ingest 四处冻结**（668/677/689/694）：round11 探针实测（`{}`→100 `KeyError('doc_ids')`；伪 ID→109 `no authorization`；空表→成功 `data:true`，均 HTTP 200）；语义/形状差异归批④/批③。
+- **upload 成功族**（单文件 202 → `Uploaded {name}`；多文件 207 与全失败 400）与 ingest `data` 形状 → 批③（信封统一随形状落）。
+- **update_dataset / delete_dataset** 的 `Knowledge base not found`（404 块 ×2，同型代码）属数据集面，未随批②。
+
+测试同步（7 断言 / 6 用例）：bulk batch 校验 101、bulk delete 校验 102、stop 空选择 102、preview 缺失 102、kb-isolation list 102、doc-config 缺失 200+102、thumbnails images 200+102。
+
+验证：`cargo test --locked`（zvec 0.7.2 + 清代理）**2271 passed / 0 failed / 27 ignored**；`cargo fmt --check` 干净；build ✓。UI 依赖核查：RayRAG 前端仅判 `code!==0`，无数字分支，收敛安全。
+
