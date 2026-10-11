@@ -130,15 +130,15 @@
 
 ## 批④ 执行记录（2026-10-12）
 
-功能级修正落地（三批，均含测试同步与全量验证）：
+功能级修正落地（四批，均含测试同步与全量验证）：
 
 - **④a 列表查询面（提交 `b379c03`）**：`list_docs` 按上游查询面重写——分页/排序/过滤（`orderby` 白名单、`types`/`run` 校验收敛到上游文案）、`type=filter` → `{total, filter}` 双键；行值本地化（`create_date`/`update_date` → 本地 `YYYY-MM-DDTHH:MM:SS`；`run` 上报短名 `UNSTART/RUNNING/CANCEL/DONE/FAIL` 与数值 `0..4`；`token_count` 按文档聚合（`SearchEngine::token_counts_for`）；`type` 由 `filename_type` 推导）；UI 引入分页循环助手 `fetchAllDocs`（`loadDocs`/`schedulePoll`/`emptyAllDocs`/`exportKb` 四处消费点，`page_size=100` 累加至 `total`）。4 个新测试；全量 **2275 passed / 0 failed**。
 - **④b ingest 语义（提交 `2608e78`）**：`doc_ids` 四臂（缺键 → 100 `KeyError('doc_ids')`；null → 100 `TypeError`；标量 → 109；空表 → 成功 `data:true`，不触达鉴权）；`run` 缺键 → 100 `KeyError('run')`；取消守卫（非 RUNNING/CANCEL 且无未完成任务 → 102）；取消成功追加 `"stopped by user"` 标记且 progress 归 0；逐文档首错即中止；成功体 `{code:0, message:"success", data:true}`；`ingest_error` 三键助手（含 `data:null`，≠ 文档面 `api_error_result`）。1 个新测试；全量 **2276 passed / 0 failed**。
+- **④c metadata/config raw-body 校验（提交 `726d9c9`）**：doc 级 `get_request_json` 五臂复刻——空体 / `{}` / 无体 → 101 `metadata is required`（两键无 data）；畸形体 → 100 `{data:null, message:"<BadRequest '400: Bad Request'>"}`；JSON 非对象 → 100 `TypeError('JSON payload must be an object.')`；`fields_from_value` pydantic 措辞守卫（list/字段类型/必填）；`Bytes` 裸体提取器替换 `Json<T>`。dataset 级 `validate_and_parse_json_request` 前置链——CT 检查 → `Malformed JSON syntax…`（空体即此）→ `Invalid request payload: expected object, got {type}`；未知数据集改 service 文案 `User '{id}' lacks permission for dataset '{ds}'`（废止 `The dataset doesn't exist` 404）；成功体去 `message` 键、`config_json` 键序字母序；`data_error` 修为无-data 两键（`mcfg_fake` 证据；原 `data:null` 为批② 残留偏差）。round12 实测四态归证（`round12-forensics/`）。测试同批扩展（未知集 404→200+102、非法 schema 400→200、doc 级四臂、dataset 级三臂、无 message、失败体不污染存储）。全量 **2276 passed / 0 failed**。
 - **④d file-commit 信封逐字复刻（提交 `31815fe`，owner 2026-10-12 决策）**：`string_code_error`（字符串 code + `Sorry! Data missing!` 恒文案 + HTTP 200）、`raised_value_error`（`{code:100, data:null, message:"ValueError(\"…\")"}`）、`missing_arguments`（缺参合集单答案、声明序、尾 `"; "`）、`find_any` 先按 id 后归域（no-such-commit / belongs-elsewhere 两文案）、versions 先判文件可见性（"File not found" quirk；可见无历史 → 空列表）、`page_size` 缺省 30 / >100 → ValueError repr；三个提交构建器按上游键集拆分（create 八键 / row 九键 / detail 八键）并按 jsonify 字母序书写；diff/versions 行键序字母序、versions `hash = new or old or ""`。测试两处扩展；全量 **2276 passed / 0 failed**。
 
 在案（未随批，按队列推进）：
 
-- ④c `metadata/config` raw-body 校验（取证完毕：空体 → `{}` → 上游 `get_error_argument_result("metadata is required")` → `{code:101, message}` 两键无 data；RayRAG 现为 `Json<T>` 提取器 → 须换裸体提取器 + 校验 + 测试同步）。
 - rename 字段面；`type=web`/`type=empty` 上传 + `parent_path`/`return_raw_files`/`parser_config` 覆写；PATCH update 字段面扩展（`chunk_method`/`enabled`/`parser_config`/`pipeline_id`/`meta_fields`）；`The dataset not own the document {id}.` 分支复核。
 - file-commit 家族成功形状（create 之外 tree/diff 属写路径，零污染政策下留观察）。
 

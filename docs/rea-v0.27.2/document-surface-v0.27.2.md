@@ -2,7 +2,7 @@
 
 Upstream artifact: `api/apps/restful_apis/document_api.py` @ `a024bea0cd93f39e6652a42bf84dd20c55bc560b` — 2,257 lines, **19 routes**.
 
-Method: full static read + **39 read-only probes** against the live instance (2026-10-12, zero writes). Raw evidence: `~/.cache/rea/ragflow-v0.27.2/round10-forensics/` (`round10-summary.tsv`, 39 `*.body`).
+Method: full static read + **39 read-only probes** against the live instance (2026-10-12, zero writes). Raw evidence: `~/.cache/rea/ragflow-v0.27.2/round10-forensics/` (`round10-summary.tsv`, 39 `*.body`). The metadata-config family was upgraded by the round12 probe set (`round12-forensics/`, 4 bodies; dataset-level companion below).
 
 Envelope: application errors always ride HTTP **200** with a numeric `code` (101 ARGUMENT_ERROR / 102 DATA_ERROR); only unmatched routes fall through to a framework 404 (e.g. `..%2F`-encoded traversal never reaches the app handler). Two source-only mixed envelopes carry `code=500` with HTTP 200 (partial local upload; partial batch status).
 
@@ -22,9 +22,13 @@ Envelope: application errors always ride HTTP **200** with a numeric `code` (101
 | `POST /datasets/{id}/metadata/update` • `PATCH …/documents/metadatas` | duplicate handlers, same shape; `{}` **succeeds** with `{updated:0, matched_docs:0}`; falsy `selector` (incl. `[]`) coerced via `or {}` — **no error for empty selector** |
 | `POST /documents/upload` | exclusive inputs: both → 101 `Provide either multipart file(s) or ?url=..., not both.`; neither → 101 `Missing input: provide multipart file(s) or url`; unsafe URL → 101 `URL resolves to a non-public address ({ip}), which is not allowed.` |
 | `PATCH /datasets/{id}/documents/{doc_id}` | `{name:null}` → 102 `Field: <name> - Message: <Input should be a valid string> - Value: <None>` (**before** ownership checks); foreign doc → 102 `the dataset doesn't own the document`; legacy RAPTOR fields silently dropped (*source*); `Not supported yet!` for visual/ppt parser mismatch (*source*) |
-| `PUT …/documents/{doc_id}/metadata/config` | requires `metadata`; foreign doc → 102 `document {doc} not found in dataset {ds}`; missing key → 101 `metadata is required` (*source*) |
+| `PUT …/documents/{doc_id}/metadata/config` | requires `metadata`; foreign doc → 102 `document {doc} not found in dataset {ds}`; empty body / `{}` / no body → 101 `metadata is required` (**round12 probe**: `{code:101, message}`, two keys, no `data`); malformed body → 100 `{data:null, message:"<BadRequest '400: Bad Request'>"}`; JSON non-object → 100 `TypeError('JSON payload must be an object.')` |
 | `POST /datasets/{id}/documents` (upload) | `type=local|web|empty`; local: `No file part!` / `No file selected!` (101); all-failed → 102 `There seems to be an issue with your file format...`; **partial success → HTTP 200 + code 500 + data** (*source*); web: `Lack of "name"` / `Lack of "url"` / `The URL format is invalid` (101); empty: `File name can't be empty.` (101) / `Duplicated document name in the same dataset.` (102) (*source*) |
 | `POST /documents/ingest` | `{doc_ids, run, delete, apply_kb, user_id}`; success `data=true`; error → `get_json_result(error_code, message)` e.g. 109 `no authorization` (*source*) |
+
+## Dataset-level companion (round12 probes)
+
+`api/apps/restful_apis/dataset_api.py::update_auto_metadata` / `get_auto_metadata`: content-type gate first (`Unsupported content type: Expected application/json, got {content_type}`), then syntax (`Malformed JSON syntax: Missing commas/brackets or invalid encoding` — an **empty body with a JSON content type** answers this), then payload shape (`Invalid request payload: expected object, got {type}`); unknown or foreign dataset → 102 `User '{tenant}' lacks permission for dataset '{id}'`; success `{code:0, data}` with **no `message` key** (jsonify key order `built_in_metadata` before `metadata`).
 
 ## Notes for the application-side crosscheck (next round)
 
