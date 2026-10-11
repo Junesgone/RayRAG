@@ -19,7 +19,7 @@ use axum::response::{IntoResponse, Response};
 use base64::Engine;
 use serde_json::{Value, json};
 
-use crate::server::{AppState, AuthContext, api_error_code, code};
+use crate::server::{AppState, AuthContext, api_error_code, api_error_result, code};
 
 /// One collected artifact.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -266,14 +266,14 @@ pub async fn get_artifact(
         .and_then(|name| name.to_str())
         .unwrap_or("");
     if basename != filename || filename.contains('/') || filename.contains('\\') {
-        return api_error_code(
+        return api_error_result(
             StatusCode::OK,
             code::INVALID_OR_MISSING_DATA,
             "Invalid filename.",
         );
     }
     let Some(mime_type) = crate::sandbox::mime_type_for_artifact(&filename) else {
-        return api_error_code(
+        return api_error_result(
             StatusCode::OK,
             code::INVALID_OR_MISSING_DATA,
             "invalid file type",
@@ -283,7 +283,7 @@ pub async fn get_artifact(
         .artifacts
         .get_for(&auth.user_id, auth.is_admin, &filename)
     else {
-        return api_error_code(
+        return api_error_result(
             StatusCode::OK,
             code::INVALID_OR_MISSING_DATA,
             "Artifact not found.",
@@ -355,7 +355,7 @@ pub async fn delete_artifact(
     axum::Extension(auth): axum::Extension<AuthContext>,
 ) -> Response {
     if !crate::sandbox::artifact_name_is_safe(&filename) {
-        return api_error_code(
+        return api_error_result(
             StatusCode::OK,
             code::INVALID_OR_MISSING_DATA,
             "Invalid filename.",
@@ -367,7 +367,7 @@ pub async fn delete_artifact(
     {
         Json(json!({ "code": 0, "data": true, "message": "success" })).into_response()
     } else {
-        api_error_code(
+        api_error_result(
             StatusCode::OK,
             code::INVALID_OR_MISSING_DATA,
             "Artifact not found.",

@@ -5,8 +5,9 @@
 //! from `GET /api/v1/documents/images/{image_id}`. RayRAG has no pre-rendered thumbnails, so it makes
 //! them: an **image document** is decoded, scaled down and encoded as JPEG on first request, then
 //! cached next to the other uploads. A document whose format cannot be decoded without a renderer (a
-//! PDF, a Word file) has **no** thumbnail, and the map says `null` for it rather than inventing a
-//! placeholder — the guide's own client treats `null` as "no thumbnail".
+//! PDF, a Word file) has **no** thumbnail, and is left out of the map entirely rather than given an
+//! invented placeholder — upstream answers `{}` for ids it cannot resolve, and the client treats a
+//! missing key as "no thumbnail".
 //!
 //! The image id keeps upstream's `{kb_id}-{name}` shape, so a client that followed the documented
 //! link does not have to know how the file is stored here.
@@ -163,27 +164,26 @@ pub async fn list_thumbnails(
         .into_response();
     }
 
+    // Upstream leaves ids it cannot resolve out of the map entirely — a fake id is answered
+    // with `{}` — so a document that is not visible, or that cannot be decoded, gets no entry
+    // rather than a `null` one.
     let mut data = serde_json::Map::new();
     for doc_id in doc_ids {
-        match visible_document(&state, &auth, &doc_id) {
-            Some(doc) => {
-                let thumbnail = if ensure_thumbnail(&state, &doc).is_some() {
+        if let Some(doc) = visible_document(&state, &auth, &doc_id) {
+            if ensure_thumbnail(&state, &doc).is_some() {
+                data.insert(
+                    doc_id,
                     serde_json::json!(format!(
                         "/api/v1/documents/images/{}-{}.jpg",
                         doc.kb_id, doc.id
-                    ))
-                } else {
-                    serde_json::Value::Null
-                };
-                data.insert(doc_id, thumbnail);
-            }
-            // A document the reader cannot see is reported exactly like one with no thumbnail.
-            None => {
-                data.insert(doc_id, serde_json::Value::Null);
+                    )),
+                );
             }
         }
     }
-    Json(serde_json::json!({ "code": 0, "data": data })).into_response()
+    // Upstream `get_json_result(data=…)` — the success envelope carries `message`
+    // (probe `thumb_fake`: `{"code":0,"data":{},"message":"success"}`).
+    Json(serde_json::json!({ "code": 0, "message": "success", "data": data })).into_response()
 }
 
 /// Split upstream's `{kb_id}-{name}` image id against the knowledge bases that exist.
@@ -222,7 +222,7 @@ pub async fn document_image(
     // Upstream answers a missing image on HTTP 200 with 102 (probes `img_fake` /
     // `img_nohyphen`); the transport status is not part of the contract here.
     let not_found = || {
-        crate::server::api_error_code(
+        crate::server::api_error_result(
             axum::http::StatusCode::OK,
             code::INVALID_OR_MISSING_DATA,
             "Image not found.",

@@ -25,7 +25,7 @@ use axum::extract::{FromRequest, Multipart, Path, Query, State};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 
-use crate::server::{AppState, AuthContext, api_error_code, code};
+use crate::server::{AppState, AuthContext, api_error_code, api_error_result, code};
 
 /// One stored attachment.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -342,7 +342,7 @@ fn not_found(message: &str) -> Response {
 /// (`101` argument); a client branches on `code`, not the transport status. The canvas route
 /// keeps the real 400 — its contract was not audited against upstream.
 fn document_route_error(message: &str) -> Response {
-    api_error_code(axum::http::StatusCode::OK, code::INVALID_ARGUMENT, message)
+    api_error_result(axum::http::StatusCode::OK, code::INVALID_ARGUMENT, message)
 }
 
 /// `POST /api/v1/documents/upload` — multipart `file`(s) or `?url=`, and not both.

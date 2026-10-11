@@ -1423,7 +1423,7 @@ async fn upload_document(
 ) -> Response {
     if state.kbs.get(&dataset_id).is_none() {
         // Upstream: `Can't find the dataset with ID …!` (DATA_ERROR), delivered on HTTP 200.
-        return api_error_code(
+        return api_error_result(
             StatusCode::OK,
             code::INVALID_OR_MISSING_DATA,
             &format!("Can't find the dataset with ID {dataset_id}!"),
@@ -1431,7 +1431,7 @@ async fn upload_document(
     }
     if !kb_manageable(&state, &dataset_id, &auth) {
         // Upstream: `no authorization` (AUTHENTICATION_ERROR), also on HTTP 200.
-        return api_error_code(StatusCode::OK, code::UNAUTHENTICATED, "no authorization");
+        return api_error_result(StatusCode::OK, code::UNAUTHENTICATED, "no authorization");
     }
     let upload_dir = FsPath::new(&state.static_dir).join("../uploads");
     let mut succeeded = Vec::new();
@@ -1478,46 +1478,42 @@ async fn upload_document(
     }
     if file_count == 0 {
         // Upstream: `No file part!` (ARGUMENT_ERROR) on HTTP 200.
-        return api_error_code(StatusCode::OK, code::INVALID_ARGUMENT, "No file part!");
+        return api_error_result(StatusCode::OK, code::INVALID_ARGUMENT, "No file part!");
     }
-    if file_count == 1 && failed.is_empty() {
-        let data = succeeded.pop().expect("one successful upload");
-        let name = data["name"].as_str().unwrap_or("document");
+    if failed.is_empty() {
+        // Upstream `_upload_local_documents`: `get_result(data=doc_data)` — HTTP 200, the
+        // mapped documents as an **array**, and no `message` key on success.
+        let mut data = serde_json::Value::Array(succeeded);
+        crate::api::compat::enrich_documents(&mut data);
         return (
-            StatusCode::ACCEPTED,
-            Json(ApiResponse {
-                code: 0,
-                message: format!("Uploaded {name}"),
-                data: Some(data),
-            }),
+            StatusCode::OK,
+            Json(serde_json::json!({ "code": 0, "data": data })),
         )
             .into_response();
     }
-    if file_count == 1 {
-        let failure = failed.pop().expect("one failed upload");
-        return api_error(
-            StatusCode::BAD_REQUEST,
-            failure["message"].as_str().unwrap_or("Upload failed"),
-        );
+    // Upstream joins the failures as `"{filename}: {message}"` lines and answers with
+    // `SERVER_ERROR` — HTTP 200 and business code 500.
+    let message = failed
+        .iter()
+        .map(|failure| {
+            format!(
+                "{}: {}",
+                failure["name"].as_str().unwrap_or("uploaded"),
+                failure["message"].as_str().unwrap_or("Upload failed")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if succeeded.is_empty() {
+        return api_error_result(StatusCode::OK, code::SERVER_ERROR, &message);
     }
-    let status = if failed.is_empty() {
-        StatusCode::ACCEPTED
-    } else if succeeded.is_empty() {
-        StatusCode::BAD_REQUEST
-    } else {
-        StatusCode::MULTI_STATUS
-    };
+    // A partial success keeps upstream's mixed envelope: code 500, the failure lines in
+    // `message`, and the documents that did land in `data`.
+    let mut data = serde_json::Value::Array(succeeded);
+    crate::api::compat::enrich_documents(&mut data);
     (
-        status,
-        Json(ApiResponse {
-            code: if failed.is_empty() {
-                0
-            } else {
-                status.as_u16() as i32
-            },
-            message: format!("{} uploaded, {} failed", succeeded.len(), failed.len()),
-            data: Some(serde_json::json!({ "succeeded": succeeded, "failed": failed })),
-        }),
+        StatusCode::OK,
+        Json(serde_json::json!({ "code": code::SERVER_ERROR, "message": message, "data": data })),
     )
         .into_response()
 }
@@ -1549,7 +1545,6 @@ pub(crate) fn register_document_upload(
         status: crate::api::document::enabled_status(),
     };
     let doc = state.docs.insert_unique(doc)?;
-    let name = doc.name.clone();
     if let Err(error) = state.kbs.update_counts(dataset_id, 0, 1) {
         // The upload is being undone: report the primary failure, but say it if the
         // compensating writes fail too, otherwise an orphan row/blob stays behind.
@@ -1582,14 +1577,8 @@ pub(crate) fn register_document_upload(
         }
     };
     upload.commit();
-    Ok(serde_json::json!({
-        "id": doc_id,
-        "name": name,
-        "chunks": 0,
-        "run": doc.run,
-        "task_id": task_id,
-        "content_hash": doc.content_hash,
-    }))
+    tracing::info!(%task_id, %doc_id, "document uploaded");
+    Ok(crate::api::document::doc_list_entry(&state, &doc))
 }
 
 /// RAGFlow's business codes — the API guide's "Response body codes" table. The HTTP status and
@@ -1607,6 +1596,9 @@ pub(crate) mod code {
     pub const STILL_RUNNING: i32 = 106;
     pub const NO_PERMISSION: i32 = 108;
     pub const UNAUTHENTICATED: i32 = 109;
+    /// RAGFlow's `RetCode.SERVER_ERROR`: the upload family reports a server-side failure in
+    /// the body while the transport stays HTTP 200.
+    pub const SERVER_ERROR: i32 = 500;
 }
 
 /// An error whose HTTP status and business code are chosen separately, so a caller that only
@@ -1619,6 +1611,19 @@ pub(crate) fn api_error_code(status: StatusCode, business_code: i32, message: &s
             message: message.into(),
             data: None,
         }),
+    )
+        .into_response()
+}
+
+/// The `get_error_data_result` shape: `{code, message}` and **no** `data` key — upstream's
+/// helper drops `None` fields from the dict it builds, so a client must not find the key at
+/// all. The document family's business errors all take this form (probes `up_both`,
+/// `up_none`, `img_fake`, `del_nobody`, `parse_nobody`, …), unlike `api_error_code`, which
+/// serialises `data: null` for callers whose counterpart uses `get_json_result`.
+pub(crate) fn api_error_result(status: StatusCode, business_code: i32, message: &str) -> Response {
+    (
+        status,
+        Json(serde_json::json!({ "code": business_code, "message": message })),
     )
         .into_response()
 }
@@ -12545,8 +12550,14 @@ mod tests {
             .unwrap();
         let status = response.status();
         let json = response_json(response).await;
-        assert_eq!(status, StatusCode::ACCEPTED, "response body: {json}");
-        let doc_id = json["data"]["id"].as_str().unwrap();
+        assert_eq!(status, StatusCode::OK, "response body: {json}");
+        assert_eq!(json["code"], 0, "response body: {json}");
+        assert_eq!(
+            json["data"].as_array().unwrap().len(),
+            1,
+            "response body: {json}"
+        );
+        let doc_id = json["data"][0]["id"].as_str().unwrap();
         let doc = env.state.docs.get(doc_id).unwrap();
         assert_eq!(doc.name, "sample.txt");
         assert!(doc.storage_name.starts_with(doc_id));
@@ -12554,7 +12565,7 @@ mod tests {
         assert_eq!(doc.content_hash.len(), 32);
         assert!(doc.content_hash.chars().all(|ch| ch.is_ascii_hexdigit()));
         assert!(env.root.join("uploads").join(doc.storage_name).is_file());
-        assert!(!json["data"]["task_id"].as_str().unwrap().is_empty());
+        assert_eq!(json["data"][0]["run"], "UNSTARTED", "response body: {json}");
     }
 
     #[tokio::test]
@@ -12600,8 +12611,8 @@ mod tests {
                 .unwrap();
             let status = response.status();
             let json = response_json(response).await;
-            assert_eq!(status, StatusCode::ACCEPTED, "response body: {json}");
-            assert_eq!(json["data"]["name"], expected_name);
+            assert_eq!(status, StatusCode::OK, "response body: {json}");
+            assert_eq!(json["data"][0]["name"], expected_name);
         }
 
         let mut names: Vec<_> = env
@@ -12644,11 +12655,16 @@ mod tests {
             .unwrap();
         let status = response.status();
         let json = response_json(response).await;
-        assert_eq!(status, StatusCode::MULTI_STATUS, "response body: {json}");
-        assert_eq!(json["data"]["succeeded"].as_array().unwrap().len(), 1);
-        assert_eq!(json["data"]["succeeded"][0]["name"], "good.txt");
-        assert_eq!(json["data"]["failed"].as_array().unwrap().len(), 1);
-        assert_eq!(json["data"]["failed"][0]["name"], "fake.pdf");
+        assert_eq!(status, StatusCode::OK, "response body: {json}");
+        assert_eq!(json["code"], 500, "response body: {json}");
+        assert_eq!(json["data"].as_array().unwrap().len(), 1);
+        assert_eq!(json["data"][0]["name"], "good.txt");
+        assert!(
+            json["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("fake.pdf")),
+            "response body: {json}"
+        );
         assert_eq!(env.state.docs.list(&kb.id).len(), 1);
         let files: Vec<_> = std::fs::read_dir(env.root.join("uploads"))
             .unwrap()
@@ -13114,7 +13130,10 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let status = response.status();
+        let json = response_json(response).await;
+        assert_eq!(status, StatusCode::OK, "response body: {json}");
+        assert_eq!(json["code"], 500, "response body: {json}");
         assert!(env.state.docs.list(&kb.id).is_empty());
         assert!(
             std::fs::read_dir(env.root.join("uploads"))
@@ -13152,7 +13171,10 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let status = response.status();
+        let json = response_json(response).await;
+        assert_eq!(status, StatusCode::OK, "response body: {json}");
+        assert_eq!(json["code"], 500, "response body: {json}");
         assert!(env.state.docs.list(&kb.id).is_empty());
         assert!(
             std::fs::read_dir(env.root.join("uploads"))
@@ -13191,9 +13213,8 @@ mod tests {
             .unwrap();
         let status = response.status();
         let json = response_json(response).await;
-        assert_eq!(status, StatusCode::ACCEPTED, "response body: {json}");
-        assert_eq!(json["data"]["succeeded"].as_array().unwrap().len(), 2);
-        assert!(json["data"]["failed"].as_array().unwrap().is_empty());
+        assert_eq!(status, StatusCode::OK, "response body: {json}");
+        assert_eq!(json["data"].as_array().unwrap().len(), 2);
         let mut names: Vec<_> = env
             .state
             .docs
@@ -13236,7 +13257,10 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let status = response.status();
+        let json = response_json(response).await;
+        assert_eq!(status, StatusCode::OK, "response body: {json}");
+        assert_eq!(json["code"], 500, "response body: {json}");
         assert!(env.state.docs.list(&kb.id).is_empty());
         assert!(
             std::fs::read_dir(env.root.join("uploads"))
@@ -13273,7 +13297,10 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let status = response.status();
+        let json = response_json(response).await;
+        assert_eq!(status, StatusCode::OK, "response body: {json}");
+        assert_eq!(json["code"], 500, "response body: {json}");
         assert!(env.state.docs.list(&kb.id).is_empty());
     }
 
@@ -15641,10 +15668,10 @@ mod tests {
             "{listed}"
         );
         assert!(
-            listed["data"]["notes-1"].is_null(),
-            "a document that cannot be decoded has no thumbnail: {listed}"
+            listed["data"].get("notes-1").is_none(),
+            "a document that cannot be decoded is left out of the map: {listed}"
         );
-        assert!(listed["data"]["unknown-doc"].is_null(), "{listed}");
+        assert!(listed["data"].get("unknown-doc").is_none(), "{listed}");
 
         // The url the map handed out serves a JPEG.
         let image = build_router(env.state.clone())
@@ -18150,6 +18177,10 @@ mod tests {
             listed["data"]["docs"][0]["status"], "1",
             "documents are listed under data.docs, as the API guide documents: {listed}"
         );
+        assert_eq!(
+            listed["data"]["total"], 2,
+            "the total rides along with the docs, as the API guide documents: {listed}"
+        );
 
         // Disable one document, then the other, and watch each answer.
         let disabled = router
@@ -18271,13 +18302,8 @@ mod tests {
         let payload = to_bytes(queued.into_body(), 64 * 1024).await.unwrap();
         let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
         assert_eq!(body["code"], 0, "{body}");
-        assert_eq!(body["data"][0]["document_id"], "bulk-doc-b");
-        assert!(
-            body["data"][0]["task_id"]
-                .as_str()
-                .is_some_and(|id| !id.is_empty()),
-            "{body}"
-        );
+        assert_eq!(body["data"], true, "{body}");
+        assert_eq!(body["message"], "success", "{body}");
 
         // Cancelling the selection (`run: 2`) marks the document and stops the task.
         let cancelled = router
@@ -18291,6 +18317,7 @@ mod tests {
         let payload = to_bytes(cancelled.into_body(), 64 * 1024).await.unwrap();
         let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
         assert_eq!(body["code"], 0, "{body}");
+        assert_eq!(body["data"], true, "{body}");
         assert_eq!(env.state.docs.get("bulk-doc-b").unwrap().run, "CANCELLED");
 
         // Deleting a selection: ids from another dataset are refused, both `ids` and
@@ -18348,6 +18375,7 @@ mod tests {
         let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
         assert_eq!(body["code"], 0, "{body}");
         assert_eq!(body["data"]["success_count"], 1);
+        assert_eq!(body["data"]["deleted"], 1);
         assert!(env.state.docs.get("bulk-doc-a").is_none());
         assert!(env.state.docs.get("bulk-doc-b").is_some());
     }
@@ -18379,7 +18407,10 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let status = response.status();
+        let json = response_json(response).await;
+        assert_eq!(status, StatusCode::OK, "response body: {json}");
+        assert_eq!(json["code"], 500, "response body: {json}");
         assert!(env.state.docs.list(&kb.id).is_empty());
         assert!(!env.root.join("escape.txt").exists());
     }

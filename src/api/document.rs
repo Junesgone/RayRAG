@@ -265,6 +265,40 @@ impl DocStore {
     }
 }
 
+/// One document as the documents API reports it.
+///
+/// The list endpoint's row shape, shared with the upload response — upstream feeds both from
+/// `map_doc_keys_with_run_status`, so a client moves a document between the two without
+/// learning a second field set.
+pub(crate) fn doc_list_entry(
+    state: &crate::server::AppState,
+    doc: &DocRecord,
+) -> serde_json::Value {
+    let meta_fields = state
+        .document_metadata
+        .get(&doc.id, &doc.kb_id)
+        .unwrap_or_default();
+    serde_json::json!({
+        "id": doc.id,
+        "name": doc.name,
+        "kb_id": doc.kb_id,
+        "size": doc.size,
+        "storage_name": doc.storage_name,
+        "content_hash": doc.content_hash,
+        "indexed_content_hash": doc.indexed_content_hash,
+        "run": doc.run,
+        "progress": doc.progress,
+        "progress_msg": doc.progress_msg,
+        "chunk_count": doc.chunk_count,
+        "created_at": doc.created_at,
+        "updated_at": doc.updated_at,
+        // Upstream `map_doc_keys_with_run_status` reports `status` on every row;
+        // the files page renders the enabled/disabled state from it.
+        "status": doc.status,
+        "meta_fields": meta_fields,
+    })
+}
+
 /// GET /api/v1/datasets/{kb_id}/documents — list docs in KB
 pub async fn list_docs(
     State(state): State<std::sync::Arc<AppState>>,
@@ -280,39 +314,17 @@ pub async fn list_docs(
         .docs
         .list(&kb_id)
         .into_iter()
-        .map(|doc| {
-            let meta_fields = state
-                .document_metadata
-                .get(&doc.id, &kb_id)
-                .unwrap_or_default();
-            serde_json::json!({
-                "id": doc.id,
-                "name": doc.name,
-                "kb_id": doc.kb_id,
-                "size": doc.size,
-                "storage_name": doc.storage_name,
-                "content_hash": doc.content_hash,
-                "indexed_content_hash": doc.indexed_content_hash,
-                "run": doc.run,
-                "progress": doc.progress,
-                "progress_msg": doc.progress_msg,
-                "chunk_count": doc.chunk_count,
-                "created_at": doc.created_at,
-                "updated_at": doc.updated_at,
-                // Upstream `map_doc_keys_with_run_status` reports `status` on every row;
-                // the files page renders the enabled/disabled state from it.
-                "status": doc.status,
-                "meta_fields": meta_fields,
-            })
-        })
+        .map(|doc| doc_list_entry(&state, &doc))
         .collect();
     // The API guide's shape for this endpoint is `data: {"docs": [...], "total_datasets": n}`.
     // A bare array looks equivalent but breaks every client written against the guide, which reads
     // `data.docs` and would silently get null.
     let total = docs.len();
-    let mut data = serde_json::json!({ "docs": docs, "total_datasets": total });
+    let mut data = serde_json::json!({ "docs": docs, "total": total, "total_datasets": total });
     crate::api::compat::enrich_documents(&mut data["docs"]);
-    Json(serde_json::json!({ "code": 0, "data": data }))
+    // Upstream `get_json_result(data=…)` — the list envelope carries `message: "success"`
+    // (probes `doc_list_filter` / `doc_list_page_neg` / `doc_list_numeric_run`).
+    Json(serde_json::json!({ "code": 0, "message": "success", "data": data }))
 }
 
 /// GET /api/v1/datasets/{kb_id}/documents/{doc_id} — get doc status
@@ -543,7 +555,8 @@ pub async fn batch_update_document_status(
             "data": result,
         }));
     }
-    Json(serde_json::json!({ "code": 0, "data": result }))
+    // Upstream `get_json_result(data=result)` — the success envelope carries `message`.
+    Json(serde_json::json!({ "code": 0, "message": "success", "data": result }))
 }
 
 /// `DELETE /api/v1/datasets/{id}/documents` — remove many documents (upstream
@@ -629,15 +642,24 @@ pub async fn delete_docs_bulk(
     }
     tracing::info!(kb_id = %kb_id, successes, failures = errors.len(), "Documents deleted");
     if errors.is_empty() {
+        // Upstream answers `data {"deleted": n}`; `success_count` stays alongside it for
+        // clients written against RayRAG's own spelling.
         return Json(serde_json::json!({
             "code": 0,
-            "data": { "success_count": successes },
+            "data": { "deleted": successes, "success_count": successes },
         }));
     }
+    // Upstream `FileService.delete_docs` aggregates the per-document error texts and answers
+    // `get_error_data_result(message=str(errors))`: business code 102, the texts concatenated
+    // in `message`, and no `data` key at all.
+    tracing::warn!(kb_id = %kb_id, ?errors, "document deletion had failures");
+    let message = errors
+        .iter()
+        .map(|error| error["error"].as_str().unwrap_or_default())
+        .collect::<String>();
     Json(serde_json::json!({
-        "code": 500,
-        "message": "Partial failure",
-        "data": { "success_count": successes, "errors": errors },
+        "code": 102,
+        "message": message,
     }))
 }
 
@@ -717,10 +739,12 @@ pub async fn ingest_documents(
             cancelled,
             "Document parsing cancelled"
         );
+        // Upstream answers `get_json_result(data=True)` for both the queue and the cancel
+        // paths: `{"code": 0, "message": "success", "data": true}`.
         return Json(serde_json::json!({
             "code": 0,
-            "message": "Cancelled",
-            "data": { "doc_ids": accepted.iter().map(|doc| doc.id.clone()).collect::<Vec<_>>(), "cancelled": cancelled }
+            "message": "success",
+            "data": true,
         }));
     }
     let mut queued = Vec::new();
@@ -773,7 +797,9 @@ pub async fn ingest_documents(
         "Documents queued for parsing"
     );
     if errors.is_empty() {
-        return Json(serde_json::json!({ "code": 0, "data": queued }));
+        // Upstream answers `get_json_result(data=True)` — the per-document task ids are not
+        // part of the response.
+        return Json(serde_json::json!({ "code": 0, "message": "success", "data": true }));
     }
     Json(serde_json::json!({
         "code": 500,
