@@ -15464,7 +15464,7 @@ mod tests {
         assert_eq!(missing.status(), StatusCode::NOT_FOUND);
         assert_eq!(
             response_json(missing).await["message"],
-            "The dataset does not have the document."
+            format!("document no-such-doc not found in dataset {}", kb.id)
         );
 
         let now = 1_700_000_000_000u64;

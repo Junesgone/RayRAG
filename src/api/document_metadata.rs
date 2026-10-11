@@ -471,7 +471,7 @@ pub async fn metadata_summary_get(
     Query(query): Query<HashMap<String, String>>,
 ) -> axum::response::Response {
     if !kb_accessible(&state, &kb_id, &auth) {
-        return not_found();
+        return data_error(&format!("You don't own the dataset {kb_id}. "));
     }
     let doc_ids: Option<Vec<String>> = query.get("doc_ids").map(|raw| {
         raw.split(',')
@@ -613,6 +613,13 @@ pub async fn update_document_metadatas(
     let selector = match body.get("selector") {
         None | Some(Value::Null) => &empty,
         Some(Value::Object(selector)) => selector,
+        // Upstream `req.get("selector", {}) or {}`: every other falsy selector value
+        // (an empty list, `""`, `0`, `false`) normalizes to `{}` — "no filter" — and
+        // only a truthy non-object is rejected.
+        Some(Value::Array(values)) if values.is_empty() => &empty,
+        Some(Value::String(value)) if value.is_empty() => &empty,
+        Some(Value::Number(number)) if number.as_f64() == Some(0.0) => &empty,
+        Some(Value::Bool(false)) => &empty,
         Some(_) => return data_error("selector must be an object."),
     };
     let updates = match body.get("updates") {

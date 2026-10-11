@@ -316,11 +316,11 @@ pub async fn update_document_metadata_config(
     Json(body): Json<DocumentMetadataConfig>,
 ) -> Response {
     if visible_kb(&state, &auth, &kb_id).is_none() {
-        return not_found("The dataset doesn't exist");
+        return not_found("you don't own the dataset");
     }
     match state.docs.get(&doc_id) {
         Some(doc) if doc.kb_id == kb_id => {}
-        _ => return not_found("The dataset does not have the document."),
+        _ => return not_found(&format!("document {doc_id} not found in dataset {kb_id}")),
     }
     if let Err(message) = validate_fields(&body.metadata) {
         return argument_error(&message);

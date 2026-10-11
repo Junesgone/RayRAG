@@ -92,6 +92,10 @@ pub const TOOLING_ONLY_ENV: &[(&str, &str)] = &[
         "RAYRAG_POSTGRES_PASSWORD",
         "compose builds the postgres DSN from it",
     ),
+    (
+        "RAYRAG_POSTGRES_USER",
+        "compose sets the postgres user and builds the DSN from it",
+    ),
     ("RAYRAG_TIMEZONE", "compose sets the container TZ"),
     ("POSTGRES_IMAGE", "compose image tag"),
     ("RUST_IMAGE", "Dockerfile build stage image"),

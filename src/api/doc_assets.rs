@@ -223,7 +223,7 @@ pub async fn document_image(
         crate::server::api_error_code(
             axum::http::StatusCode::NOT_FOUND,
             code::INVALID_OR_MISSING_DATA,
-            "document not found",
+            "Image not found.",
         )
     };
     let kb_ids: Vec<String> = state.kbs.list().into_iter().map(|kb| kb.id).collect();
