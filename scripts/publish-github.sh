@@ -45,6 +45,9 @@ EXCLUDES=(
     # Internal parity ledgers and the plan derived from them: never published.
     "docs/api-parity-worklist.md"
     "docs/api-parity-plan.md"
+    # The REA reverse-engineering records (methodology, findings, probes):
+    # engineering material, not product material.
+    "docs/rea-v0.27.2"
     # The coverage gate validates the internal parity ledger against a pinned
     # RAGFlow checkout; neither the ledger nor the reference tree ships, so the
     # binary is internal engineering tooling.
@@ -204,7 +207,8 @@ while IFS= read -r found; do
 done < <(find "$WORK" -type f \( \
     -name '运维记录.md' -o -name '*api-parity*' -o -name '*parameter-interface-registry*' \
     -o -name 'MAINTENANCE.md' -o -name 'ragflow-*-coverage.md' -o -name 'ragflow-*-worklist.md' \
-    -o -name 'ragflow-file-list.txt' -o -name 'ragflow-ui-inventory.md' \) 2>/dev/null)
+    -o -name 'ragflow-file-list.txt' -o -name 'ragflow-ui-inventory.md' \
+    -o -path '*/rea-v0.27.2/*' \) 2>/dev/null)
 # Third guard, by CONTENT: the snapshot must not *mention* the internal ledgers either. The
 # filename scan above cannot see a changelog line that points at `docs/api-parity-plan.md`,
 # which is exactly how a dangling internal reference reached the published repository once.
@@ -212,7 +216,7 @@ while IFS= read -r hit; do
     echo "FATAL: internal reference in published content: $hit" >&2
     leaked=1
 done < <(grep -rIl -e 'api-parity-plan' -e 'api-parity-worklist' -e 'parameter-interface-registry' \
-    -e '运维记录' -e 'ui-traversal' "$WORK" 2>/dev/null)
+    -e '运维记录' -e 'ui-traversal' -e 'rea-v0.27.2' "$WORK" 2>/dev/null)
 
 if [ "$leaked" -ne 0 ]; then
     echo "publish aborted: fix EXCLUDES or remove the file from the tracked tree" >&2
