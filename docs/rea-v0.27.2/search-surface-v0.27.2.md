@@ -15,7 +15,7 @@
 
 ## 要点
 
-- **代码语义**：103=越权（"Has no permission for this operation."）、109=未授权（"no authorization"）、101=缺参、102=通用（含 BETA 拒收："API key is invalid!"）。
+- **代码语义**：103=越权（"Has no permission for this operation."）、109=未授权（"no authorization"）、101=缺参、102=DATA_ERROR（BETA 拒收复用该码："API key is invalid!"；全表见 `file-commit-surface-v0.27.2.md`）。
 - **completion 的 SSE 信封**：`data:{"code":0,"message":"","data":ans}` 逐块；错误 → `{"code":500,…,"data":{"answer":"**ERROR**: …","reference":[]}}`；终止 `{"code":0,"data":true}`。
 - **kb 优先级**：`search_config.kb_ids ∨ req.kb_ids`（记录优先）。
 - **模型解析缺口（本实例实测）**：search_config 无 `chat_id` 时，`resolve_model_config` 对 None 调 `rsplit("@")` 抛错（`tenant_model_service.py:218`）→ SSE code:500（17.9ms 即时，无默认模型回退）。chat 链有默认注入，search 链没有。
