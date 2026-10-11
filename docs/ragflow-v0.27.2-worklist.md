@@ -1,7 +1,7 @@
 # RAGFlow v0.27.2 Parity Worklist（内部工作清单，禁止发布）
 
 > 来源：`docs/ragflow-v0.27.2-coverage.md`（固定 commit `a024bea0cd93f39e6652a42bf84dd20c55bc560b`，5977 文件）。
-> 生成：`scripts/gen-parity-worklist.py`（v0.3.10g 起）；台账状态变更后重跑刷新。
+> 生成：`scripts/gen-parity-worklist.py`（v0.3.10g 起；含人工维护的「方法任务」区）；台账状态变更后重跑刷新。
 > 用途：v0.27.2 对标收敛的有序工作队列；每批完成后回写台账并刷新本清单。
 
 ## 现状摘要
@@ -10,6 +10,12 @@
 - partial：42（UI 残留 42 + 实施队列 0）
 - re-audit：0（上游内容变更、需复核对齐的已审计行）
 - replaced / N/A / reference：无逐文件动作（基础设施替代与审计参考材料）
+
+## 方法任务（人工维护）
+
+| 任务 | 状态 | 说明 |
+|---|---|---|
+| **REA 逆向分析（RAGFlow v0.27.2 全量行为与代码）** | **未开始**（2026-10-11 登记） | 需求来源：项目便签（RayRAG项目）。使用 `morluto/rea`（`npx rea-agents` v6.4.0，面向二进制 / JS / Electron / .NET / 网站行为的 MCP 逆向工具）对 v0.27.2 参考树（固定 commit `a024bea0cd93`）做逆向分析，把分析结果、方法、行为应用到 RayRAG；产出逐模块分析记录并回写台账与实施队列。核查（2026-10-11）：全仓无 REA 使用痕迹、本机未安装。 |
 
 ## 实施队列
 
