@@ -1,0 +1,38 @@
+[
+  {
+    "id": "brand",
+    "topic": "marketing",
+    "instruction": "- Each page must be a proper encyclopedic article, NOT a flat bullet list:\n- 1. Take prefix \">\" or \"-\" in the \"page_example\" as instructions to generate the content.\n- 2. Sections with H2 headings, each starting with prose before sub-bullets.\n",
+    "page_example": "# Tone of voice\n\n## Principles\n> The tonal principles that shape the way you communicate.\n### Principle 1\n> Details\n### Principle 2\n> Details\n\n## Voice\n> Qualify what your company public's personality is and is not.\n\n### We are adjective, not adjective\n> Details\n\n### We are adjective, not adjective\n> Details\n\n## Tone\n> Describe your general tone\n> Use the matrix below to determine which tonal principles should drive which messaging.\n| Channel | Leading tonal principle |\tCopy examples\n| :--- | :---: | ---: |\n|Website|Principle|Example\n|Advertising|Principle|Example\n|Social|Principle|Example\n\n## Stylistic guidance\n> Easy rules and tactics everyone can apply about punctuation, lexicon, formatting...\n### Tip 1\n> Details\n### Tip 2\n> Details\n\n## Dos & Dont's\n|We say  👍|\tWe don't say  🙅|\n| :--- | :---: | \n|Example|\tExample|\n|Example|\tExample|\n"
+  },
+  {
+    "id": "engineering",
+    "topic": "engineering",
+    "instruction": "- Each page must be a proper encyclopedic article, NOT a flat bullet list:\n- 1. Take prefix \">\" or \"-\" in the \"page_example\" as instructions to generate the content.\n- 2. Sections with H2 headings, each starting with prose before sub-bullets.\n",
+    "page_example": "# Secret feature(Title)\n\n## Background & research\n> Explain the context behind why we are doing this project. Data is a great source of insight.\n\n\n## Problem statement\n> As a who, I am trying to outcome/job. But problem/barrier because root cause which makes me feel emotion.\n\n## Goals\n- List goals\n- KPIs\n- What success looks like\n\n## Hypothesis\n> If we achieve/enable X, then user behavior Y changes in this way leading to positive metrics Z.\n\n## Technical solution\n> Outline the solution step by step and illustrate your points with specific code structure.\n```\nFill code snippet\n```\n\n## Scope\n> Explain the solution is, how it works and the extent of the work involved.\n- Requirements\n- Future evolutions\n- Out of scope\n\n## Designs and assets\n> Add any necessary figma project link, hi-fi mockups, SVGs, font files, images, prototypes...\n\n## Open questions\n[x] E.g. is this part of the free plan?\n"
+  },
+  {
+    "id": "general",
+    "topic": "general",
+    "instruction": "- Each page must be a proper encyclopedic article, NOT a flat bullet list:\n- 1. Opening paragraph (2-4 sentences defining what this is). No heading.\n- 2. Sections with H2 headings, each starting with prose before sub-bullets.\n- 3. Bold key terms on first use; link them with [[ ]] wikilinks.\n- 4. Examples or implications where the source provides them.\n- 5. ## See also section at the end with wikilinks to highly related pages(less than 12).\\n\n",
+    "page_example": "- (Not provided)"
+  },
+  {
+    "id": "market",
+    "topic": "marketing",
+    "instruction": "- Each page must be a proper encyclopedic article, NOT a flat bullet list:\n- 1. Take prefix \">\" or \"-\" in the \"page_example\" as instructions to generate the content.\n- 2. Sections with H2 headings, each starting with prose before sub-bullets.\n",
+    "page_example": "# Competitor analysis(title)\n\n## Analysis strengths/weaknesses\n> Use the table below to analyze strong and weak points of each competitor\n| Competitor Name | Weakness | strengths |\n| :--- | :---: | ---: |\n| Laptop | Electronics | something |\n| Coffee Mug | Kitchenware | something |\n| Desk Chair | Furniture | something |\n\n## Positioning & use cases\n> How is the product positioning itself on the market? What use cases does it enable?\n\n## Features to note\n> List and add screenshots of any noteworthy feature.\n\n## Pricing\n"
+  },
+  {
+    "id": "product",
+    "topic": "product",
+    "instruction": "- Each page must be a proper encyclopedic article, NOT a flat bullet list:\n- 1. Take prefix \">\" or \"-\" in the \"page_example\" as instructions to generate the content.\n- 2. Sections with H2 headings, each starting with prose before sub-bullets.\n",
+    "page_example": "# Onboarding flow update\n## Background & research\nsummary(example): 40% of new users aren't activating. By reviewing our onboarding flow we'll help teams better understand the value of the product and activate faster on Slite.\n## Problem statement\n> As a new user, I am trying to get started with the product. But I don't understand the features and the product because nothing is explained to me which makes me feel like I don't know how to use the tool at all.\n## Goals\n- Increase user activation by 10 points\n\n## Hypothesis\n> If we review our onboarding to help users, then we will retain more users leading to positive activation results.\n\n## Vision narrative\nWe ask users about themselves in order to give them more personalized information to help them get started.\n## Scope\n1. Decide the questions we ask users\n2. Personalize how we cater to each different types of users\n3. Plan for the content\n4. Build and ship the new flow\n## First mock-ups\n> maybe some images here.\n\n## Open questions\n[x] How will we measure this?\n[x] How do Marketing and Product work on this together?\n\n## Technical factoring\n> Engineers can estimate the project to plan for code structure and specific technical choices.\n```\nasync fn quick_task() -> Result<&'static str> {\n    println!(\"START quick_task\");\n    await!(delay(10)).context(\"delay failed\")?;\n    println!(\"END quick_task\");\n    Ok(\"quick_task result\")\n```\n"
+  },
+  {
+    "id": "user_interview",
+    "topic": "product",
+    "instruction": "- Each page must be a proper encyclopedic article, NOT a flat bullet list:\n- 1. Take prefix \">\" or \"-\" in the \"page_example\" as instructions to generate the content.\n- 2. Sections with H2 headings, each starting with prose before sub-bullets.\n",
+    "page_example": "# User interview\n## Takeaways\n- The team is still unaware about features x, y, z\n- Takeaway 2\n- Takeaway 3\n## Goal\n> What are you trying to find out with this interview?\n## Feedback\n### Why did you sign up?\n> Record user's answer.\n\n### Have you tried other alternatives?\n- Competitors\n- Process\n\n### Question #3\n> Record user's answer.\n\n## Resources\n> Upload screenshots or video recordings of your interview. Any relevant file exchanged during your conversation can be added too.\n"
+  }
+]
