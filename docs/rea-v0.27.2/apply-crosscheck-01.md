@@ -25,7 +25,7 @@
 
 1. 7 行回写 REA 交叉引用（agent/bot/chat/file_commit/memory/openai/search_api）。
 2. `agent_api.py` 行「POST + batch DELETE remain open」陈旧注记修正为 v0.3.8n 已落地。
-3. 覆盖校验：`cargo run --locked --bin ragflow-coverage -- --check <checkout>`（本轮启动，结果回填本节）。
+3. 覆盖校验 ✓：`cargo run --locked --bin ragflow-coverage -- --check <checkout>` → `coverage ledger verified: commit=a024bea0cd93…, files=5977, unmapped=0`（逐行注记修改不影响校验；5977 行全量复核通过）。
 
 ## 后续
 
