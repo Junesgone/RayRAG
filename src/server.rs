@@ -15672,6 +15672,10 @@ mod tests {
         )
         .await;
         assert_eq!(initial["code"], 0, "{initial}");
+        assert!(
+            initial.get("message").is_none(),
+            "a get_result success carries no message: {initial}"
+        );
         assert_eq!(
             initial["data"]["metadata"].as_array().unwrap().len(),
             0,
@@ -15696,6 +15700,10 @@ mod tests {
         )
         .await;
         assert_eq!(saved["code"], 0, "{saved}");
+        assert!(
+            saved.get("message").is_none(),
+            "a get_result success carries no message: {saved}"
+        );
         assert_eq!(saved["data"]["metadata"][0]["key"], "company", "{saved}");
         assert!(
             !saved["data"]["built_in_metadata"]
@@ -15738,7 +15746,7 @@ mod tests {
                 Some(body),
             )
             .await;
-            assert_eq!(refused.status(), StatusCode::BAD_REQUEST, "{body}");
+            assert_eq!(refused.status(), StatusCode::OK, "{body}");
             let refused = response_json(refused).await;
             assert_eq!(refused["code"], 101, "{refused}");
             assert!(
@@ -15761,6 +15769,48 @@ mod tests {
         assert_eq!(
             still["data"]["metadata"][0]["key"], "company",
             "a refused update leaves the stored schema alone: {still}"
+        );
+
+        // The dataset route's raw-body arms (round12): an empty body with a JSON content
+        // type is the malformed-JSON answer, a missing content type is named, and a
+        // non-object payload is typed.
+        let empty_with_json_ct = call(
+            Method::PUT,
+            format!("/api/v1/datasets/{}/metadata/config", kb.id),
+            Some(""),
+        )
+        .await;
+        let body = response_json(empty_with_json_ct).await;
+        assert_eq!(body["code"], 101, "{body}");
+        assert_eq!(
+            body["message"], "Malformed JSON syntax: Missing commas/brackets or invalid encoding",
+            "{body}"
+        );
+
+        let no_content_type = call(
+            Method::PUT,
+            format!("/api/v1/datasets/{}/metadata/config", kb.id),
+            None,
+        )
+        .await;
+        let body = response_json(no_content_type).await;
+        assert_eq!(body["code"], 101, "{body}");
+        assert_eq!(
+            body["message"], "Unsupported content type: Expected application/json, got None",
+            "{body}"
+        );
+
+        let not_an_object = call(
+            Method::PUT,
+            format!("/api/v1/datasets/{}/metadata/config", kb.id),
+            Some("[1]"),
+        )
+        .await;
+        let body = response_json(not_an_object).await;
+        assert_eq!(body["code"], 101, "{body}");
+        assert_eq!(
+            body["message"], "Invalid request payload: expected object, got list",
+            "{body}"
         );
 
         // A document override needs a document of that dataset.
@@ -15814,6 +15864,10 @@ mod tests {
         )
         .await;
         assert_eq!(override_saved["code"], 0, "{override_saved}");
+        assert!(
+            override_saved.get("message").is_none(),
+            "a get_result success carries no message: {override_saved}"
+        );
         assert_eq!(
             override_saved["data"]["metadata"][0]["key"], "author",
             "{override_saved}"
@@ -15828,7 +15882,84 @@ mod tests {
             "author"
         );
 
-        // An unknown dataset is refused on both verbs.
+        // The raw-body contract of the document route (round12 probes): an empty body, a
+        // `{}` body and a metadata-less object are the argument error; a malformed body is
+        // the raised parse error; a JSON non-object is the payload TypeError.
+        for empty_body in [None, Some(""), Some("{}")] {
+            let response = call(
+                Method::PUT,
+                format!(
+                    "/api/v1/datasets/{}/documents/doc-meta-1/metadata/config",
+                    kb.id
+                ),
+                empty_body,
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = response_json(response).await;
+            assert_eq!(body["code"], 101, "{body}");
+            assert_eq!(body["message"], "metadata is required", "{body}");
+            assert!(body.get("data").is_none(), "{body}");
+        }
+
+        let malformed = call(
+            Method::PUT,
+            format!(
+                "/api/v1/datasets/{}/documents/doc-meta-1/metadata/config",
+                kb.id
+            ),
+            Some("{bad"),
+        )
+        .await;
+        let body = response_json(malformed).await;
+        assert_eq!(body["code"], 100, "{body}");
+        assert_eq!(body["message"], "<BadRequest '400: Bad Request'>", "{body}");
+        assert!(body["data"].is_null(), "{body}");
+
+        let not_object = call(
+            Method::PUT,
+            format!(
+                "/api/v1/datasets/{}/documents/doc-meta-1/metadata/config",
+                kb.id
+            ),
+            Some("[1, 2]"),
+        )
+        .await;
+        let body = response_json(not_object).await;
+        assert_eq!(body["code"], 100, "{body}");
+        assert_eq!(
+            body["message"], "TypeError('JSON payload must be an object.')",
+            "{body}"
+        );
+
+        let wrong_shape = call(
+            Method::PUT,
+            format!(
+                "/api/v1/datasets/{}/documents/doc-meta-1/metadata/config",
+                kb.id
+            ),
+            Some(r#"{"metadata": 5}"#),
+        )
+        .await;
+        let body = response_json(wrong_shape).await;
+        assert_eq!(body["code"], 101, "{body}");
+        assert_eq!(
+            body["message"],
+            "Field: <metadata> - Message: <Input should be a valid list> - Value: <5>",
+            "{body}"
+        );
+        assert_eq!(
+            env.state
+                .metadata_config
+                .get_document("doc-meta-1")
+                .unwrap()
+                .metadata[0]
+                .key,
+            "author",
+            "a refused body leaves the stored override alone"
+        );
+
+        // An unknown dataset answers the service's permission wording on both verbs.
         for method in [Method::GET, Method::PUT] {
             let response = call(
                 method,
@@ -15836,10 +15967,12 @@ mod tests {
                 Some(r#"{"metadata":[]}"#),
             )
             .await;
-            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = response_json(response).await;
+            assert_eq!(body["code"], 102, "{body}");
             assert_eq!(
-                response_json(response).await["message"],
-                "The dataset doesn't exist"
+                body["message"], "User 'test-user' lacks permission for dataset 'no-such-kb'",
+                "{body}"
             );
         }
     }

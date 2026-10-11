@@ -23,11 +23,13 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use axum::Extension;
 use axum::Json;
+use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 
-use crate::server::{AppState, AuthContext, api_error_code, code};
+use crate::server::{AppState, AuthContext, api_error_code, api_error_result, code};
+use crate::user_register::EXCEPTION_ERROR;
 
 /// One auto-metadata field.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -245,36 +247,177 @@ fn visible_kb(state: &AppState, auth: &AuthContext, kb_id: &str) -> Option<()> {
     }
 }
 
-fn argument_error(message: &str) -> Response {
-    api_error_code(
-        axum::http::StatusCode::BAD_REQUEST,
-        code::INVALID_ARGUMENT,
-        message,
-    )
+/// `get_error_argument_result`: `{code:101, message}` at HTTP 200 and no `data` key — the
+/// metadata family's argument errors (round12 probes `mcfg_put_empty` / `meta_put_empty_ds`).
+fn argument_result(message: &str) -> Response {
+    api_error_result(axum::http::StatusCode::OK, code::INVALID_ARGUMENT, message)
 }
 
-fn not_found(message: &str) -> Response {
-    api_error_code(
-        axum::http::StatusCode::NOT_FOUND,
-        code::INVALID_OR_MISSING_DATA,
-        message,
-    )
-}
-
-/// The document-scoped config route answers errors the upstream way: HTTP 200 with the
-/// numeric code in the body (`get_error_data_result`), not a 404 transport status.
+/// The document-scoped config route's business errors, `get_error_data_result` shape: HTTP 200
+/// with `{code:102, message}` and **no** `data` key (`mcfg_fake` probe).
 fn data_error(message: &str) -> Response {
-    api_error_code(
+    api_error_result(
         axum::http::StatusCode::OK,
         code::INVALID_OR_MISSING_DATA,
         message,
     )
 }
 
+/// An unknown or foreign dataset: upstream's service answers
+/// `User '<tenant>' lacks permission for dataset '<id>'` as a `102` (`meta_get_fake` probe).
+fn permission_error(auth: &AuthContext, kb_id: &str) -> Response {
+    api_error_result(
+        axum::http::StatusCode::OK,
+        code::INVALID_OR_MISSING_DATA,
+        &format!(
+            "User '{}' lacks permission for dataset '{kb_id}'",
+            auth.user_id
+        ),
+    )
+}
+
+/// A raised exception answered by the global handler: `{code:100, data:null, message}` at
+/// HTTP 200 (round12 probes `mcfg_put_bad` / `mcfg_put_arr`).
+fn raised_error(message: String) -> Response {
+    Json(serde_json::json!({
+        "code": EXCEPTION_ERROR,
+        "data": serde_json::Value::Null,
+        "message": message,
+    }))
+    .into_response()
+}
+
+/// Python's `repr` for the value shapes that appear in the validation messages below.
+fn python_repr(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Null => "None".to_string(),
+        serde_json::Value::Bool(true) => "True".to_string(),
+        serde_json::Value::Bool(false) => "False".to_string(),
+        serde_json::Value::Number(number) => number.to_string(),
+        serde_json::Value::String(text) => {
+            format!("'{}'", text.replace('\\', "\\\\").replace('\'', "\\'"))
+        }
+        serde_json::Value::Array(items) => format!(
+            "[{}]",
+            items.iter().map(python_repr).collect::<Vec<_>>().join(", ")
+        ),
+        serde_json::Value::Object(map) => format!(
+            "{{{}}}",
+            map.iter()
+                .map(|(key, value)| format!("'{key}': {}", python_repr(value)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
+}
+
+/// Python's `type(value).__name__`, for the payload-shape message.
+fn python_type_name(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Null => "NoneType",
+        serde_json::Value::Bool(_) => "bool",
+        serde_json::Value::Number(number) if number.is_i64() || number.is_u64() => "int",
+        serde_json::Value::Number(_) => "float",
+        serde_json::Value::String(_) => "str",
+        serde_json::Value::Array(_) => "list",
+        serde_json::Value::Object(_) => "dict",
+    }
+}
+
+/// Grow one field list out of a request value.
+///
+/// The shapes `validate_fields` cannot see — a list that is not a list, items that are not
+/// field objects, fields of the wrong type — answer in the catalogue's pydantic wording, the
+/// same `Field: <…> - Message: <…> - Value: <…>` form `format_validation_error_message`
+/// produces upstream.
+fn fields_from_value(
+    list_name: &str,
+    value: &serde_json::Value,
+) -> Result<Vec<MetadataField>, String> {
+    let Some(items) = value.as_array() else {
+        return Err(format!(
+            "Field: <{list_name}> - Message: <Input should be a valid list> - Value: <{}>",
+            python_repr(value)
+        ));
+    };
+    for (index, item) in items.iter().enumerate() {
+        let Some(object) = item.as_object() else {
+            return Err(format!(
+                "Field: <{list_name}.{index}> - Message: <Input should be a valid dictionary or instance of AutoMetadataField> - Value: <{}>",
+                python_repr(item)
+            ));
+        };
+        match object.get("key") {
+            None => {
+                return Err(format!(
+                    "Field: <{list_name}.{index}.key> - Message: <Field required> - Value: <{}>",
+                    python_repr(item)
+                ));
+            }
+            Some(value) if !value.is_string() => {
+                return Err(format!(
+                    "Field: <{list_name}.{index}.key> - Message: <Input should be a valid string> - Value: <{}>",
+                    python_repr(value)
+                ));
+            }
+            Some(_) => {}
+        }
+        match object.get("type") {
+            None => {
+                return Err(format!(
+                    "Field: <{list_name}.{index}.type> - Message: <Field required> - Value: <{}>",
+                    python_repr(item)
+                ));
+            }
+            Some(serde_json::Value::String(_)) => {}
+            Some(value) => {
+                return Err(format!(
+                    "Field: <{list_name}.{index}.type> - Message: <Input should be 'string', 'list', 'time' or 'number'> - Value: <{}>",
+                    python_repr(value)
+                ));
+            }
+        }
+        if let Some(value) = object.get("description")
+            && !value.is_null()
+            && !value.is_string()
+        {
+            return Err(format!(
+                "Field: <{list_name}.{index}.description> - Message: <Input should be a valid string> - Value: <{}>",
+                python_repr(value)
+            ));
+        }
+        if let Some(serde_json::Value::Array(values)) = object.get("enum") {
+            for (position, value) in values.iter().enumerate() {
+                if !value.is_string() {
+                    return Err(format!(
+                        "Field: <{list_name}.{index}.enum.{position}> - Message: <Input should be a valid string> - Value: <{}>",
+                        python_repr(value)
+                    ));
+                }
+            }
+        } else if let Some(value) = object.get("enum")
+            && !value.is_null()
+        {
+            return Err(format!(
+                "Field: <{list_name}.{index}.enum> - Message: <Input should be a valid list> - Value: <{}>",
+                python_repr(value)
+            ));
+        }
+    }
+    serde_json::from_value(value.clone()).map_err(|_| {
+        format!(
+            "Field: <{list_name}> - Message: <Input should be a valid list> - Value: <{}>",
+            python_repr(value)
+        )
+    })
+}
+
 fn config_json(config: &AutoMetadataConfig) -> serde_json::Value {
+    // Key order follows upstream's jsonify output (alphabetical; `mcfg_get_real` measured
+    // `{"built_in_metadata": …, "metadata": …}`).
     serde_json::json!({
-        "metadata": config.metadata,
         "built_in_metadata": config.built_in_metadata,
+        "metadata": config.metadata,
     })
 }
 
@@ -285,11 +428,12 @@ pub async fn get_dataset_metadata_config(
     Path(kb_id): Path<String>,
 ) -> Response {
     if visible_kb(&state, &auth, &kb_id).is_none() {
-        return not_found("The dataset doesn't exist");
+        return permission_error(&auth, &kb_id);
     }
     let config = state.metadata_config.get(&kb_id);
-    Json(serde_json::json!({ "code": 0, "data": config_json(&config), "message": "success" }))
-        .into_response()
+    // `get_result(data=result)`: `{code:0, data}` — a success carries no message key
+    // (`mcfg_get_real` probe).
+    Json(serde_json::json!({ "code": 0, "data": config_json(&config) })).into_response()
 }
 
 /// `PUT /api/v1/datasets/{dataset_id}/metadata/config`.
@@ -297,15 +441,67 @@ pub async fn update_dataset_metadata_config(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
     Path(kb_id): Path<String>,
-    Json(body): Json<AutoMetadataConfig>,
+    headers: axum::http::HeaderMap,
+    body: Bytes,
 ) -> Response {
     if visible_kb(&state, &auth, &kb_id).is_none() {
-        return not_found("The dataset doesn't exist");
+        return permission_error(&auth, &kb_id);
     }
-    // Only the user-configured list is validated; the built-ins are this deployment's.
-    if let Err(message) = validate_fields(&body.metadata) {
-        return argument_error(&message);
+    // Upstream `update_auto_metadata` runs `validate_and_parse_json_request`: content type
+    // first, then JSON syntax, then payload shape (round12 probe `meta_put_empty_ds` — an
+    // empty body with a JSON content type answers the malformed-JSON message).
+    let content_type = headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok());
+    let mime = content_type
+        .and_then(|value| value.split(';').next())
+        .map(|value| value.trim().to_ascii_lowercase());
+    if mime.as_deref() != Some("application/json") {
+        return argument_result(&format!(
+            "Unsupported content type: Expected application/json, got {}",
+            content_type.unwrap_or("None")
+        ));
     }
+    if body.is_empty() {
+        return argument_result(
+            "Malformed JSON syntax: Missing commas/brackets or invalid encoding",
+        );
+    }
+    let parsed: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(value) => value,
+        Err(_) => {
+            return argument_result(
+                "Malformed JSON syntax: Missing commas/brackets or invalid encoding",
+            );
+        }
+    };
+    if !parsed.is_object() {
+        return argument_result(&format!(
+            "Invalid request payload: expected object, got {}",
+            python_type_name(&parsed)
+        ));
+    }
+    // `AutoMetadataConfig`: both lists default to empty, and both are shape-checked when
+    // present. Only the user-configured list is stored; the built-ins stay this deployment's.
+    let metadata = match parsed.get("metadata") {
+        Some(value) => match fields_from_value("metadata", value) {
+            Ok(fields) => fields,
+            Err(message) => return argument_result(&message),
+        },
+        None => Vec::new(),
+    };
+    if let Some(value) = parsed.get("built_in_metadata")
+        && let Err(message) = fields_from_value("built_in_metadata", value)
+    {
+        return argument_result(&message);
+    }
+    if let Err(message) = validate_fields(&metadata) {
+        return argument_result(&message);
+    }
+    let body = AutoMetadataConfig {
+        metadata,
+        built_in_metadata: Vec::new(),
+    };
     if let Err(error) = state.metadata_config.replace(&kb_id, body) {
         return api_error_code(
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -314,8 +510,7 @@ pub async fn update_dataset_metadata_config(
         );
     }
     let config = state.metadata_config.get(&kb_id);
-    Json(serde_json::json!({ "code": 0, "data": config_json(&config), "message": "success" }))
-        .into_response()
+    Json(serde_json::json!({ "code": 0, "data": config_json(&config) })).into_response()
 }
 
 /// `PUT /api/v1/datasets/{dataset_id}/documents/{document_id}/metadata/config`.
@@ -323,7 +518,7 @@ pub async fn update_document_metadata_config(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
     Path((kb_id, doc_id)): Path<(String, String)>,
-    Json(body): Json<DocumentMetadataConfig>,
+    body: Bytes,
 ) -> Response {
     if visible_kb(&state, &auth, &kb_id).is_none() {
         return data_error("you don't own the dataset");
@@ -332,9 +527,38 @@ pub async fn update_document_metadata_config(
         Some(doc) if doc.kb_id == kb_id => {}
         _ => return data_error(&format!("document {doc_id} not found in dataset {kb_id}")),
     }
-    if let Err(message) = validate_fields(&body.metadata) {
-        return argument_error(&message);
+    // Upstream reads the body through `get_request_json()`: an empty body normalises to `{}`
+    // and the route requires the `metadata` key — `101 "metadata is required"` (round12
+    // probes `mcfg_put_empty` / `mcfg_put_obj` / `mcfg_put_noct`). A malformed JSON body and
+    // a non-object payload surface as raised exceptions through the global handler
+    // (`mcfg_put_bad` / `mcfg_put_arr`).
+    let parsed: serde_json::Value = if body.is_empty() {
+        serde_json::json!({})
+    } else {
+        match serde_json::from_slice(&body) {
+            Ok(value) => value,
+            Err(_) => return raised_error("<BadRequest '400: Bad Request'>".to_string()),
+        }
+    };
+    if !parsed.is_object() {
+        return raised_error("TypeError('JSON payload must be an object.')".to_string());
     }
+    let Some(metadata_value) = parsed.get("metadata") else {
+        return argument_result("metadata is required");
+    };
+    // Only `metadata` reaches the store, as upstream's route does; the doc-level override
+    // keeps no built-in list.
+    let metadata = match fields_from_value("metadata", metadata_value) {
+        Ok(fields) => fields,
+        Err(message) => return argument_result(&message),
+    };
+    if let Err(message) = validate_fields(&metadata) {
+        return argument_result(&message);
+    }
+    let body = DocumentMetadataConfig {
+        metadata,
+        built_in_metadata: Vec::new(),
+    };
     if let Err(error) = state.metadata_config.replace_document(&doc_id, body) {
         return api_error_code(
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -348,8 +572,7 @@ pub async fn update_document_metadata_config(
         .unwrap_or_default();
     Json(serde_json::json!({
         "code": 0,
-        "data": { "metadata": stored.metadata, "built_in_metadata": stored.built_in_metadata },
-        "message": "success",
+        "data": { "built_in_metadata": stored.built_in_metadata, "metadata": stored.metadata },
     }))
     .into_response()
 }
