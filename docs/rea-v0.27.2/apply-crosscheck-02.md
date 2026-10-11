@@ -51,7 +51,7 @@
 | 39 | PATCH update 伪文档 → 102 `the dataset doesn't own the document` | 404 `Not found` | **C+T** |
 | 40 | PATCH update 全字段面（`chunk_method`/`enabled`/`parser_config`/`pipeline_id`/`meta_fields`） | 仅重命名 | **F** |
 
-\* ingest 行：上游空/伪体行为未实测（源分析为 KeyError→500 族），待实例具备条件后补探针。
+\* ingest 行：上游空/伪体行为已实测（2026-10-12 round11 探针：{}→100 KeyError('doc_ids')、伪 ID→109 no authorization、空表→成功 data:true，均 HTTP 200）。
 
 ## 修正批计划
 
