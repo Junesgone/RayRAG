@@ -1307,6 +1307,107 @@ async fn run_ssh_probe(config: &Map<String, Value>) -> Result<Value, String> {
 }
 
 /// `POST /api/v1/admin/sandbox/test` — upstream body `{provider_type, config}`.
+/// Runs the probe through a deployer-provided sandbox executor sidecar.
+///
+/// Upstream imports the vendor SDKs directly (Aliyun agentrun-sdk; E2B itself is a
+/// TODO in v0.27.2 that raises "not yet fully implemented"). RayRAG keeps those
+/// proprietary SDKs out of the image: when RAYRAG_SANDBOX_EXECUTOR_URL is
+/// configured the probe is POSTed to that sidecar together with the provider
+/// config, and the sidecar runs the official SDK. Without an executor the endpoint
+/// reports that instead of faking success.
+async fn run_sidecar_probe(
+    provider_type: &str,
+    config: &Map<String, Value>,
+    executor_url: Option<&str>,
+) -> Result<Value, String> {
+    let required: &[&str] = match provider_type {
+        "e2b" => &["api_key"],
+        "aliyun_codeinterpreter" => &["access_key_id", "access_key_secret", "account_id"],
+        other => {
+            return Err(format!(
+                "Connection test failed: the '{other}' provider is not implemented in this build."
+            ));
+        }
+    };
+    for key in required {
+        let value = config
+            .get(*key)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if value.is_empty() {
+            return Err(format!(
+                "Failed to initialize provider '{provider_type}': {key} is required"
+            ));
+        }
+    }
+    let Some(url) = executor_url.map(str::trim).filter(|url| !url.is_empty()) else {
+        return Err(format!(
+            "Connection test failed: the '{provider_type}' provider runs through a sandbox executor. Set RAYRAG_SANDBOX_EXECUTOR_URL to the executor service (for example a sidecar wrapping the official agentrun-sdk or E2B SDK)."
+        ));
+    };
+    let timeout = config
+        .get("timeout")
+        .and_then(Value::as_i64)
+        .filter(|value| *value > 0)
+        .unwrap_or(30)
+        .min(30) as u64;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(timeout + 15))
+        .build()
+        .map_err(|error| format!("Connection test failed: {error}"))?;
+    let request = json!({
+        "provider_type": provider_type,
+        "config": config,
+        "code": SANDBOX_TEST_CODE,
+        "language": "python",
+        "timeout": timeout,
+    });
+    let response = client
+        .post(url)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|error| format!("Connection test failed: executor is not reachable ({error})"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Connection test failed: the executor answered HTTP {}",
+            response.status()
+        ));
+    }
+    let payload: Value = response.json().await.map_err(|error| {
+        format!("Connection test failed: executor answered invalid JSON ({error})")
+    })?;
+    let stdout = payload.get("stdout").and_then(Value::as_str).unwrap_or("");
+    let stderr = payload.get("stderr").and_then(Value::as_str).unwrap_or("");
+    let exit_code = payload
+        .get("exit_code")
+        .and_then(Value::as_i64)
+        .unwrap_or_else(|| {
+            if payload
+                .get("success")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                0
+            } else {
+                1
+            }
+        });
+    let execution_time = payload
+        .get("execution_time")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0);
+    let success = exit_code == 0 && stdout.contains("TEST_PASSED");
+    Ok(test_payload(
+        success,
+        exit_code,
+        execution_time,
+        stdout,
+        stderr,
+    ))
+}
+
 pub async fn test_connection(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -1342,6 +1443,10 @@ pub async fn test_connection(
         "local" => run_local_probe(&config).await,
         "self_managed" => run_self_managed_probe(&state, &config).await,
         "ssh" => run_ssh_probe(&config).await,
+        "e2b" | "aliyun_codeinterpreter" => {
+            let executor_url = std::env::var("RAYRAG_SANDBOX_EXECUTOR_URL").ok();
+            run_sidecar_probe(&provider_type, &config, executor_url.as_deref()).await
+        }
         other => Err(format!(
             "Connection test failed: the '{other}' provider is not implemented in this build. Its configuration is stored, but code execution is performed by the local sandbox or by sandbox-executor-manager."
         )),
@@ -1355,6 +1460,131 @@ pub async fn test_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// A one-shot HTTP endpoint for the sandbox executor probe: answers the next
+    /// POST with body and yields the received request for form/JSON assertions.
+    fn mock_executor_endpoint(body: &'static str) -> (String, std::thread::JoinHandle<String>) {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock executor");
+        let address = listener.local_addr().expect("mock address");
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept executor request");
+            let mut buffer = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                match stream.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(count) => {
+                        buffer.extend_from_slice(&chunk[..count]);
+                        let text = String::from_utf8_lossy(&buffer).to_string();
+                        if let Some(split) = text.find("\r\n\r\n") {
+                            let expected = text[..split]
+                                .lines()
+                                .find_map(|line| {
+                                    let (name, value) = line.split_once(':')?;
+                                    if name.eq_ignore_ascii_case("content-length") {
+                                        value.trim().parse::<usize>().ok()
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap_or(0);
+                            if buffer.len() >= split + 4 + expected {
+                                break;
+                            }
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.flush();
+            String::from_utf8_lossy(&buffer).to_string()
+        });
+        (
+            format!("http://127.0.0.1:{}/execute", address.port()),
+            handle,
+        )
+    }
+
+    fn sidecar_config(provider_type: &str) -> Map<String, Value> {
+        let mut config = Map::new();
+        match provider_type {
+            "e2b" => {
+                config.insert("api_key".into(), Value::from("e2b_sk_test"));
+                config.insert("region".into(), Value::from("us"));
+            }
+            _ => {
+                config.insert("access_key_id".into(), Value::from("ak"));
+                config.insert("access_key_secret".into(), Value::from("sk"));
+                config.insert("account_id".into(), Value::from("123"));
+            }
+        }
+        config
+    }
+
+    #[tokio::test]
+    async fn sidecar_probe_posts_the_probe_and_reports_stdout() {
+        let (url, handle) = mock_executor_endpoint(
+            r#"{"success":true,"exit_code":0,"execution_time":0.01,"stdout":"2 + 2 = 4\nTEST_PASSED\n","stderr":""}"#,
+        );
+        let config = sidecar_config("e2b");
+        let payload = run_sidecar_probe("e2b", &config, Some(&url))
+            .await
+            .expect("sidecar probe");
+        assert_eq!(payload["success"], true);
+        assert_eq!(payload["details"]["exit_code"], 0);
+        assert!(
+            payload["details"]["stdout"]
+                .as_str()
+                .unwrap()
+                .contains("TEST_PASSED")
+        );
+        assert!(
+            payload["message"]
+                .as_str()
+                .unwrap()
+                .starts_with("Test PASSED | Exit code: 0")
+        );
+        let request = handle.join().expect("mock executor thread");
+        assert!(request.starts_with("POST /execute "), "{request}");
+        assert!(request.contains("\"provider_type\":\"e2b\""), "{request}");
+        assert!(request.contains("TEST_PASSED"), "{request}");
+        assert!(request.contains("\"api_key\":\"e2b_sk_test\""), "{request}");
+    }
+
+    #[tokio::test]
+    async fn sidecar_probe_requires_an_executor() {
+        let error = run_sidecar_probe("e2b", &sidecar_config("e2b"), None)
+            .await
+            .expect_err("missing executor");
+        assert!(error.contains("RAYRAG_SANDBOX_EXECUTOR_URL"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn sidecar_probe_validates_required_credentials() {
+        let mut config = Map::new();
+        config.insert("region".into(), Value::from("us"));
+        let error = run_sidecar_probe("e2b", &config, Some("http://127.0.0.1:1/execute"))
+            .await
+            .expect_err("missing api key");
+        assert!(error.contains("api_key is required"), "{error}");
+        let mut aliyun = Map::new();
+        aliyun.insert("access_key_id".into(), Value::from("ak"));
+        let error = run_sidecar_probe(
+            "aliyun_codeinterpreter",
+            &aliyun,
+            Some("http://127.0.0.1:1/execute"),
+        )
+        .await
+        .expect_err("missing secret");
+        assert!(error.contains("access_key_secret is required"), "{error}");
+    }
 
     #[test]
     fn provider_registry_matches_upstream() {

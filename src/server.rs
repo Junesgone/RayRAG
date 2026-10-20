@@ -12165,8 +12165,9 @@ mod tests {
             "{}",
             ssh_test["data"]["message"]
         );
-        // The e2b provider is registered but not executable in this build; the
-        // probe says so instead of reporting a fake success.
+        // The e2b / Aliyun providers run through the deployer-provided executor
+        // sidecar (RAYRAG_SANDBOX_EXECUTOR_URL); without one the probe reports
+        // that instead of a fake success, and credentials are validated first.
         let e2b_test = call(
             "POST",
             "/api/v1/admin/sandbox/test".into(),
@@ -12179,7 +12180,38 @@ mod tests {
             response_json(e2b_test).await["message"]
                 .as_str()
                 .unwrap()
-                .contains("not implemented in this build")
+                .contains("RAYRAG_SANDBOX_EXECUTOR_URL")
+        );
+        let aliyun_test = call(
+            "POST",
+            "/api/v1/admin/sandbox/test".into(),
+            Some(serde_json::json!({
+                "provider_type": "aliyun_codeinterpreter",
+                "config": {"access_key_id": "ak", "access_key_secret": "sk", "account_id": "1"}
+            })),
+            token.clone(),
+        )
+        .await;
+        assert_eq!(aliyun_test.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            response_json(aliyun_test).await["message"]
+                .as_str()
+                .unwrap()
+                .contains("RAYRAG_SANDBOX_EXECUTOR_URL")
+        );
+        let e2b_missing = call(
+            "POST",
+            "/api/v1/admin/sandbox/test".into(),
+            Some(serde_json::json!({"provider_type": "e2b", "config": {"region": "us"}})),
+            token,
+        )
+        .await;
+        assert_eq!(e2b_missing.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            response_json(e2b_missing).await["message"]
+                .as_str()
+                .unwrap()
+                .contains("api_key is required")
         );
     }
 

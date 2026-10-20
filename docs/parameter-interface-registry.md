@@ -1271,3 +1271,11 @@ scripts/ui-traversal/admin-*.mjs 9 个脚本（console / login-form / identity-c
 - in-scope consumer（14 调用点）：datasets 创建 embd、dataset 配置 embd、retrieval test rerank、memory 列表 embd/llm、memory 详情 embd/llm、skills 搜索配置 embd、search 页 rerank、search app detail rerank、系统默认模型六字段。
 - 上游 consumer 文件（agent parser 表单、llm-setting-items、layout-recognize-form-field、rerank.tsx）在台账为 reference（RayRAG Rust-native 管理面替代），不属本组件遗留。
 - 当前构建证据：kb-embd-tree PASS、memory-tree form-local 保存、skill-embd-tree PASS、model-tree-keyboard 17/17、system-model 六行 role=tree。
+
+## Sandbox provider 执行（RAGFlow v0.27.2 对齐，v0.3.10ar）
+
+- local：直接子进程执行 SANDBOX_TEST_CODE；self_managed：sandbox-executor-manager /run；ssh：ssh_exec 真实远程执行。
+- e2b / aliyun_codeinterpreter：经部署侧 executor sidecar 执行——设置 RAYRAG_SANDBOX_EXECUTOR_URL 后，POST {provider_type, config, code: SANDBOX_TEST_CODE, language:"python", timeout} 到该地址，期望返回 {success, exit_code, execution_time, stdout, stderr}；判据 exit_code==0 && stdout 含 TEST_PASSED，消息格式 Test PASSED | Exit code: … | Execution time: …s | Output: …。
+- 凭据必填：e2b.api_key；aliyun.access_key_id/access_key_secret/account_id（缺失在本地直接报错，不发请求）。
+- 未配置 executor：如实报错（不伪造成功）。上游 E2B execute_code 在 v0.27.2 仍是 TODO；Aliyun 上游依赖专有 agentrun-sdk，sidecar 内可运行官方 SDK。
+- 测试：sandbox_admin::tests::sidecar_probe_*（本地 one-shot HTTP）、server::tests::sandbox_admin_endpoints_match_the_upstream_contract；CDP scripts/ui-traversal/sandbox-executor-cdp.mjs。

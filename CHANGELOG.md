@@ -2,6 +2,24 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.55.0] - 2026-10-21
+
+### The sandbox console runs its connection probe through an executor
+
+- The admin sandbox page's Test button now runs the upstream probe for the
+  E2B and Aliyun Code Interpreter providers through a deployer-provided
+  executor sidecar (`RAYRAG_SANDBOX_EXECUTOR_URL`): the provider config and the
+  upstream test snippet are POSTed to that service and the answer is reported
+  with the upstream success rule and message format.
+- Without an executor the endpoint says the provider runs through one instead
+  of faking a pass; missing credentials are reported before any network call.
+  This matches v0.27.2, where the E2B provider's own execution is still a TODO
+  and the Aliyun provider depends on the proprietary agentrun-sdk, which the
+  image does not bundle.
+- Unit tests cover the sidecar request/response and both error paths; the
+  sandbox admin endpoint test and a CDP probe (E2B and Aliyun selected in the
+  console) verify the full flow.
+
 ## [0.54.0] - 2026-10-21
 
 ### The Docker build links the vendored zvec 0.7.2 crates

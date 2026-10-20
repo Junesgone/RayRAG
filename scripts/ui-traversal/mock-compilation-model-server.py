@@ -161,6 +161,24 @@ class Handler(BaseHTTPRequestHandler):
                 }
             )
             return
+        if self.path.endswith("/sandbox/execute"):
+            with open("/tmp/mock-sandbox.log", "a", encoding="utf-8") as log:
+                log.write(json.dumps(payload, ensure_ascii=False) + "\n")
+            self._send(
+                {
+                    "success": True,
+                    "exit_code": 0,
+                    "execution_time": 0.01,
+                    "stdout": (
+                        "2 + 2 = 4\n"
+                        "JSON dump: {\"test\": \"data\", \"value\": 123}\n"
+                        "Math.sqrt(16) = 4.0\n"
+                        "TEST_PASSED\n"
+                    ),
+                    "stderr": "",
+                }
+            )
+            return
         if self.path.endswith("/chat/completions"):
             messages = payload.get("messages") or []
             system = ""
