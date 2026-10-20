@@ -1249,3 +1249,11 @@ scripts/ui-traversal/admin-*.mjs 9 个脚本（console / login-form / identity-c
 2. debug 实例 env：LLM_API_BASE=http://127.0.0.1:18089/v1 LLM_MODEL=mock-model EMBED_API_BASE=… EMBED_MODEL=mock-embedding RAYRAG_EMBEDDING_DIMENSION=384。
 3. 配置模型：POST /api/v1/providers/{provider}/instances（base_url 指向 mock）+ PATCH /api/v1/models/default {model_type:"chat",…}。
 4. search-answer-cdp.mjs：创建带 summary/query_mindmap 的 search app → 查询 → 断言 answer/refs/mind tree/related/clear。
+
+## 数据源 OAuth token 兑现（RAGFlow v0.27.2 对齐，v0.3.10ap）
+
+- Box：POST /api/v1/connectors/box/oauth/web/start → GET …/box/oauth/web/callback?code&state → POST …/box/oauth/web/result {flow_id}；callback 在 BOX_OAUTH_TOKEN_URL 配置时 POST form（grant_type=authorization_code, code, client_id, client_secret, redirect_uri），读回 access_token/refresh_token 并随 result credentials 返回。
+- Gmail / Google Drive：POST /api/v1/connectors/google/oauth/web/start?type=gmail|google-drive {credentials, redirect_uri} → GET …/gmail|google-drive/oauth/web/callback → POST /api/v1/connectors/google/oauth/web/result?type=… {flow_id}；GOOGLE_OAUTH_TOKEN_URL 配置时同上兑换。
+- 未配置 token 端点时：callback 仍保存 code，result 返回 code 不返回 token（部署可后置兑换）。
+- 单测：oauth_web::tests::{box,google}_token_exchange_* 用本地 one-shot HTTP 端点断言表单字段与 token 落库；token_exchange_without_an_endpoint_keeps_the_flow_code 断言无端点路径。
+- CDP 探针：scripts/ui-traversal/oauth-token-exchange-cdp.mjs（mock 端点 + 建 gmail connector）。

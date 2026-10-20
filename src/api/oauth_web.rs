@@ -62,6 +62,78 @@ fn google_registry() -> &'static RwLock<GoogleFlowRegistry> {
     REGISTRY.get_or_init(|| RwLock::new(GoogleFlowRegistry::default()))
 }
 
+/// POST the authorization code to the configured token endpoint and return the
+/// access/refresh token pair. None means "no endpoint configured" (the flow
+/// stores the code verbatim) or the exchange failed; the callback keeps the
+/// code either way so the result endpoint still answers.
+async fn exchange_authorization_code(
+    client_id: &str,
+    client_secret: &str,
+    redirect_uri: &str,
+    code: &str,
+    token_url: Option<&str>,
+) -> Option<(Option<String>, Option<String>)> {
+    let token_url = token_url?;
+    let client = reqwest::Client::builder()
+        .timeout(crate::common::cmd_timeout::duration())
+        .build()
+        .ok()?;
+    let response = client
+        .post(token_url)
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("code", code),
+            ("client_id", client_id),
+            ("client_secret", client_secret),
+            ("redirect_uri", redirect_uri),
+        ])
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let json = response.json::<serde_json::Value>().await.ok()?;
+    Some((
+        json.get("access_token")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
+        json.get("refresh_token")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
+    ))
+}
+
+async fn box_token_exchange(flow: &mut BoxFlow, code: &str, token_url: Option<&str>) {
+    if let Some((access, refresh)) = exchange_authorization_code(
+        &flow.client_id,
+        &flow.client_secret,
+        &flow.redirect_uri,
+        code,
+        token_url,
+    )
+    .await
+    {
+        flow.access_token = access;
+        flow.refresh_token = refresh;
+    }
+}
+
+async fn google_token_exchange(flow: &mut GoogleFlow, code: &str, token_url: Option<&str>) {
+    if let Some((access, refresh)) = exchange_authorization_code(
+        &flow.client_id,
+        &flow.client_secret,
+        &flow.redirect_uri,
+        code,
+        token_url,
+    )
+    .await
+    {
+        flow.access_token = access;
+        flow.refresh_token = refresh;
+    }
+}
+
 const GOOGLE_DRIVE_SCOPES: &[&str] = &[
     "https://www.googleapis.com/auth/drive.readonly",
     "https://www.googleapis.com/auth/drive.metadata.readonly",
@@ -235,33 +307,8 @@ pub async fn box_oauth_callback(Query(params): Query<HashMap<String, String>>) -
         return box_popup(&flow_id, false, "Box OAuth session expired or invalid.");
     }
     flow.code = Some(code.clone());
-    if let Ok(token_url) = std::env::var("BOX_OAUTH_TOKEN_URL")
-        && let Ok(client) = reqwest::Client::builder()
-            .timeout(crate::common::cmd_timeout::duration())
-            .build()
-        && let Ok(response) = client
-            .post(&token_url)
-            .form(&[
-                ("grant_type", "authorization_code"),
-                ("code", code.as_str()),
-                ("client_id", flow.client_id.as_str()),
-                ("client_secret", flow.client_secret.as_str()),
-                ("redirect_uri", flow.redirect_uri.as_str()),
-            ])
-            .send()
-            .await
-        && response.status().is_success()
-        && let Ok(json) = response.json::<serde_json::Value>().await
-    {
-        flow.access_token = json
-            .get("access_token")
-            .and_then(|value| value.as_str())
-            .map(str::to_string);
-        flow.refresh_token = json
-            .get("refresh_token")
-            .and_then(|value| value.as_str())
-            .map(str::to_string);
-    }
+    let token_url = std::env::var("BOX_OAUTH_TOKEN_URL").ok();
+    box_token_exchange(&mut flow, &code, token_url.as_deref()).await;
     // Store the completed result under the same flow id for the poll endpoint.
     registry()
         .write()
@@ -490,33 +537,8 @@ async fn google_callback_impl(params: HashMap<String, String>, source: &str) -> 
         );
     }
     flow.code = Some(code.clone());
-    if let Ok(token_url) = std::env::var("GOOGLE_OAUTH_TOKEN_URL")
-        && let Ok(client) = reqwest::Client::builder()
-            .timeout(crate::common::cmd_timeout::duration())
-            .build()
-        && let Ok(response) = client
-            .post(&token_url)
-            .form(&[
-                ("grant_type", "authorization_code"),
-                ("code", code.as_str()),
-                ("client_id", flow.client_id.as_str()),
-                ("client_secret", flow.client_secret.as_str()),
-                ("redirect_uri", flow.redirect_uri.as_str()),
-            ])
-            .send()
-            .await
-        && response.status().is_success()
-        && let Ok(json) = response.json::<serde_json::Value>().await
-    {
-        flow.access_token = json
-            .get("access_token")
-            .and_then(|value| value.as_str())
-            .map(str::to_string);
-        flow.refresh_token = json
-            .get("refresh_token")
-            .and_then(|value| value.as_str())
-            .map(str::to_string);
-    }
+    let token_url = std::env::var("GOOGLE_OAUTH_TOKEN_URL").ok();
+    google_token_exchange(&mut flow, &code, token_url.as_deref()).await;
     google_registry()
         .write()
         .expect("flow lock poisoned")
@@ -615,6 +637,117 @@ mod tests {
         FLOW_TEST_LOCK
             .lock()
             .unwrap_or_else(|error| error.into_inner())
+    }
+
+    /// A one-shot local token endpoint: answers the next POST with body and
+    /// yields the received request so the submitted form fields can be checked.
+    fn mock_token_endpoint(body: &'static str) -> (String, std::thread::JoinHandle<String>) {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock token endpoint");
+        let address = listener.local_addr().expect("mock address");
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept token request");
+            let mut buffer = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                match stream.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(count) => {
+                        buffer.extend_from_slice(&chunk[..count]);
+                        let text = String::from_utf8_lossy(&buffer).to_string();
+                        if let Some(split) = text.find("\r\n\r\n") {
+                            let expected = text[..split]
+                                .lines()
+                                .find_map(|line| {
+                                    let (name, value) = line.split_once(':')?;
+                                    if name.eq_ignore_ascii_case("content-length") {
+                                        value.trim().parse::<usize>().ok()
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap_or(0);
+                            if buffer.len() >= split + 4 + expected {
+                                break;
+                            }
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.flush();
+            String::from_utf8_lossy(&buffer).to_string()
+        });
+        (format!("http://127.0.0.1:{}/token", address.port()), handle)
+    }
+
+    fn box_flow_for_test() -> BoxFlow {
+        BoxFlow {
+            client_id: "client".into(),
+            client_secret: "secret".into(),
+            redirect_uri: "https://example.com/box/callback".into(),
+            created_at: SystemTime::now(),
+            code: None,
+            access_token: None,
+            refresh_token: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn box_token_exchange_posts_the_code_and_stores_tokens() {
+        let (url, handle) =
+            mock_token_endpoint(r#"{"access_token":"box-access","refresh_token":"box-refresh"}"#);
+        let mut flow = box_flow_for_test();
+        box_token_exchange(&mut flow, "auth-code", Some(&url)).await;
+        assert_eq!(flow.access_token.as_deref(), Some("box-access"));
+        assert_eq!(flow.refresh_token.as_deref(), Some("box-refresh"));
+        let request = handle.join().expect("mock endpoint thread");
+        assert!(request.starts_with("POST /token "), "{request}");
+        assert!(
+            request.contains("grant_type=authorization_code"),
+            "{request}"
+        );
+        assert!(request.contains("code=auth-code"), "{request}");
+        assert!(request.contains("client_id=client"), "{request}");
+        assert!(request.contains("client_secret=secret"), "{request}");
+    }
+
+    #[tokio::test]
+    async fn token_exchange_without_an_endpoint_keeps_the_flow_code() {
+        let mut flow = box_flow_for_test();
+        box_token_exchange(&mut flow, "auth-code", None).await;
+        assert!(flow.access_token.is_none());
+        assert!(flow.refresh_token.is_none());
+    }
+
+    #[tokio::test]
+    async fn google_token_exchange_posts_the_code_and_stores_tokens() {
+        let (url, handle) = mock_token_endpoint(
+            r#"{"access_token":"google-access","refresh_token":"google-refresh"}"#,
+        );
+        let mut flow = GoogleFlow {
+            source: "gmail".into(),
+            client_id: "client".into(),
+            client_secret: "secret".into(),
+            redirect_uri: "https://example.com/gmail/callback".into(),
+            raw_config: "{}".into(),
+            created_at: SystemTime::now(),
+            code: None,
+            access_token: None,
+            refresh_token: None,
+        };
+        google_token_exchange(&mut flow, "auth-code", Some(&url)).await;
+        assert_eq!(flow.access_token.as_deref(), Some("google-access"));
+        assert_eq!(flow.refresh_token.as_deref(), Some("google-refresh"));
+        let request = handle.join().expect("mock endpoint thread");
+        assert!(request.contains("code=auth-code"), "{request}");
     }
 
     #[test]

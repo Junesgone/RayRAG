@@ -120,6 +120,23 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length") or 0)
+        if self.path in ("/box/token", "/google/token"):
+            # OAuth token-exchange stub: the OAuth callbacks POST a form body and
+            # read back access_token/refresh_token.
+            form_length = int(self.headers.get("Content-Length") or 0)
+            form = (self.rfile.read(form_length) if form_length else b"").decode("utf-8", "replace")
+            with open("/tmp/mock-oauth.log", "a", encoding="utf-8") as log:
+                log.write(self.path + " " + form + "\n")
+            provider = "box" if self.path == "/box/token" else "google"
+            self._send(
+                {
+                    "access_token": provider + "-access-from-mock",
+                    "refresh_token": provider + "-refresh-from-mock",
+                    "expires_in": 3600,
+                    "token_type": "bearer",
+                }
+            )
+            return
         raw = self.rfile.read(length) if length else b"{}"
         try:
             payload = json.loads(raw or b"{}")

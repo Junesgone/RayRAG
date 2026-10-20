@@ -2,6 +2,20 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.53.0] - 2026-10-21
+
+### The data-source OAuth token fields mint real tokens
+
+- The Box and Gmail/Google-Drive token fields exchange the authorization code at
+  the configured token endpoint (BOX_OAUTH_TOKEN_URL / GOOGLE_OAUTH_TOKEN_URL)
+  and store the returned access and refresh tokens in the connector credentials.
+  The exchange is extracted into a shared helper with unit tests that post the
+  authorization-code form to a local one-shot endpoint and assert the stored
+  tokens, plus the no-endpoint path that keeps the code.
+- End-to-end probe: Box start → popup callback → result returns the minted
+  tokens; Gmail does the same and the resulting credentials create a gmail
+  connector; the mock token endpoint logs both authorization-code form posts.
+
 ## [0.52.0] - 2026-10-21
 
 ### The search answer stream and the mind map work end to end
