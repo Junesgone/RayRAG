@@ -2,6 +2,30 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.49.0] - 2026-10-21
+
+### The search settings avatar uses the shared cropper
+
+- The search page's settings drawer now uploads its avatar through the same
+  crop dialog as the user profile: pick an image, drag/zoom the square in the
+  shared `avatar-upload` modal, and the 64x64 data URL is shown in the drawer
+  with a remove button. Non-image files and images over 4 MB are rejected with
+  the upstream copy.
+- `SearchAppSeed` gained the `avatar` column (`POST`/`PUT /api/v1/searchapps`),
+  so the cropped image survives save and reload exactly like the React
+  `AvatarNameDescription` field.
+- The avatar crop dialog is now mounted once in the shared page shell instead of
+  only inside the user-settings area, so every avatar uploader opens the same
+  modal.
+
+### Admin console re-audited against v0.27.2
+
+- The admin console CDP battery was re-run on the release build and all
+  reachable pages matched: console login/guard/cache trio, the services table
+  (search, paging, hover action icons, typed JSON view and detail dialogs), the
+  users table (superuser selector, password/delete dialogs, own-row hiding) and
+  the user detail page with its datasets/agents tables.
+
 ## [0.48.0] - 2026-10-20
 
 ### The Artifacts tab shows the compiled wiki

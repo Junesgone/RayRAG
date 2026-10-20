@@ -561,6 +561,8 @@ fn t(k: &str, zh: bool) -> &str {
         }
         "Add data source" => "添加数据源",
         "Connectors sync their content into this dataset." => "连接器会将其内容同步到该知识库。",
+        "Only JPG/JPEG/PNG/WebP/BMP images are supported" => "仅支持 JPG/JPEG/PNG/WebP/BMP 图片",
+        "The avatar image must be 4 MB or smaller" => "头像图片不能超过 4 MB",
         _ => k,
     }
 }
@@ -810,6 +812,10 @@ fn layout(title: &str, body: &str, zh: bool) -> String {
     h.push_str("'>U</a></div></header>");
     h.push_str("<div class='ct'>");
     h.push_str(body);
+    // Upstream avatar-upload.tsx is a shared component: mount its crop
+    // dialog once in the shell so every avatar uploader can open it.
+    h.push_str(&avatar_crop_markup(zh));
+    h.push_str(AVATAR_CROP_JS);
     h.push_str("</div>");
     h.push_str("<script>");
     h.push_str(RAYRAG_STORE_JS);
@@ -1036,6 +1042,16 @@ function avatarCropConfirm(){var modal=document.getElementById('avatarCropModal'
 function avatarCropCancel(){var modal=document.getElementById('avatarCropModal');modal.classList.remove('show');if(modal._resolve)modal._resolve(null)}
 </script>"#;
 
+/// Upstream avatar-upload.tsx crop dialog markup. Mounted once by
+/// [layout] so every avatar uploader (user settings, search settings, dataset
+/// configuration) opens the same dialog, exactly like the shared React component.
+fn avatar_crop_markup(zh: bool) -> String {
+    let modal = r#"<div class='modal-overlay' id='avatarCropModal' data-testid='avatar-crop-dialog' onclick='if(event.target===this)avatarCropCancel()'><div class='modal avatar-crop-modal' role='dialog' aria-modal='true' aria-labelledby='avatarCropTitle'><h2 id='avatarCropTitle'>Crop image</h2><div class='avatar-crop-stage' id='avatarCropStage'><img class='avatar-crop-image' id='avatarCropImage' alt=''><div class='avatar-crop-box' id='avatarCropBox' data-testid='avatar-crop-box'></div></div><p class='user-setting-description'>Drag the selection to choose the square used for the avatar.</p><div class='provider-instance-actions'><button class='btn btn-o' type='button' id='avatarCropCancel' onclick='avatarCropCancel()'>{crop_cancel_label}</button><button class='btn btn-p' type='button' id='avatarCropOk' data-testid='avatar-crop-confirm' onclick='avatarCropConfirm()'>{crop_ok_label}</button></div></div></div>"#;
+    modal
+        .replace("{crop_ok_label}", &t("OK", zh))
+        .replace("{crop_cancel_label}", &t("Cancel", zh))
+}
+
 fn user_setting_layout(title: &str, body: &str, active: UserSettingSection, zh: bool) -> String {
     let theme_label = if zh { "主题" } else { "Theme" };
     let logout_label = if zh { "退出登录" } else { "Log out" };
@@ -1072,17 +1088,13 @@ fn user_setting_layout(title: &str, body: &str, active: UserSettingSection, zh: 
     let theme_pressed = if zh { "深色" } else { "dark" };
     let shell = format!(
         r#"<div class='user-setting-layout' data-testid='user-setting-layout'><aside class='user-setting-sidebar' aria-label='{sidebar_label}'><div class='user-setting-account'><span class='user-setting-avatar' id='userSettingAvatar' aria-hidden='true'>U</span><span class='user-setting-email' id='userSettingEmail'>...</span></div><nav class='user-setting-nav'>{nav}</nav><footer class='user-setting-footer'><div class='user-setting-footer-row'><span class='user-setting-version'>{version}</span><button type='button' class='theme-switch' role='switch' aria-checked='true' aria-label='{theme_label}' data-theme-state='{theme_pressed}' onclick='toggleTheme()'><span class='theme-switch-track' aria-hidden='true'><svg class='theme-sun' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round'><circle cx='12' cy='12' r='4'/><path d='M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4'/></svg><svg class='theme-moon' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12.8A8.5 8.5 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z'/></svg></span></button></div><button type='button' class='user-setting-footer-button user-setting-logout' aria-label='{logout_label}' onclick='logoutUser()'><span aria-hidden='true'><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><path d='M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4'/><path d='m16 17 5-5-5-5'/><path d='M21 12H9'/></svg></span><span class='user-setting-footer-label'>{logout_label}</span></button></footer></aside><main class='user-setting-content' data-setting-page='{active_key}'>{body}</main></div><script>function logoutUser(){{localStorage.removeItem('rayrag_token');document.cookie='rayrag_token=;path=/;max-age=0';location.href='/login'}}function settingUnauthorized(){{logoutUser()}}function loadSettingUser(){{fetch('/api/v1/user/info').then(function(response){{return response.json()}}).then(function(result){{if(result.code===401){{settingUnauthorized();return}}var user=result.data||{{}};var name=(user.nickname||user.email||'U').trim();document.getElementById('userSettingAvatar').textContent=name.charAt(0).toUpperCase()||'U';document.getElementById('userSettingEmail').textContent=user.email||user.nickname||''}}).catch(function(){{}})}}loadSettingUser()</script>
-<div class='modal-overlay' id='avatarCropModal' data-testid='avatar-crop-dialog' onclick='if(event.target===this)avatarCropCancel()'><div class='modal avatar-crop-modal' role='dialog' aria-modal='true' aria-labelledby='avatarCropTitle'><h2 id='avatarCropTitle'>Crop image</h2><div class='avatar-crop-stage' id='avatarCropStage'><img class='avatar-crop-image' id='avatarCropImage' alt=''><div class='avatar-crop-box' id='avatarCropBox' data-testid='avatar-crop-box'></div></div><p class='user-setting-description'>Drag the selection to choose the square used for the avatar.</p><div class='provider-instance-actions'><button class='btn btn-o' type='button' id='avatarCropCancel' onclick='avatarCropCancel()'>{crop_cancel_label}</button><button class='btn btn-p' type='button' id='avatarCropOk' data-testid='avatar-crop-confirm' onclick='avatarCropConfirm()'>{crop_ok_label}</button></div></div></div>"#,
+"#,
         version = crate::build_info::version_line(),
         active_key = active.key(),
         sidebar_label = if zh { "用户设置" } else { "User settings" },
         // Upstream renders the crop dialog's footer through `common.ok` /
         // `common.cancel`, so the shared shell localises them too.
-        crop_ok_label = t("OK", zh),
-        crop_cancel_label = t("Cancel", zh),
     );
-    let mut shell = shell;
-    shell.push_str(AVATAR_CROP_JS);
     layout(title, &shell, zh)
 }
 
@@ -4599,10 +4611,10 @@ function ssRerankSync(){var field=document.getElementById('ssTopKField');if(fiel
 function ssRefMetaChange(){var row=document.getElementById('ssMetaFieldsRow');var on=ssChecked('ssRefMeta');if(row)row.hidden=!on;if(on)ssMetaKeysLoad();ssTouch('ssRefMeta')}
 function ssSummaryChange(){var fields=document.getElementById('ssLlmFields');if(fields)fields.hidden=!ssChecked('ssSummary');ssTouch('ssSummary')}
 function ssFreedomChange(){var presets={default:['0.7','0.9','0.0','0.0'],precise:['0.2','0.1','0.0','0.0'],balanced:['0.5','0.8','0.0','0.0'],imaginative:['1.0','0.95','0.2','0.2']};var picked=presets[ssValue('ssFreedom','default')];if(!picked)return;[['ssTemperature',picked[0]],['ssTopP',picked[1]],['ssPresencePenalty',picked[2]],['ssFrequencyPenalty',picked[3]]].forEach(function(pair){var node=document.getElementById(pair[0]);if(node)node.value=pair[1];var toggle=document.getElementById(pair[0]+'On');if(toggle)toggle.checked=true;ssTouch(pair[0])})}
-function ssAvatarPick(input){var file=input&&input.files&&input.files[0];if(!file)return;var reader=new FileReader();reader.onload=function(){var image=document.getElementById('ssAvatarImg');var empty=document.getElementById('ssAvatarEmpty');if(image){image.src=String(reader.result||'');image.hidden=false}if(empty)empty.hidden=true;ssTouch('ssAvatar')};reader.readAsDataURL(file)}
+function ssAvatarPick(input){var file=input&&input.files&&input.files[0];if(!file)return;var name=String(file.name||'').toLowerCase();if(!/\.(jpg|jpeg|png|webp|bmp)$/.test(name)){alert(SEARCH_LABELS.avatarTypeError);input.value='';return}if(file.size>4*1024*1024){alert(SEARCH_LABELS.avatarSizeError);input.value='';return}openAvatarCropModal(file,'','ssAvatarImg').then(function(data){input.value='';if(data===null)return;var image=document.getElementById('ssAvatarImg');var empty=document.getElementById('ssAvatarEmpty');var clear=document.getElementById('ssAvatarClear');if(image){image.src=data;image.hidden=false}if(empty)empty.hidden=true;if(clear)clear.hidden=false;ssTouch('ssAvatar')}).catch(function(error){input.value='';alert(String((error&&error.message)||error))})}function ssAvatarClear(){var image=document.getElementById('ssAvatarImg');var empty=document.getElementById('ssAvatarEmpty');var clear=document.getElementById('ssAvatarClear');if(image){image.removeAttribute('src');image.hidden=true}if(empty)empty.hidden=false;if(clear)clear.hidden=true;ssTouch('ssAvatar')}
 function ssMetaFieldsPayload(){var out=[];document.querySelectorAll('#ssMetaFields .ss-chip.on').forEach(function(chip){out.push(chip.dataset.value)});return out}
 function ssMetaFilterPayload(){var method=ssValue('ssMetaMethod','disabled');if(method==='disabled')return null;if(method==='auto')return {method:'auto'};if(method==='semi_auto'){var semi=[];document.querySelectorAll('#ssMetaSemiRows .ss-meta-row').forEach(function(row){var key=(row.querySelector('.ss-meta-key')||{}).value||'';var op=(row.querySelector('.ss-meta-op')||{}).value||'';if(!key)return;semi.push(op?{key:key,op:op}:key)});return {method:'semi_auto',semi_auto:semi}}var manual=[];document.querySelectorAll('#ssMetaManualRows .ss-meta-row').forEach(function(row){var key=((row.querySelector('.ss-meta-key')||{}).value||'').trim();var op=(row.querySelector('.ss-meta-op')||{}).value||'';var value=(row.querySelector('.ss-meta-value')||{}).value||'';if(key)manual.push({key:key,op:op,value:value})});return {method:'manual',logic:'and',manual:manual}}
-function ssLoad(app){if(!app)return;var name=document.getElementById('ssName');if(name)name.value=app.name||'';var desc=document.getElementById('ssDesc');if(desc)desc.value=app.description||SEARCH_LABELS.descriptionValue;var image=document.getElementById('ssAvatarImg');var empty=document.getElementById('ssAvatarEmpty');if(image&&app.avatar){image.src=app.avatar;image.hidden=false;if(empty)empty.hidden=true}var mind=document.getElementById('ssMindmap');if(mind)mind.checked=!!app.query_mindmap;var summary=document.getElementById('ssSummary');if(summary)summary.checked=!!app.summary;ssSummaryChange();var refmeta=(app.reference_metadata||{});var refSwitch=document.getElementById('ssRefMeta');if(refSwitch){refSwitch.checked=!!refmeta.include;ssRefMetaChange()}var filter=app.meta_data_filter||null;var method=document.getElementById('ssMetaMethod');if(method){method.value=(filter&&filter.method)||'disabled';if(filter&&filter.method==='manual'){(filter.manual||[]).forEach(function(item){ssMetaAddRow();var rows=document.querySelectorAll('#ssMetaManualRows .ss-meta-row');var row=rows[rows.length-1];if(!row)return;(row.querySelector('.ss-meta-key')||{}).value=item.key||'';(row.querySelector('.ss-meta-op')||{}).value=item.op||'=';(row.querySelector('.ss-meta-value')||{}).value=item.value==null?'':String(item.value)})}if(filter&&filter.method==='semi_auto'){(filter.semi_auto||[]).forEach(function(item){ssMetaAddSemiRow();var rows=document.querySelectorAll('#ssMetaSemiRows .ss-meta-row');var row=rows[rows.length-1];if(!row)return;var key=typeof item==='string'?item:(item.key||'');(row.querySelector('.ss-meta-key')||{}).value=key;(row.querySelector('.ss-meta-op')||{}).value=(item&&item.op)||''})}ssMetaChange()}}
+function ssLoad(app){if(!app)return;var name=document.getElementById('ssName');if(name)name.value=app.name||'';var desc=document.getElementById('ssDesc');if(desc)desc.value=app.description||SEARCH_LABELS.descriptionValue;var image=document.getElementById('ssAvatarImg');var empty=document.getElementById('ssAvatarEmpty');var clear=document.getElementById('ssAvatarClear');if(image&&app.avatar){image.src=app.avatar;image.hidden=false;if(empty)empty.hidden=true;if(clear)clear.hidden=false}else{if(image){image.removeAttribute('src');image.hidden=true}if(empty)empty.hidden=false;if(clear)clear.hidden=true}var mind=document.getElementById('ssMindmap');if(mind)mind.checked=!!app.query_mindmap;var summary=document.getElementById('ssSummary');if(summary)summary.checked=!!app.summary;ssSummaryChange();var refmeta=(app.reference_metadata||{});var refSwitch=document.getElementById('ssRefMeta');if(refSwitch){refSwitch.checked=!!refmeta.include;ssRefMetaChange()}var filter=app.meta_data_filter||null;var method=document.getElementById('ssMetaMethod');if(method){method.value=(filter&&filter.method)||'disabled';if(filter&&filter.method==='manual'){(filter.manual||[]).forEach(function(item){ssMetaAddRow();var rows=document.querySelectorAll('#ssMetaManualRows .ss-meta-row');var row=rows[rows.length-1];if(!row)return;(row.querySelector('.ss-meta-key')||{}).value=item.key||'';(row.querySelector('.ss-meta-op')||{}).value=item.op||'=';(row.querySelector('.ss-meta-value')||{}).value=item.value==null?'':String(item.value)})}if(filter&&filter.method==='semi_auto'){(filter.semi_auto||[]).forEach(function(item){ssMetaAddSemiRow();var rows=document.querySelectorAll('#ssMetaSemiRows .ss-meta-row');var row=rows[rows.length-1];if(!row)return;var key=typeof item==='string'?item:(item.key||'');(row.querySelector('.ss-meta-key')||{}).value=key;(row.querySelector('.ss-meta-op')||{}).value=(item&&item.op)||''})}ssMetaChange()}}
 function ssPayload(){return {name:ssValue('ssName',''),description:ssValue('ssDesc',''),avatar:(document.getElementById('ssAvatarImg')||{}).src||'',kb_ids:searchDocsSelectedKbs(),top_k:ssNumber('topK',1024),similarity_threshold:ssNumber('thresh',0.3),vector_similarity_weight:ssNumber('vWeight',0.7),rerank:ssChecked('rerank'),rerank_id:(function(){var node=document.getElementById('searchRerankSel');return node?(node.dataset.value||''):''})(),related_search:ssChecked('relatedSearch'),query_mindmap:ssChecked('ssMindmap'),summary:ssChecked('ssSummary'),llm_setting:ssLlmPayload(),reference_metadata:{include:ssChecked('ssRefMeta'),fields:(ssChecked('ssRefMeta')?ssMetaFieldsPayload():[])},meta_data_filter:ssMetaFilterPayload()}}
 function ssLlmPayload(){var out={};[['temperature','ssTemperature'],['top_p','ssTopP'],['presence_penalty','ssPresencePenalty'],['frequency_penalty','ssFrequencyPenalty']].forEach(function(pair){var toggle=document.getElementById(pair[1]+'On');if(toggle&&toggle.checked)out[pair[0]]=ssNumber(pair[1],0)});var freedom=ssValue('ssFreedom','default');if(freedom!=='default')out.parameter=freedom;return out}
 function ssSave(){var body=ssPayload();var app=window.__SAPP__;var url=app&&app.id?'/api/v1/searchapps/'+encodeURIComponent(app.id):'/api/v1/searchapps';var method=app&&app.id?'PUT':'POST';fetch(url,{method:method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(response){return response.json()}).then(function(data){if(data.code!==0){alert('Save failed: '+(data.message||'unknown'));return}ssToggle(false)}).catch(function(error){alert('Save failed: '+error.message)})}
@@ -4632,6 +4644,8 @@ function ssCancel(){var app=window.__SAPP__;if(app)ssLoad(app);ssToggle(false)}
         "metaValue": t("Value", zh),
         "metaAuto": t("Automatic", zh),
         "remove": t("Remove", zh),
+        "avatarTypeError": t("Only JPG/JPEG/PNG/WebP/BMP images are supported", zh),
+        "avatarSizeError": t("The avatar image must be 4 MB or smaller", zh),
     })));
     b.push_str(";</script>");
     b.push_str("<script>var SEARCH_EMPTY_HTML=");
@@ -10151,7 +10165,7 @@ fn push_search_settings_drawer(b: &mut String, zh: bool) {
          aria-label='",
     );
     b.push_str(t("Avatar", zh));
-    b.push_str("' onclick=\"document.getElementById('ssAvatarFile').click()\"><img id='ssAvatarImg' alt='' hidden><span id='ssAvatarEmpty'>+</span></button><input type='file' id='ssAvatarFile' accept='image/*' hidden onchange='ssAvatarPick(this)'></div>");
+    b.push_str("' onclick=\"document.getElementById('ssAvatarFile').click()\"><img id='ssAvatarImg' alt='' hidden><span id='ssAvatarEmpty'>+</span></button><button type='button' class='ss-avatar-clear' id='ssAvatarClear' data-testid='search-settings-avatar-clear' hidden onclick='ssAvatarClear()' aria-label='Remove'>×</button><input type='file' id='ssAvatarFile' accept='image/*' hidden onchange='ssAvatarPick(this)'></div>");
     b.push_str("<label class='ss-field'><span class='ss-label'>");
     b.push_str(t("Name", zh));
     b.push_str("</span><input id='ssName' class='ss-input' oninput=\"ssTouch('ssName')\"></label>");
@@ -17207,12 +17221,25 @@ connection: close
             "if(ssChecked('ssSummary')){body.summary=true}",
             "if(ssChecked('ssMindmap')){body.query_mindmap=true}",
             "if(mindButton)mindButton.hidden=!ssChecked('ssMindmap');",
+            // Shared `components/avatar-upload.tsx` crop dialog: the drawer's
+            // avatar opens the same modal the user-setting shell mounts.
+            "id='avatarCropModal'",
+            "data-testid='search-settings-avatar-clear'",
+            "function ssAvatarClear(){",
+            "openAvatarCropModal(file,'','ssAvatarImg')",
+            "avatarTypeError",
+            "avatarSizeError",
         ] {
             assert!(
                 body.contains(marker),
                 "search settings marker missing: {marker}"
             );
         }
+        assert_eq!(
+            body.matches("id='avatarCropModal'").count(),
+            1,
+            "the shared crop dialog must be mounted exactly once"
+        );
         // The old fixed sidebar card is gone.
         assert!(
             !body.contains("Settings sidebar") && !body.contains(">Quick Questions<"),

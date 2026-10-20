@@ -16,6 +16,10 @@ pub struct SearchAppRecord {
     /// Emoji icon (RAGFlow HomeCard avatar).
     #[serde(default)]
     pub icon: String,
+    /// Uploaded avatar image (base64 data URL), `search-settings.tsx`
+    /// `AvatarNameDescription`. Empty falls back to the letter avatar.
+    #[serde(default)]
+    pub avatar: String,
     #[serde(default)]
     pub description: String,
     #[serde(default)]
@@ -80,6 +84,8 @@ pub struct SearchAppRecord {
 pub struct SearchAppCreate {
     pub name: String,
     #[serde(default)]
+    pub avatar: String,
+    #[serde(default)]
     pub kb_ids: Vec<String>,
     #[serde(default)]
     pub hybrid: bool,
@@ -125,6 +131,7 @@ impl Default for SearchAppCreate {
     fn default() -> Self {
         Self {
             name: String::new(),
+            avatar: String::new(),
             kb_ids: Vec::new(),
             hybrid: false,
             rerank: false,
@@ -221,6 +228,7 @@ impl SearchAppStore {
             name: req.name.trim().to_string(),
             owner_id: owner_id.to_string(),
             icon: String::new(),
+            avatar: req.avatar,
             description: String::new(),
             kb_ids: req.kb_ids,
             hybrid: req.hybrid,
@@ -357,6 +365,8 @@ pub struct UpdateSearchAppRequest {
     #[serde(default)]
     pub icon: Option<String>,
     #[serde(default)]
+    pub avatar: Option<String>,
+    #[serde(default)]
     pub kb_ids: Option<Vec<String>>,
     #[serde(default)]
     pub hybrid: Option<bool>,
@@ -441,6 +451,12 @@ pub async fn update_search_app(
             next.icon = icon;
             changed = true;
         }
+    }
+    if let Some(avatar) = body.avatar
+        && avatar != next.avatar
+    {
+        next.avatar = avatar;
+        changed = true;
     }
     if let Some(kb_ids) = body.kb_ids
         && kb_ids != next.kb_ids
@@ -574,6 +590,7 @@ mod tests {
                 "u1",
                 SearchAppCreate {
                     name: "rerank-app".into(),
+                    avatar: "data:image/png;base64,AAAA".into(),
                     kb_ids: vec![],
                     hybrid: false,
                     rerank: true,
@@ -586,8 +603,10 @@ mod tests {
             )
             .unwrap();
         assert_eq!(rec.rerank_id, "prov/inst/bge-reranker-v2-m3");
+        assert_eq!(rec.avatar, "data:image/png;base64,AAAA");
         let got = store.get(&rec.id).unwrap();
         assert_eq!(got.rerank_id, "prov/inst/bge-reranker-v2-m3");
+        assert_eq!(got.avatar, "data:image/png;base64,AAAA");
         assert_eq!(got.similarity_threshold, 0.2);
         assert_eq!(got.vector_similarity_weight, 0.3);
         std::fs::remove_dir_all(dir).ok();
@@ -602,6 +621,7 @@ mod tests {
                 "u1",
                 SearchAppCreate {
                     name: "related".into(),
+                    avatar: String::new(),
                     kb_ids: vec!["kb1".into()],
                     hybrid: false,
                     rerank: false,
@@ -687,10 +707,11 @@ mod tests {
     #[test]
     fn update_request_parses_partial_fields() {
         let req: UpdateSearchAppRequest = serde_json::from_str(
-            r#"{"name":"新名","rerank":true,"rerank_id":"prov/inst/m3","top_k":12,"similarity_threshold":0.6,"vector_similarity_weight":0.4}"#,
+            r#"{"name":"新名","avatar":"data:image/png;base64,BBBB","rerank":true,"rerank_id":"prov/inst/m3","top_k":12,"similarity_threshold":0.6,"vector_similarity_weight":0.4}"#,
         )
         .unwrap();
         assert_eq!(req.name.as_deref(), Some("新名"));
+        assert_eq!(req.avatar.as_deref(), Some("data:image/png;base64,BBBB"));
         assert!(req.rerank == Some(true));
         assert_eq!(req.top_k, Some(12));
         assert!(req.hybrid.is_none());

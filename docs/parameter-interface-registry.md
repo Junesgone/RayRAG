@@ -1151,3 +1151,39 @@ difference exists only after the client script runs. Verify page levels by rende
 1. `scripts/ui-traversal/mock-compilation-model-server.py`：本地 OpenAI 兼容 stub（/v1/embeddings + /v1/chat/completions；MAP JSON、partition/route JSON、SUMMARY/TITLE/TOPIC 页面 markdown），让 MAP→COMPILE 端到端离线可跑。
 2. debug 实例 env：`LLM_API_BASE=http://127.0.0.1:18089/v1 LLM_MODEL=mock-model EMBED_API_BASE=... EMBED_MODEL=mock-embedding RAYRAG_EMBEDDING_DIMENSION=384`。
 3. `scripts/ui-traversal/compilation-artifacts-view-cdp.mjs`：创建带 pipeline_id 的探针数据集→上传→加 chunk→CDP 点击 Generate→workspace/topic/page 详情/搜索/Graph tab/模式切换/Clear；断言 26 项（0 pageerror）。
+
+## 搜索应用（searchapps）头像面（RAGFlow v0.27.2 对齐，v0.3.10al）
+
+> 供后续代码/接口编写查询：搜索应用的 avatar 列、共享头像裁剪对话框与 CDP 验证方法。基线同前（commit a024bea0cd93）。
+
+### 数据列
+
+| 字段 | 位置 | 语义 |
+| --- | --- | --- |
+| avatar | SearchAppRecord / SearchAppCreate / UpdateSearchAppRequest | 64×64 PNG data URL（data:image/png;base64,...）；空串=无头像；serde(default) 兼容旧记录 |
+
+- POST /api/v1/searchapps：body 可带 avatar（可选，缺省空）。
+- PUT /api/v1/searchapps/{id} / PUT /api/v1/searches/{id}：局部更新，avatar 缺省保持、空串清除；响应 {code:0,message:"Updated"}（avatar 通过 GET 回读）。
+- GET /api/v1/searchapps/{id}：返回完整记录，含 avatar。
+- 上游等价：ISearchAppDetailProps.avatar + search-setting.tsx 的 avatar form 字段 + useUpdateSearch。
+
+### UI 行为
+
+- 设置抽屉 Avatar 行（#ssAvatarBtn / #ssAvatarFile / #ssAvatarImg / #ssAvatarEmpty / #ssAvatarClear）：
+  - 点击 → 文件选择（accept=image/*）；前端校验扩展名 JPG/JPEG/PNG/WebP/BMP 与 ≤4MB，错误文案 SEARCH_LABELS.avatarTypeError / avatarSizeError（中英）。
+  - 选择后打开共享裁剪对话框 #avatarCropModal（data-testid='avatar-crop-dialog'；拖拽选区、滚轮缩放、Cancel/OK）→ openAvatarCropModal(file,'','ssAvatarImg') 返回 64×64 data URL → 写入预览并显示移除按钮。
+  - 移除按钮 → 清空预览 + 隐藏自身；ssLoad(app) 按 app.avatar 恢复/清空。
+- 共享壳：fn layout 每页挂载 avatar_crop_markup(zh) + AVATAR_CROP_JS，恰好一份 #avatarCropModal；layout_plain（登录/无头页）不挂。
+- 上游对照：共享组件 components/avatar-upload.tsx 同时被 profile 与 search-setting 使用；本轮把该对话框从 user-setting 壳上移到全局 layout。
+
+### 证据方法
+
+    RAYRAG_CDP_ORIGIN=http://127.0.0.1:9390 \
+    RAYRAG_LOGIN_PASSWORD=<admin pass> \
+    RAYRAG_ADMIN_EMAIL=admin@rayrag.local \
+    node scripts/ui-traversal/search-settings-drawer-cdp.mjs
+    # 23/23 checks：crop 对话框打开、64×64 data URL 预览、保存持久化、重载恢复、清空持久化
+
+### 管理控制台复核批次（同轮）
+
+scripts/ui-traversal/admin-*.mjs 9 个脚本（console / login-form / identity-cache / services-table / service-dialogs / user-detail / user-detail-tables / users-cells / user-forms）在当前构建全绿（0 error）；sandbox 两脚本需 /tmp/rr-sshd fixture。台账对应 7 行 admin partial 已翻 aligned。

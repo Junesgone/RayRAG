@@ -17968,6 +17968,42 @@ mod tests {
             assert_eq!(body["data"]["id"], app_id, "{uri}");
         }
 
+        // The avatar column the settings drawer's crop dialog writes travels
+        // through the same partial-update route and back out of GET.
+        let updated = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri(format!("/api/v1/searchapps/{app_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"avatar": "data:image/png;base64,ZZZZ"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated.status(), StatusCode::OK);
+        let updated = response_json(updated).await;
+        assert_eq!(updated["code"], 0);
+        let fetched = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/searchapps/{app_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response_json(fetched).await["data"]["avatar"],
+            "data:image/png;base64,ZZZZ"
+        );
+
         // Unknown id and a foreign app keep upstream's messages.
         let response = router
             .clone()

@@ -109,16 +109,19 @@ try {
 
   await ctx.addCookies([{ name: "lang", value: "en", domain: "127.0.0.1", path: "/" }]);
   await page.goto(`${ORIGIN}/login`, { waitUntil: "domcontentloaded", timeout: 40000 });
-  await page.evaluate(async (password) => {
-    const res = await fetch("/api/v1/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: "admin@rayrag.local", password }),
-    });
-    const data = await res.json();
-    localStorage.setItem("rayrag_token", data.data.access_token);
-    document.cookie = "rayrag_token=" + data.data.access_token + ";path=/";
-  }, PASSWORD);
+  await page.evaluate(
+    async ({ email, password }) => {
+      const res = await fetch("/api/v1/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await res.json();
+      localStorage.setItem("rayrag_token", data.data.access_token);
+      document.cookie = "rayrag_token=" + data.data.access_token + ";path=/";
+    },
+    { email: EMAIL, password: PASSWORD },
+  );
   await page.goto(`${ORIGIN}/search`, { waitUntil: "domcontentloaded", timeout: 40000 });
   await page.waitForFunction(() => typeof window.ssToggle === "function", { timeout: 15000 });
   // The drawer's trigger lives in the results toolbar, which appears once a
@@ -143,6 +146,41 @@ try {
       (await page.getAttribute("#ssOpen", "aria-expanded")) === "true" &&
       (await page.locator("#ssDrawer").isVisible()),
     "drawer_opens_from_trigger",
+  );
+
+  // Avatar upload goes through the shared crop dialog (avatar-upload.tsx):
+  // pick a real PNG, confirm the 64x64 crop, and keep the data URL for save.
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  await page.setInputFiles("#ssAvatarFile", { name: "avatar.png", mimeType: "image/png", buffer: png });
+  await page.waitForFunction(
+    () => document.getElementById("avatarCropModal")?.classList.contains("show"),
+    { timeout: 15000 },
+  );
+  check(
+    await page.locator("[data-testid='avatar-crop-dialog']").isVisible(),
+    "avatar_crop_dialog_opens",
+  );
+  await page.click("#avatarCropOk");
+  await page.waitForTimeout(400);
+  const avatarPreview = await page.evaluate(() => {
+    const image = document.getElementById("ssAvatarImg");
+    const clear = document.getElementById("ssAvatarClear");
+    return {
+      hidden: image ? image.hidden : null,
+      src: image ? String(image.getAttribute("src") || "").slice(0, 32) : "",
+      clearHidden: clear ? clear.hidden : null,
+    };
+  });
+  results.avatarPreview = avatarPreview;
+  check(
+    avatarPreview.hidden === false &&
+      avatarPreview.src.startsWith("data:image/png") &&
+      avatarPreview.clearHidden === false,
+    "avatar_crop_writes_preview_and_clear",
+    JSON.stringify(avatarPreview),
   );
 
   const missing = await page.evaluate(
@@ -287,6 +325,15 @@ try {
   await page.click("[data-testid='search-settings-trigger']");
   await page.waitForTimeout(300);
   const renamed = `Drawer saved ${Date.now().toString(36)}`;
+  // Upload the avatar through the crop dialog in the session that saves, so
+  // the data URL rides the PUT payload.
+  await page.setInputFiles("#ssAvatarFile", { name: "avatar.png", mimeType: "image/png", buffer: png });
+  await page.waitForFunction(
+    () => document.getElementById("avatarCropModal")?.classList.contains("show"),
+    { timeout: 15000 },
+  );
+  await page.click("#avatarCropOk");
+  await page.waitForTimeout(400);
   await page.fill("#ssName", renamed);
   await page.click("[data-testid='search-settings-save']");
   await page.waitForTimeout(1500);
@@ -301,6 +348,38 @@ try {
   check(
     (await page.getAttribute("#ssDrawer", "data-open")) === "false",
     "save_closes_drawer",
+  );
+  check(
+    String(stored.body?.data?.avatar || "").startsWith("data:image/png"),
+    "save_persists_avatar_data_url",
+    JSON.stringify(String(stored.body?.data?.avatar || "").slice(0, 32)),
+  );
+
+  // The stored avatar reopens in the drawer; the clear affordance removes it.
+  // Refresh the page state from the saved record, then reopen the drawer.
+  await page.evaluate(
+    (app) => {
+      window.__SAPP__ = app;
+      if (typeof ssLoad === "function") ssLoad(app);
+      if (typeof ssToggle === "function") ssToggle(true);
+    },
+    stored.body.data,
+  );
+  await page.waitForTimeout(400);
+  check(
+    await page.locator("[data-testid='search-settings-avatar-clear']").isVisible(),
+    "stored_avatar_restores_clear_button",
+  );
+  await page.evaluate(() => document.getElementById("ssAvatarClear").click());
+  await page.waitForTimeout(200);
+  await page.click("[data-testid='search-settings-save']");
+  await page.waitForTimeout(1500);
+  const cleared = await api("/api/v1/searchapps/" + appId);
+  results.clearedAvatar = cleared.body?.data?.avatar;
+  check(
+    cleared.body?.data?.avatar === "",
+    "avatar_clear_persists",
+    JSON.stringify(cleared.body?.data?.avatar),
   );
 
   check(pageErrors.length === 0, "no_page_errors", pageErrors.join(" | "));
