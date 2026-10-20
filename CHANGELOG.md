@@ -2,6 +2,27 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.51.0] - 2026-10-21
+
+### Search settings edits reach the retrieval request
+
+- Discovered and fixed a real payload bug: the settings drawer marked the
+  similarity-threshold and vector-weight sliders with their element ids
+  (`thresh`/`vWeight`) while the retrieval builder checked `threshold`/`weight`,
+  so edited slider values never reached the request. `ssTouch` now records the
+  canonical keys too; the probe confirms an untouched request relies on the
+  saved search app config and an edited request carries the new threshold.
+- The user-setting shell now uses the upstream geometry exactly: a 303 px
+  sidebar from the `md` breakpoint and 64 px below it, with the active item
+  derived from the route and kept in sync across back/forward navigation.
+- The data-source grid uses the upstream breakpoint set (1 column, 2 columns
+  from 1024 px, 4 columns from 1536 px) instead of container queries that never
+  reached the 4-column layout; the upstream page has no per-source search box,
+  so the old residual is withdrawn.
+- Re-audited the UI route table: all `/chunk` views, the chat widget embed and
+  the agentbots log endpoint are registered and reachable, so the routes row is
+  aligned.
+
 ## [0.50.0] - 2026-10-21
 
 ### Fixed provider image assets and the remaining UI audit

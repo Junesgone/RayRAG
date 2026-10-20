@@ -1200,3 +1200,26 @@ scripts/ui-traversal/admin-*.mjs 9 个脚本（console / login-form / identity-c
 - 当前 svg mapping（v0.27.2 内实际存在的 factory）：LocalAI->local-ai.svg、Gemini->gemini.svg、StepFun->stepfun.svg、MinerU->mineru-bright.svg、PaddleOCR->paddleocr.svg、n1n->n1n.svg、Avian->avian.svg、RAGcon->ragcon.svg、SoMark->somark.svg、New API->new-api.svg、aimlapi.com->aimlapi.svg、Astraflow/Astraflow-CN->astraflow.svg、FastEmbed->fastembed.svg、FunASR->funasr.svg、FuturMix->futurmix.svg、GreenPT->greenpt.svg、MWS->mws.svg、Synthorai->synthorai.svg、Xiaomi->xiaomi.svg。
 - 资产来源：RAGFlow v0.27.2 web/src/assets/svg/llm/*.svg 全量（29 个），复制到 web/static/assets/svg/llm/。
 - 单测 provider_icons_resolve_svg_font_and_fallback 断言每个映射文件真实存在；CDP provider-cards-cdp.mjs 可验证 provider 卡片图标 <img>。
+
+## 搜索请求体 touched 语义 / user-setting 壳几何（RAGFlow v0.27.2 对齐，v0.3.10an）
+
+### 搜索页 retrieval 请求体
+
+- 带 search_id 的请求只发 {question, highlight, page, size, include_metadata, search_id} 等基础字段；top_k/similarity_threshold/vector_similarity_weight 由服务端从 Search App 的 search_config 解析（未触碰时不覆盖）。
+- 用户编辑后才加覆盖字段：
+  - #topK → __SEARCH_TOUCHED.topK → body.top_k；
+  - #thresh → __SEARCH_TOUCHED.threshold（canonical）→ body.similarity_threshold；
+  - #vWeight → __SEARCH_TOUCHED.weight → body.vector_similarity_weight。
+- ssTouch(id) 同时写元素原名与 canonical 别名；CDP search-hooks-cdp.mjs 验证未触碰不带、编辑后带 0.73。
+
+### user-setting 壳
+
+- 布局：display:grid; grid-template-columns:303px minmax(0,1fr)；@media (max-width:767px) → 64px minmax(0,1fr)（对应 upstream w-16 md:w-[303px]）。
+- 侧栏顺序与 upstream menuItems 一致：/model、/data-source、/chat-channel、/mcp、/team、/profile、/api；每页恰好一个 [data-setting-key][aria-current='page']。
+- CDP user-setting-shell-cdp.mjs：宽 303/64、7 页 active key、back/forward 同步。
+
+### data-source 可用源网格
+
+- 1 列；min-width:1024px → 2 列；min-width:1536px → 4 列（upstream lg/2xl viewport 断点，非容器查询）。
+- 上游 v0.27.2 该页无 per-source search（源码注释），不要按旧 residual 补搜索框。
+- CDP data-source-grid-cdp.mjs：6 档宽度列数 + hover Add + 无搜索框。
