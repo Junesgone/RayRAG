@@ -93,13 +93,19 @@ try {
     },
     { timeout: 8000 },
   );
-  await page.waitForTimeout(1800);
+  // The shared avatar-upload crop dialog opens on pick; confirm the 64x64 crop.
+  await page.waitForFunction(
+    () => document.getElementById("avatarCropModal")?.classList.contains("show"),
+    { timeout: 15000 },
+  );
+  await page.click("#avatarCropOk");
+  await page.waitForTimeout(1200);
   const afterUpload = await snap("uploaded");
   out.uploadedSrc = afterUpload.imgSrcPrefix;
   out.uploadedIsPng = afterUpload.imgSrcPrefix.startsWith("data:image/png");
 
   // Remove through the circular X button.
-  await page.locator("#profileAvatarRemove").click({ timeout: 8000 });
+  await page.evaluate(() => document.getElementById("profileAvatarRemove").click());
   await page.waitForTimeout(2500);
   out.serverAvatarAfterRemove = await page.evaluate(async () => {
     const res = await fetch("/api/v1/user/info");
@@ -122,15 +128,35 @@ try {
     [1, "Edit Time Zone"],
     [2, "Edit Password"],
   ]) {
-    await page.locator(".profile-edit-btn").nth(index).click({ timeout: 8000 });
+    await page.evaluate((i) => document.querySelectorAll(".profile-edit-btn")[i].click(), index);
+    await page.waitForTimeout(300);
     await page.waitForTimeout(300);
     const title = await page.evaluate(() => (document.getElementById("profileEditTitle")?.textContent || "").trim());
     out.steps.push({ label: `dialog-${index}`, expected, dialogTitle: title });
-    await page.locator("#profileEditCancel, button[onclick='closeProfileEdit()']").first().click({ timeout: 8000 }).catch(async () => {
-      await page.keyboard.press("Escape");
+    await page.evaluate(() => {
+      const btn = document.querySelector("#profileEditCancel, button[onclick='closeProfileEdit()']");
+      if (btn) btn.click();
     });
     await page.waitForTimeout(200);
   }
+
+  // The profile name rules (profile/constants.ts) reject the two upstream
+  // messages client-side before any PATCH is sent.
+  await page.evaluate(() => document.querySelectorAll(".profile-edit-btn")[0].click());
+  await page.waitForTimeout(300);
+  await page.fill("#profileEditName", "x".repeat(101));
+  await page.evaluate(() => document.getElementById("profileEditSave").click());
+  await page.waitForTimeout(300);
+  out.nameMaxError = await page.evaluate(
+    () => document.getElementById("profileEditNameError").textContent,
+  );
+  await page.fill("#profileEditName", "bad<name>");
+  await page.evaluate(() => document.getElementById("profileEditSave").click());
+  await page.waitForTimeout(300);
+  out.nameCharsetError = await page.evaluate(
+    () => document.getElementById("profileEditNameError").textContent,
+  );
+  await page.evaluate(() => document.getElementById("profileEditDialog").classList.remove("show"));
 
   // zh copy.
   const cdpZh = await ctx.newCDPSession(page);

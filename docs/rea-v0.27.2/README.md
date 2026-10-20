@@ -23,6 +23,7 @@
 | 12 | 文档面（document_api） | `document-surface-v0.27.2.md` | 19 路由全文 + 39 探针（全只读）；混合信封再确认；**应用侧交叉核对待做** |
 | 13 | 文档面交叉核对 | `apply-crosscheck-02.md` | 40 行逐项对照四级分类（✓/T/C/S/F）；修正批①–④ 计划在案（批① 文案、批② 码值·状态、批③ 形状已落地 ✓） |
 | 14 | 编译模板面交叉核对 | `apply-crosscheck-03.md` | **发现 v0.26.4 陈旧种子**：kind `artifacts`→`wiki`、新增 `mode`、wiki presets 用 `example` 键、`empty` 模板移除；8 builtins / 6 presets 基线刷新；编辑器深层表单 + 上游 HTTP 信封（200/101/102）落地 |
+| 17 | Provider 固定图标资产 + UI 复核 | `apply-crosscheck-06.md` | **发现 svgIcons 固定图片只入库 13/29、mapping 缺 10 个 factory**；补齐 29 个上游 SVG + mapping + 资产存在性单测；profile-page CDP 对齐共享裁剪弹窗并补姓名规则断言；login-next/skills/chat-channel/setting-model/dataset-testing/profile 批次复核 0 error，8 行 partial→aligned（partial 19→11） |
 | 16 | 搜索设置头像 + admin 复核 | `apply-crosscheck-05.md` | **发现 avatar 列缺失**（抽屉提交被静默忽略）与共享裁剪对话框未复用；`SearchAppSeed.avatar` 列 + 全局 layout 共享 avatar-upload 对话框 + 移除按钮/双语校验落地；CDP 23/23；admin 9 脚本批次全绿，8 行 partial→aligned |
 | 15 | 数据集 Artifacts/Wiki 编译面 | `apply-crosscheck-04.md` | **发现门控永关**（缺 `Knowledgebase.pipeline_id` 列）与**新解析数据集 compile 静默 0 页**（current state 未并入 engine chunk 视图）；5 模式空态 + Contents/Topics→Pages + markdown 详情 + Update/Clear 落地；mock model + CDP 26/26 端到端 |
 

@@ -10038,6 +10038,18 @@ fn provider_icon(provider_name: &str) -> ProviderIcon {
         "RAGcon" => Some("ragcon.svg"),
         "SoMark" => Some("somark.svg"),
         "New API" => Some("new-api.svg"),
+        // The remaining upstream `svgIcons` factories (v0.27.2 `svg-icon.tsx`):
+        // their fixed image assets ship in `web/static/assets/svg/llm`.
+        "aimlapi.com" => Some("aimlapi.svg"),
+        "Astraflow" => Some("astraflow.svg"),
+        "Astraflow-CN" => Some("astraflow.svg"),
+        "FastEmbed" => Some("fastembed.svg"),
+        "FunASR" => Some("funasr.svg"),
+        "FuturMix" => Some("futurmix.svg"),
+        "GreenPT" => Some("greenpt.svg"),
+        "MWS" => Some("mws.svg"),
+        "Synthorai" => Some("synthorai.svg"),
+        "Xiaomi" => Some("xiaomi.svg"),
         _ => None,
     };
     if let Some(path) = svg {
@@ -21280,6 +21292,39 @@ connection: close
 
     #[test]
     fn provider_icons_resolve_svg_font_and_fallback() {
+        // Every upstream `svgIcons` factory resolves to its fixed image asset,
+        // and the asset is actually shipped in the static tree.
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        for (name, file) in [
+            ("Gemini", "gemini.svg"),
+            ("StepFun", "stepfun.svg"),
+            ("MinerU", "mineru-bright.svg"),
+            ("PaddleOCR", "paddleocr.svg"),
+            ("n1n", "n1n.svg"),
+            ("Avian", "avian.svg"),
+            ("RAGcon", "ragcon.svg"),
+            ("SoMark", "somark.svg"),
+            ("New API", "new-api.svg"),
+            ("aimlapi.com", "aimlapi.svg"),
+            ("Astraflow", "astraflow.svg"),
+            ("Astraflow-CN", "astraflow.svg"),
+            ("FastEmbed", "fastembed.svg"),
+            ("FunASR", "funasr.svg"),
+            ("FuturMix", "futurmix.svg"),
+            ("GreenPT", "greenpt.svg"),
+            ("MWS", "mws.svg"),
+            ("Synthorai", "synthorai.svg"),
+            ("Xiaomi", "xiaomi.svg"),
+        ] {
+            assert_eq!(provider_icon(name), ProviderIcon::Svg(file), "{name}");
+            assert!(
+                manifest
+                    .join("web/static/assets/svg/llm")
+                    .join(file)
+                    .is_file(),
+                "missing provider image asset {file}"
+            );
+        }
         assert_eq!(provider_icon("OpenAI"), ProviderIcon::Font("openai"));
         assert_eq!(provider_icon("MiniMax"), ProviderIcon::Font("MiniMax"));
         assert_eq!(

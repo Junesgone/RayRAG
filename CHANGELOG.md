@@ -2,6 +2,24 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.50.0] - 2026-10-21
+
+### Fixed provider image assets and the remaining UI audit
+
+- Every upstream SVG-backed model-provider icon now ships with RayRAG: the 29
+  fixed `web/src/assets/svg/llm/*.svg` assets from v0.27.2 are vendored into the
+  static tree, and `provider_icon` resolves the AIMLAPI, Astraflow, FastEmbed,
+  FunASR, FuturMix, GreenPT, MWS, Synthorai and Xiaomi factories to them. A unit
+  test now asserts each mapped asset exists.
+- The profile avatar uploader is re-verified through the shared crop dialog: the
+  profile CDP probe picks an image, confirms the 64x64 crop, checks the PATCH
+  round-trip, removes the avatar, and checks both upstream name-validation
+  messages and the zh copy.
+- The UI re-audit batch re-ran the login-next backgrounds/form, skills search
+  configuration, chat channels, model-provider settings, dataset retrieval
+  testing and profile pages on the release build; all passed with zero page
+  errors, and their ledger rows are aligned.
+
 ## [0.49.0] - 2026-10-21
 
 ### The search settings avatar uses the shared cropper

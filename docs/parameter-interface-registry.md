@@ -1187,3 +1187,16 @@ difference exists only after the client script runs. Verify page levels by rende
 ### 管理控制台复核批次（同轮）
 
 scripts/ui-traversal/admin-*.mjs 9 个脚本（console / login-form / identity-cache / services-table / service-dialogs / user-detail / user-detail-tables / users-cells / user-forms）在当前构建全绿（0 error）；sandbox 两脚本需 /tmp/rr-sshd fixture。台账对应 7 行 admin partial 已翻 aligned。
+
+## Provider 固定图标资产（RAGFlow v0.27.2 对齐，v0.3.10am）
+
+> 供后续实现查询：模型 provider 的固定图标映射与静态资产位置。
+
+- 上游语义：components/svg-icon.tsx 的 IconMap 把 factory 名映射为图标 id；svgIcons 内的 factory 用固定 SVG 图片（themeIcons 再追加 -bright/-dark），其余用 iconfont glyph。
+- RayRAG：fn provider_icon(provider_name) -> ProviderIcon::{Svg(&'static str), Font(&'static str)}：
+  - Svg 文件位于 web/static/assets/svg/llm/<file>，页面经 <img class='provider-brand-icon' src='/assets/svg/llm/<file>'> 渲染；
+  - Font 经 <svg><use href='/icons.svg#icon-<symbol>'></use></svg> 渲染；
+  - 未知 factory -> Font("moxing-default")。
+- 当前 svg mapping（v0.27.2 内实际存在的 factory）：LocalAI->local-ai.svg、Gemini->gemini.svg、StepFun->stepfun.svg、MinerU->mineru-bright.svg、PaddleOCR->paddleocr.svg、n1n->n1n.svg、Avian->avian.svg、RAGcon->ragcon.svg、SoMark->somark.svg、New API->new-api.svg、aimlapi.com->aimlapi.svg、Astraflow/Astraflow-CN->astraflow.svg、FastEmbed->fastembed.svg、FunASR->funasr.svg、FuturMix->futurmix.svg、GreenPT->greenpt.svg、MWS->mws.svg、Synthorai->synthorai.svg、Xiaomi->xiaomi.svg。
+- 资产来源：RAGFlow v0.27.2 web/src/assets/svg/llm/*.svg 全量（29 个），复制到 web/static/assets/svg/llm/。
+- 单测 provider_icons_resolve_svg_font_and_fallback 断言每个映射文件真实存在；CDP provider-cards-cdp.mjs 可验证 provider 卡片图标 <img>。
