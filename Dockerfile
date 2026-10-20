@@ -30,7 +30,7 @@ COPY vendor ./vendor
 # zvec is RayRAG's vector backend, so the image builds with it by default;
 # pass --build-arg RAYRAG_FEATURES=postgres-backend for a JSON-index-only image.
 ARG RAYRAG_FEATURES=postgres-backend,zvec-backend
-ARG ZVEC_RUST_VERSION=0.7.1
+ARG ZVEC_RUST_VERSION=0.7.2
 ARG ZVEC_RELEASE_BASE=https://xget.xi-xu.me/gh/zvec-ai/zvec-rust/releases/download
 ARG ZVEC_RELEASE_FALLBACK_BASE=https://github.com/zvec-ai/zvec-rust/releases/download
 # Bounded zvec download: a stalled mirror used to hang the build forever

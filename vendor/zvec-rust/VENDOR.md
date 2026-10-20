@@ -1,18 +1,17 @@
-# Vendored `zvec-ai/zvec-rust` (v0.7.1)
+# Vendored zvec-ai/zvec-rust (v0.7.2)
 
 RayRAG links the zvec native library through `ZVEC_LIB_DIR`, so the Docker build
 never needs the vendored C++ sources — but `Cargo.toml` tracks the crate by git
-tag (v0.7.1 is not published on crates.io; 0.7.0 is the newest published
-version). A git dependency makes `cargo` fetch the full repository **including
+tag (0.7.0 is the newest version published on crates.io). A git dependency makes `cargo` fetch the full repository **including
 the `vendor/zvec` C++ submodule**, which is slow and fragile from both mainland
 China and some overseas networks.
 
 To keep `docker build` deterministic and network-tolerant, this directory holds
-a verbatim copy of the two crates from tag `v0.7.1`
-(`448b6b48`, release 2026-09-14):
+a verbatim copy of the two crates from tag v0.7.2
+(89a0ab30):
 
-- `zvec/` — the safe Rust bindings (`zvec-rust` 0.7.1)
-- `zvec-sys/` — the raw FFI bindings (`zvec-rust-sys` 0.7.1)
+- zvec/ - the safe Rust bindings (zvec-rust 0.7.2)
+- zvec-sys/ - the raw FFI bindings (zvec-rust-sys 0.7.2)
 - `Cargo.toml` — the upstream workspace root, so `version.workspace = true`
   resolves for both crates
 - `README.md` — referenced by `zvec/Cargo.toml` (`readme = "../README.md"`)
@@ -24,7 +23,7 @@ builds keep using the git tag declared in `Cargo.toml`.
 ## Refreshing the vendored copy
 
 ```bash
-tag=v0.7.1
+tag=v0.7.2
 tmp=$(mktemp -d)
 curl -fsSL "https://ghfast.top/https://github.com/zvec-ai/zvec-rust/archive/refs/tags/${tag}.tar.gz" \
   | tar xz -C "$tmp" --strip-components=1

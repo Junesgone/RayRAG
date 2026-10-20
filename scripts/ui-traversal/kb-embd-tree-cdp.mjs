@@ -137,7 +137,13 @@ try {
       const rows = Array.from(
         document.querySelectorAll("#embdSelTree button.default-model-node"),
       );
-      return { activeIdx: rows.indexOf(document.activeElement) };
+      const active = document.activeElement;
+      return {
+        activeIdx: rows.indexOf(active),
+        // Typeahead must land on the first title starting with the prefix;
+        // catalog order can put branches before it, so the index is not 0.
+        activeTitle: (active.textContent || "").trim(),
+      };
     });
     results.kbTypeahead = nav3;
     await page.keyboard.press("End");
@@ -216,7 +222,7 @@ try {
         results.kbNav2 &&
         results.kbNav2.activeIdx === 1 &&
         results.kbTypeahead &&
-        results.kbTypeahead.activeIdx === 0 &&
+        /qwen/i.test(results.kbTypeahead.activeTitle || "") &&
         results.kbNavEnd &&
         results.kbNavEnd.activeIsLeaf === true));
   results.result = ok

@@ -1,6 +1,6 @@
 [package]
 name = "rayrag"
-version = "0.53.0"
+version = "0.54.0"
 edition = "2024"
 description = "RayRAG: RAGFlow parsing pipeline rewritten in Rust, powered by zvec"
 authors = ["Boss"]
@@ -24,10 +24,10 @@ flate2 = "1"
 # build never downloads or links a native library. Set ZVEC_LIB_DIR when
 # building with --features zvec-backend.
 #
-# v0.7.1 is tracked by its release tag because the crate is not yet published
-# to crates.io at that patch level (0.7.0 is the newest published version);
-# the tag pins the exact source that the v0.7.1 prebuilt libzvec_c_api.so ships
-# with (Dockerfile ARG ZVEC_RUST_VERSION=0.7.1).
+# v0.7.2 is tracked by its release tag because the crate is not published on
+# crates.io at that patch level (0.7.0 is the newest published version). The
+# vendored copy under vendor/zvec-rust and Dockerfile ARG ZVEC_RUST_VERSION keep
+# the same version so the Docker [patch] actually applies.
 zvec-rust = { git = "https://github.com/zvec-ai/zvec-rust", tag = "v0.7.2", optional = true }
 
 # Optional synchronous PostgreSQL mirror used by the existing synchronous

@@ -2,6 +2,26 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.54.0] - 2026-10-21
+
+### The Docker build links the vendored zvec 0.7.2 crates
+
+- The vendored zvec Rust crates were still 0.7.1 while the Cargo tag resolves
+  0.7.2, so the Docker `[patch]` no longer matched and the build silently fell
+  back to fetching the git dependency (the `patch was not used` warning). The
+  vendor tree now holds the v0.7.2 crates, VENDOR.md records the new tag, and
+  `ARG ZVEC_RUST_VERSION` points at the matching prebuilt release, so the patch
+  applies and the build stays self-contained.
+
+### The shared model tree closes
+
+- All in-scope consumers of the shared provider/instance/model selector are
+  covered: dataset create and configuration, retrieval-test rerank, memory
+  list and detail embedding/LLM, skills search configuration, the search page
+  rerank field, the search-app detail rerank field and the six default-model
+  fields. The remaining upstream consumer files are reference material by
+  project scope (RayRAG serves a Rust-native management surface).
+
 ## [0.53.0] - 2026-10-21
 
 ### The data-source OAuth token fields mint real tokens

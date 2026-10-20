@@ -54,12 +54,38 @@ The Rust SDK depends on the zvec C library (`libzvec_c_api`). Choose one of the 
 
 ### Option 1: Bundled Prebuilt Library (Zero Setup)
 
-Add `zvec-rust` to your `Cargo.toml`. The default `bundled` feature automatically downloads the prebuilt `libzvec_c_api` for your platform from [GitHub Releases](https://github.com/zvec-ai/zvec-rust/releases) and sets up the library path via `rpath`:
+Add `zvec-rust` to your `Cargo.toml`. The default `bundled` feature automatically downloads the prebuilt `libzvec_c_api` for your platform from [GitHub Releases](https://github.com/zvec-ai/zvec-rust/releases):
 
 ```toml
 [dependencies]
-zvec-rust = "0.7.1"
+zvec-rust = "0.7.2"
 ```
+
+`cargo run` / `cargo test` work out of the box because Cargo passes the
+resolved library directory to the linker for you. A **directly executed** or
+**deployed** binary, however, needs a runtime search path (`rpath`) pointing at
+the shared library — Cargo does not add one automatically. Use the
+[`zvec-rust-build`](https://crates.io/crates/zvec-rust-build) build-script
+helper from your binary crate to emit the `rpath` and stage the library beside
+the executable:
+
+```toml
+[dependencies]
+zvec-rust = "0.7.2"
+
+[build-dependencies]
+zvec-rust-build = "0.7.2"
+```
+
+```rust
+// build.rs
+fn main() {
+    zvec_rust_build::configure();
+}
+```
+
+Without the helper you must instead set `DYLD_LIBRARY_PATH` (macOS) /
+`LD_LIBRARY_PATH` (Linux) at runtime.
 
 ### Option 2: Custom Build
 
@@ -195,6 +221,8 @@ cargo run --example vector_search
 | `is_initialized()` | Check initialization status |
 | `set_default_jieba_dict_dir(dir)` | Set the process-wide default jieba dict dir for the FTS `jieba` tokenizer |
 | `get_default_jieba_dict_dir()` | Get the current default jieba dict dir (`""` when unset) |
+| `io_backend_type()` / `io_backend_type_name(code)` | Active DiskAnn I/O backend code and name (`io_uring`, `libaio`, `pread`, `windows_overlapped`) |
+| `io_backend_description()` | Human-readable description of the active I/O backend |
 
 Use [`ConfigBuilder`](zvec/src/config.rs) to customize memory limits, thread counts, and logging:
 
@@ -253,12 +281,13 @@ let schema = CollectionSchema::builder("name")
 | `collection.upsert(&docs)` | Insert or update |
 | `collection.delete(&pks)` | Delete by primary keys |
 | `collection.delete_by_filter(filter)` | Delete documents matching a filter expression |
-| `collection.query(&query)` | Vector similarity search |
+| `collection.query(&query)` | Scalar filtering, full-text, or vector similarity search |
 | `collection.multi_query(&query)` | Multi-route search with RRF / weighted rerank |
 | `collection.fetch(&pks)` | Fetch by primary keys |
 | `collection.fetch_with_options(&pks, fields, include_vector)` | Fetch with output-field control |
 | `collection.iter()` / `iter_with_options(fields, include_vector)` | Iterate over all documents (isolated snapshot) |
 | `collection.create_index(field, params)` / `drop_index(field)` | Runtime index management |
+| `collection.add_column(schema, default_expr)` / `drop_column(name)` / `alter_column(name, new_name, new_schema)` | Schema evolution (DDL) |
 | `collection.optimize()` | Rebuild indexes / merge segments |
 | `collection.stats()` | Get collection statistics |
 | `collection.flush()` | Flush to disk |
@@ -278,6 +307,25 @@ let name: Option<String> = doc.get_string("name")?;
 let count: Option<i64> = doc.get_i64("count")?;
 ```
 
+### Scalar Query
+
+Use `SearchQuery::scalar(topk)` to filter scalar fields without a query vector,
+FTS payload, or target field. It also works on collections with no vector fields:
+
+```rust
+let mut query = SearchQuery::scalar(10)?;
+query.set_filter("relative_path = 'src/main.rs'")?;
+query.set_output_fields(&["relative_path"])?;
+let results = collection.query(&query)?;
+```
+
+`topk` limits the number of returned documents, and their order is unspecified.
+A query without a filter returns up to `topk` documents; it does not enumerate
+all matches when there are more than that limit.
+
+`SearchQuery::builder()` produces the same query when neither `vector(..)` nor an
+FTS clause is set; `field_name(..)` must then be omitted.
+
 ### Vector Query
 
 ```rust
@@ -293,6 +341,11 @@ let query = SearchQuery::builder()
     .output_fields(&["id", "name"])
     .build()?;
 ```
+
+The builder infers the query kind from what was set: `vector(..)` builds a dense
+vector query (adding an FTS clause makes it a hybrid search), an FTS clause
+without a vector builds a keyword-only query, and neither builds a scalar query.
+`SearchQuery::fts(field, fts, topk)` is the direct keyword-only constructor.
 
 ### Multi-Query (Hybrid Search)
 
@@ -345,9 +398,13 @@ Available distance metrics: `L2`, `Ip`, `Cosine`, `MipsL2`.
 | IVF | `IndexParams::ivf(metric, nlist, niters, soar)` | Inverted file index |
 | IVF RaBitQ | `IndexParams::ivf_rabitq(metric, nlist, total_bits, sample_count)` | IVF with RaBitQ quantization |
 | Flat | `IndexParams::flat(metric)` | Brute-force index |
-| DiskANN | `IndexParams::diskann(metric, max_degree, list_size, pq_chunk_num)` | Disk-based graph index for large datasets (Linux x86_64 only) |
+| DiskANN | `IndexParams::diskann(metric, max_degree, list_size, pq_chunk_num)` | Disk-based graph index for large datasets (Linux x86_64/ARM64, macOS ARM64, Windows x86_64, 64-bit Android/iOS) |
 | Invert | `IndexParams::invert(range, wildcard)` | Scalar field index |
 | FTS | `IndexParams::fts(tokenizer, filters, extra)` | Full-text search index |
+
+With `Int8` / `Int4` quantization, `params.set_quantizer_enable_rotate(true)` randomly rotates
+vectors before quantization to reduce the quantization error. The rotation matrix is stored with
+the index and applied to query vectors at search time.
 
 ## Testing
 

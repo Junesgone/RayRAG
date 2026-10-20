@@ -200,6 +200,8 @@ pub type zvec_log_level_t = u32;
 pub type zvec_log_type_t = u32;
 /// Document operation type (insert/update/delete).
 pub type zvec_doc_operator_t = u32;
+/// I/O backend used for DiskAnn disk reads.
+pub type zvec_io_backend_type_t = u32;
 
 // =============================================================================
 // Error Code Constants
@@ -268,6 +270,8 @@ pub const ZVEC_DATA_TYPE_VECTOR_INT4: zvec_data_type_t = 25;
 pub const ZVEC_DATA_TYPE_VECTOR_INT8: zvec_data_type_t = 26;
 /// Dense vector with INT16 quantized elements.
 pub const ZVEC_DATA_TYPE_VECTOR_INT16: zvec_data_type_t = 27;
+/// Dense vector with unsigned 8-bit elements (Flat reference storage).
+pub const ZVEC_DATA_TYPE_VECTOR_UINT8: zvec_data_type_t = 28;
 /// Sparse vector with FP16 elements.
 pub const ZVEC_DATA_TYPE_SPARSE_VECTOR_FP16: zvec_data_type_t = 30;
 /// Sparse vector with FP32 elements.
@@ -382,6 +386,19 @@ pub const ZVEC_DOC_OP_UPDATE: zvec_doc_operator_t = 1;
 pub const ZVEC_DOC_OP_UPSERT: zvec_doc_operator_t = 2;
 /// Delete operation.
 pub const ZVEC_DOC_OP_DELETE: zvec_doc_operator_t = 3;
+
+// =============================================================================
+// I/O Backend Type Constants
+// =============================================================================
+
+/// Synchronous pread(); no async I/O.
+pub const ZVEC_IO_BACKEND_TYPE_PREAD: zvec_io_backend_type_t = 0;
+/// libaio loaded at runtime via dlopen().
+pub const ZVEC_IO_BACKEND_TYPE_LIBAIO: zvec_io_backend_type_t = 1;
+/// io_uring via raw Linux kernel syscalls (zero dependency).
+pub const ZVEC_IO_BACKEND_TYPE_IO_URING: zvec_io_backend_type_t = 2;
+/// Windows overlapped I/O using per-context IOCP.
+pub const ZVEC_IO_BACKEND_TYPE_WINDOWS_OVERLAPPED: zvec_io_backend_type_t = 3;
 
 // =============================================================================
 // Non-Opaque Structures
@@ -619,6 +636,14 @@ extern "C" {
     pub fn zvec_get_default_jieba_dict_dir() -> *const c_char;
 
     // -------------------------------------------------------------------------
+    // I/O Backend Introspection
+    // Reports the backend used for DiskAnn disk reads.
+    // -------------------------------------------------------------------------
+    pub fn zvec_get_io_backend_type() -> zvec_io_backend_type_t;
+    pub fn zvec_get_io_backend_type_name(backend_type: zvec_io_backend_type_t) -> *const c_char;
+    pub fn zvec_get_io_backend_description() -> *const c_char;
+
+    // -------------------------------------------------------------------------
     // Index Parameters
     // Functions for creating and configuring index parameters.
     // -------------------------------------------------------------------------
@@ -639,6 +664,13 @@ extern "C" {
     pub fn zvec_index_params_get_quantize_type(
         params: *const zvec_index_params_t,
     ) -> zvec_quantize_type_t;
+    pub fn zvec_index_params_set_quantizer_enable_rotate(
+        params: *mut zvec_index_params_t,
+        enable_rotate: bool,
+    ) -> zvec_error_code_t;
+    pub fn zvec_index_params_get_quantizer_enable_rotate(
+        params: *const zvec_index_params_t,
+    ) -> bool;
     pub fn zvec_index_params_set_hnsw_params(
         params: *mut zvec_index_params_t,
         m: c_int,
@@ -1725,12 +1757,6 @@ extern "C" {
     ) -> zvec_error_code_t;
     pub fn zvec_doc_merge(doc: *mut zvec_doc_t, other: *const zvec_doc_t);
     pub fn zvec_doc_memory_usage(doc: *const zvec_doc_t) -> usize;
-    pub fn zvec_doc_validate(
-        doc: *const zvec_doc_t,
-        schema: *const zvec_collection_schema_t,
-        is_update: bool,
-        error_msg: *mut *mut c_char,
-    ) -> zvec_error_code_t;
     pub fn zvec_doc_to_detail_string(
         doc: *const zvec_doc_t,
         detail_str: *mut *mut c_char,

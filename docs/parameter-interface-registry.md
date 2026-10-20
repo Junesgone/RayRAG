@@ -1257,3 +1257,17 @@ scripts/ui-traversal/admin-*.mjs 9 个脚本（console / login-form / identity-c
 - 未配置 token 端点时：callback 仍保存 code，result 返回 code 不返回 token（部署可后置兑换）。
 - 单测：oauth_web::tests::{box,google}_token_exchange_* 用本地 one-shot HTTP 端点断言表单字段与 token 落库；token_exchange_without_an_endpoint_keeps_the_flow_code 断言无端点路径。
 - CDP 探针：scripts/ui-traversal/oauth-token-exchange-cdp.mjs（mock 端点 + 建 gmail connector）。
+
+## zvec vendor 与共享模型树（RAGFlow v0.27.2 对齐，v0.3.10aq）
+
+### zvec vendor
+
+- Cargo.toml: zvec-rust = git https://github.com/zvec-ai/zvec-rust tag v0.7.2；Cargo.lock 解析 0.7.2#89a0ab30。
+- vendor/zvec-rust：v0.7.2 的两个 crate（zvec、zvec-sys）+ workspace Cargo.toml + README.md；VENDOR.md 记录 tag/commit；Dockerfile ARG ZVEC_RUST_VERSION 必须与 vendor 版本一致（当前 0.7.2），否则 [patch] 不匹配会静默回退 git fetch。
+- Docker 构建验证：docker build 不应出现 "patch ... was not used in the crate graph"；镜像内 /opt/zvec/lib/libzvec_c_api.so 来自对应的 v0.7.2 prebuilt。
+
+### 共享模型树（push_default_model_selector）
+
+- in-scope consumer（14 调用点）：datasets 创建 embd、dataset 配置 embd、retrieval test rerank、memory 列表 embd/llm、memory 详情 embd/llm、skills 搜索配置 embd、search 页 rerank、search app detail rerank、系统默认模型六字段。
+- 上游 consumer 文件（agent parser 表单、llm-setting-items、layout-recognize-form-field、rerank.tsx）在台账为 reference（RayRAG Rust-native 管理面替代），不属本组件遗留。
+- 当前构建证据：kb-embd-tree PASS、memory-tree form-local 保存、skill-embd-tree PASS、model-tree-keyboard 17/17、system-model 六行 role=tree。
