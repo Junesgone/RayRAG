@@ -97,6 +97,27 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_stream(self, text):
+        chunks = [text[i : i + 24] for i in range(0, len(text), 24)] or [""]
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        for chunk in chunks:
+            event = json.dumps(
+                {
+                    "id": "chatcmpl-mock",
+                    "object": "chat.completion.chunk",
+                    "choices": [
+                        {"index": 0, "delta": {"content": chunk}, "finish_reason": None}
+                    ],
+                }
+            )
+            self.wfile.write(("data: " + event + "\n\n").encode("utf-8"))
+            self.wfile.flush()
+        self.wfile.write(b"data: [DONE]\n\n")
+        self.wfile.flush()
+
     def do_POST(self):
         length = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(length) if length else b"{}"
@@ -136,7 +157,34 @@ class Handler(BaseHTTPRequestHandler):
                     system = content
                 if role == "user":
                     user = content
-            if "knowledge extraction engine" in system:
+            if "Use the context to answer questions" in system or "Relevant document context" in system:
+                reply = (
+                    "Based on the provided context, RayRAG retrieves grounded chunks and "
+                    "uses them to answer the question."
+                )
+            elif "AI language model assistant tasked with generating" in (system + user):
+                reply = (
+                    "1. What is retrieval?\n"
+                    "2. How does reranking work?\n"
+                    "3. Which chunks are used in the answer?\n"
+                )
+            elif "Answer the question using only the reference material below" in (system + user):
+                reply = (
+                    "RayRAG retrieves the most relevant chunks from the selected knowledge "
+                    "base and uses them as grounded context for the answer."
+                )
+            elif "knowledge-mapping assistant" in (system + user):
+                reply = json.dumps(
+                    {
+                        "name": "RayRAG",
+                        "children": [
+                            {"name": "Retrieval", "children": [{"name": "Chunks"}, {"name": "Rerank"}]},
+                            {"name": "Search", "children": [{"name": "Summary"}, {"name": "Mind map"}]},
+                        ],
+                    },
+                    ensure_ascii=False,
+                )
+            elif "knowledge extraction engine" in system:
                 reply = map_reply(user)
             elif "wiki COMPILER" in system or "wiki editor" in system:
                 reply = page_reply(user)
@@ -148,6 +196,9 @@ class Handler(BaseHTTPRequestHandler):
                 reply = "[]"
             else:
                 reply = "{}"
+            if payload.get("stream"):
+                self._send_stream(reply)
+                return
             self._send(
                 {
                     "id": "chatcmpl-mock",

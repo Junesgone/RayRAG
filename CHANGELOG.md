@@ -2,6 +2,27 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.52.0] - 2026-10-21
+
+### The search answer stream and the mind map work end to end
+
+- Fixed a real streaming panic: the search app completion bridge sent chunks with
+  `blocking_send` on a bounded channel from inside the async runtime, which
+  panicked on the first streamed chunk and left the AI-summary block empty. It
+  now uses an unbounded channel; the probe renders the streamed answer, one
+  citation chip and the divider.
+- Fixed a page-level `ReferenceError: searchRerankToggle is not defined` when the
+  search page is opened with a saved app (`?sapp=`): the seed applier ran before
+  the later script defines the toggle. The call is now guarded.
+- Verified the mind-map flow against a reachable chat model: the button opens
+  the sheet, the mock model's tree renders seven nodes, and close/clear behave.
+- Serialized the OAuth flow-registry unit tests: two tests cleared the process-wide
+  registry concurrently and could flake the round-trip assertion.
+- Withdrawn a stale residual: the upstream v0.27.2 tree-select rows are plain
+  divs with hover/selected accent styles and no Radix focus ring, so the old
+  "approximated focus styling" note no longer applies; RayRAG's keyboard roving
+  focus is an accessibility superset.
+
 ## [0.51.0] - 2026-10-21
 
 ### Search settings edits reach the retrieval request

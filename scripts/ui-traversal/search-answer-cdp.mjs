@@ -17,6 +17,7 @@ import { mkdirSync } from "node:fs";
 
 const ORIGIN = process.env.RAYRAG_CDP_ORIGIN || "http://127.0.0.1:9390";
 const PASSWORD = process.env.RAYRAG_LOGIN_PASSWORD;
+const EMAIL = process.env.RAYRAG_ADMIN_EMAIL || "admin@rayrag.local";
 if (!PASSWORD) {
   console.error(
     "RAYRAG_LOGIN_PASSWORD is required (sourced from operator env, not committed)",
@@ -40,17 +41,17 @@ try {
     { name: "lang", value: "en", domain: "127.0.0.1", path: "/" },
   ]);
   await page.goto(ORIGIN + "/login", { waitUntil: "domcontentloaded", timeout: 40000 });
-  const login = await page.evaluate(async (password) => {
+  const login = await page.evaluate(async ({ email, password }) => {
     const res = await fetch("/api/v1/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: "admin@rayrag.local", password }),
+      body: JSON.stringify({ email, password }),
     });
     const data = await res.json();
     if (data.code !== 0) return { ok: false };
     localStorage.setItem("rayrag_token", data.data.access_token);
     return { ok: true };
-  }, PASSWORD);
+  }, { email: EMAIL, password: PASSWORD });
   if (!login.ok) throw new Error("login failed");
 
   // Probe search app over the existing knowledge bases, with the AI summary,
@@ -127,7 +128,9 @@ try {
   // Real query: fill the input and submit, then watch the summary stream.
   await page.fill("#q2", QUESTION);
   await page.click("[data-testid='search-ask-submit']");
-  // The submit button flips to the stop control while the answer streams.
+  // The submit button flips to the stop control while the answer streams; the
+  // second click below would stop the stream instead of re-running it, so the
+  // query is submitted exactly once with hybrid retrieval already enabled.
   await page
     .waitForFunction(
       () =>
@@ -138,8 +141,6 @@ try {
       { timeout: 15000 },
     )
     .catch(() => {});
-  // Re-run the query now that hybrid retrieval is on.
-  await page.click("[data-testid='search-ask-submit']");
   results.streaming = await page.evaluate(() => ({
     streaming: document
       .getElementById("searchAskSubmit")

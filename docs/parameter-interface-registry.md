@@ -1223,3 +1223,29 @@ scripts/ui-traversal/admin-*.mjs 9 个脚本（console / login-form / identity-c
 - 1 列；min-width:1024px → 2 列；min-width:1536px → 4 列（upstream lg/2xl viewport 断点，非容器查询）。
 - 上游 v0.27.2 该页无 per-source search（源码注释），不要按旧 residual 补搜索框。
 - CDP data-source-grid-cdp.mjs：6 档宽度列数 + hover Add + 无搜索框。
+
+## Search AI summary / mind map 端到端（RAGFlow v0.27.2 对齐，v0.3.10ao）
+
+### 接口
+
+- AI summary：搜索页提交后（app 配置 summary=true）调用 POST /api/v1/searches/{search_id}/completions body {question, stream:true}，SSE 帧序：
+  1. {"id":"searchcmpl-…","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"…"},"finish_reason":null}]} ×N
+  2. {"object":"chat.completion.references","references":{chunks,total}}
+  3. {"code":0,"data":{"answer":"…","reference":{…}}}
+  4. data: [DONE]
+- 实现注意：流式桥必须用 unbounded channel（回调在 async runtime 内执行，bounded blocking_send 会 panic）。
+- mind map：POST /api/v1/searchbots/mindmap {question, kb_ids} → {"code":0,"data":{"name":"…","children":[…]}}；POST /api/v1/chat/mindmap 同一 handler。
+- related questions：POST /api/v1/searchbots/related_questions（或 /api/v1/sessions/related_questions）→ 编号问题列表。
+
+### UI 行为
+
+- 结果页 greeting 行：清空 X、分隔符、圆形提交/停止按钮（streaming class + aria-busy）；AI summary 块：骨架屏→streamed answer→citation chips→divider。
+- mind map 按钮仅 app.query_mindmap=true 时可见；点击打开 mind sheet（progress → 缩进树 → close）。
+- ?sapp= 载入时 applySapp 不得直接调用尚未定义的函数（typeof 守卫）。
+
+### 验证方法（内部）
+
+1. scripts/ui-traversal/mock-compilation-model-server.py：扩展了 RAG summary/related/mindmap 分支与 OpenAI SSE 流。
+2. debug 实例 env：LLM_API_BASE=http://127.0.0.1:18089/v1 LLM_MODEL=mock-model EMBED_API_BASE=… EMBED_MODEL=mock-embedding RAYRAG_EMBEDDING_DIMENSION=384。
+3. 配置模型：POST /api/v1/providers/{provider}/instances（base_url 指向 mock）+ PATCH /api/v1/models/default {model_type:"chat",…}。
+4. search-answer-cdp.mjs：创建带 summary/query_mindmap 的 search app → 查询 → 断言 answer/refs/mind tree/related/clear。

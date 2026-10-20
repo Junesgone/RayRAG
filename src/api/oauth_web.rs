@@ -605,6 +605,18 @@ pub async fn google_oauth_result(
 mod tests {
     use super::*;
 
+    /// Box OAuth flows live in a process-wide registry, so tests that clear it
+    /// must not run concurrently with the round-trip tests that use it (cargo
+    /// runs unit tests in parallel, which used to clear the flow between the
+    /// callback and the result poll).
+    static FLOW_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn flow_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        FLOW_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+    }
+
     #[test]
     fn start_validation_rejects_missing_client_credentials() {
         let body = BoxStartRequest {
@@ -622,6 +634,7 @@ mod tests {
 
     #[test]
     fn flow_registry_is_shared_across_start_result() {
+        let _serial = flow_test_lock();
         let mut guard = registry().write().unwrap();
         guard.flows.clear();
         drop(guard);
@@ -641,6 +654,7 @@ mod tests {
 
     #[tokio::test]
     async fn box_oauth_start_callback_result_round_trip() {
+        let _serial = flow_test_lock();
         {
             let mut guard = registry().write().unwrap();
             guard.flows.clear();
@@ -690,6 +704,7 @@ mod tests {
 
     #[tokio::test]
     async fn google_oauth_start_callback_result_round_trip() {
+        let _serial = flow_test_lock();
         {
             let mut guard = google_registry().write().unwrap();
             guard.flows.clear();

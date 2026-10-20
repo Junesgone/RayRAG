@@ -1402,7 +1402,10 @@ pub async fn search_complete(
     }
     use axum::response::sse::{Event, KeepAlive, Sse};
     use std::convert::Infallible;
-    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, Infallible>>(16);
+    // The SSE bridge must use an unbounded channel: the streamed chunks are emitted
+    // from inside the async runtime (the LLM stream callback), where blocking_send on a
+    // bounded channel panics with "Cannot block the current thread from within a runtime".
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Result<Event, Infallible>>();
     tokio::spawn(async move {
         let id = format!("searchcmpl-{}", uuid::Uuid::new_v4());
         let id2 = id.clone();
@@ -1414,7 +1417,7 @@ pub async fn search_complete(
                     "object": "chat.completion.chunk",
                     "choices": [{"index": 0, "delta": {"content": chunk}, "finish_reason": null}],
                 });
-                let _ = tx.blocking_send(Ok(Event::default().data(event.to_string())));
+                let _ = tx.send(Ok(Event::default().data(event.to_string())));
             })
         };
         let generated = generate_chat_answer(
@@ -1435,40 +1438,33 @@ pub async fn search_complete(
         match generated {
             Ok(generated) => {
                 let references = references_payload(&generated.references);
-                let _ = tx
-                    .send(Ok(Event::default().data(
-                        serde_json::json!({
-                            "object": "chat.completion.references",
-                            "references": references,
-                        })
-                        .to_string(),
-                    )))
-                    .await;
-                let _ = tx
-                    .send(Ok(Event::default().data(
-                        serde_json::json!({
-                            "code": 0,
-                            "data": {
-                                "answer": generated.answer,
-                                "reference": references_payload(&generated.references),
-                            }
-                        })
-                        .to_string(),
-                    )))
-                    .await;
+                let _ = tx.send(Ok(Event::default().data(
+                    serde_json::json!({
+                        "object": "chat.completion.references",
+                        "references": references,
+                    })
+                    .to_string(),
+                )));
+                let _ = tx.send(Ok(Event::default().data(
+                    serde_json::json!({
+                        "code": 0,
+                        "data": {
+                            "answer": generated.answer,
+                            "reference": references_payload(&generated.references),
+                        }
+                    })
+                    .to_string(),
+                )));
             }
             Err(error) => {
-                let _ = tx
-                    .send(Ok(Event::default().data(
-                        serde_json::json!({ "code": 500, "message": error.to_string() })
-                            .to_string(),
-                    )))
-                    .await;
+                let _ = tx.send(Ok(Event::default().data(
+                    serde_json::json!({ "code": 500, "message": error.to_string() }).to_string(),
+                )));
             }
         }
-        let _ = tx.send(Ok(Event::default().data("[DONE]"))).await;
+        let _ = tx.send(Ok(Event::default().data("[DONE]")));
     });
-    Sse::new(tokio_stream::wrappers::ReceiverStream::new(rx))
+    Sse::new(tokio_stream::wrappers::UnboundedReceiverStream::new(rx))
         .keep_alive(KeepAlive::default())
         .into_response()
 }
