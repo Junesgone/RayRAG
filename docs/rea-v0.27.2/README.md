@@ -22,10 +22,12 @@
 | 11 | UI 路由对账 | `ui-route-crosscheck-v0.27.2.md` | 上游 3 形式浏览器实测 + RayRAG 51 探针；遍历增补建议 4+1 项 |
 | 12 | 文档面（document_api） | `document-surface-v0.27.2.md` | 19 路由全文 + 39 探针（全只读）；混合信封再确认；**应用侧交叉核对待做** |
 | 13 | 文档面交叉核对 | `apply-crosscheck-02.md` | 40 行逐项对照四级分类（✓/T/C/S/F）；修正批①–④ 计划在案（批① 文案、批② 码值·状态、批③ 形状已落地 ✓） |
+| 14 | 编译模板面交叉核对 | `apply-crosscheck-03.md` | **发现 v0.26.4 陈旧种子**：kind `artifacts`→`wiki`、新增 `mode`、wiki presets 用 `example` 键、`empty` 模板移除；8 builtins / 6 presets 基线刷新；编辑器深层表单 + 上游 HTTP 信封（200/101/102）落地 |
 
 ## 资产
 
 - `memory-default-system-prompt.txt` — 记忆默认提取系统提示词（3604 字符，源自实例真实配置）。
+- 编译模板 v0.27.2 种子基线（v0.3.10aj）：`api/db/init_data/compilation_templates/*.yaml` → 内嵌 fixture `src/api/fixtures/compilation_template_builtins.v0.27.2.json`（8 条）与 `..._wiki_presets.v0.27.2.json`（6 条，`example` 键）；`cargo test --locked --lib api::compilation_templates::tests::reference_palette_matches_v0272_seed_set` 守护。
 
 ## 方法（已成范式）
 

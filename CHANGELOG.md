@@ -2,6 +2,34 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.47.0] - 2026-10-20
+
+### Compilation templates speak the v0.27.2 vocabulary
+
+The knowledge-compilation template palette and editor were re-audited against RAGFlow
+v0.27.2 and brought to the current contract.
+
+- The built-in palette is the v0.27.2 seed set: eight templates in RAGFlow's own order,
+  the graph-based wiki renamed from `artifacts` to `wiki`, the `mode`, `instruction` and
+  `example` fields included, and the retired `empty` seed dropped.
+- Wiki blueprints (page-structure presets) carry the v0.27.2 `example` field; the editor's
+  Blueprint selector fills the instruction/example pair from the chosen preset or the
+  built-in custom defaults.
+- The template editor now covers the whole upstream form: template name, kind, global
+  rules, wiki entity/topic mode, RAPTOR tree settings for tree templates, re-chunk rules
+  for the other kinds, per-section field cards with an add/edit field dialog, blueprint
+  selection for wiki templates, a JSON preview sheet and the Back/Save footer.
+- Template validation answers the upstream wording: wiki mode enum, claim/concept field
+  requirements, the group scope rules and the "a wiki template cannot be combined"
+  message.
+- The template-group HTTP answers now use RAGFlow's envelopes: success is
+  `{code:0, message:"success", data:...}` on HTTP 200, a missing request field is a 101
+  with the upstream argument wording, and validation or not-found errors are HTTP 200
+  with code 102 and no `data` key. The builtin palette and wiki-preset routes carry the
+  same success message.
+- Existing template groups saved under the old `artifacts` kind are migrated to `wiki` on
+  startup, with `mode=entity` filled in, so no saved group is lost.
+
 ## [0.46.0] - 2026-10-12
 
 ### The document API answers like RAGFlow — field for field

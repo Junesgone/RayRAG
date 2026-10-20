@@ -990,3 +990,106 @@ difference exists only after the client script runs. Verify page levels by rende
 
 **i18n rule:** a label is the translation **value** for its key, not the key name. Check `locales/en.ts` and
 `locales/zh.ts` for the value before writing a label into the UI.
+
+## 编译模板参数面（RAGFlow v0.27.2 对齐，v0.3.10aj）
+
+> 供后续代码/接口编写查询：编译模板（knowledge compilation template）的 kind 词表、config 键、接口路由与逐字校验文案。对标基线 RAGFlow v0.27.2（commit `a024bea0cd93`），数据源 `api/db/init_data/compilation_templates/`。
+
+### kind 词表（v0.27.2 重命名）
+
+| kind | 含义 | 编辑器可选 | scope |
+| --- | --- | --- | --- |
+| `wiki` | 图式 wiki（v0.26.4 旧名 `artifacts`，启动时自动迁移） | ✓ | 单独成组 → `dataset` |
+| `knowledge_graph` | 知识图谱 | ✓ | `file` |
+| `timeline` | 时间线/列表 | ✓ | `file` |
+| `mind_map` | 思维导图 | ✓ | `file` |
+| `page_index` | PageIndex 目录树 | ✓ | `file` |
+| `tree` | RAPTOR 文档树 | ✓ | `file`（组内最多一个 `raptor.rechunk=true`） |
+| `session_essence` / `session_graph` | 会话类模板（内置数据在库，但编辑器 `ExcludedBuiltinKinds` 不提供） | ✗ | － |
+| `empty` | 前端常量保留，v0.27.2 无种子文件 | ✗ | － |
+
+内置数据基线：**8 条 builtins**（按 `_sort_builtins`：无 empty 时按 display_name 升序）+ **6 条 wiki presets**（文件名序 brand/engineering/general/market/product/user_interview）。
+
+### 接口路由
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/v1/compilation-template-groups` | 组列表（keywords/scope/page/page_size/orderby/desc） |
+| GET/PUT/DELETE | `/api/v1/compilation-template-groups/{id}` | 组详情/更新/删除 |
+| POST | `/api/v1/compilation-template-groups` | 建组 |
+| POST | `/api/v1/compilation-template-groups/{id}/execute` | 执行组内模板（RayRAG 扩展，用于 tree/hypergraph 试跑） |
+| GET | `/api/v1/compilation-templates/builtins` | 内置模板面板（v0.27.2 形状 `{id,kind,display_name,description,config}`） |
+| GET | `/api/v1/compilation-templates/wiki-presets` | wiki 蓝图预设（v0.27.2 形状 `{id,topic,instruction,example}`，旧 `page_example` 废止） |
+| 别名 | 下划线形式 `/api/v1/compilation_template_groups`、`/api/v1/compilation_templates/wiki_presets` … | 兼容旧前端调用，语义相同 |
+
+页面路由：`/compilation-templates/edit-next`（创建）、`/compilation-templates/edit-next/{id}`（编辑）。
+
+### 组/模板请求体（与上游 edit-next `transformFormToPayload` 一致）
+
+```json
+{
+  "name": "<组名，= 模板 name>",
+  "description": "",
+  "templates": [{
+    "id": "<编辑时回传>",
+    "name": "<模板名>",
+    "description": "",
+    "kind": "wiki|knowledge_graph|timeline|mind_map|page_index|tree",
+    "config": {
+      "kind": "<same as kind>",
+      "mode": "entity|topic",
+      "global_rules": "...",
+      "instruction": "...",
+      "example": "...",
+      "use_blueprint": true,
+      "synthesis": {"compile_kwd": "...", "enabled": true, "example": "..."},
+      "rechunk": false,
+      "rechunk_rules": "...",
+      "raptor": {"prompt": "...", "max_token": 512, "clustering_threshold": 0.3, "clustering_ratio": 0.5, "rechunk": false},
+      "entity": {"description": "...", "fields": [{"type": "...", "description": "...", "rule": "..."}]},
+      "relation": {"description": "...", "fields": [{"type": "...", "description": "...", "rule": "..."}]},
+      "claim": {"fields": [{"statement": "...", "subject": "..."}]},
+      "concept": {"fields": [{"term": "...", "definition_excerpt": "..."}]}
+    }
+  }]
+}
+```
+
+- `wiki`：`mode` 必填（entity/topic）；`instruction`/`example` 仅在 `use_blueprint=true` 时保留（trim 后写入），否则写空串；`claim`/`concept` 字段必填。
+- `tree`：只有 `raptor` 配置，无分节字段与 rechunk 元键；`raptor.rechunk` 组内至多一个为 true。
+- 其余 kind：分节字段来自对应 builtin 的 config（entity/relation，及可能存在的 synthesis）。
+- 字段键序（Add field 弹层）：`type,description,rule` / `statement,subject` / `definition_excerpt,term`；卡片标题/描述映射：entity·relation = type/description，claim = statement/subject，concept = definition_excerpt/term。
+- 类型去重：entity/relation 的 `type` 在分节内不可重复；可选项来自 builtin 分节的 `type` 集合。
+
+### 组校验规则与逐字错误文案（HTTP 200 信封）
+
+- 成功：`{code:0, message:"success", data:...}`（list/detail/create/update/delete 均 HTTP 200）。
+- 缺参（`@validate_request`）：`{code:101, message:"required argument are missing: name,templates; ", data:null}`。
+- 校验/不存在：`{code:102, message}`（无 data 键，HTTP 200）。
+
+| 条件 | 文案 |
+| --- | --- |
+| 缺 name/templates | `Missing required field: {key}.` |
+| 组名为空/超 128 字节 | `Invalid template group name.` / `Template group name is too long.` |
+| 模板缺字段 | `Missing required field: {key}.` |
+| 模板名非法 | `Invalid template name.` |
+| kind 非法 | `Invalid template kind.` |
+| config 非对象 | `Invalid template config.` |
+| global_rules 超 4096 字符 | `Global compilation rules is too long.` |
+| entity/relation type 缺失/重复 | `{Section} type is required.` / `{Section} type can not be duplicated.` |
+| entity/relation 描述缺失 | `{Section} field description is required.` |
+| wiki mode 非 entity/topic | `Wiki mode must be either 'entity' or 'topic'.` |
+| wiki claim 字段缺失 | `Claim statement is required.` / `Claim subject is required.` |
+| wiki concept 字段缺失 | `Concept term is required.` / `Concept definition excerpt is required.` |
+| wiki 与其它模板同组 | `A wiki template cannot be combined with other templates in the same group.` |
+| 组内两个 tree 都开 rechunk | `Only one tree template in a group may enable re-chunking.` |
+| 组名重复 | `Duplicated compilation template group name.` |
+
+### 编辑器本地校验（v0.3.10aj 落地）
+
+页面 `/compilation-templates/edit-next` 客户端校验与上游一致：模板名必填（Please input template name）、kind 必选（Please select a kind）、wiki mode 必选（Please select a Wiki mode）、分节字段按 kind 检查 type/description、claim statement/subject、concept term/definition_excerpt；提交后走组 POST/PUT，成功跳 `/agents`。JSON 预览弹层展示表单态 `{name,description,avatar,templates:[{id,name,description,kind,config}]}`。
+
+### 运维注意
+
+- 旧数据（v0.26.4 kind=artifacts）在 `CompilationTemplateStore::new` 载入时迁移为 `wiki`（同时 `config.kind`、补 `mode=entity`）并持久化。
+- internal assets：本文件、对照台账、运维记录不进入 GitHub 发布快照。

@@ -4948,160 +4948,189 @@ pub async fn agent_detail_page(
 /// `canvas_type`) beside a `CardContainer` of `TemplateCard`s whose hover
 /// overlay carries `flow.useTemplate`; using a template opens the create-agent
 /// dialog and seeds the new agent with the template DSL.
-/// `/compilation-templates/edit-next` (create) and
-/// `/compilation-templates/edit-next/{id}` (edit).
+/// /compilation-templates/edit-next (create) and /compilation-templates/edit-next/{id} (edit).
 ///
-/// Mirrors RAGFlow v0.27.2 `pages/user-setting/compilation-templates/edit-next/
-/// index.tsx` + `components/template-configuration.tsx`: a layout-less page with
-/// a Back + title header, the template form (name / description / kind /
-/// global rules / re-chunk parser output + rules) and the Back/Save footer,
-/// wired to the tenant `/api/v1/compilation_template_groups` CRUD.
-fn compilation_template_edit_body(zh: bool, id: Option<&str>) -> String {
-    let back = if zh { "返回" } else { "Back" };
-    let save = if zh { "保存" } else { "Save" };
-    let add_title = if zh { "添加模板" } else { "Add template" };
-    let edit_title = if zh { "编辑模板" } else { "Edit template" };
-    let name_label = if zh { "名称" } else { "Name" };
-    let name_placeholder = if zh {
-        "请输入名称"
-    } else {
-        "Please input name"
-    };
-    let description_label = if zh { "描述" } else { "Description" };
-    let description_placeholder = if zh {
-        "请输入描述"
-    } else {
-        "Enter description"
-    };
-    let template_label = if zh { "模板" } else { "Template" };
-    let select_placeholder = if zh { "请选择" } else { "Select value" };
-    let global_rules_label = if zh { "全局规则" } else { "Global rules" };
-    let global_rules_placeholder = if zh {
-        "请输入全局编译规则"
-    } else {
-        "Input global compilation rules"
-    };
-    let rechunk_label = if zh {
-        "重新切分 Parser 输出"
-    } else {
-        "Re-chunk parser output"
-    };
-    let rechunk_rules_label = if zh {
-        "重分片规则"
-    } else {
-        "Rechunking rules"
-    };
-    let rechunk_rules_placeholder = if zh {
-        "描述此知识编译任务下，LLM 应如何合并和划分源 Chunk。"
-    } else {
-        "Describe how the LLM should group source chunks for this compilation task."
-    };
-    let name_required = if zh {
-        "请输入模板名称"
-    } else {
-        "Please input template name"
-    };
-    let kind_required = if zh {
-        "请选择模板类型"
-    } else {
-        "Please select a kind"
-    };
-    let load_failed = if zh {
-        "加载失败："
-    } else {
-        "Load failed: "
-    };
-    let save_failed = if zh {
-        "保存失败："
-    } else {
-        "Save failed: "
-    };
-    let saving = if zh { "保存中…" } else { "Saving…" };
-    let id_js = match id {
-        Some(value) => serde_json::Value::String(value.to_string()).to_string(),
-        None => "null".to_string(),
-    };
-    let labels = serde_json::json!({
-        "back": back,
-        "save": save,
-        "addTitle": add_title,
-        "editTitle": edit_title,
-        "name": name_label,
-        "namePlaceholder": name_placeholder,
-        "nameRequired": name_required,
-        "description": description_label,
-        "descriptionPlaceholder": description_placeholder,
-        "template": template_label,
-        "selectPlaceholder": select_placeholder,
-        "kindRequired": kind_required,
-        "globalRules": global_rules_label,
-        "globalRulesPlaceholder": global_rules_placeholder,
-        "rechunk": rechunk_label,
-        "rechunkRules": rechunk_rules_label,
-        "rechunkRulesPlaceholder": rechunk_rules_placeholder,
-        "loadFailed": load_failed,
-        "saveFailed": save_failed,
-        "saving": saving,
-        "kindLabels": {
+/// Mirrors RAGFlow v0.27.2 pages/user-setting/compilation-templates/edit-next:
+/// the layout-less shell, the template form (name / description / kind / global
+/// rules), the kind-dependent RAPTOR tree settings, the per-section field editor
+/// (SectionFieldGrid + AddFieldModal), the wiki-only mode selector and
+/// BlueprintSection (wiki presets -> instruction/example), the JSON preview
+/// sheet and the Back/Save footer, wired to the tenant
+/// /api/v1/compilation-template-groups CRUD.
+const CT_EDIT_MARKUP: &str = r##"<style>.ct-edit-page{display:flex;flex-direction:column;min-height:calc(100vh - 48px);background:var(--bgc)}.ct-edit-header{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid var(--bd)}.ct-edit-header h2{margin:0;font-size:16px;font-weight:500;color:var(--t2)}.ct-preview-head{flex-shrink:0;display:flex;justify-content:space-between;align-items:center;padding:12px 20px;border-bottom:1px solid var(--bd)}.ct-preview-name{font-size:18px;font-weight:500;color:var(--t)}.ct-edit-scroll{flex:1;min-height:0;overflow-y:auto;padding:20px}.ct-edit-form{max-width:900px;margin:0 auto;display:flex;flex-direction:column;gap:18px}.ct-edit-form textarea,.ct-edit-form input[type=text],.ct-edit-form input[type=number],.ct-edit-form select{width:100%}.ct-edit-form textarea{resize:vertical;font:inherit}.ct-check{flex-direction:row;align-items:center;gap:8px}.ct-check input{width:auto}.ct-help{font-size:12px;color:var(--tm);margin:0;line-height:1.5}.ct-collapse{border:1px solid var(--bdc);border-radius:var(--r);padding:14px 16px;background:var(--bgc);display:flex;flex-direction:column;gap:14px}.ct-collapse>h3{margin:0;font-size:15px;font-weight:500;color:var(--t)}.ct-footer{display:flex;justify-content:flex-end;gap:16px;padding:16px 20px;border-top:1px solid var(--bd)}.ct-message{margin:0 20px;font-size:12px;color:var(--tm);min-height:16px}.ct-message.error{color:var(--d)}.ct-tabs{display:flex;gap:4px;border-bottom:1px solid var(--bd);margin-bottom:14px;overflow-x:auto}.ct-tab{border:0;background:transparent;padding:8px 14px;font:inherit;font-size:13px;color:var(--tm);cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap}.ct-tab[aria-selected=true]{color:var(--t);border-bottom-color:var(--p);font-weight:500}.ct-field-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px}.ct-field-card{position:relative;border:1px solid var(--bdc);border-radius:var(--r);padding:12px;background:var(--bgc);min-height:84px}.ct-field-card:hover .ct-field-actions{opacity:1}.ct-field-title{font-size:14px;font-weight:500;color:var(--t);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ct-field-desc{margin:8px 0 0;font-size:13px;color:var(--t2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}.ct-field-actions{position:absolute;top:8px;right:8px;display:flex;gap:2px;opacity:0;transition:opacity .15s}.ct-field-actions button{border:0;background:transparent;color:var(--t2);cursor:pointer;padding:4px 6px;border-radius:4px;font-size:12px}.ct-field-actions button:hover{background:var(--bgch);color:var(--t)}.ct-add-card{border:1px dashed var(--bdc);border-radius:var(--r);min-height:84px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--t2);background:transparent;font:inherit;font-size:13px;cursor:pointer}.ct-add-card:hover{border-color:var(--p);color:var(--t)}.ct-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:500;padding:20px}.ct-modal{width:min(560px,100%);max-height:88vh;overflow-y:auto;background:var(--bgm);border:1px solid var(--bd);border-radius:var(--r);box-shadow:var(--shl);padding:20px}.ct-modal h2{margin:0 0 16px;font-size:18px}.ct-modal-footer{display:flex;justify-content:flex-end;gap:10px;margin-top:18px}.ct-field-form{display:flex;flex-direction:column;gap:14px}.ct-sheet{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:500;display:flex;justify-content:flex-end}.ct-sheet-panel{width:min(700px,100%);height:100%;background:var(--bgm);border-left:1px solid var(--bd);display:flex;flex-direction:column}.ct-sheet-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--bd)}.ct-sheet-head h2{margin:0;font-size:16px}.ct-sheet-body{flex:1;min-height:0;overflow:auto;margin:0;padding:16px 20px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;white-space:pre-wrap;color:var(--t2)}.ct-hidden{display:none !important}</style><section class='ct-edit-page' data-testid='compilation-template-edit-page'><header class='ct-edit-header'><button type='button' class='btn btn-ghost ct-back' data-testid='compilation-template-back' aria-label='{{back}}' onclick='ctBack()'>&#8592;</button><h2 id='ctTitle'>{{addTitle}}</h2></header><div class='ct-preview-head'><span id='ctPreviewName' class='ct-preview-name'>{{name}}</span><button type='button' class='btn btn-ghost' id='ctJsonPreviewBtn' data-testid='compilation-template-json-preview' aria-label='{{jsonPreview}}' title='{{jsonPreview}}' onclick='ctOpenJsonPreview()'>{ }</button></div><div class='ct-edit-scroll'><form id='ctForm' class='ct-edit-form' onsubmit='event.preventDefault()' novalidate><label class='ds-field'><span class='ds-field-label required'>{{name}}</span><input id='ctName' type='text' autocomplete='off' placeholder='{{namePlaceholder}}'><span class='ds-field-error' id='ctNameError'></span></label><label class='ds-field'><span class='ds-field-label'>{{description}}</span><textarea id='ctDescription' rows='2' placeholder='{{descriptionPlaceholder}}'></textarea></label><label class='ds-field'><span class='ds-field-label required'>{{template}}</span><select id='ctKind' data-testid='compilation-template-kind'><option value=''>{{selectPlaceholder}}</option></select><span class='ds-field-error' id='ctKindError'></span></label><label class='ds-field'><span class='ds-field-label'>{{globalRules}}</span><textarea id='ctGlobalRules' rows='8' placeholder='{{globalRulesPlaceholder}}'></textarea></label><div class='ds-field ct-hidden' id='ctModeField' data-testid='compilation-template-wiki-mode-field'><span class='ds-field-label'>{{wikiMode}}</span><select id='ctMode' data-testid='compilation-template-wiki-mode'><option value='entity'>{{entityMode}}</option><option value='topic'>{{topicMode}}</option></select><p class='ct-help'>{{wikiModeTip}}</p><span class='ds-field-error' id='ctModeError'></span></div><div class='ct-collapse ct-hidden' id='ctTreeFields' data-testid='compilation-template-raptor'><h3>{{raptorTreeSettings}}</h3><label class='ds-field'><span class='ds-field-label'>{{summarizationPrompt}}</span><textarea id='ctRaptorPrompt' rows='8'></textarea></label><label class='ds-field'><span class='ds-field-label'>{{maxToken}}</span><input id='ctRaptorMaxToken' type='number' min='512' max='2048' step='1' value='512'><span class='ds-field-error' id='ctRaptorMaxTokenError'></span></label><label class='ds-field'><span class='ds-field-label'>{{clusteringThreshold}}</span><input id='ctRaptorThreshold' type='number' min='0' max='1' step='0.01' value='0.3'><p class='ct-help'>{{clusteringThresholdTip}}</p></label><label class='ds-field'><span class='ds-field-label'>{{clusteringRatio}}</span><input id='ctRaptorRatio' type='number' min='0' max='1' step='0.01' value='0.5'><p class='ct-help'>{{clusteringRatioTip}}</p></label><label class='ds-field ct-check'><input type='checkbox' id='ctRaptorRechunk'><span>{{rechunkByTreeLeaves}}</span></label><p class='ct-help'>{{rechunkByTreeLeavesTip}}</p></div><label class='ds-field ct-check ct-hidden' id='ctRechunkField'><input type='checkbox' id='ctRechunk'><span>{{rechunk}}</span></label><p class='ct-help ct-hidden' id='ctRechunkTip'>{{rechunkInputTip}}</p><label class='ds-field ct-hidden' id='ctRechunkRulesField'><span class='ds-field-label'>{{rechunkRules}}</span><textarea id='ctRechunkRules' rows='6' placeholder='{{rechunkRulesPlaceholder}}'></textarea></label><div class='ct-hidden' id='ctSections'><div class='ct-tabs' id='ctSectionTabs' role='tablist'></div><div class='ct-field-grid' id='ctSectionGrid' data-testid='compilation-template-fields'></div></div><div class='ct-collapse ct-hidden' id='ctBlueprint' data-testid='compilation-template-blueprint'><h3>{{blueprints}}</h3><label class='ds-field'><span class='ds-field-label'>{{blueprints}}</span><select id='ctBlueprintPreset' data-testid='compilation-template-blueprint-preset'></select></label><label class='ds-field'><span class='ds-field-label'>{{instruction}}</span><textarea id='ctInstruction' rows='8'></textarea></label><label class='ds-field'><span class='ds-field-label'>{{example}}</span><textarea id='ctExample' rows='10'></textarea></label></div></form></div><footer class='ct-footer'><button type='button' class='btn btn-o' data-testid='compilation-template-back-footer' onclick='ctBack()'>{{back}}</button><button type='button' class='btn btn-p' id='ctSaveButton' data-testid='compilation-template-save' onclick='ctSave()'>{{save}}</button></footer><p id='ctMessage' class='ct-message' role='status'></p></section><div class='ct-modal-overlay ct-hidden' id='ctFieldModal' data-testid='compilation-template-field-modal' onclick='if(event.target===this)ctCloseFieldModal()'><div class='ct-modal' role='dialog' aria-modal='true' aria-labelledby='ctFieldModalTitle'><h2 id='ctFieldModalTitle'>{{addField}}</h2><div class='ct-field-form' id='ctFieldForm'></div><div class='ct-modal-footer'><button type='button' class='btn btn-o' onclick='ctCloseFieldModal()'>{{cancel}}</button><button type='button' class='btn btn-p' id='ctFieldConfirm' data-testid='compilation-template-field-confirm' onclick='ctConfirmField()'>{{confirm}}</button></div></div></div><div class='ct-sheet ct-hidden' id='ctJsonSheet' data-testid='compilation-template-json-sheet' onclick='if(event.target===this)ctCloseJsonPreview()'><div class='ct-sheet-panel' role='dialog' aria-modal='true' aria-labelledby='ctJsonSheetTitle'><div class='ct-sheet-head'><h2 id='ctJsonSheetTitle'>{{jsonPreview}}</h2><button type='button' class='btn btn-ghost' aria-label='{{close}}' onclick='ctCloseJsonPreview()'>&#215;</button></div><pre class='ct-sheet-body' id='ctJsonBody'></pre></div></div>"##;
+
+/// Labels for the compile-template editor. The token names are also the
+/// placeholders replaced inside CT_EDIT_MARKUP; kindLabels mirrors the upstream
+/// formatKindLabel map (wiki/graph/page-index/mindmap hard-coded, the rest
+/// capitalize(lowerCase(kind))).
+fn ct_labels(zh: bool) -> serde_json::Value {
+    let pairs: [(&str, &str, &str); 57] = [
+        ("back", "Back", "返回"),
+        ("save", "Save", "保存"),
+        ("addTitle", "Add template", "添加模板"),
+        ("editTitle", "Edit template", "编辑模板"),
+        ("name", "Name", "名称"),
+        ("namePlaceholder", "Please input name", "请输入名称"),
+        (
+            "nameRequired",
+            "Please input template name",
+            "请输入模板名称",
+        ),
+        ("description", "Description", "描述"),
+        ("descriptionPlaceholder", "Enter description", "请输入描述"),
+        ("template", "Template", "模板"),
+        ("selectPlaceholder", "Select value", "请选择"),
+        ("kindRequired", "Please select a kind", "请选择类型"),
+        ("globalRules", "Global rules", "全局规则"),
+        (
+            "globalRulesPlaceholder",
+            "Input global compilation rules",
+            "请输入全局编译规则",
+        ),
+        ("rechunk", "Re-chunk parser output", "重新切分 Parser 输出"),
+        (
+            "rechunkInputTip",
+            "Let the LLM determine chunk boundaries based on the knowledge compilation task.",
+            "根据知识编译任务，由 LLM 决定 Chunk 边界。",
+        ),
+        ("rechunkRules", "Rechunking rules", "重分片规则"),
+        (
+            "rechunkRulesPlaceholder",
+            "Describe how the LLM should group source chunks for this compilation task.",
+            "描述此知识编译任务下，LLM 应如何合并和划分源 Chunk。",
+        ),
+        ("jsonPreview", "JSON preview", "JSON 预览"),
+        ("wikiMode", "Wiki mode", "Wiki 模式"),
+        (
+            "wikiModeTip",
+            "Entity mode: one Wiki page per entity or concept. Topic mode: let the LLM group related entities or concepts into the same Wiki page by topic.",
+            "实体模式：每个实体或概念对应一个 Wiki 页面。主题模式：让 LLM 按主题将相关实体或概念组合到同一个 Wiki 页面。",
+        ),
+        ("entityMode", "Entity mode", "实体模式"),
+        ("topicMode", "Topic mode", "主题模式"),
+        (
+            "wikiModeRequired",
+            "Please select a Wiki mode",
+            "请选择 Wiki 模式",
+        ),
+        ("blueprints", "Blueprints", "蓝图"),
+        ("instruction", "Instruction", "Instruction"),
+        ("example", "Example", "示例"),
+        ("custom", "Custom", "自定义"),
+        (
+            "raptorTreeSettings",
+            "RAPTOR tree settings",
+            "RAPTOR 树设置",
+        ),
+        ("summarizationPrompt", "Summarization prompt", "摘要提示词"),
+        ("maxToken", "Max token", "最大 token 数"),
+        (
+            "maxTokenRequired",
+            "Please input max token",
+            "请输入最大 token 数",
+        ),
+        ("clusteringThreshold", "Clustering threshold", "聚类阈值"),
+        (
+            "clusteringThresholdTip",
+            "Sets the percentile used to split clusters by adjacent chunk similarity. Higher values create more cluster boundaries.",
+            "按相邻数据块相似度分布的百分位决定聚类边界。数值越高，产生的聚类边界越多。",
+        ),
+        ("clusteringRatio", "Clustering ratio", "聚类比例"),
+        (
+            "clusteringRatioTip",
+            "Sets the maximum number of clusters as a fraction of the input chunks. Lower values produce fewer clusters.",
+            "设置聚类数量相对于输入数据块数量的最大比例。数值越低，聚类数量越少。",
+        ),
+        (
+            "rechunkByTreeLeaves",
+            "Re-chunk by tree leaves",
+            "按树叶重新分块",
+        ),
+        (
+            "rechunkByTreeLeavesTip",
+            "Merge each leaf cluster source chunks into a single replacement chunk. Originals are kept but marked unavailable for retrieval. Only one tree template per group may enable this.",
+            "将每个叶簇的源数据块合并为单个替换数据块。原始数据块保留但标记为不可检索。每个分组最多只能有一个树模板启用此功能。",
+        ),
+        ("addField", "Add field", "添加字段"),
+        ("editField", "Edit field", "编辑字段"),
+        ("fieldType", "Type", "Type"),
+        ("fieldRule", "Rule", "规则"),
+        ("fieldTypeRequired", "Please select a type", "请选择 type"),
+        (
+            "fieldDescriptionRequired",
+            "Please input description",
+            "请输入描述",
+        ),
+        (
+            "selectFieldType",
+            "Select or enter a field type",
+            "选择或输入字段类型",
+        ),
+        (
+            "fieldTypeExists",
+            "This field type already exists",
+            "该字段类型已存在",
+        ),
+        ("pleaseInput", "Please input", "请输入"),
+        ("cancel", "Cancel", "取消"),
+        ("confirm", "Confirm", "确定"),
+        ("close", "Close", "关闭"),
+        ("entitySpec", "Entity specification", "Entity specification"),
+        (
+            "relationSpec",
+            "Relation specification",
+            "Relation specification",
+        ),
+        (
+            "conceptSpec",
+            "Concept specification",
+            "Concept specification",
+        ),
+        ("claimSpec", "Claim specification", "Claim specification"),
+        ("loadFailed", "Load failed: ", "加载失败："),
+        ("saveFailed", "Save failed: ", "保存失败："),
+        ("saving", "Saving…", "保存中…"),
+    ];
+    let mut map = serde_json::Map::new();
+    for (key, en, cn) in pairs {
+        map.insert(
+            key.to_string(),
+            serde_json::Value::String(if zh { cn } else { en }.to_string()),
+        );
+    }
+    map.insert(
+        "kindLabels".into(),
+        serde_json::json!({
             "wiki": "Wiki",
-            "artifacts": "Wiki",
             "knowledge_graph": "Graph",
             "page_index": "PageIndex",
             "mind_map": "Mindmap",
             "timeline": "Timeline",
             "tree": "Tree",
-            "empty": "Empty",
-            "session_graph": "Session graph",
-            "session_essence": "Session essence",
-        },
-    });
-    let mut b = String::with_capacity(9216);
-    b.push_str("<style>.ct-edit-page{display:flex;flex-direction:column;min-height:calc(100vh - 48px);background:var(--bgc)}.ct-edit-header{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid var(--bd)}.ct-edit-header h2{margin:0;font-size:16px;font-weight:500;color:var(--t2)}.ct-edit-form{flex:1;display:flex;flex-direction:column;gap:18px;padding:20px;max-width:960px;width:100%;margin:0 auto}.ct-edit-form textarea,.ct-edit-form input[type=text]{width:100%}.ct-edit-form .ct-check{flex-direction:row;align-items:center;gap:8px}.ct-edit-footer{display:flex;justify-content:flex-end;gap:16px;padding:16px 20px;border-top:1px solid var(--bd)}.ct-message{margin:0 20px 16px;font-size:12px;color:var(--tm);min-height:16px}.ct-message.error{color:var(--d)}</style>");
-    b.push_str("<section class='ct-edit-page' data-testid='compilation-template-edit-page'><header class='ct-edit-header'><button type='button' class='btn btn-ghost ct-back' data-testid='compilation-template-back' aria-label='");
-    b.push_str(back);
-    b.push_str("' onclick='ctBack()'>&#8592;</button><h2 id='ctTitle'>");
-    b.push_str(if id.is_some() { edit_title } else { add_title });
-    b.push_str(
-        "</h2></header><form id='ctForm' class='ct-edit-form' onsubmit='event.preventDefault()'>",
+        }),
     );
-    b.push_str("<label class='ds-field'><span class='ds-field-label required'>");
-    b.push_str(name_label);
-    b.push_str("</span><input id='ctName' type='text' autocomplete='off' placeholder='");
-    b.push_str(name_placeholder);
-    b.push_str("'><span class='ds-field-error' id='ctNameError'></span></label>");
-    b.push_str("<label class='ds-field'><span class='ds-field-label'>");
-    b.push_str(description_label);
-    b.push_str("</span><textarea id='ctDescription' rows='2' placeholder='");
-    b.push_str(description_placeholder);
-    b.push_str("'></textarea></label>");
-    b.push_str("<label class='ds-field'><span class='ds-field-label required'>");
-    b.push_str(template_label);
-    b.push_str(
-        "</span><select id='ctKind' data-testid='compilation-template-kind'><option value=''>",
-    );
-    b.push_str(select_placeholder);
-    b.push_str("</option></select><span class='ds-field-error' id='ctKindError'></span></label>");
-    b.push_str("<label class='ds-field'><span class='ds-field-label'>");
-    b.push_str(global_rules_label);
-    b.push_str("</span><textarea id='ctGlobalRules' rows='8' placeholder='");
-    b.push_str(global_rules_placeholder);
-    b.push_str("'></textarea></label>");
-    b.push_str("<label class='ds-field ct-check' id='ctRechunkField'><input type='checkbox' id='ctRechunk'><span>");
-    b.push_str(rechunk_label);
-    b.push_str("</span></label>");
-    b.push_str(
-        "<label class='ds-field' id='ctRechunkRulesField' hidden><span class='ds-field-label'>",
-    );
-    b.push_str(rechunk_rules_label);
-    b.push_str("</span><textarea id='ctRechunkRules' rows='6' placeholder='");
-    b.push_str(rechunk_rules_placeholder);
-    b.push_str("'></textarea></label></form><footer class='ct-edit-footer'><button type='button' class='btn btn-o' data-testid='compilation-template-back-footer' onclick='ctBack()'>");
-    b.push_str(back);
-    b.push_str("</button><button type='button' class='btn btn-p' id='ctSaveButton' data-testid='compilation-template-save' onclick='ctSave()'>");
-    b.push_str(save);
-    b.push_str(
-        "</button></footer><p id='ctMessage' class='ct-message' role='status'></p></section>",
-    );
+    serde_json::Value::Object(map)
+}
+
+/// Renders the editor shell. The labels are substituted into the markup tokens
+/// so the first paint is already localized, and the same table is injected as
+/// the CT.labels global for the client-side kind/section renderers.
+fn compilation_template_edit_body(zh: bool, id: Option<&str>) -> String {
+    let labels = ct_labels(zh);
+    let mut markup = CT_EDIT_MARKUP.to_string();
+    if let Some(map) = labels.as_object() {
+        for (key, value) in map {
+            if let Some(text) = value.as_str() {
+                markup = markup.replace(&format!("{{{{{key}}}}}"), &html_escape(text));
+            }
+        }
+    }
+    let id_js = match id {
+        Some(value) => serde_json::Value::String(value.to_string()).to_string(),
+        None => "null".to_string(),
+    };
+    let mut b = String::with_capacity(markup.len() + 32 * 1024);
+    b.push_str(&markup);
     b.push_str("<script>const CT={id:");
     b.push_str(&id_js);
     b.push_str(",labels:");
@@ -5137,9 +5166,11 @@ pub async fn compilation_template_edit_page(
     ))
 }
 
-/// Client half of the compilation-template edit page. `CT` (id + labels) is
-/// injected right before this script by `compilation_template_edit_body`.
-const CT_EDIT_JS: &str = r#"function ctBack(){location.href='/agents'}function ctSetMessage(text,isError){var node=document.getElementById('ctMessage');if(!node)return;node.textContent=text||'';node.classList.toggle('error',!!isError)}function ctField(id){return document.getElementById(id)}function ctKindLabel(kind){return (CT.labels.kindLabels&&CT.labels.kindLabels[kind])||kind}async function ctLoadBuiltins(){try{var response=await fetch('/api/v1/compilation_templates/builtins');var data=await response.json();if(!response.ok||data.code!==0)throw new Error(data.message||('HTTP '+response.status));CT.builtins=data.data||[];var kinds=[];CT.builtins.forEach(function(item){var kind=item.kind;if(kind&&kinds.indexOf(kind)<0)kinds.push(kind)});var select=ctField('ctKind');kinds.forEach(function(kind){var option=document.createElement('option');option.value=kind;option.textContent=ctKindLabel(kind);select.appendChild(option)})}catch(error){ctSetMessage(CT.labels.loadFailed+error.message,true)}}function ctApplyBuiltin(kind){var builtin=null;for(var i=0;i<CT.builtins.length;i+=1){if(CT.builtins[i].kind===kind){builtin=CT.builtins[i];break}}if(!builtin)return;var config=builtin.config||{};if(typeof config.global_rules==='string')ctField('ctGlobalRules').value=config.global_rules;ctField('ctRechunk').checked=config.rechunk===true;ctField('ctRechunkRules').value=typeof config.rechunk_rules==='string'?config.rechunk_rules:'';ctSyncKind()}function ctSyncKind(){var wiki=ctField('ctKind').value==='wiki';ctField('ctRechunkField').hidden=wiki;if(wiki)ctField('ctRechunk').checked=false;ctSyncRechunk()}function ctSyncRechunk(){ctField('ctRechunkRulesField').hidden=!ctField('ctRechunk').checked}async function ctLoad(){await ctLoadBuiltins();if(!CT.id){ctSyncKind();return}try{var response=await fetch('/api/v1/compilation_template_groups/'+encodeURIComponent(CT.id));var data=await response.json();if(!response.ok||data.code!==0)throw new Error(data.message||('HTTP '+response.status));var group=data.data||{};var template=(group.templates&&group.templates[0])||{};var config=template.config||{};ctField('ctTitle').textContent=group.name||CT.labels.editTitle;ctField('ctName').value=template.name||'';ctField('ctDescription').value=template.description||'';ctField('ctKind').value=template.kind||'';ctField('ctGlobalRules').value=typeof config.global_rules==='string'?config.global_rules:'';ctField('ctRechunk').checked=config.rechunk===true;ctField('ctRechunkRules').value=typeof config.rechunk_rules==='string'?config.rechunk_rules:'';ctSyncKind()}catch(error){ctSetMessage(CT.labels.loadFailed+error.message,true)}}async function ctSave(){var name=ctField('ctName').value.trim();var kind=ctField('ctKind').value;ctField('ctNameError').textContent='';ctField('ctKindError').textContent='';if(!name){ctField('ctNameError').textContent=CT.labels.nameRequired;return}if(!kind){ctField('ctKindError').textContent=CT.labels.kindRequired;return}var description=ctField('ctDescription').value.trim();var payload={name:name,description:description,templates:[{name:name,description:description,kind:kind,config:{kind:kind,global_rules:ctField('ctGlobalRules').value,rechunk:ctField('ctRechunk').checked,rechunk_rules:ctField('ctRechunkRules').value}}]};var button=ctField('ctSaveButton');button.disabled=true;ctSetMessage(CT.labels.saving,false);try{var url=CT.id?'/api/v1/compilation_template_groups/'+encodeURIComponent(CT.id):'/api/v1/compilation_template_groups';var response=await fetch(url,{method:CT.id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});var data=await response.json();if(!response.ok||data.code!==0)throw new Error(data.message||('HTTP '+response.status));location.href='/agents'}catch(error){ctSetMessage(CT.labels.saveFailed+error.message,true);button.disabled=false}}document.getElementById('ctKind').addEventListener('change',function(){ctApplyBuiltin(this.value)});document.getElementById('ctRechunk').addEventListener('change',ctSyncRechunk);ctLoad();"#;
+/// Client half of the compile-template editor: builtin palette + wiki presets
+/// load, the kind-driven form renderer (mode / RAPTOR / rechunk / section
+/// fields / blueprint), the add-edit-field modal, the JSON preview sheet and the
+/// group create/update submit, all mirroring the v0.27.2 edit-next form helpers.
+const CT_EDIT_JS: &str = r##"function ctBack(){location.href='/agents'}function ctField(id){return document.getElementById(id)}function ctSetMessage(text,isError){var node=ctField('ctMessage');if(!node)return;node.textContent=text||'';node.classList.toggle('error',!!isError)}function ctEsc(value){return String(value==null?'':value).split('&').join('&amp;').split('<').join('&lt;').split('>').join('&gt;').split('"').join('&quot;')}function ctStartCase(value){var parts=String(value==null?'':value).replace(/([a-z0-9])([A-Z])/g,'$1 $2').split('_').join(' ').split('-').join(' ').split(' ');for(var i=0;i<parts.length;i+=1){if(parts[i])parts[i]=parts[i].charAt(0).toUpperCase()+parts[i].slice(1)}return parts.join(' ')}var CTX={id:CT.id,labels:CT.labels||{},builtins:[],presets:[],kind:'',templateId:null,config:{},name:'',description:'',active:'',editingIndex:null};var CT_META=['kind','llm_id','global_rules','example','instruction','synthesis','use_blueprint','mode','rechunk','rechunk_rules'];var CT_PRIORITY=['entity','relation'];var CT_EXCLUDED_KINDS=['session_essence','session_graph'];var CT_CARDS={entity:{title:'type',description:'description'},relation:{title:'type',description:'description'},claim:{title:'statement',description:'subject'},concept:{title:'definition_excerpt',description:'term'}};var CT_KEY_ORDERS=[['type','description','rule'],['statement','subject'],['definition_excerpt','term']];var CT_SECTION_LABELS={entity:'entitySpec',relation:'relationSpec',concept:'conceptSpec',claim:'claimSpec'};function ctIsMeta(key){return CT_META.indexOf(key)>=0}function ctKindLabel(kind){var map=CTX.labels.kindLabels||{};if(map[kind])return map[kind];return ctStartCase(kind)}function ctKindChoices(){var seen={};var items=[];CTX.builtins.forEach(function(builtin){var kind=builtin&&builtin.kind;if(!kind)return;if(CT_EXCLUDED_KINDS.indexOf(kind)>=0)return;if(seen[kind])return;seen[kind]=1;items.push({value:kind,label:ctKindLabel(kind)})});items.sort(function(left,right){return left.value<right.value?-1:(left.value>right.value?1:0)});return items}function ctBuiltinFor(kind){var found=null;CTX.builtins.forEach(function(builtin){if(builtin&&builtin.kind===kind)found=builtin});return found}function ctNormalizeSection(section){var fields=(section&&Array.isArray(section.fields))?section.fields:[];return {description:(section&&typeof section.description==='string')?section.description:'',fields:fields.map(function(field){var normalized={};Object.keys(field||{}).forEach(function(key){normalized[key]=(field[key]==null?'':String(field[key]))});return normalized})}}function ctConfigFromBuiltin(builtin,kind){var config=(builtin&&builtin.config)||{};var instruction=typeof config.instruction==='string'?config.instruction:'';var example=typeof config.example==='string'?config.example:'';var out={kind:kind,global_rules:typeof config.global_rules==='string'?config.global_rules:'',example:example};if(config.synthesis&&typeof config.synthesis==='object')out.synthesis=config.synthesis;out.use_blueprint=(kind==='wiki'&&(instruction.length>0||example.length>0));out.mode=typeof config.mode==='string'?config.mode:'';if(kind!=='tree'){out.rechunk=config.rechunk===true;out.rechunk_rules=typeof config.rechunk_rules==='string'?config.rechunk_rules:''}if(kind==='wiki'&&(instruction.length>0||example.length>0)){out.instruction=instruction;out.example=example}if(kind==='tree'){var raptor=config.raptor||{};out.raptor={prompt:raptor.prompt==null?'':String(raptor.prompt),max_token:raptor.max_token==null?512:Number(raptor.max_token),clustering_threshold:raptor.clustering_threshold==null?0.3:Number(raptor.clustering_threshold),clustering_ratio:raptor.clustering_ratio==null?0.5:Number(raptor.clustering_ratio),rechunk:raptor.rechunk===true};return out}Object.keys(config).forEach(function(key){if(ctIsMeta(key))return;out[key]=ctNormalizeSection(config[key])});return out}function ctConfigFromDetail(template,kind){var config=(template&&template.config)||{};var storedInstruction=typeof config.instruction==='string'?config.instruction:'';var storedExample=typeof config.example==='string'?config.example:'';var hasBlueprint=(storedInstruction.trim().length>0||storedExample.trim().length>0);var out={kind:typeof config.kind==='string'&&config.kind?config.kind:kind,global_rules:typeof config.global_rules==='string'?config.global_rules:'',example:storedExample};if(config.synthesis&&typeof config.synthesis==='object')out.synthesis=config.synthesis;out.use_blueprint=(kind==='wiki'&&hasBlueprint);out.mode=typeof config.mode==='string'?config.mode:'';if(kind!=='tree'){out.rechunk=config.rechunk===true;out.rechunk_rules=typeof config.rechunk_rules==='string'?config.rechunk_rules:''}if(kind==='wiki'&&hasBlueprint){out.instruction=storedInstruction}if(kind==='tree'){var raptor=config.raptor||{};out.raptor={prompt:raptor.prompt==null?'':String(raptor.prompt),max_token:raptor.max_token==null?512:Number(raptor.max_token),clustering_threshold:raptor.clustering_threshold==null?0.3:Number(raptor.clustering_threshold),clustering_ratio:raptor.clustering_ratio==null?0.5:Number(raptor.clustering_ratio),rechunk:raptor.rechunk===true};return out}Object.keys(config).forEach(function(key){if(ctIsMeta(key))return;out[key]=ctNormalizeSection(config[key])});return out}function ctSectionNames(config){var names=[];Object.keys(config||{}).forEach(function(key){if(ctIsMeta(key))return;var value=config[key];if(value&&typeof value==='object'&&Array.isArray(value.fields))names.push(key)});var priority=CT_PRIORITY.filter(function(name){return names.indexOf(name)>=0});var rest=names.filter(function(name){return CT_PRIORITY.indexOf(name)<0});return priority.concat(rest)}function ctOrderKeys(keys){var sorted=keys.slice().sort().join('|');for(var i=0;i<CT_KEY_ORDERS.length;i+=1){if(CT_KEY_ORDERS[i].slice().sort().join('|')===sorted)return CT_KEY_ORDERS[i].slice()}return keys.slice()}function ctBuildKindSelect(){var select=ctField('ctKind');if(!select)return;select.innerHTML='';var placeholder=document.createElement('option');placeholder.value='';placeholder.textContent=CTX.labels.selectPlaceholder;select.appendChild(placeholder);ctKindChoices().forEach(function(item){var option=document.createElement('option');option.value=item.value;option.textContent=item.label;select.appendChild(option)})}function ctRenderBlueprint(){var config=CTX.config||{};var instruction=String(config.instruction||'');var example=String(config.example||'');var matched='';CTX.presets.forEach(function(preset){if(!matched&&String(preset.instruction||'').trim()===instruction.trim()&&String(preset.example||'').trim()===example.trim())matched=preset.id});var select=ctField('ctBlueprintPreset');select.innerHTML='';CTX.presets.forEach(function(preset){var option=document.createElement('option');option.value=preset.id;option.textContent=String(preset.id).charAt(0).toUpperCase()+String(preset.id).slice(1).toLowerCase();select.appendChild(option)});var custom=document.createElement('option');custom.value='__custom__';custom.textContent=CTX.labels.custom;select.appendChild(custom);select.value=matched||'__custom__';ctField('ctInstruction').value=instruction;ctField('ctExample').value=example}function ctRenderTabs(names){var host=ctField('ctSectionTabs');if(!host)return;host.innerHTML='';names.forEach(function(name){var button=document.createElement('button');button.type='button';button.className='ct-tab';button.setAttribute('role','tab');button.setAttribute('data-testid','compilation-template-section-tab');button.setAttribute('data-section',name);var selected=name===CTX.active;button.setAttribute('aria-selected',selected?'true':'false');var labelKey=CT_SECTION_LABELS[name];var label=(labelKey&&CTX.labels[labelKey])?CTX.labels[labelKey]:ctStartCase(name);button.textContent=label;button.onclick=function(){CTX.active=name;ctRender()};host.appendChild(button)})}function ctRenderGrid(){var host=ctField('ctSectionGrid');if(!host)return;var sectionData=(CTX.config&&CTX.config[CTX.active])?CTX.config[CTX.active]:{fields:[]};var fields=Array.isArray(sectionData.fields)?sectionData.fields:[];var cards=CT_CARDS[CTX.active]||{};host.innerHTML='';fields.forEach(function(field,index){var card=document.createElement('div');card.className='ct-field-card';card.setAttribute('data-testid','compilation-template-field-card');card.setAttribute('data-index',String(index));var actions=document.createElement('div');actions.className='ct-field-actions';var edit=document.createElement('button');edit.type='button';edit.textContent=CTX.labels.editField;edit.setAttribute('data-testid','compilation-template-field-edit');edit.onclick=function(){ctOpenFieldModal(index)};var remove=document.createElement('button');remove.type='button';remove.textContent=CTX.labels.fieldRule;remove.setAttribute('data-testid','compilation-template-field-delete');remove.onclick=function(){ctDeleteField(index)};actions.appendChild(edit);actions.appendChild(remove);card.appendChild(actions);var title=document.createElement('div');title.className='ct-field-title';title.textContent=(cards.title&&field[cards.title]!=null&&String(field[cards.title]))||String(field.type||'');card.appendChild(title);var desc=document.createElement('p');desc.className='ct-field-desc';desc.textContent=(cards.description&&field[cards.description]!=null)?String(field[cards.description]):'';card.appendChild(desc);host.appendChild(card)});var add=document.createElement('button');add.type='button';add.className='ct-add-card';add.setAttribute('data-testid','compilation-template-add-field');add.textContent='+ '+CTX.labels.addField;add.onclick=function(){ctOpenFieldModal(null)};host.appendChild(add)}function ctRender(){if(!CTX.kind)ctField('ctTitle').textContent=CTX.id?CTX.labels.editTitle:CTX.labels.addTitle;ctField('ctPreviewName').textContent=CTX.name||CTX.labels.name;var kind=CTX.kind||'';var kindSelect=ctField('ctKind');kindSelect.value=kind;ctField('ctGlobalRules').value=String(CTX.config.global_rules||'');var wiki=kind==='wiki';var tree=kind==='tree';ctField('ctModeField').classList.toggle('ct-hidden',!wiki);if(wiki)ctField('ctMode').value=(String(CTX.config.mode||'')==='topic')?'topic':'entity';ctField('ctTreeFields').classList.toggle('ct-hidden',!tree);if(tree){var raptor=CTX.config.raptor||{};ctField('ctRaptorPrompt').value=raptor.prompt==null?'':String(raptor.prompt);ctField('ctRaptorMaxToken').value=raptor.max_token==null?512:raptor.max_token;ctField('ctRaptorThreshold').value=raptor.clustering_threshold==null?0.3:raptor.clustering_threshold;ctField('ctRaptorRatio').value=raptor.clustering_ratio==null?0.5:raptor.clustering_ratio;ctField('ctRaptorRechunk').checked=raptor.rechunk===true}var blueprint=wiki&&CTX.presets.length>0;ctField('ctBlueprint').classList.toggle('ct-hidden',!blueprint);if(blueprint)ctRenderBlueprint();var rechunkVisible=kind!==''&&!wiki&&!tree;ctField('ctRechunkField').classList.toggle('ct-hidden',!rechunkVisible);ctField('ctRechunkTip').classList.toggle('ct-hidden',!rechunkVisible);if(rechunkVisible)ctField('ctRechunk').checked=CTX.config.rechunk===true;var rulesVisible=rechunkVisible&&ctField('ctRechunk').checked;ctField('ctRechunkRulesField').classList.toggle('ct-hidden',!rulesVisible);if(rulesVisible)ctField('ctRechunkRules').value=String(CTX.config.rechunk_rules||'');var sectionsHidden=(kind===''||tree);if(sectionsHidden){ctField('ctSections').classList.add('ct-hidden');return}var names=ctSectionNames(CTX.config);ctField('ctSections').classList.toggle('ct-hidden',names.length===0);if(names.length===0)return;if(names.indexOf(CTX.active)<0)CTX.active=names[0];ctRenderTabs(names);ctRenderGrid()}function ctFillBase(){ctField('ctName').value=CTX.name||'';ctField('ctDescription').value=CTX.description||''}function ctApplyKind(kind){var previous=CTX.kind;CTX.kind=kind;if(kind&&kind!==previous){var builtin=ctBuiltinFor(kind);if(builtin)CTX.config=ctConfigFromBuiltin(builtin,kind)}ctField('ctKindError').textContent='';ctRender()}function ctSyncInputs(){CTX.name=ctField('ctName').value;CTX.description=ctField('ctDescription').value;if(!CTX.config||typeof CTX.config!=='object')CTX.config={};CTX.config.global_rules=ctField('ctGlobalRules').value;if(CTX.kind==='wiki'){CTX.config.mode=ctField('ctMode').value;CTX.config.instruction=ctField('ctInstruction').value;CTX.config.example=ctField('ctExample').value}if(CTX.kind==='tree'){var raptor=CTX.config.raptor||{};raptor.prompt=ctField('ctRaptorPrompt').value;raptor.max_token=Number(ctField('ctRaptorMaxToken').value||512);raptor.clustering_threshold=Number(ctField('ctRaptorThreshold').value||0);raptor.clustering_ratio=Number(ctField('ctRaptorRatio').value||0);raptor.rechunk=ctField('ctRaptorRechunk').checked;CTX.config.raptor=raptor}if(CTX.kind&&CTX.kind!=='wiki'&&CTX.kind!=='tree'){CTX.config.rechunk=ctField('ctRechunk').checked;CTX.config.rechunk_rules=ctField('ctRechunkRules').value}}function ctPayloadConfig(){var config={kind:CTX.kind};var source=CTX.config||{};Object.keys(source).forEach(function(key){var value=source[key];if(key==='kind')return;if(key==='example'||key==='instruction')return;if(key==='synthesis'){config.synthesis=value;return}if(key==='mode'){config.mode=value;return}if(ctIsMeta(key)){if(typeof value==='string'||typeof value==='boolean')config[key]=value;return}config[key]=value});if(CTX.kind==='wiki'){if(source.use_blueprint){config.instruction=String(source.instruction||'').trim();config.example=String(source.example||'').trim()}else{config.instruction='';config.example=''}}return config}function ctFormValues(){ctSyncInputs();var name=String(ctField('ctName').value||'').trim();var description=String(ctField('ctDescription').value||'').trim();var template={name:name,description:description,kind:CTX.kind,config:ctPayloadConfig()};if(CTX.templateId)template.id=CTX.templateId;return {name:name,description:description,templates:[template]}}function ctPreviewValues(){ctSyncInputs();var template={id:CTX.templateId||undefined,name:ctField('ctName').value,description:ctField('ctDescription').value,kind:CTX.kind,config:CTX.config};return {name:ctField('ctName').value,description:ctField('ctDescription').value,avatar:'',templates:[template]}}function ctValidateFields(){var sections=['entity','relation','claim','concept'];for(var s=0;s<sections.length;s+=1){var name=sections[s];var data=CTX.config?CTX.config[name]:null;if(!data||!Array.isArray(data.fields))continue;for(var i=0;i<data.fields.length;i+=1){var field=data.fields[i]||{};if(name==='entity'||name==='relation'){if(!String(field.type||'').trim())return CTX.labels.fieldTypeRequired;if(!String(field.description||'').trim())return CTX.labels.fieldDescriptionRequired;for(var j=0;j<data.fields.length;j+=1){if(j!==i&&String((data.fields[j]||{}).type||'')===String(field.type||''))return CTX.labels.fieldTypeExists}}if(name==='claim'){if(!String(field.statement||'').trim())return CTX.labels.fieldDescriptionRequired;if(!String(field.subject||'').trim())return CTX.labels.fieldDescriptionRequired}if(name==='concept'){if(!String(field.term||'').trim())return CTX.labels.fieldDescriptionRequired;if(!String(field.definition_excerpt||'').trim())return CTX.labels.fieldDescriptionRequired}}}return ''}function ctFieldKeys(){var builtin=ctBuiltinFor(CTX.kind);var section=builtin&&builtin.config?builtin.config[CTX.active]:null;var first=section&&Array.isArray(section.fields)?section.fields[0]:null;var keys=first?Object.keys(first):(CTX.active==='claim'?['statement','subject']:(CTX.active==='concept'?['definition_excerpt','term']:['type','description','rule']));return ctOrderKeys(keys)}function ctFieldTypeOptions(existingFields,currentType){var builtin=ctBuiltinFor(CTX.kind);var section=builtin&&builtin.config?builtin.config[CTX.active]:null;var used={};(existingFields||[]).forEach(function(field){if(field&&field.type&&field.type!==currentType)used[field.type]=true});var seen={};var options=[];((section&&section.fields)||[]).forEach(function(field){if(field&&field.type&&!used[field.type]&&!seen[field.type]){seen[field.type]=true;options.push(field.type)}});return options.sort()}function ctFieldLabel(key){if(key==='type')return CTX.labels.fieldType;if(key==='description')return CTX.labels.description;if(key==='rule')return CTX.labels.fieldRule;return ctStartCase(key)}function ctOpenFieldModal(index){var sectionData=(CTX.config&&CTX.config[CTX.active])?CTX.config[CTX.active]:{fields:[]};var fields=Array.isArray(sectionData.fields)?sectionData.fields:[];CTX.editingIndex=(index==null?null:index);var initial=(index==null?null:(fields[index]||{}));var keys=ctFieldKeys();var hasType=keys.indexOf('type')>=0;var types=ctFieldTypeOptions(fields,initial?initial.type:null);var html='';if(hasType){html+="<label class='ds-field'><span class='ds-field-label required'>"+ctEsc(CTX.labels.fieldType)+"</span><input id='ctField_type' type='text' autocomplete='off' list='ctFieldTypeList' placeholder='"+ctEsc(CTX.labels.selectFieldType)+"'>";html+="<datalist id='ctFieldTypeList'>";types.forEach(function(type){html+="<option value='"+ctEsc(type)+"'></option>"});html+="</datalist><span class='ds-field-error' id='ctField_typeError'></span></label>"}keys.filter(function(key){return key!=='type'}).forEach(function(key){var rows=(key==='description')?4:10;html+="<label class='ds-field'><span class='ds-field-label'>"+ctEsc(ctFieldLabel(key))+"</span><textarea id='ctField_"+key+"' rows='"+rows+"'></textarea><span class='ds-field-error' id='ctField_"+key+"Error'></span></label>"});ctField('ctFieldForm').innerHTML=html;if(hasType)ctField('ctField_type').value=initial&&initial.type!=null?String(initial.type):'';keys.filter(function(key){return key!=='type'}).forEach(function(key){var node=ctField('ctField_'+key);node.value=initial&&initial[key]!=null?String(initial[key]):''});ctField('ctFieldModalTitle').textContent=(index==null?CTX.labels.addField:CTX.labels.editField)+' - '+ctStartCase(CTX.active);ctField('ctFieldModal').classList.remove('ct-hidden')}function ctCloseFieldModal(){ctField('ctFieldModal').classList.add('ct-hidden');CTX.editingIndex=null}function ctConfirmField(){var keys=ctFieldKeys();var values={};keys.forEach(function(key){var node=ctField('ctField_'+key);values[key]=node?String(node.value||''):'';var error=ctField('ctField_'+key+'Error');if(error)error.textContent=''});var required=(keys.indexOf('type')>=0)?['type','description']:keys;for(var i=0;i<required.length;i+=1){var key=required[i];if(!String(values[key]||'').trim()){var errorNode=ctField('ctField_'+key+'Error');if(errorNode)errorNode.textContent=(key==='type')?CTX.labels.fieldTypeRequired:CTX.labels.fieldDescriptionRequired;return}}if(values.type){var sectionData=CTX.config[CTX.active]||{fields:[]};var existing=Array.isArray(sectionData.fields)?sectionData.fields:[];for(var j=0;j<existing.length;j+=1){if(CTX.editingIndex!==j&&existing[j]&&existing[j].type===values.type){var duplicate=ctField('ctField_typeError');if(duplicate)duplicate.textContent=CTX.labels.fieldTypeExists;return}}}var target=(CTX.config[CTX.active]=CTX.config[CTX.active]||{description:'',fields:[]});if(!Array.isArray(target.fields))target.fields=[];var normalized={};keys.forEach(function(key){normalized[key]=String(values[key]==null?'':values[key])});if(CTX.editingIndex==null)target.fields.push(normalized);else target.fields[CTX.editingIndex]=normalized;ctCloseFieldModal();ctRender()}function ctDeleteField(index){var sectionData=CTX.config?CTX.config[CTX.active]:null;if(!sectionData||!Array.isArray(sectionData.fields))return;sectionData.fields.splice(index,1);ctRender()}function ctApplyPreset(value){var builtin=ctBuiltinFor('wiki');if(value==='__custom__'){var config=(builtin&&builtin.config)||{};ctField('ctInstruction').value=typeof config.instruction==='string'?config.instruction:'';ctField('ctExample').value=typeof config.example==='string'?config.example:''}else{var preset=null;CTX.presets.forEach(function(item){if(item.id===value)preset=item});if(!preset)return;ctField('ctInstruction').value=String(preset.instruction||'');ctField('ctExample').value=String(preset.example||'')}CTX.config.instruction=ctField('ctInstruction').value;CTX.config.example=ctField('ctExample').value;CTX.config.use_blueprint=true}function ctOpenJsonPreview(){if(ctField('ctJsonSheet').classList.contains('ct-hidden')){ctField('ctJsonBody').textContent=JSON.stringify(ctPreviewValues(),null,2);ctField('ctJsonSheet').classList.remove('ct-hidden')}}function ctCloseJsonPreview(){ctField('ctJsonSheet').classList.add('ct-hidden')}function ctSave(){ctField('ctNameError').textContent='';ctField('ctKindError').textContent='';ctField('ctModeError').textContent='';var name=String(ctField('ctName').value||'').trim();var kind=ctField('ctKind').value;if(!name){ctField('ctNameError').textContent=CTX.labels.nameRequired;return}if(!kind){ctField('ctKindError').textContent=CTX.labels.kindRequired;return}if(kind==='wiki'){var mode=ctField('ctMode').value;if(mode!=='entity'&&mode!=='topic'){ctField('ctModeError').textContent=CTX.labels.wikiModeRequired;return}}var invalid=ctValidateFields();if(invalid){ctSetMessage(invalid,true);return}var payload=ctFormValues();var button=ctField('ctSaveButton');button.disabled=true;ctSetMessage(CTX.labels.saving,false);var requestUrl=CTX.id?('/api/v1/compilation-template-groups/'+encodeURIComponent(CTX.id)):'/api/v1/compilation-template-groups';fetch(requestUrl,{method:CTX.id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(function(response){return response.json().then(function(data){return {ok:response.ok,status:response.status,data:data}})}).then(function(result){if(!result.ok||result.data.code!==0)throw new Error(result.data.message||('HTTP '+result.status));location.href='/agents'}).catch(function(error){ctSetMessage(CTX.labels.saveFailed+String((error&&error.message)||error),true);button.disabled=false})}function ctLoadBuiltins(){return fetch('/api/v1/compilation-templates/builtins').then(function(response){return response.json().then(function(data){return {ok:response.ok,status:response.status,data:data}})}).then(function(result){if(!result.ok||result.data.code!==0)throw new Error(result.data.message||('HTTP '+result.status));CTX.builtins=result.data.data||[]})}function ctLoadPresets(){return fetch('/api/v1/compilation-templates/wiki-presets').then(function(response){if(!response.ok)return [];return response.json()}).then(function(data){CTX.presets=(data&&data.code===0&&Array.isArray(data.data))?data.data:[]}).catch(function(){CTX.presets=[]})}function ctLoadDetail(){return fetch('/api/v1/compilation-template-groups/'+encodeURIComponent(CTX.id)).then(function(response){return response.json().then(function(data){return {ok:response.ok,status:response.status,data:data}})}).then(function(result){if(!result.ok||result.data.code!==0)throw new Error(result.data.message||('HTTP '+result.status));var group=result.data.data||{};var template=(group.templates&&group.templates[0])||{};var kind=template.kind||'';if(kind==='artifacts')kind='wiki';CTX.templateId=template.id||null;CTX.name=template.name||'';CTX.description=template.description||'';CTX.kind=kind;CTX.config=ctConfigFromDetail(template,kind);ctField('ctTitle').textContent=group.name||CTX.labels.editTitle;ctFillBase();ctRender()})}function ctBind(){ctField('ctName').addEventListener('input',function(){CTX.name=this.value;ctField('ctPreviewName').textContent=this.value||CTX.labels.name});ctField('ctDescription').addEventListener('input',function(){CTX.description=this.value});ctField('ctGlobalRules').addEventListener('input',function(){CTX.config.global_rules=this.value});ctField('ctKind').addEventListener('change',function(){ctApplyKind(this.value)});ctField('ctMode').addEventListener('change',function(){CTX.config.mode=this.value;ctField('ctModeError').textContent=''});ctField('ctRechunk').addEventListener('change',function(){CTX.config.rechunk=this.checked;ctRender()});ctField('ctRechunkRules').addEventListener('input',function(){CTX.config.rechunk_rules=this.value});ctField('ctRaptorPrompt').addEventListener('input',function(){var raptor=(CTX.config.raptor=CTX.config.raptor||{});raptor.prompt=this.value});ctField('ctRaptorMaxToken').addEventListener('input',function(){var raptor=(CTX.config.raptor=CTX.config.raptor||{});raptor.max_token=Number(this.value||512)});ctField('ctRaptorThreshold').addEventListener('input',function(){var raptor=(CTX.config.raptor=CTX.config.raptor||{});raptor.clustering_threshold=Number(this.value||0)});ctField('ctRaptorRatio').addEventListener('input',function(){var raptor=(CTX.config.raptor=CTX.config.raptor||{});raptor.clustering_ratio=Number(this.value||0)});ctField('ctRaptorRechunk').addEventListener('change',function(){var raptor=(CTX.config.raptor=CTX.config.raptor||{});raptor.rechunk=this.checked});ctField('ctInstruction').addEventListener('input',function(){CTX.config.instruction=this.value;CTX.config.use_blueprint=true});ctField('ctExample').addEventListener('input',function(){CTX.config.example=this.value;CTX.config.use_blueprint=true});ctField('ctBlueprintPreset').addEventListener('change',function(){ctApplyPreset(this.value)});document.addEventListener('keydown',function(event){if(event.key==='Escape'){ctCloseFieldModal();ctCloseJsonPreview()}})}function ctBoot(){ctBind();Promise.all([ctLoadBuiltins(),ctLoadPresets()]).then(function(){ctBuildKindSelect();if(CTX.id)return ctLoadDetail();ctFillBase();ctRender()}).catch(function(error){ctSetMessage(CTX.labels.loadFailed+String((error&&error.message)||error),true)})}ctBoot();"##;
 
 pub async fn agent_templates_page(
     State(_state): State<Arc<AppState>>,
@@ -16171,17 +16202,47 @@ connection: close
             "data-testid='compilation-template-edit-page'",
             "data-testid='compilation-template-back'",
             "data-testid='compilation-template-save'",
+            "data-testid='compilation-template-json-preview'",
+            "data-testid='compilation-template-wiki-mode'",
+            "data-testid='compilation-template-raptor'",
+            "data-testid='compilation-template-blueprint'",
+            "data-testid='compilation-template-fields'",
+            "data-testid='compilation-template-field-modal'",
+            "data-testid='compilation-template-field-confirm'",
             "id='ctName'",
             "id='ctDescription'",
             "id='ctKind'",
             "id='ctGlobalRules'",
+            "id='ctMode'",
+            "id='ctRaptorPrompt'",
+            "id='ctRaptorMaxToken'",
+            "id='ctRaptorThreshold'",
+            "id='ctRaptorRatio'",
+            "id='ctRaptorRechunk'",
+            "id='ctInstruction'",
+            "id='ctExample'",
             "id='ctRechunk'",
             "id='ctRechunkRules'",
             "Add template",
             "Global rules",
             "Re-chunk parser output",
-            "/api/v1/compilation_template_groups",
-            "/api/v1/compilation_templates/builtins",
+            "Wiki mode",
+            "RAPTOR tree settings",
+            "Blueprints",
+            "Add field",
+            "Entity specification",
+            "/api/v1/compilation-template-groups",
+            "/api/v1/compilation-templates/builtins",
+            "/api/v1/compilation-templates/wiki-presets",
+            "session_essence",
+            "session_graph",
+            "ctConfigFromBuiltin",
+            "ctConfigFromDetail",
+            "ctPayloadConfig",
+            "ctApplyKind",
+            "ctOpenFieldModal",
+            "ctOpenJsonPreview",
+            "ctApplyPreset",
             "const CT={id:null",
         ] {
             assert!(
@@ -16189,13 +16250,51 @@ connection: close
                 "missing compilation edit marker {marker}"
             );
         }
+        assert!(
+            !body.contains("{{"),
+            "unresolved label token left in the editor page"
+        );
         let edit = compilation_template_edit_body(false, Some("group-123"));
         assert!(edit.contains("const CT={id:\"group-123\""));
         assert!(edit.contains("Edit template"));
         let zh = compilation_template_edit_body(true, None);
-        assert!(zh.contains("添加模板"));
-        assert!(zh.contains("全局规则"));
-        assert!(zh.contains("重新切分 Parser 输出"));
+        for marker in [
+            "添加模板",
+            "全局规则",
+            "重新切分 Parser 输出",
+            "Wiki 模式",
+            "RAPTOR 树设置",
+            "蓝图",
+            "添加字段",
+            "JSON 预览",
+        ] {
+            assert!(zh.contains(marker), "missing zh label {marker}");
+        }
+    }
+
+    #[test]
+    fn compilation_template_edit_labels_cover_markup_and_locales() {
+        let en = ct_labels(false);
+        let zh = ct_labels(true);
+        assert_eq!(en["addTitle"], "Add template");
+        assert_eq!(en["custom"], "Custom");
+        assert_eq!(en["kindLabels"]["wiki"], "Wiki");
+        assert_eq!(en["kindLabels"]["knowledge_graph"], "Graph");
+        assert_eq!(en["kindLabels"]["page_index"], "PageIndex");
+        assert_eq!(en["kindLabels"]["mind_map"], "Mindmap");
+        assert_eq!(zh["addTitle"], "添加模板");
+        assert_eq!(zh["wikiMode"], "Wiki 模式");
+        assert_eq!(zh["fieldRule"], "规则");
+        // Every markup token must have an English and a Chinese label row.
+        let mut rest = CT_EDIT_MARKUP;
+        while let Some(start) = rest.find("{{") {
+            let tail = &rest[start + 2..];
+            let end = tail.find("}}").expect("unterminated markup token");
+            let key = &tail[..end];
+            assert!(en.get(key).is_some(), "missing label for token {key}");
+            assert!(zh.get(key).is_some(), "missing zh label for token {key}");
+            rest = &tail[end + 2..];
+        }
     }
 
     #[tokio::test]

@@ -1,7 +1,8 @@
-//! Compilation templates aligned with RAGFlow v0.26.4.
+//! Compilation templates aligned with RAGFlow v0.27.2.
 //!
 //! User-created groups are tenant-scoped and persistent. The builtin palette and
-//! wiki presets are immutable data compiled from the fixed v0.26.4 YAML files.
+//! wiki presets are immutable data compiled from the fixed v0.27.2 YAML files
+//! (api/db/init_data/compilation_templates/, commit a024bea0cd93).
 
 use axum::{
     Json,
@@ -21,9 +22,9 @@ use crate::server::{AppState, AuthContext};
 const NAME_MAX_BYTES: usize = 128;
 const DESCRIPTION_MAX_CHARS: usize = 1024;
 const GLOBAL_RULES_MAX_CHARS: usize = 4096;
-const BUILTIN_DATA: &str = include_str!("fixtures/compilation_template_builtins.v0.26.4.json");
+const BUILTIN_DATA: &str = include_str!("fixtures/compilation_template_builtins.v0.27.2.json");
 const WIKI_PRESET_DATA: &str =
-    include_str!("fixtures/compilation_template_wiki_presets.v0.26.4.json");
+    include_str!("fixtures/compilation_template_wiki_presets.v0.27.2.json");
 type ReferenceData = (Arc<[BuiltinCompilationTemplate]>, Arc<[WikiPreset]>);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -40,7 +41,7 @@ pub struct WikiPreset {
     pub id: String,
     pub topic: String,
     pub instruction: String,
-    pub page_example: String,
+    pub example: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -131,11 +132,12 @@ impl CompilationTemplateStore {
     pub fn new(path: impl AsRef<FsPath>) -> anyhow::Result<Self> {
         let path = path.as_ref().to_path_buf();
         crate::persistence::restore_if_missing(&path)?;
-        let groups = if path.exists() {
+        let mut groups: Vec<CompilationTemplateGroup> = if path.exists() {
             serde_json::from_slice(&std::fs::read(&path)?)?
         } else {
             Vec::new()
         };
+        normalize_legacy_kinds(&mut groups);
         validate_saved_groups(&groups)?;
         let (builtins, wiki_presets) = load_reference_data()?;
         let store = Self {
@@ -150,7 +152,7 @@ impl CompilationTemplateStore {
     }
 
     pub fn in_memory() -> Self {
-        Self::try_in_memory().expect("embedded v0.26.4 compilation template data is valid")
+        Self::try_in_memory().expect("embedded v0.27.2 compilation template data is valid")
     }
 
     fn try_in_memory() -> anyhow::Result<Self> {
@@ -207,8 +209,9 @@ impl CompilationTemplateStore {
     pub fn create(
         &self,
         tenant_id: &str,
-        request: GroupCreateRequest,
+        mut request: GroupCreateRequest,
     ) -> anyhow::Result<CompilationTemplateGroup> {
+        normalize_legacy_requests(&mut request.templates);
         let name = request.name.trim().to_string();
         validate_group_fields(&name, &request.description, &request.templates)?;
         let scope = derive_scope(&request.templates)?;
@@ -300,7 +303,8 @@ impl CompilationTemplateStore {
             let description = request.description.unwrap_or(current.description);
             let now = now_ms();
             let (templates, scope) = match request.templates {
-                Some(templates) => {
+                Some(mut templates) => {
+                    normalize_legacy_requests(&mut templates);
                     validate_group_fields(&name, &description, &templates)?;
                     let scope = derive_scope(&templates)?.to_string();
                     (materialize_templates(id, templates, now), scope)
@@ -392,8 +396,23 @@ fn validate_reference_data(
             anyhow::bail!("Invalid or duplicated builtin compilation template");
         }
     }
-    if builtins.last().map(|template| template.id.as_str()) != Some("empty") {
-        anyhow::bail!("Empty builtin compilation template must sort last");
+    // Upstream _sort_builtins: the (unseeded) empty kind would sort first and
+    // everything else by display name; the embedded palette must already be in
+    // that order so the editor kind list is byte-for-byte the upstream one.
+    let mut ordered = builtins.to_vec();
+    ordered.sort_by(|left, right| {
+        let left_empty = left.kind == "empty" || left.id == "empty";
+        let right_empty = right.kind == "empty" || right.id == "empty";
+        left_empty
+            .cmp(&right_empty)
+            .then_with(|| left.display_name.cmp(&right.display_name))
+    });
+    if ordered
+        .iter()
+        .map(|template| template.id.as_str())
+        .ne(builtins.iter().map(|template| template.id.as_str()))
+    {
+        anyhow::bail!("Builtin compilation templates must follow the upstream sort order");
     }
     let mut preset_ids = HashSet::new();
     for preset in wiki_presets {
@@ -402,6 +421,50 @@ fn validate_reference_data(
         }
     }
     Ok(())
+}
+
+/// v0.26.4 spelled the graph-based-wiki template kind "artifacts"; v0.27.2
+/// renamed it "wiki" (web/src/constants/compilation.ts). Stored pre-upgrade
+/// groups are migrated in place so the v0.27.2 validator and editor see the
+/// canonical vocabulary.
+fn normalize_legacy_kinds(groups: &mut [CompilationTemplateGroup]) {
+    for group in groups.iter_mut() {
+        for template in group.templates.iter_mut() {
+            if template.kind != "artifacts" {
+                continue;
+            }
+            template.kind = "wiki".into();
+            if let Some(config) = template.config.as_object_mut() {
+                if config.get("kind").and_then(|value| value.as_str()) == Some("artifacts") {
+                    config.insert("kind".into(), serde_json::Value::String("wiki".into()));
+                }
+                if !config.contains_key("mode") {
+                    config.insert("mode".into(), serde_json::Value::String("entity".into()));
+                }
+            }
+        }
+    }
+}
+
+/// Write-path twin of [`normalize_legacy_kinds`]: a v0.26.4 client (cached
+/// editor bundle) still posts kind `artifacts`; accept it as the v0.27.2
+/// `wiki` template with its default `entity` mode instead of storing a kind
+/// the palette no longer offers.
+fn normalize_legacy_requests(templates: &mut [TemplateRequest]) {
+    for template in templates.iter_mut() {
+        let legacy = template.kind == "artifacts";
+        if legacy {
+            template.kind = "wiki".into();
+        }
+        if let Some(config) = template.config.as_object_mut() {
+            if config.get("kind").and_then(|value| value.as_str()) == Some("artifacts") {
+                config.insert("kind".into(), serde_json::Value::String("wiki".into()));
+            }
+            if template.kind == "wiki" && !config.contains_key("mode") {
+                config.insert("mode".into(), serde_json::Value::String("entity".into()));
+            }
+        }
+    }
 }
 
 fn materialize_templates(
@@ -523,20 +586,43 @@ fn validate_template(template: &TemplateRequest) -> anyhow::Result<()> {
             }
         }
     }
-    if template.kind.trim() == "artifacts"
-        || config.get("kind").and_then(|v| v.as_str()) == Some("artifacts")
+    if template.kind.trim() == "wiki" || config.get("kind").and_then(|v| v.as_str()) == Some("wiki")
     {
-        validate_artifact_fields(config, "claim", "statement", "subject")?;
-        validate_artifact_fields(config, "concept", "term", "definition_excerpt")?;
+        // Upstream validate_template_payload: wiki mode first, then the claim
+        // and concept field sets of the graph-based wiki recipe.
+        let mode = config
+            .get("mode")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        if mode != "entity" && mode != "topic" {
+            anyhow::bail!("Wiki mode must be either 'entity' or 'topic'.");
+        }
+        validate_wiki_fields(
+            config,
+            "claim",
+            &[
+                ("statement", "Claim statement"),
+                ("subject", "Claim subject"),
+            ],
+        )?;
+        validate_wiki_fields(
+            config,
+            "concept",
+            &[
+                ("term", "Concept term"),
+                ("definition_excerpt", "Concept definition excerpt"),
+            ],
+        )?;
     }
     Ok(())
 }
 
-fn validate_artifact_fields(
+/// Wiki recipe fields (upstream validate_template_payload): the label is part of
+/// the upstream message verbatim, e.g. "Claim statement is required.".
+fn validate_wiki_fields(
     config: &serde_json::Map<String, serde_json::Value>,
     section: &str,
-    first: &str,
-    second: &str,
+    keys: &[(&str, &str)],
 ) -> anyhow::Result<()> {
     let fields = config
         .get(section)
@@ -545,16 +631,16 @@ fn validate_artifact_fields(
         .cloned()
         .unwrap_or_default();
     for field in fields {
-        for key in [first, second] {
+        for (key, label) in keys {
             let value = field
-                .get(key)
+                .get(*key)
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or_default();
             if value.trim().is_empty() {
-                anyhow::bail!("{} is required.", title_key(key));
+                anyhow::bail!("{label} is required.");
             }
             if value.chars().count() > DESCRIPTION_MAX_CHARS {
-                anyhow::bail!("{} is too long.", title_key(key));
+                anyhow::bail!("{label} is too long.");
             }
         }
     }
@@ -565,14 +651,14 @@ fn derive_scope(templates: &[TemplateRequest]) -> anyhow::Result<&'static str> {
     if templates.is_empty() {
         anyhow::bail!("A template group must contain at least one template.");
     }
-    let artifacts = templates
+    let wiki_templates = templates
         .iter()
-        .filter(|template| template.kind.trim() == "artifacts")
+        .filter(|template| template.kind.trim() == "wiki")
         .count();
-    if artifacts > 0 {
-        if artifacts != 1 || templates.len() != 1 {
+    if wiki_templates > 0 {
+        if wiki_templates != 1 || templates.len() != 1 {
             anyhow::bail!(
-                "An artifacts template cannot be combined with other templates in the same group."
+                "A wiki template cannot be combined with other templates in the same group."
             );
         }
         return Ok("dataset");
@@ -645,15 +731,150 @@ fn capitalize(value: &str) -> String {
     }
 }
 
-fn title_key(key: &str) -> String {
-    key.split('_').map(capitalize).collect::<Vec<_>>().join(" ")
-}
-
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+fn json_result(code: i64, message: &str, data: serde_json::Value) -> Response {
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "code": code, "message": message, "data": data })),
+    )
+        .into_response()
+}
+
+/// Upstream `get_data_error_result(...)` in the compilation-template blueprint is a
+/// plain jsonify answer: HTTP 200, code 102, message only, no data key.
+fn data_error(message: &str) -> Response {
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "code": 102, "message": message })),
+    )
+        .into_response()
+}
+
+/// Upstream `validate_request("name", "templates")`: a missing key answers
+/// `get_json_result(code=101, message=..., data=null)` on HTTP 200.
+fn missing_arguments_message(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    let missing: Vec<&str> = keys
+        .iter()
+        .copied()
+        .filter(|key| value.get(*key).is_none())
+        .collect();
+    if missing.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "required argument are missing: {}; ",
+            missing.join(",")
+        ))
+    }
+}
+
+/// `_validate_group_payload` scalar half: name/description types and lengths.
+fn group_scalars_from_value(
+    value: &serde_json::Value,
+) -> Result<(Option<String>, Option<String>), String> {
+    let name = match value.get("name") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(raw)) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return Err("Invalid template group name.".into());
+            }
+            if trimmed.len() > 128 {
+                return Err("Template group name is too long.".into());
+            }
+            Some(trimmed.to_string())
+        }
+        Some(_) => return Err("Invalid template group name.".into()),
+    };
+    let description = match value.get("description") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(raw)) => {
+            if raw.chars().count() > 1024 {
+                return Err("Invalid template group description.".into());
+            }
+            Some(raw.clone())
+        }
+        Some(_) => return Err("Invalid template group description.".into()),
+    };
+    Ok((name, description))
+}
+
+/// `_validate_group_payload` template half plus the child required-field check
+/// from `validate_template_payload(require_all=True)`.
+fn templates_from_value(value: &serde_json::Value) -> Result<Option<Vec<TemplateRequest>>, String> {
+    let Some(raw) = value.get("templates") else {
+        return Ok(None);
+    };
+    if raw.is_null() {
+        return Ok(None);
+    }
+    let Some(array) = raw.as_array() else {
+        return Err("A template group must contain at least one template.".into());
+    };
+    if array.is_empty() {
+        return Err("A template group must contain at least one template.".into());
+    }
+    let mut templates = Vec::with_capacity(array.len());
+    for child in array {
+        let Some(object) = child.as_object() else {
+            return Err("Invalid template entry in group.".into());
+        };
+        templates.push(template_from_object(object)?);
+    }
+    Ok(Some(templates))
+}
+
+fn template_from_object(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<TemplateRequest, String> {
+    for key in ["name", "kind", "config"] {
+        if !object.contains_key(key) {
+            return Err(format!("Missing required field: {key}."));
+        }
+    }
+    let name = object
+        .get("name")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    if name.trim().is_empty() || name.len() > 128 {
+        return Err("Invalid template name.".into());
+    }
+    let description = match object.get("description") {
+        None | Some(serde_json::Value::Null) => String::new(),
+        Some(serde_json::Value::String(raw)) => {
+            if raw.chars().count() > 1024 {
+                return Err("Invalid template description.".into());
+            }
+            raw.clone()
+        }
+        Some(_) => return Err("Invalid template description.".into()),
+    };
+    let kind = object
+        .get("kind")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    if kind.is_empty() {
+        return Err("Invalid template kind.".into());
+    }
+    let config = object
+        .get("config")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    if !config.is_object() {
+        return Err("Invalid template config.".into());
+    }
+    Ok(TemplateRequest {
+        name: name.to_string(),
+        description,
+        kind: kind.to_string(),
+        config,
+    })
 }
 
 pub async fn list_groups(
@@ -662,8 +883,11 @@ pub async fn list_groups(
     Query(query): Query<GroupListQuery>,
 ) -> Response {
     let (groups, total) = state.compilation_templates.list(&auth.user_id, &query);
-    Json(serde_json::json!({ "code": 0, "data": { "groups": groups, "total": total } }))
-        .into_response()
+    json_result(
+        0,
+        "success",
+        serde_json::json!({ "groups": groups, "total": total }),
+    )
 }
 
 pub async fn list_builtin_templates(
@@ -679,30 +903,79 @@ pub async fn list_builtin_templates(
         )
             .into_response();
     }
-    Json(serde_json::json!({ "code": 0, "data": state.compilation_templates.list_builtins_for(tenant_id, &state.tenant_models, &state.providers) }))
-        .into_response()
+    json_result(
+        0,
+        "success",
+        serde_json::json!(state.compilation_templates.list_builtins_for(
+            tenant_id,
+            &state.tenant_models,
+            &state.providers
+        )),
+    )
 }
 
 pub async fn list_wiki_presets(
     State(state): State<Arc<AppState>>,
     Extension(_auth): Extension<AuthContext>,
 ) -> Response {
-    Json(serde_json::json!({ "code": 0, "data": state.compilation_templates.list_wiki_presets() }))
-        .into_response()
+    json_result(
+        0,
+        "success",
+        serde_json::json!(state.compilation_templates.list_wiki_presets()),
+    )
 }
 
 pub async fn create_group(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
-    Json(request): Json<GroupCreateRequest>,
+    request: Option<Json<serde_json::Value>>,
 ) -> Response {
-    match state.compilation_templates.create(&auth.user_id, request) {
-        Ok(group) => (
-            StatusCode::CREATED,
-            Json(serde_json::json!({ "code": 0, "data": group })),
-        )
-            .into_response(),
-        Err(error) => bad_request(&error.to_string()),
+    let Some(Json(value)) = request else {
+        return json_result(
+            101,
+            "required argument are missing: name,templates; ",
+            serde_json::Value::Null,
+        );
+    };
+    if !value.is_object() {
+        return json_result(
+            101,
+            "required argument are missing: name,templates; ",
+            serde_json::Value::Null,
+        );
+    }
+    if let Some(message) = missing_arguments_message(&value, &["name", "templates"]) {
+        return json_result(101, &message, serde_json::Value::Null);
+    }
+    let (name, description) = match group_scalars_from_value(&value) {
+        Ok(fields) => fields,
+        Err(message) => return data_error(&message),
+    };
+    let Some(name) = name else {
+        return data_error("Missing required field: name.");
+    };
+    let templates = match templates_from_value(&value) {
+        Ok(Some(templates)) => templates,
+        Ok(None) => {
+            return data_error("A template group must contain at least one template.");
+        }
+        Err(message) => return data_error(&message),
+    };
+    let group_request = GroupCreateRequest {
+        name,
+        description: description.unwrap_or_default(),
+        templates,
+    };
+    match state
+        .compilation_templates
+        .create(&auth.user_id, group_request)
+    {
+        Ok(group) => json_result(
+            0,
+            "success",
+            serde_json::to_value(group).unwrap_or(serde_json::Value::Null),
+        ),
+        Err(error) => data_error(&error.to_string()),
     }
 }
 
@@ -712,8 +985,12 @@ pub async fn get_group(
     Path(id): Path<String>,
 ) -> Response {
     match state.compilation_templates.get(&auth.user_id, &id) {
-        Some(group) => Json(serde_json::json!({ "code": 0, "data": group })).into_response(),
-        None => not_found(&format!("Cannot find compilation template group {id}.")),
+        Some(group) => json_result(
+            0,
+            "success",
+            serde_json::to_value(group).unwrap_or(serde_json::Value::Null),
+        ),
+        None => data_error(&format!("Cannot find compilation template group {id}.")),
     }
 }
 
@@ -754,7 +1031,7 @@ pub async fn execute_group_templates(
     Json(request): Json<ExecuteTreeTemplatesRequest>,
 ) -> Response {
     let Some(group) = state.compilation_templates.get(&auth.user_id, &id) else {
-        return not_found(&format!("Cannot find compilation template group {id}."));
+        return data_error(&format!("Cannot find compilation template group {id}."));
     };
     let tree_templates: Vec<(String, serde_json::Value)> = group
         .templates
@@ -926,15 +1203,38 @@ pub async fn update_group(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<String>,
-    Json(request): Json<GroupUpdateRequest>,
+    request: Option<Json<serde_json::Value>>,
 ) -> Response {
+    let value = request
+        .map(|Json(value)| value)
+        .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
+    if !value.is_object() {
+        return data_error("Invalid request payload: expected object.");
+    }
+    let (name, description) = match group_scalars_from_value(&value) {
+        Ok(fields) => fields,
+        Err(message) => return data_error(&message),
+    };
+    let templates = match templates_from_value(&value) {
+        Ok(templates) => templates,
+        Err(message) => return data_error(&message),
+    };
+    let group_request = GroupUpdateRequest {
+        name,
+        description,
+        templates,
+    };
     match state
         .compilation_templates
-        .update(&auth.user_id, &id, request)
+        .update(&auth.user_id, &id, group_request)
     {
-        Ok(Some(group)) => Json(serde_json::json!({ "code": 0, "data": group })).into_response(),
-        Ok(None) => not_found(&format!("Cannot find compilation template group {id}.")),
-        Err(error) => bad_request(&error.to_string()),
+        Ok(Some(group)) => json_result(
+            0,
+            "success",
+            serde_json::to_value(group).unwrap_or(serde_json::Value::Null),
+        ),
+        Ok(None) => data_error(&format!("Cannot find compilation template group {id}.")),
+        Err(error) => data_error(&error.to_string()),
     }
 }
 
@@ -944,8 +1244,8 @@ pub async fn delete_group(
     Path(id): Path<String>,
 ) -> Response {
     match state.compilation_templates.delete(&auth.user_id, &id) {
-        Ok(true) => Json(serde_json::json!({ "code": 0, "data": true })).into_response(),
-        Ok(false) => not_found(&format!("Cannot find compilation template group {id}.")),
+        Ok(true) => json_result(0, "success", serde_json::Value::Bool(true)),
+        Ok(false) => data_error(&format!("Cannot find compilation template group {id}.")),
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "code": 500, "message": error.to_string() })),
@@ -954,25 +1254,19 @@ pub async fn delete_group(
     }
 }
 
-fn bad_request(message: &str) -> Response {
-    (
-        StatusCode::BAD_REQUEST,
-        Json(serde_json::json!({ "code": 400, "message": message })),
-    )
-        .into_response()
-}
-
-fn not_found(message: &str) -> Response {
-    (
-        StatusCode::NOT_FOUND,
-        Json(serde_json::json!({ "code": 404, "message": message })),
-    )
-        .into_response()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A graph-based-wiki config that passes the v0.27.2 template validator.
+    fn wiki_config() -> serde_json::Value {
+        serde_json::json!({
+            "kind": "wiki",
+            "mode": "entity",
+            "claim": {"fields": [{"statement": "A is B", "subject": "A"}]},
+            "concept": {"fields": [{"term": "A", "definition_excerpt": "the A"}]}
+        })
+    }
 
     fn template(name: &str, kind: &str, config: serde_json::Value) -> TemplateRequest {
         TemplateRequest {
@@ -1011,10 +1305,7 @@ mod tests {
         let artifact = store
             .create(
                 "tenant-a",
-                request(
-                    "Dataset",
-                    vec![template("Wiki", "artifacts", serde_json::json!({}))],
-                ),
+                request("Dataset", vec![template("Wiki", "wiki", wiki_config())]),
             )
             .unwrap();
         assert_eq!(artifact.scope, "dataset");
@@ -1025,7 +1316,7 @@ mod tests {
                     request(
                         "Mixed",
                         vec![
-                            template("Wiki", "artifacts", serde_json::json!({})),
+                            template("Wiki", "wiki", wiki_config()),
                             template("Other", "graph", serde_json::json!({}))
                         ]
                     )
@@ -1082,11 +1373,7 @@ mod tests {
                 "tenant-a",
                 &first.id,
                 GroupUpdateRequest {
-                    templates: Some(vec![template(
-                        "Artifact",
-                        "artifacts",
-                        serde_json::json!({}),
-                    )]),
+                    templates: Some(vec![template("Artifact", "wiki", wiki_config())]),
                     ..Default::default()
                 },
             )
@@ -1108,19 +1395,18 @@ mod tests {
                 )
                 .is_err()
         );
-        let missing_claim =
-            serde_json::json!({"claim":{"fields":[{"statement":"","subject":"fish"}]}});
-        assert!(
-            store
-                .create(
-                    "tenant",
-                    request(
-                        "Bad artifact",
-                        vec![template("Bad", "artifacts", missing_claim)]
-                    )
-                )
-                .is_err()
-        );
+        let missing_claim = serde_json::json!({
+            "kind": "wiki",
+            "mode": "entity",
+            "claim": {"fields": [{"statement": "", "subject": "fish"}]}
+        });
+        let error = store
+            .create(
+                "tenant",
+                request("Bad wiki", vec![template("Bad", "wiki", missing_claim)]),
+            )
+            .unwrap_err();
+        assert_eq!(error.to_string(), "Claim statement is required.");
     }
 
     #[test]
@@ -1165,10 +1451,157 @@ mod tests {
     }
 
     #[test]
+    fn reference_palette_matches_v0272_seed_set() {
+        let store = CompilationTemplateStore::in_memory();
+        let builtins = store.list_builtins();
+        assert_eq!(builtins.len(), 8);
+        for builtin in &builtins {
+            assert_eq!(builtin.id, builtin.kind);
+            assert!(!builtin.display_name.is_empty());
+            assert!(builtin.config.is_object());
+        }
+        let wiki = builtins.iter().find(|b| b.id == "wiki").unwrap();
+        assert_eq!(wiki.kind, "wiki");
+        assert_eq!(wiki.config["kind"], "wiki");
+        assert_eq!(wiki.config["mode"], "entity");
+        assert!(
+            wiki.config["instruction"]
+                .as_str()
+                .unwrap()
+                .contains("wikilinks")
+        );
+        assert!(wiki.config["example"].as_str().is_some());
+        for section in ["entity", "relation", "claim", "concept"] {
+            assert!(
+                wiki.config[section]["fields"].as_array().is_some(),
+                "missing wiki section {section}"
+            );
+        }
+        let tree = builtins.iter().find(|b| b.id == "tree").unwrap();
+        assert_eq!(tree.config["raptor"]["max_token"], 512);
+        assert_eq!(tree.config["raptor"]["clustering_threshold"], 0.3);
+        let presets = store.list_wiki_presets();
+        assert_eq!(presets.len(), 6);
+        assert!(
+            presets
+                .iter()
+                .all(|preset| !preset.example.trim().is_empty())
+        );
+    }
+
+    #[test]
+    fn wiki_validation_messages_match_upstream() {
+        let store = CompilationTemplateStore::in_memory();
+        let bad_mode = serde_json::json!({"kind": "wiki", "mode": "neither"});
+        let error = store
+            .create(
+                "tenant",
+                request("Wiki", vec![template("Wiki", "wiki", bad_mode)]),
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Wiki mode must be either 'entity' or 'topic'."
+        );
+        let missing_concept = serde_json::json!({
+            "kind": "wiki",
+            "mode": "topic",
+            "concept": {"fields": [{"term": "", "definition_excerpt": "d"}]}
+        });
+        let error = store
+            .create(
+                "tenant",
+                request("Wiki 2", vec![template("Wiki", "wiki", missing_concept)]),
+            )
+            .unwrap_err();
+        assert_eq!(error.to_string(), "Concept term is required.");
+    }
+
+    #[test]
+    fn wiki_scope_error_message_matches_upstream() {
+        let store = CompilationTemplateStore::in_memory();
+        let error = store
+            .create(
+                "tenant",
+                request(
+                    "Mixed",
+                    vec![
+                        template("Wiki", "wiki", wiki_config()),
+                        template("Tree", "tree", serde_json::json!({})),
+                    ],
+                ),
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "A wiki template cannot be combined with other templates in the same group."
+        );
+    }
+
+    #[test]
+    fn legacy_artifacts_kind_migrates_to_wiki_on_load() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-template-legacy-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("compilation_templates.json");
+        let legacy = serde_json::json!([{
+            "id": "g1",
+            "tenant_id": "tenant",
+            "name": "Legacy",
+            "description": "",
+            "scope": "dataset",
+            "templates": [{
+                "id": "t1",
+                "name": "Wiki",
+                "description": "",
+                "kind": "artifacts",
+                "config": {"kind": "artifacts"},
+                "created_at": 1,
+                "updated_at": 1
+            }],
+            "created_at": 1,
+            "updated_at": 1
+        }]);
+        std::fs::write(&path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
+        let store = CompilationTemplateStore::new(&path).unwrap();
+        let group = store.get("tenant", "g1").unwrap();
+        assert_eq!(group.templates[0].kind, "wiki");
+        assert_eq!(group.templates[0].config["kind"], "wiki");
+        assert_eq!(group.templates[0].config["mode"], "entity");
+        // The migration is persisted, so a restart sees the canonical record too.
+        let persisted = std::fs::read_to_string(&path).unwrap();
+        assert!(persisted.contains("\"kind\": \"wiki\""));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn legacy_artifacts_write_is_normalized_to_wiki() {
+        let store = CompilationTemplateStore::in_memory();
+        let group = store
+            .create(
+                "tenant",
+                request(
+                    "Legacy client",
+                    vec![template(
+                        "Wiki",
+                        "artifacts",
+                        serde_json::json!({"kind": "artifacts"}),
+                    )],
+                ),
+            )
+            .unwrap();
+        assert_eq!(group.scope, "dataset");
+        assert_eq!(group.templates[0].kind, "wiki");
+        assert_eq!(group.templates[0].config["kind"], "wiki");
+        assert_eq!(group.templates[0].config["mode"], "entity");
+    }
+
+    #[test]
     fn embedded_builtin_seed_is_complete_stable_and_read_only() {
         let store = CompilationTemplateStore::in_memory();
+        // Upstream _sort_builtins: kind == empty first, then display_name; the
+        // v0.27.2 seed set has no empty template.
         let expected = [
-            "wiki",
             "knowledge_graph",
             "timeline",
             "mind_map",
@@ -1176,7 +1609,7 @@ mod tests {
             "session_essence",
             "session_graph",
             "tree",
-            "empty",
+            "wiki",
         ];
         assert_eq!(
             store
@@ -1188,9 +1621,14 @@ mod tests {
         );
         let mut changed = store.list_builtins();
         changed[0].display_name = "changed by caller".into();
+        assert_eq!(store.list_builtins()[0].display_name, "Knowledge graph");
         assert_eq!(
-            store.list_builtins()[0].display_name,
-            "Artifacts — Graph-based wiki"
+            store
+                .list_builtins()
+                .iter()
+                .find(|template| template.id == "wiki")
+                .map(|template| template.display_name.as_str()),
+            Some("Wiki — Graph-based wiki")
         );
         assert_eq!(store.list("tenant-a", &GroupListQuery::default()).1, 0);
         assert_eq!(store.list("tenant-b", &GroupListQuery::default()).1, 0);
@@ -1216,7 +1654,7 @@ mod tests {
         assert_eq!(presets[0].topic, "marketing");
         assert!(presets[2].instruction.contains("See also"));
         assert_eq!(presets[5].topic, "product");
-        assert!(presets[5].page_example.contains("# User interview"));
+        assert!(presets[5].example.contains("# User interview"));
     }
 
     #[test]
@@ -1226,7 +1664,7 @@ mod tests {
         duplicated[1].id = duplicated[0].id.clone();
         assert!(validate_reference_data(&duplicated, &store.list_wiki_presets()).is_err());
         let mut misordered = store.list_builtins();
-        misordered.swap(0, 8);
+        misordered.swap(0, 7);
         assert!(validate_reference_data(&misordered, &store.list_wiki_presets()).is_err());
     }
 }

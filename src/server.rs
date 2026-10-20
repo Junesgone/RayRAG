@@ -20436,8 +20436,10 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(created.status(), StatusCode::CREATED);
+        assert_eq!(created.status(), StatusCode::OK);
         let created = response_json(created).await;
+        assert_eq!(created["code"], 0);
+        assert_eq!(created["message"], "success");
         let group_id = created["data"]["id"].as_str().unwrap().to_string();
         assert_eq!(created["data"]["scope"], "file");
 
@@ -20453,6 +20455,8 @@ mod tests {
             .await
             .unwrap();
         let listed = response_json(listed).await;
+        assert_eq!(listed["code"], 0);
+        assert_eq!(listed["message"], "success");
         assert_eq!(listed["data"]["total"], 1);
         assert_eq!(listed["data"]["groups"][0]["id"], group_id);
 
@@ -20467,7 +20471,18 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(hidden.status(), StatusCode::NOT_FOUND);
+        // Upstream get_data_error_result: HTTP 200 + code 102, message only.
+        assert_eq!(hidden.status(), StatusCode::OK);
+        let hidden = response_json(hidden).await;
+        assert_eq!(hidden["code"], 102);
+        assert!(hidden.get("data").is_none(), "{hidden}");
+        assert!(
+            hidden["message"]
+                .as_str()
+                .unwrap_or_default()
+                .starts_with("Cannot find compilation template group"),
+            "{hidden}"
+        );
 
         let updated = router
             .clone()
@@ -20482,8 +20497,13 @@ mod tests {
                             "description": "Dataset version",
                             "templates": [{
                                 "name": "Wiki artifact",
-                                "kind": "artifacts",
-                                "config": {}
+                                "kind": "wiki",
+                                "config": {
+                                    "kind": "wiki",
+                                    "mode": "entity",
+                                    "claim": {"fields": [{"statement": "A is B", "subject": "A"}]},
+                                    "concept": {"fields": [{"term": "A", "definition_excerpt": "the A"}]}
+                                }
                             }]
                         })
                         .to_string(),
@@ -20493,7 +20513,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(updated.status(), StatusCode::OK);
-        assert_eq!(response_json(updated).await["data"]["scope"], "dataset");
+        let updated = response_json(updated).await;
+        assert_eq!(updated["code"], 0);
+        assert_eq!(updated["message"], "success");
+        assert_eq!(updated["data"]["scope"], "dataset");
 
         let deleted = router
             .clone()
@@ -20508,7 +20531,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(deleted.status(), StatusCode::OK);
-        assert_eq!(response_json(deleted).await["data"], true);
+        let deleted = response_json(deleted).await;
+        assert_eq!(deleted["code"], 0);
+        assert_eq!(deleted["message"], "success");
+        assert_eq!(deleted["data"], true);
 
         let missing = router
             .oneshot(
@@ -20520,7 +20546,102 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        assert_eq!(missing.status(), StatusCode::OK);
+        let missing = response_json(missing).await;
+        assert_eq!(missing["code"], 102);
+        assert!(missing.get("data").is_none(), "{missing}");
+    }
+
+    #[tokio::test]
+    async fn compilation_template_group_errors_answer_upstream_envelopes() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let post = |body: Option<serde_json::Value>| {
+            let router = router.clone();
+            let token = env.token.clone();
+            async move {
+                let request = Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/compilation_template_groups")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"));
+                let request = match body {
+                    Some(value) => request
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(value.to_string())),
+                    None => request.body(Body::empty()),
+                }
+                .unwrap();
+                router.oneshot(request).await.unwrap()
+            }
+        };
+
+        // Upstream validate_request: missing keys answer 101 data:null on HTTP 200.
+        let empty = post(Some(serde_json::json!({}))).await;
+        assert_eq!(empty.status(), StatusCode::OK);
+        let empty = response_json(empty).await;
+        assert_eq!(empty["code"], 101);
+        assert_eq!(
+            empty["message"],
+            "required argument are missing: name,templates; "
+        );
+        assert!(empty.get("data").unwrap().is_null());
+        let no_templates = post(Some(serde_json::json!({"name": "x"}))).await;
+        let no_templates = response_json(no_templates).await;
+        assert_eq!(no_templates["code"], 101);
+        assert_eq!(
+            no_templates["message"],
+            "required argument are missing: templates; "
+        );
+
+        // get_data_error_result: HTTP 200 + code 102, no data key.
+        let empty_templates = post(Some(serde_json::json!({"name": "x", "templates": []}))).await;
+        assert_eq!(empty_templates.status(), StatusCode::OK);
+        let empty_templates = response_json(empty_templates).await;
+        assert_eq!(empty_templates["code"], 102);
+        assert_eq!(
+            empty_templates["message"],
+            "A template group must contain at least one template."
+        );
+        assert!(empty_templates.get("data").is_none());
+        let missing_kind = post(Some(serde_json::json!({
+            "name": "x",
+            "templates": [{"name": "t", "config": {}}]
+        })))
+        .await;
+        let missing_kind = response_json(missing_kind).await;
+        assert_eq!(missing_kind["code"], 102);
+        assert_eq!(missing_kind["message"], "Missing required field: kind.");
+        let bad_wiki = post(Some(serde_json::json!({
+            "name": "x",
+            "templates": [{"name": "t", "kind": "wiki", "config": {"kind": "wiki", "mode": "neither"}}]
+        })))
+        .await;
+        let bad_wiki = response_json(bad_wiki).await;
+        assert_eq!(bad_wiki["code"], 102);
+        assert_eq!(
+            bad_wiki["message"],
+            "Wiki mode must be either 'entity' or 'topic'."
+        );
+
+        // Unknown ids answer the same error envelope on every verb.
+        for (method, expected) in [(Method::GET, 102), (Method::DELETE, 102)] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri("/api/v1/compilation_template_groups/no-such-group")
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = response_json(response).await;
+            assert_eq!(body["code"], expected, "{body}");
+            assert!(body.get("data").is_none(), "{body}");
+        }
     }
 
     #[tokio::test]
@@ -20567,9 +20688,9 @@ mod tests {
             .unwrap();
         assert_eq!(builtins.status(), StatusCode::OK);
         let builtins = response_json(builtins).await;
-        assert_eq!(builtins["data"].as_array().unwrap().len(), 9);
-        assert_eq!(builtins["data"][0]["id"], "wiki");
-        assert_eq!(builtins["data"][8]["id"], "empty");
+        assert_eq!(builtins["data"].as_array().unwrap().len(), 8);
+        assert_eq!(builtins["data"][0]["id"], "knowledge_graph");
+        assert_eq!(builtins["data"][7]["id"], "wiki");
 
         env.state
             .tenant_models
@@ -20699,6 +20820,13 @@ mod tests {
         assert_eq!(presets["data"].as_array().unwrap().len(), 6);
         assert_eq!(presets["data"][0]["id"], "brand");
         assert_eq!(presets["data"][5]["id"], "user_interview");
+        assert!(
+            presets["data"][0]["example"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty()),
+            "v0.27.2 wiki presets carry the example field"
+        );
+        assert!(presets["data"][0].get("page_example").is_none());
     }
 
     /// An unrouted API path must answer JSON, never the application shell: the shell made
@@ -22551,7 +22679,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(created.status(), StatusCode::CREATED);
+        assert_eq!(created.status(), StatusCode::OK);
         let created = response_json(created).await;
         let group_id = created["data"]["id"].as_str().unwrap().to_string();
 
