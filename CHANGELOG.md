@@ -2,6 +2,31 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.48.0] - 2026-10-20
+
+### The Artifacts tab shows the compiled wiki
+
+The dataset Artifacts tab is now the full RAGFlow v0.27.2 knowledge-compilation
+surface instead of a shell around a generate button.
+
+- Every view mode has its upstream empty state and title: Wiki, Graph, Mind map,
+  Timeline and the navigation tree. The Generate button follows the upstream
+  `canGenerateWiki` gate, and the structure views explain that their artifacts
+  are compiled automatically when documents are parsed.
+- The wiki view renders the contents panel (topics -> pages, search, graph tab),
+  Update and Clear actions, and a markdown detail pane with headings, lists,
+  code and clickable `[[wiki links]]`, plus the source-document line.
+- Generation runs end to end from the UI: the MAP extracts are persisted, COMPILE
+  synthesises the pages and the view reloads with them. A freshly parsed dataset
+  now compiles in one pass: the compile step folds the search index's chunk view
+  into the compile state instead of relying on rows mirrored into the document
+  store, which used to report `pages created: 0` without an error.
+- `Knowledgebase.pipeline_id` is a real top-level dataset column now: it is
+  stored on create/update, returned in the dataset payload, and drives the
+  generation gate exactly like the upstream column.
+- Clearing the wiki answers the upstream confirmation copy and returns the page
+  to the empty state.
+
 ## [0.47.0] - 2026-10-20
 
 ### Compilation templates speak the v0.27.2 vocabulary

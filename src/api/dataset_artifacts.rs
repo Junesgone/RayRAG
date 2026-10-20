@@ -647,6 +647,34 @@ pub async fn list_artifact_topics(
     .into_response()
 }
 
+/// Fold the search engine's chunk view (`per_doc`: document id -> `[{id,text}]`)
+/// into COMPILE's chunk-state map (`chunk_id -> {doc_id, hash}`).
+///
+/// `scan_current_chunk_state` only sees chunk rows mirrored into the document
+/// store; a dataset parsed through the search engine has none, so without this
+/// fold a fresh compile persisted MAP extracts but COMPILE saw an empty state and
+/// answered `pages_created: 0` without any error.
+fn merge_engine_chunks_into_state(
+    current: &mut serde_json::Map<String, Value>,
+    per_doc: &std::collections::BTreeMap<String, Vec<Value>>,
+) {
+    for (doc_id, chunks) in per_doc {
+        for chunk in chunks {
+            let Some(id) = chunk.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            let text = chunk.get("text").and_then(Value::as_str).unwrap_or("");
+            current.insert(
+                id.to_string(),
+                serde_json::json!({
+                    "doc_id": doc_id,
+                    "hash": crate::harness::knowlege_wiki::chunk_hash(text),
+                }),
+            );
+        }
+    }
+}
+
 /// `POST /api/v1/datasets/{id}/artifacts/compile` — run the wiki/artifact compilation.
 ///
 /// Upstream's artifact generation is **two phases**, and skipping either one produces a silent
@@ -785,7 +813,7 @@ pub async fn compile_artifacts(
     }
     // Phase 2 — COMPILE: reads the extracts phase 1 just stored.
     let doc_ids: BTreeSet<String> = per_doc.keys().cloned().collect();
-    let current = match crate::harness::knowlege_wiki::scan_current_chunk_state(
+    let mut current = match crate::harness::knowlege_wiki::scan_current_chunk_state(
         &store,
         &auth.user_id,
         &kb_id,
@@ -794,6 +822,7 @@ pub async fn compile_artifacts(
         Ok(state) => state,
         Err(error) => return store_error(&error),
     };
+    merge_engine_chunks_into_state(&mut current, &per_doc);
     // `load_map_versions` returns the map directly (no Result) and takes the requested
     // versions as an optional map; `None` means "every stored version".
     let previous = crate::harness::knowlege_wiki::load_map_versions(
@@ -831,4 +860,53 @@ pub async fn compile_artifacts(
         "data": { "mapped": mapped, "total": total, "extracts": extracts, "failed": failed_docs, "skipped": skipped, "compile": outcome }
     }))
     .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn engine_chunks_are_folded_into_the_compile_state() {
+        let mut current = serde_json::Map::new();
+        current.insert(
+            "docstore-only".into(),
+            serde_json::json!({"doc_id": "d0", "hash": "h0"}),
+        );
+        let mut per_doc: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+        per_doc.insert(
+            "d1".into(),
+            vec![serde_json::json!({"id": "engine-1", "text": "Alpha is text"})],
+        );
+        merge_engine_chunks_into_state(&mut current, &per_doc);
+        assert_eq!(current.len(), 2);
+        let row = current.get("engine-1").expect("engine chunk folded");
+        assert_eq!(row["doc_id"], "d1");
+        assert_eq!(
+            row["hash"],
+            crate::harness::knowlege_wiki::chunk_hash("Alpha is text")
+        );
+        // A doc-store row that was already present keeps its value.
+        assert_eq!(current["docstore-only"]["hash"], "h0");
+    }
+
+    #[test]
+    fn engine_fold_overrides_a_stale_docstore_hash() {
+        let mut current = serde_json::Map::new();
+        current.insert(
+            "chunk-1".into(),
+            serde_json::json!({"doc_id": "d1", "hash": "stale"}),
+        );
+        let mut per_doc: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+        per_doc.insert(
+            "d1".into(),
+            vec![serde_json::json!({"id": "chunk-1", "text": "fresh"})],
+        );
+        merge_engine_chunks_into_state(&mut current, &per_doc);
+        assert_eq!(
+            current["chunk-1"]["hash"],
+            crate::harness::knowlege_wiki::chunk_hash("fresh")
+        );
+    }
 }

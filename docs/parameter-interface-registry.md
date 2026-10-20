@@ -1093,3 +1093,61 @@ difference exists only after the client script runs. Verify page levels by rende
 
 - 旧数据（v0.26.4 kind=artifacts）在 `CompilationTemplateStore::new` 载入时迁移为 `wiki`（同时 `config.kind`、补 `mode=entity`）并持久化。
 - internal assets：本文件、对照台账、运维记录不进入 GitHub 发布快照。
+
+## 数据集 Artifacts / Wiki 编译面（RAGFlow v0.27.2 对齐，v0.3.10ak）
+
+> 供后续代码/接口编写查询：知识编译页（Artifacts tab）的接口形状、生成门控、UI 行为与证据方法。基线与数据同前（v0.27.2，commit `a024bea0cd93`）。
+
+### 生成门控（upstream `wiki-generation-eligibility.ts`）
+
+`canGenerateWiki(kb) = (kb.chunk_count ?? 0) > 0 && Boolean((kb.pipeline_id ?? "").trim())`。
+
+- `chunk_count`：数据集已解析 chunk 数（RayRAG 由解析流水线维护）。
+- `pipeline_id`：`Knowledgebase.pipeline_id`（upstream `CharField(max_length=32, null=True)`）——**数据集顶层列**；RayRAG 的 `POST/PUT /api/v1/datasets` 接受该键（absent=保持、null/空串=清除、字符串=绑定），并随数据集 JSON 返回。
+- 前端按钮态：不满足时 Generate 禁用，并按 `chunk_count>0 ? 缺 pipeline : 缺 chunk` 给出提示；结构类视图（graph/mindmap/timeline）显示 `autoCompiled`（文档解析时自动编译）。
+
+### 接口（`src/api/dataset_artifacts.rs` / `src/api/dataset_navigation.rs`）
+
+| 方法 | 路径 | 形状 |
+| --- | --- | --- |
+| HEAD | `/api/v1/datasets/{id}/artifacts` | 200=有任何 wiki 页面；404=空（upstream `has_any_wiki`） |
+| GET | `/api/v1/datasets/{id}/artifacts?page&page_size&page_type&keywords&topic` | `{total, items:[{slug,title,page_type}]}`，默认 page_size=200、上限 1000 |
+| GET | `/api/v1/datasets/{id}/artifacts/topics?page_size&keywords` | `{total, items:[{topic,title,slug}]}`（page_type=topic） |
+| GET | `/api/v1/datasets/{id}/artifacts/{page_type}/{slug}` | `{slug,title,page_type,content,summary,entity_names,source_doc_ids,source_chunk_ids}`（slug 含 `/` 时按整段匹配） |
+| PUT | `/api/v1/datasets/{id}/artifacts/{page_type}/{slug}` | body `{content_md,title?,comments?}` → `{slug,page_type,saved:true}`；仅更新已存在页面 |
+| DELETE | `/api/v1/datasets/{id}/artifacts` | `{deleted}`（清空全部 wiki_page 行） |
+| POST | `/api/v1/datasets/{id}/artifacts/compile` | MAP+COMPILE，见下 |
+| GET/DELETE | `/api/v1/datasets/{id}/artifacts/structure` | 结构类 artifact 列表/清空 |
+| GET | `/api/v1/datasets/{id}/artifacts/graph|alteration` | 同列表形状（按 page_type 过滤） |
+| GET | `/api/v1/datasets/{id}/navigation?page_size&keywords&top_k` | `{total, items:[nav 节点]}`；节点含 `name/description/keywords/entities/graph_content/doc_count/type(cluster|doc)` |
+| GET | `/api/v1/datasets/{id}/navigation/{name}/children` | 同上的子节点列表 |
+| POST/DELETE | `/api/v1/datasets/{id}/navigation` | 生成/删除导航树（扩展/对齐 upstream dataset_api） |
+
+### 编译响应（`POST .../artifacts/compile`）
+
+```json
+{"code":0,"data":{
+  "mapped":1,"total":1,"extracts":4,"failed":0,"skipped":[],
+  "compile":{"pages_created":1,"pages_modified":0,"pages_deleted":0,"errors":[]},
+  "message":"..."
+}}
+```
+
+- 需要服务端已配置 chat model；缺少时返回数据错误文案（不是静默空成功）。
+- MAP 按文档抽取 entities/concepts/claims/relations/topics 并持久化 extract 行；COMPILE 从 extract 行合成页面（entity/concept 页 + 可能的 topic 页）。
+- **修复（v0.3.10ak）**：compile 的 current chunk state 除 doc-store 扫描外，并入搜索 engine 的 chunk 视图（id + content hash）。修复前，新解析数据集因 chunk 行未镜像到 doc store 而 `pages_created=0` 且无错误。
+
+### UI（`/dataset/compilation/{id}`）
+
+- 外壳：Back + avatar + `{name}{titleSuffix}` + 视图选择器（Wiki / Tree-PageIndex / Graph / Mind map / Timeline）；loading / empty / workspace 三态。
+- 空态标题逐字：`No wiki yet` / `No graph yet` / `No mind map yet` / `No timeline yet` / `No navigation nodes`；zh 值按上游 locale。
+- Wiki 视图：Contents/Graph 双 tab；Topics→Pages 导航 + 面包屑；搜索（客户端过滤）；Update（重编译）/Clear（上游确认文案）；详情 markdown（标题/段落/列表/代码/外链/[[wiki link]] 点击解析到页面）；来源文档行。
+- 生成后状态文案：Mapped X of Y document(s), extracts N, pages created K, modified M（+skipped/失败提示）。
+- Tree 视图：navigation 树（cluster→children→doc 详情：description/keywords/entities/graph_content）。
+- 结构视图：structure artifact 列表 + 详情 + autoCompiled 提示。
+
+### 证据方法（可复跑）
+
+1. `scripts/ui-traversal/mock-compilation-model-server.py`：本地 OpenAI 兼容 stub（/v1/embeddings + /v1/chat/completions；MAP JSON、partition/route JSON、SUMMARY/TITLE/TOPIC 页面 markdown），让 MAP→COMPILE 端到端离线可跑。
+2. debug 实例 env：`LLM_API_BASE=http://127.0.0.1:18089/v1 LLM_MODEL=mock-model EMBED_API_BASE=... EMBED_MODEL=mock-embedding RAYRAG_EMBEDDING_DIMENSION=384`。
+3. `scripts/ui-traversal/compilation-artifacts-view-cdp.mjs`：创建带 pipeline_id 的探针数据集→上传→加 chunk→CDP 点击 Generate→workspace/topic/page 详情/搜索/Graph tab/模式切换/Clear；断言 26 项（0 pageerror）。

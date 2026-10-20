@@ -755,6 +755,14 @@ async fn create_dataset(
         .get("embd_id")
         .or_else(|| body.get("embedding_model"))
         .and_then(|value| value.as_str());
+    // Upstream `Knowledgebase.pipeline_id` — the ingestion-pipeline binding the
+    // Artifacts tab's generation gate reads.
+    let requested_pipeline = body
+        .get("pipeline_id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
     if name.is_empty() || name.len() > 255 {
         return api_error(
             StatusCode::BAD_REQUEST,
@@ -821,15 +829,26 @@ async fn create_dataset(
         &parser_config,
         &stored_language,
     ) {
-        Ok(kb) => (
-            StatusCode::CREATED,
-            Json(ApiResponse {
-                code: 0,
-                message: "Created".into(),
-                data: Some(serde_json::to_value(kb).unwrap_or_default()),
-            }),
-        )
-            .into_response(),
+        Ok(kb) => {
+            let kb = match requested_pipeline {
+                Some(pipeline_id) => state
+                    .kbs
+                    .set_pipeline_id(&kb.id, Some(pipeline_id))
+                    .ok()
+                    .flatten()
+                    .unwrap_or(kb),
+                None => kb,
+            };
+            (
+                StatusCode::CREATED,
+                Json(ApiResponse {
+                    code: 0,
+                    message: "Created".into(),
+                    data: Some(serde_json::to_value(kb).unwrap_or_default()),
+                }),
+            )
+                .into_response()
+        }
         Err(error) => api_error(StatusCode::BAD_REQUEST, &error.to_string()),
     }
 }
@@ -935,6 +954,16 @@ async fn update_dataset(
         .and_then(|value| value.as_str())
         .map(str::trim)
         .filter(|value| !value.is_empty());
+    // `pipeline_id` is a top-level Knowledgebase column upstream. Absent = keep,
+    // null/empty = clear, string = bind.
+    let requested_pipeline = match body.get("pipeline_id") {
+        None => None,
+        Some(serde_json::Value::Null) => Some(None),
+        Some(serde_json::Value::String(raw)) => Some(Some(raw.trim().to_string())),
+        Some(_) => {
+            return api_error(StatusCode::BAD_REQUEST, "pipeline_id must be a string");
+        }
+    };
     if name.is_none()
         && description.is_none()
         && permission.is_none()
@@ -942,6 +971,7 @@ async fn update_dataset(
         && parser_config.is_none()
         && requested_prompt_config.is_none()
         && language.is_none()
+        && requested_pipeline.is_none()
     {
         return api_error(
             StatusCode::BAD_REQUEST,
@@ -994,6 +1024,11 @@ async fn update_dataset(
     });
     if let Some(language) = language
         && let Err(error) = state.kbs.set_language(&dataset_id, language)
+    {
+        return api_error(StatusCode::BAD_REQUEST, &error.to_string());
+    }
+    if let Some(pipeline_id) = requested_pipeline
+        && let Err(error) = state.kbs.set_pipeline_id(&dataset_id, pipeline_id)
     {
         return api_error(StatusCode::BAD_REQUEST, &error.to_string());
     }
@@ -12208,6 +12243,90 @@ mod tests {
         assert!(
             env.state.kbs.get(&other.id).is_some(),
             "another tenant keeps its datasets"
+        );
+    }
+
+    /// Upstream `Knowledgebase.pipeline_id` is a top-level column: `POST` binds
+    /// it, `PUT` rebinds or clears it (null/empty), and both the create and the
+    /// update answer carry the column -- the Artifacts generation gate reads it.
+    #[tokio::test]
+    async fn dataset_pipeline_id_is_a_top_level_column() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let created = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/datasets")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"name": "Pipeline KB", "pipeline_id": "pipe-1"})
+                            .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let created = response_json(created).await;
+        assert_eq!(created["data"]["pipeline_id"], "pipe-1", "{created}");
+        let dataset_id = created["data"]["id"].as_str().unwrap().to_string();
+
+        let fetched = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/datasets/{dataset_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response_json(fetched).await["data"]["pipeline_id"],
+            "pipe-1"
+        );
+
+        let cleared = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri(format!("/api/v1/datasets/{dataset_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"pipeline_id": serde_json::Value::Null}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response_json(cleared).await["data"]["pipeline_id"],
+            serde_json::Value::Null
+        );
+
+        let rebound = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri(format!("/api/v1/datasets/{dataset_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"pipeline_id": "pipe-2"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response_json(rebound).await["data"]["pipeline_id"],
+            "pipe-2"
         );
     }
 

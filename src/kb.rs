@@ -29,6 +29,11 @@ pub struct KnowledgeBase {
     /// Visibility: `private` for the owner only, `team` for joined tenant members.
     #[serde(default = "default_permission")]
     pub permission: String,
+    /// RAGFlow `Knowledgebase.pipeline_id` — the ingestion-pipeline binding.
+    /// The Artifacts tab's `canGenerateWiki` gate requires it alongside a
+    /// non-zero chunk count (upstream `wiki-generation-eligibility.ts`).
+    #[serde(default)]
+    pub pipeline_id: Option<String>,
     /// Chunk count
     pub chunk_count: usize,
     /// Document count
@@ -498,6 +503,7 @@ impl KbStore {
                 description: description.to_string(),
                 owner_id: owner_id.to_string(),
                 permission: normalize_permission(permission).to_string(),
+                pipeline_id: None,
                 chunk_count: 0,
                 doc_count: 0,
                 embd_id: embd_id.into(),
@@ -510,6 +516,28 @@ impl KbStore {
             };
             kbs.insert(kb.id.clone(), kb.clone());
             Ok(kb)
+        })
+    }
+
+    /// Upstream `Knowledgebase.pipeline_id` binding update: a value binds the
+    /// dataset to an ingestion pipeline, `None`/empty clears it.
+    pub fn set_pipeline_id(
+        &self,
+        id: &str,
+        pipeline_id: Option<String>,
+    ) -> Result<Option<KnowledgeBase>> {
+        let pipeline_id = pipeline_id
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        self.mutate_if_changed(|kbs| {
+            let Some(kb) = kbs.get_mut(id) else {
+                return Ok((None, false));
+            };
+            if kb.pipeline_id == pipeline_id {
+                return Ok((Some(kb.clone()), false));
+            }
+            kb.pipeline_id = pipeline_id;
+            Ok((Some(kb.clone()), true))
         })
     }
 

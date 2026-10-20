@@ -2837,6 +2837,166 @@ function dsTagDelete(tag){if(!confirm('Delete tag '+tag+' ?'))return;dsTagReques
 function dsTagRequest(method,body,okText){var kb=document.getElementById('cfgName')?window.kbId:window.kbId;if(!kb)return;dsTagStatus('Saving…',false);fetch('/api/v1/datasets/'+encodeURIComponent(kb)+'/tags',{method:method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json()}).then(function(d){if(d.code!==0)throw new Error(d.message||('HTTP '+d.code));dsTagStatus(okText,false);return dsTagLoad()}).catch(function(error){dsTagStatus(String(error.message||error),true)})}
 async function dsTagLoad(){var kb=window.kbId;if(!kb)return;try{var response=await fetch('/api/v1/datasets/'+encodeURIComponent(kb)+'/tags');var data=await response.json();if(data.code!==0)throw new Error(data.message||('HTTP '+data.code));DS_TAG_LIST=(data.data||[]).filter(function(pair){return Array.isArray(pair)&&pair.length>=2});dsTagRender()}catch(error){dsTagStatus(String(error.message||error),true)}}";
 
+/// Labels for the dataset Artifacts page (RAGFlow v0.27.2
+/// `pages/dataset/compilation/*`). Token names are also the placeholders
+/// replaced inside [CWP_MARKUP]; the client reads the same table through
+/// `CWP.labels`.
+fn cwp_labels(zh: bool) -> serde_json::Value {
+    let pairs: [(&str, &str, &str); 59] = [
+        ("back", "Back", "返回"),
+        ("titleSuffix", "' dataset", "的数据集"),
+        ("llmWiki", "Wiki", "Wiki"),
+        ("navTree", "Tree/PageIndex", "Tree/PageIndex"),
+        ("graph", "Graph", "Graph"),
+        ("structureMindmap", "Mind map", "Mindmap"),
+        ("structureTimeline", "Timeline", "Timeline"),
+        ("noWikiPages", "No wiki yet", "暂无 Wiki"),
+        ("noStructureGraph", "No graph yet", "暂无 Graph"),
+        ("noStructureMindmap", "No mind map yet", "暂无 Mindmap"),
+        ("noStructureTimeline", "No timeline yet", "暂无 Timeline"),
+        ("generate", "Generate", "生成"),
+        ("compiling", "Compiling…", "编译中…"),
+        ("update", "Update", "更新"),
+        ("clearWikiTitle", "Clear wiki", "清空 Wiki"),
+        (
+            "clearWikiDescription",
+            "Are you sure you want to clear all wiki pages in this dataset? This action cannot be undone.",
+            "确定要清空该数据集下的所有 Wiki 页面吗？此操作无法撤销。",
+        ),
+        ("contents", "Navigation", "导航"),
+        ("topics", "Topics", "Topic"),
+        ("sourceDocuments", "Source documents", "来源文档"),
+        (
+            "autoCompiled",
+            "Compiled automatically when documents are parsed.",
+            "文档解析时自动编译。",
+        ),
+        ("search", "Search", "搜索"),
+        ("noResults", "No results found", "未查到结果"),
+        ("cancel", "Cancel", "取消"),
+        ("confirm", "Confirm", "确定"),
+        ("close", "Close", "关闭"),
+        ("loading", "Loading...", "加载中…"),
+        ("loadFailed", "Load failed: ", "加载失败："),
+        ("generateFailed", "Generate failed: ", "生成失败："),
+        ("clearFailed", "Clear failed: ", "清空失败："),
+        (
+            "loadFailedPages",
+            "Could not load the page: ",
+            "页面加载失败：",
+        ),
+        ("updating", "Updating wiki…", "正在更新 Wiki…"),
+        ("pageNotFound", "Page not found: ", "页面不存在："),
+        ("noTopics", "No topics yet", "暂无 Topic"),
+        (
+            "noPagesUnderTopic",
+            "No pages under this topic",
+            "该 Topic 下暂无页面",
+        ),
+        ("noGraphArtifacts", "No graph artifacts yet", "暂无图谱产物"),
+        (
+            "selectNode",
+            "Select a topic or page to view its content.",
+            "选择 Topic 或页面查看内容。",
+        ),
+        ("pages", "Pages", "页面"),
+        ("navEmpty", "No navigation nodes", "暂无导航节点"),
+        (
+            "navSelectNode",
+            "Select a child node to view details",
+            "选择子节点查看详情",
+        ),
+        ("navNoDescription", "No description", "无描述"),
+        ("navKeywords", "Keywords", "关键词"),
+        ("navEntities", "Entities", "实体"),
+        ("navGraphContent", "Full graph content", "完整图谱内容"),
+        ("navDocCount", "{{count}} documents", "{{count}} 个文档"),
+        ("navLoading", "Loading...", "加载中…"),
+        (
+            "msgMapped",
+            "Mapped {{mapped}} of {{total}} document(s), extracts {{extracts}}, pages created {{created}}, modified {{modified}}.",
+            "已映射 {{mapped}}/{{total}} 个文档，抽取 {{extracts}} 条，生成页面 {{created}} 个，修改 {{modified}} 个。",
+        ),
+        (
+            "msgSkipped",
+            " {{count}} document(s) had nothing to extract.",
+            " {{count}} 个文档没有可抽取内容。",
+        ),
+        (
+            "msgNoExtracts",
+            " The model found no entities, concepts, claims, relations or topics in this dataset, so no pages were produced - that is a data result, not a failure.",
+            " 模型未在该数据集中发现实体、概念、断言、关系或主题，因此未产生页面——这是数据结果，不是失败。",
+        ),
+        (
+            "msgNoChunks",
+            "This dataset has no parsed chunks yet.",
+            "该数据集暂无已解析的 Chunk。",
+        ),
+        (
+            "msgNoPipeline",
+            "Assign a chunk method to this dataset before generating artifacts.",
+            "请先为该数据集配置 Chunk 方法后再生成。",
+        ),
+        (
+            "summarizing",
+            "Reading the compiled pages...",
+            "正在读取编译产物…",
+        ),
+        (
+            "clearDone",
+            "Cleared {{count}} page(s).",
+            "已清空 {{count}} 个页面。",
+        ),
+        ("details", "Details", "详情"),
+        ("export", "Export", "导出"),
+        ("typeTopic", "topic", "topic"),
+        ("typeConcept", "concept", "concept"),
+        ("typeEntity", "entity", "entity"),
+        ("typeClaim", "claim", "claim"),
+        ("typeRelation", "relation", "relation"),
+    ];
+    let mut map = serde_json::Map::new();
+    for (key, en, cn) in pairs {
+        map.insert(
+            key.to_string(),
+            serde_json::Value::String(if zh { cn } else { en }.to_string()),
+        );
+    }
+    serde_json::Value::Object(map)
+}
+
+/// Markup skeleton for the Artifacts tab. Label placeholders are replaced from
+/// [cwp_labels]; the dataset id fills the back link so the shell mirrors
+/// RAGFlow's `pages/dataset/compilation/index.tsx`.
+const CWP_MARKUP: &str = r##"<style>.cwp-panel{padding:20px;display:flex;flex-direction:column;gap:16px;min-height:520px}.cwp-header{display:flex;flex-direction:column;gap:12px}.cwp-title-row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.cwp-title-left{display:flex;align-items:center;gap:10px}.cwp-title-left h2{margin:0;font-size:20px}.cwp-mode{max-width:240px;padding:8px 12px;border:1px solid var(--bdc);border-radius:var(--rs);background:var(--bgc);color:var(--t);font:inherit;font-size:13px}.cwp-status{font-size:13px;color:var(--tm);min-height:18px}.cwp-status.error{color:var(--d)}.cwp-spinner{display:inline-block;width:12px;height:12px;border:2px solid var(--bd);border-top-color:var(--p);border-radius:50%;margin-right:8px;vertical-align:-2px;animation:cwp-spin .8s linear infinite}@keyframes cwp-spin{to{transform:rotate(360deg)}}.cwp-loading{padding:60px 20px;text-align:center;color:var(--tm)}.cwp-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;border:1px dashed var(--bdc);border-radius:var(--r);padding:60px 20px;min-height:280px}.cwp-empty p{margin:0;color:var(--t2);font-size:16px}.cwp-hint{max-width:560px;text-align:center;font-size:13px;color:var(--tm);line-height:1.6}.cwp-work{flex:1;display:grid;grid-template-columns:minmax(260px,42%) 1fr;gap:16px;min-height:440px;border:1px solid var(--bdc);border-radius:var(--r);overflow:hidden}.cwp-left{display:flex;flex-direction:column;gap:10px;padding:16px;border-right:1px solid var(--bdc);min-height:0;background:var(--bgc)}.cwp-left-head{display:flex;align-items:center;justify-content:space-between;gap:8px}.cwp-icon{border:1px solid transparent;background:transparent;color:var(--tm);cursor:pointer;border-radius:var(--rs);padding:4px 8px;font-size:15px}.cwp-icon:hover{color:var(--d);border-color:var(--bdc)}.cwp-tabs{display:grid;grid-template-columns:1fr 1fr;border:1px solid var(--bdc);border-radius:var(--rs);overflow:hidden}.cwp-tab{border:0;background:transparent;padding:8px 10px;font:inherit;font-size:13px;color:var(--t2);cursor:pointer}.cwp-tab[aria-selected='true']{background:var(--bgch);color:var(--t);font-weight:500}.cwp-search{width:100%;padding:8px 12px;border:1px solid var(--bdc);border-radius:var(--rs);background:var(--bgc);color:var(--t);font:inherit;font-size:13px}.cwp-crumbs{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--tm);flex-wrap:wrap;min-height:18px}.cwp-crumbs a{color:var(--tm);text-decoration:none;cursor:pointer}.cwp-crumbs a:hover{color:var(--t)}.cwp-list{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:3px;padding-right:4px}.cwp-row{display:flex;align-items:center;gap:8px;width:100%;border:0;background:transparent;color:var(--t);padding:8px 10px;border-radius:var(--rs);cursor:pointer;text-align:left;font:inherit;font-size:13px}.cwp-row:hover{background:var(--bgch)}.cwp-row[aria-current='true']{background:var(--bgch)}.cwp-row-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.cwp-chip{flex-shrink:0;font-size:11px;color:var(--tm);border:1px solid var(--bdc);border-radius:999px;padding:1px 8px}.cwp-count{flex-shrink:0;font-size:11px;color:var(--tm)}.cwp-muted{padding:8px 10px;color:var(--tm);font-size:13px;margin:0}.cwp-section-label{padding:8px 10px 2px;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--tm)}.cwp-detail{display:flex;flex-direction:column;min-width:0;min-height:0;padding:16px 20px;gap:10px}.cwp-detail-head{display:flex;align-items:center;gap:10px;min-height:28px}.cwp-detail-head h3{margin:0;font-size:18px;color:var(--t);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.cwp-md{flex:1;min-height:0;overflow-y:auto;font-size:14px;line-height:1.7;color:var(--t);padding-right:4px}.cwp-md h1,.cwp-md h2,.cwp-md h3,.cwp-md h4{margin:18px 0 8px;line-height:1.35}.cwp-md p{margin:8px 0}.cwp-md ul{margin:8px 0;padding-left:22px}.cwp-md code{background:var(--bgch);padding:1px 5px;border-radius:4px;font-size:12px}.cwp-md pre.cwp-code{background:var(--bgch);padding:12px;border-radius:var(--rs);overflow-x:auto;font-size:12px}.cwp-md a{color:var(--p)}.cwp-wikilink{color:var(--p);text-decoration:underline dotted;cursor:pointer}.cwp-sources{font-size:12px;color:var(--tm);min-height:16px;word-break:break-all}.cwp-empty-detail{padding:40px 10px;text-align:center;color:var(--tm);font-size:13px}</style><div class='card cwp-panel' data-testid='dataset-compilation-panel'><header class='cwp-header'><button type='button' class='btn btn-o btn-sm' style='align-self:flex-start' data-testid='dataset-compilation-back' onclick="location.href='/dataset/files/{{kbId}}'">&#8592; {{back}}</button><div class='cwp-title-row'><div class='cwp-title-left'><span class='av-lg' aria-hidden='true'>{{initial}}</span><h2 id='cwpTitle'>{{name}}{{titleSuffix}}</h2></div><select id='cwpMode' class='cwp-mode' data-testid='dataset-compilation-mode' onchange='cwpModeChange()'><option value='llm-wiki'>{{llmWiki}}</option><option value='tree'>{{navTree}}</option><option value='graph'>{{graph}}</option><option value='mindmap'>{{structureMindmap}}</option><option value='timeline'>{{structureTimeline}}</option></select></div></header><p id='cwpMsg' class='cwp-status' role='status'><span id='cwpSpinner' class='cwp-spinner' hidden></span></p><div id='cwpLoading' class='cwp-loading'>{{loading}}</div><div id='cwpEmpty' class='cwp-empty' data-testid='dataset-compilation-empty' hidden><p id='cwpEmptyTitle'>{{noWikiPages}}</p><button type='button' class='btn btn-p' id='cwpGenerate' data-testid='dataset-compilation-generate' onclick='cwpGenerate(false)' disabled>{{generate}}</button><p id='cwpEmptyHint' class='cwp-hint'></p></div><div id='cwpWork' class='cwp-work' data-testid='dataset-compilation-work' hidden><aside class='cwp-left' data-testid='dataset-compilation-left'><div class='cwp-left-head'><button type='button' class='btn btn-o btn-sm' id='cwpUpdate' data-testid='dataset-compilation-update' onclick='cwpGenerate(true)'>{{update}}</button><button type='button' class='cwp-icon' id='cwpClear' data-testid='dataset-compilation-clear' title='{{clearWikiTitle}}' aria-label='{{clearWikiTitle}}' onclick='cwpClear()'>&#128465;</button></div><div class='cwp-tabs' role='tablist'><button type='button' class='cwp-tab' data-cwp-tab='contents' role='tab' aria-selected='true' data-testid='cwp-tab-contents' onclick='cwpSetTab("contents")'>{{contents}}</button><button type='button' class='cwp-tab' data-cwp-tab='graph' role='tab' aria-selected='false' data-testid='cwp-tab-graph' onclick='cwpSetTab("graph")'>{{graph}}</button></div><input id='cwpSearch' class='cwp-search' data-testid='dataset-compilation-search' type='search' placeholder='{{search}}' aria-label='{{search}}' oninput='cwpSearchInput()'><nav id='cwpCrumbs' class='cwp-crumbs' aria-label='{{contents}}'></nav><div id='cwpList' class='cwp-list' data-testid='dataset-compilation-list'></div></aside><section class='cwp-detail' id='cwpDetail' data-testid='dataset-compilation-detail'><header class='cwp-detail-head'><h3 id='cwpDetailTitle'></h3><span id='cwpDetailType' class='cwp-chip'></span></header><div id='cwpDetailBody' class='cwp-md'><p class='cwp-empty-detail'>{{selectNode}}</p></div><div id='cwpDetailSources' class='cwp-sources'></div></section></div></div>"##;
+
+/// Renders the Artifacts tab shell: the localized markup tokens are filled from
+/// [cwp_labels], then the dataset id/name/avatar initial replace their own
+/// placeholders (they are request data, not labels).
+fn cwp_markup(id: &str, name: &str, initial: &str, zh: bool) -> String {
+    let labels = cwp_labels(zh);
+    let mut markup = CWP_MARKUP.to_string();
+    if let Some(map) = labels.as_object() {
+        for (key, value) in map {
+            if let Some(text) = value.as_str() {
+                markup = markup.replace(&format!("{{{{{key}}}}}"), &html_escape(text));
+            }
+        }
+    }
+    markup
+        .replace("{{kbId}}", id)
+        .replace("{{name}}", &html_escape(name))
+        .replace("{{initial}}", &html_escape(initial))
+}
+
+/// Client half of the dataset Artifacts tab. Mirrors RAGFlow v0.27.2
+/// `pages/dataset/compilation/index.tsx` + `empty-state.tsx` +
+/// `llm-wiki-view.tsx`: per-mode empty states with the generation gate, the
+/// contents/graph left panel with a topic -> page navigation, a markdown detail
+/// pane, wiki-link navigation, Update (recompile) and Clear. The tree/structure
+/// modes reuse the same shell over the navigation/artifact management rows.
+const CWP_JS: &str = r##"var CWPX={mode:'llm-wiki',tab:'contents',items:[],topics:[],nav:[],navPath:[],view:'topics',topic:null,selected:null,search:'',eligible:false,chunks:0,pipeline:'',busy:false,loaded:false};function cwpL(key){return (CWP.labels&&CWP.labels[key])||key}function cwpFormat(key,values){var text=cwpL(key);Object.keys(values||{}).forEach(function(name){text=text.split('{{'+name+'}}').join(String(values[name]))});return text}function cwpEsc(value){return String(value==null?'':value).split('&').join('&amp;').split('<').join('&lt;').split('>').join('&gt;').split('"').join('&quot;')}function cwpField(id){return document.getElementById(id)}function cwpShow(id,on){var node=cwpField(id);if(node)node.hidden=!on}function cwpSetStatus(text,isError){var node=cwpField('cwpMsg');if(!node)return;var spinner=cwpField('cwpSpinner');if(spinner){spinner.hidden=!CWPX.busy}node.textContent=text||'';node.classList.toggle('error',!!isError)}function cwpSetBusy(on,text){CWPX.busy=on;var spinner=cwpField('cwpSpinner');if(spinner)spinner.hidden=!on;var gen=cwpField('cwpGenerate');if(gen)gen.disabled=on||!CWPX.eligible;var update=cwpField('cwpUpdate');if(update)update.disabled=on;var clear=cwpField('cwpClear');if(clear)clear.disabled=on;if(text)nodeStatus(text)}function nodeStatus(text){var node=cwpField('cwpMsg');if(!node)return;node.classList.remove('error');node.textContent=text;var spinner=cwpField('cwpSpinner');if(spinner)spinner.hidden=!CWPX.busy}function cwpApi(path,init){return fetch(path,init).then(function(response){return response.json().catch(function(){return {}}).then(function(data){return {ok:response.ok,status:response.status,data:data}})})}async function cwpBoot(){if(!cwpField('tab5'))return;cwpShow('cwpLoading',true);cwpShow('cwpEmpty',false);cwpShow('cwpWork',false);cwpField('cwpDetailBody').addEventListener('click',cwpDetailClick);cwpField('cwpMode').value=CWPX.mode;try{var result=await cwpApi('/api/v1/datasets/'+encodeURIComponent(window.kbId));if(!result.ok||result.data.code!==0)throw new Error((result.data&&result.data.message)||('HTTP '+result.status));var kb=result.data.data||{};CWPX.chunks=parseInt(kb.chunk_count,10)||0;CWPX.pipeline=String(kb.pipeline_id||'').trim();CWPX.eligible=CWPX.chunks>0&&CWPX.pipeline.length>0;await cwpRefresh()}catch(error){cwpShow('cwpLoading',false);cwpSetStatus(cwpL('loadFailed')+String((error&&error.message)||error),true)}}async function cwpRefresh(){cwpShow('cwpLoading',true);cwpShow('cwpEmpty',false);cwpShow('cwpWork',false);CWPX.loaded=false;CWPX.selected=null;CWPX.view='topics';CWPX.topic=null;CWPX.navPath=[];CWPX.search='';CWPX.tab='contents';var search=cwpField('cwpSearch');if(search)search.value='';try{if(CWPX.mode==='llm-wiki'){await cwpLoadWiki()}else if(CWPX.mode==='tree'){await cwpLoadTree()}else{await cwpLoadStructure()}}catch(error){cwpShow('cwpLoading',false);cwpSetStatus(cwpL('loadFailed')+String((error&&error.message)||error),true);return}cwpShow('cwpLoading',false);cwpRender()}async function cwpLoadWiki(){var head=await fetch('/api/v1/datasets/'+encodeURIComponent(window.kbId)+'/artifacts',{method:'HEAD'});CWPX.items=[];CWPX.topics=[];if(head.status!==200){CWPX.loaded=false;return}var results=await Promise.all([cwpApi('/api/v1/datasets/'+encodeURIComponent(window.kbId)+'/artifacts/topics?page_size=1000'),cwpApi('/api/v1/datasets/'+encodeURIComponent(window.kbId)+'/artifacts?page_size=1000')]);if(results[0].ok&&results[0].data.code===0)CWPX.topics=(results[0].data.data&&results[0].data.data.items)||[];if(results[1].ok&&results[1].data.code===0)CWPX.items=(results[1].data.data&&results[1].data.data.items)||[];CWPX.loaded=CWPX.topics.length>0||CWPX.items.length>0}async function cwpLoadTree(){var result=await cwpApi('/api/v1/datasets/'+encodeURIComponent(window.kbId)+'/navigation?page_size=1000');CWPX.nav=(result.ok&&result.data.code===0&&result.data.data)?(result.data.data.items||[]):[];CWPX.loaded=CWPX.nav.length>0}async function cwpLoadStructure(){var result=await cwpApi('/api/v1/datasets/'+encodeURIComponent(window.kbId)+'/artifacts/structure?page_size=1000');CWPX.items=(result.ok&&result.data.code===0&&result.data.data)?(result.data.data.items||[]):[];CWPX.loaded=CWPX.items.length>0}function cwpModeChange(){CWPX.mode=cwpField('cwpMode').value;cwpRefresh()}function cwpEmptyTitleKey(){if(CWPX.mode==='llm-wiki')return 'noWikiPages';if(CWPX.mode==='graph')return 'noStructureGraph';if(CWPX.mode==='mindmap')return 'noStructureMindmap';if(CWPX.mode==='timeline')return 'noStructureTimeline';return 'navEmpty'}function cwpRender(){cwpField('cwpEmptyTitle').textContent=cwpL(cwpEmptyTitleKey());var generate=cwpField('cwpGenerate');generate.hidden=CWPX.mode!=='llm-wiki';generate.disabled=CWPX.busy||!CWPX.eligible;var hint='';if(CWPX.mode==='llm-wiki'){hint=CWPX.eligible?'':(CWPX.chunks>0?cwpL('msgNoPipeline'):cwpL('msgNoChunks'))}else{hint=cwpL('autoCompiled')}cwpField('cwpEmptyHint').textContent=hint;if(!CWPX.loaded){cwpShow('cwpWork',false);cwpShow('cwpEmpty',true);return}cwpShow('cwpEmpty',false);cwpShow('cwpWork',true);cwpField('cwpUpdate').hidden=CWPX.mode!=='llm-wiki';cwpField('cwpClear').hidden=CWPX.mode!=='llm-wiki';cwpRenderTabs();cwpRenderList();cwpRenderDetailEmpty()}function cwpRenderTabs(){var tabs=document.querySelectorAll('[data-cwp-tab]');for(var i=0;i<tabs.length;i+=1){var selected=tabs[i].getAttribute('data-cwp-tab')===CWPX.tab;tabs[i].setAttribute('aria-selected',selected?'true':'false')}}function cwpSetTab(tab){CWPX.tab=tab;cwpRenderTabs();cwpRenderList()}function cwpSearchInput(){CWPX.search=String(cwpField('cwpSearch').value||'').trim().toLowerCase();cwpRenderList()}function cwpRenderCrumbs(parts){var host=cwpField('cwpCrumbs');host.innerHTML='';parts.forEach(function(part,index){if(index>0){var sep=document.createElement('span');sep.textContent='/';host.appendChild(sep)}if(part.action){var link=document.createElement('a');link.href='javascript:void(0)';link.textContent=part.label;link.onclick=part.action;host.appendChild(link)}else{var current=document.createElement('span');current.textContent=part.label;host.appendChild(current)}})}function cwpRow(title,meta,onclick,current){var row=document.createElement('button');row.type='button';row.className='cwp-row';row.setAttribute('data-testid','cwp-row');if(current)row.setAttribute('aria-current','true');var titleNode=document.createElement('span');titleNode.className='cwp-row-title';titleNode.textContent=title;row.appendChild(titleNode);if(meta){var chip=document.createElement('span');chip.className='cwp-chip';chip.textContent=meta;row.appendChild(chip)}row.onclick=onclick;return row}function cwpRenderRows(host,rows,showType){rows.forEach(function(item){var meta=showType?String(item.page_type||''):'';host.appendChild(cwpRow(String(item.title||item.slug||''),meta,function(){cwpSelectPage(item)},CWPX.selected&&CWPX.selected.slug===item.slug))})}function cwpMatches(value,query){return String(value==null?'':value).toLowerCase().indexOf(query)>=0}function cwpItemsForTopic(topic){var name=String(topic.topic||'');var slug=String(topic.slug||'');return CWPX.items.filter(function(item){if(item.page_type==='topic')return false;var itemSlug=String(item.slug||'');var title=String(item.title||'');if(slug&&itemSlug.indexOf(slug+'/')===0)return true;return name&&(cwpMatches(itemSlug,name)||cwpMatches(title,name))})}function cwpRenderList(){var host=cwpField('cwpList');host.innerHTML='';var query=CWPX.search;cwpRenderCrumbs([]);if(CWPX.mode==='tree'){cwpRenderTreeList(host);return}if(CWPX.mode!=='llm-wiki'){if(!CWPX.items.length){host.appendChild(cwpMuted(CWPX.mode==='graph'?cwpL('noGraphArtifacts'):cwpL('noResults')));return}cwpRenderCrumbs([{label:cwpL('pages')}]);cwpRenderRows(host,CWPX.items,true);return}if(CWPX.tab==='graph'){var graphs=CWPX.items.filter(function(item){return item.page_type==='graph'});cwpRenderCrumbs([{label:cwpL('graph')}]);if(!graphs.length){host.appendChild(cwpMuted(cwpL('noGraphArtifacts')));return}cwpRenderRows(host,graphs,true);return}if(query){var matchedTopics=CWPX.topics.filter(function(topic){return cwpMatches(topic.title,query)||cwpMatches(topic.topic,query)||cwpMatches(topic.slug,query)});var matchedItems=CWPX.items.filter(function(item){if(item.page_type==='topic')return false;return cwpMatches(item.title,query)||cwpMatches(item.slug,query)});cwpRenderCrumbs([{label:cwpL('search')+': '+query}]);if(matchedTopics.length){host.appendChild(cwpSectionLabel(cwpL('topics')));matchedTopics.forEach(function(topic){host.appendChild(cwpTopicRow(topic))})}if(matchedItems.length){host.appendChild(cwpSectionLabel(cwpL('pages')));cwpRenderRows(host,matchedItems,true)}if(!matchedTopics.length&&!matchedItems.length)host.appendChild(cwpMuted(cwpL('noResults')));return}if(CWPX.view==='topic'&&CWPX.topic){var topic=CWPX.topic;cwpRenderCrumbs([{label:cwpL('topics'),action:function(){cwpBackTopics()}},{label:String(topic.title||topic.topic||'')}]);var rows=cwpItemsForTopic(topic);if(!rows.length){host.appendChild(cwpMuted(cwpL('noPagesUnderTopic')));return}cwpRenderRows(host,rows,true);return}if(CWPX.topics.length){cwpRenderCrumbs([{label:cwpL('topics')}]);CWPX.topics.forEach(function(topic){host.appendChild(cwpTopicRow(topic))});return}if(CWPX.items.length){cwpRenderCrumbs([{label:cwpL('pages')}]);cwpRenderRows(host,CWPX.items,true);return}host.appendChild(cwpMuted(cwpL('noResults')))}function cwpMuted(text){var node=document.createElement('p');node.className='cwp-muted';node.textContent=text;return node}function cwpSectionLabel(text){var node=document.createElement('p');node.className='cwp-section-label';node.textContent=text;return node}function cwpTopicRow(topic){var count=cwpItemsForTopic(topic).length;var row=cwpRow(String(topic.title||topic.topic||topic.slug||''),'',function(){cwpSelectTopic(topic)},false);var countNode=document.createElement('span');countNode.className='cwp-count';countNode.textContent=String(count);row.appendChild(countNode);return row}function cwpSelectTopic(topic){CWPX.view='topic';CWPX.topic=topic;cwpRenderList()}function cwpBackTopics(){CWPX.view='topics';CWPX.topic=null;cwpRenderList()}async function cwpSelectPage(item){CWPX.selected=item;cwpRenderList();cwpField('cwpDetailTitle').textContent=String(item.title||item.slug||'');cwpField('cwpDetailType').textContent=String(item.page_type||'');cwpField('cwpDetailBody').innerHTML='<p class="cwp-empty-detail">'+cwpEsc(cwpL('loading'))+'</p>';cwpField('cwpDetailSources').textContent='';try{var type=String(item.page_type||'wiki');var result=await cwpApi('/api/v1/datasets/'+encodeURIComponent(window.kbId)+'/artifacts/'+encodeURIComponent(type)+'/'+encodeURIComponent(String(item.slug||'')));if(!result.ok||result.data.code!==0)throw new Error((result.data&&result.data.message)||('HTTP '+result.status));var page=result.data.data||{};cwpField('cwpDetailTitle').textContent=String(page.title||item.title||item.slug||'');cwpField('cwpDetailType').textContent=String(page.page_type||type);var content=String(page.content||page.summary||'');cwpField('cwpDetailBody').innerHTML=content?cwpMarkdown(content):'<p class="cwp-empty-detail">'+cwpEsc(cwpL('noResults'))+'</p>';var sources=Array.isArray(page.source_doc_ids)?page.source_doc_ids:[];cwpField('cwpDetailSources').textContent=sources.length?(cwpL('sourceDocuments')+': '+sources.join(', ')):''}catch(error){cwpField('cwpDetailBody').innerHTML='<p class="cwp-empty-detail">'+cwpEsc(cwpL('loadFailedPages')+String((error&&error.message)||error))+'</p>'}}function cwpRenderDetailEmpty(){cwpField('cwpDetailTitle').textContent='';cwpField('cwpDetailType').textContent='';cwpField('cwpDetailBody').innerHTML='<p class="cwp-empty-detail">'+cwpEsc(cwpL('selectNode'))+'</p>';cwpField('cwpDetailSources').textContent=''}function cwpDetailClick(event){var node=event.target;while(node&&node!==this){if(node.getAttribute&&node.getAttribute('data-slug')){event.preventDefault();cwpOpenWikiLink(node.getAttribute('data-slug'));return}node=node.parentNode}}function cwpOpenWikiLink(slug){var wanted=String(slug||'').replace(/^#/,'');var match=null;CWPX.items.forEach(function(item){if(match)return;var itemSlug=String(item.slug||'');if(itemSlug===wanted||itemSlug.split('/').pop()===wanted)match=item});if(match){cwpSelectPage(match)}else{cwpSetStatus(cwpL('pageNotFound')+wanted,true)}}function cwpInlineMarkdown(text){var html=cwpEsc(text);html=html.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g,function(whole,target,label){return '<a class="cwp-wikilink" data-slug="'+cwpEsc(target)+'" href="javascript:void(0)">'+cwpEsc(label||target)+'</a>'});html=html.replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g,'<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');html=html.replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>');var tick=String.fromCharCode(96);var chunks=html.split(tick);var rebuilt='';for(var m=0;m<chunks.length;m+=1){rebuilt+=(m%2===1)?('<code>'+chunks[m]+'</code>'):chunks[m]}html=rebuilt;return html}function cwpMarkdown(text){var lines=String(text||'').replace(/\r/g,'').split('\n');var out=[];var inList=false;var inCode=false;var code=[];var fence=String.fromCharCode(96,96,96);function closeList(){if(inList){out.push('</ul>');inList=false}}for(var index=0;index<lines.length;index+=1){var line=lines[index];if(line.indexOf(fence)===0){if(inCode){out.push('<pre class="cwp-code">'+cwpEsc(code.join('\n'))+'</pre>');code=[];inCode=false}else{closeList();inCode=true}continue}if(inCode){code.push(line);continue}var heading=line.match(/^(#{1,6})\s+(.*)$/);if(heading){closeList();var level=heading[1].length;out.push('<h'+level+'>'+cwpInlineMarkdown(heading[2])+'</h'+level+'>');continue}var item=line.match(/^\s*[-*+]\s+(.*)$/);if(item){if(!inList){out.push('<ul>');inList=true}out.push('<li>'+cwpInlineMarkdown(item[1])+'</li>');continue}closeList();if(!line.trim())continue;out.push('<p>'+cwpInlineMarkdown(line)+'</p>')}if(inCode)out.push('<pre class="cwp-code">'+cwpEsc(code.join('\n'))+'</pre>');closeList();return out.join('\n')}function cwpRenderTreeList(host){cwpRenderCrumbs(CWPX.navPath.map(function(node,index){return {label:String(node.name||''),action:index===CWPX.navPath.length-1?null:function(){cwpLoadNavNode(CWPX.navPath[index])}}}));if(!CWPX.navPath.length){if(!CWPX.nav.length){host.appendChild(cwpMuted(cwpL('navEmpty')));return}CWPX.nav.forEach(function(node){host.appendChild(cwpNavRow(node))});return}CWPX.nav.forEach(function(node){host.appendChild(cwpNavRow(node))})}function cwpNavRow(node){var isCluster=String(node.type||'')==='cluster';var title=String(node.name||'');var meta=isCluster?cwpFormat('navDocCount',{count:Number(node.doc_count||0)}):cwpL('details');return cwpRow(title,meta,function(){if(isCluster){cwpLoadNavNode(node)}else{cwpShowNavDetail(node)}},false)}async function cwpLoadNavNode(node){try{var result=await cwpApi('/api/v1/datasets/'+encodeURIComponent(window.kbId)+'/navigation/'+encodeURIComponent(String(node.name||''))+'/children?page_size=1000');if(!result.ok||result.data.code!==0)throw new Error((result.data&&result.data.message)||('HTTP '+result.status));CWPX.nav=(result.data.data&&result.data.data.items)||[];CWPX.navPath.push(node);cwpRenderList();cwpRenderDetailEmpty()}catch(error){cwpSetStatus(cwpL('loadFailed')+String((error&&error.message)||error),true)}}function cwpShowNavDetail(node){cwpField('cwpDetailTitle').textContent=String(node.name||'');cwpField('cwpDetailType').textContent=String(node.type||'doc');var parts=[];var description=String(node.description||'');parts.push('<p>'+cwpEsc(description||cwpL('navNoDescription'))+'</p>');var keywords=Array.isArray(node.keywords)?node.keywords:[];if(keywords.length)parts.push('<h4>'+cwpEsc(cwpL('navKeywords'))+'</h4><p>'+cwpEsc(keywords.join(', '))+'</p>');var entities=Array.isArray(node.entities)?node.entities:[];if(entities.length)parts.push('<h4>'+cwpEsc(cwpL('navEntities'))+'</h4><p>'+cwpEsc(entities.map(function(entity){return typeof entity==='string'?entity:(entity&&(entity.name||entity.title))||''}).filter(Boolean).join(', '))+'</p>');var graph=String(node.graph_content||'');if(graph)parts.push('<h4>'+cwpEsc(cwpL('navGraphContent'))+'</h4><pre class="cwp-code">'+cwpEsc(graph)+'</pre>');cwpField('cwpDetailBody').innerHTML=parts.join('');cwpField('cwpDetailSources').textContent=cwpFormat('navDocCount',{count:Number(node.doc_count||1)})}async function cwpGenerate(isUpdate){if(CWPX.busy)return;cwpSetBusy(true,cwpL(isUpdate?'updating':'compiling'));try{var result=await cwpApi('/api/v1/datasets/'+encodeURIComponent(window.kbId)+'/artifacts/compile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({language:document.documentElement.lang==='zh-CN'?'zh':'en'})});if(!result.ok||result.data.code!==0)throw new Error((result.data&&result.data.message)||('HTTP '+result.status));var payload=result.data.data||{};var compile=payload.compile||{};var message=cwpFormat('msgMapped',{mapped:payload.mapped||0,total:payload.total||0,extracts:payload.extracts||0,created:compile.pages_created||0,modified:compile.pages_modified||0});var skipped=(payload.skipped||[]).length;if(skipped)message+=cwpFormat('msgSkipped',{count:skipped});if((payload.extracts===0)&&(payload.total>0))message+=cwpL('msgNoExtracts');if(payload.message)message+=' '+payload.message;cwpSetBusy(false);cwpSetStatus(message,false);await cwpRefresh()}catch(error){cwpSetBusy(false);cwpSetStatus(cwpL('generateFailed')+String((error&&error.message)||error),true)}}async function cwpClear(){if(CWPX.busy)return;if(!window.confirm(cwpL('clearWikiDescription')))return;cwpSetBusy(true);try{var result=await cwpApi('/api/v1/datasets/'+encodeURIComponent(window.kbId)+'/artifacts',{method:'DELETE'});if(!result.ok||result.data.code!==0)throw new Error((result.data&&result.data.message)||('HTTP '+result.status));var deleted=(result.data.data&&result.data.data.deleted)||0;cwpSetBusy(false);cwpSetStatus(cwpFormat('clearDone',{count:deleted}),false);await cwpRefresh()}catch(error){cwpSetBusy(false);cwpSetStatus(cwpL('clearFailed')+String((error&&error.message)||error),true)}}if(cwpField('tab5'))cwpBoot();"##;
+
 pub async fn dataset_page(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -3513,30 +3673,19 @@ pub async fn dataset_page(
         zh,
     ));
     b.push_str("</p></div></div></div>");
-    // Tab 5: Artifacts (v0.27.2 knowledge-compilation page). Upstream
-    // `pages/dataset/compilation/index.tsx`: Back + "{name}{suffix}" header, the
-    // view-mode selector (Wiki default) and the LlmWiki empty state. Generation
-    // follows upstream's eligibility gate (`canGenerateWiki`: chunk_count > 0 and
-    // a pipeline id); the wiki/tree/structure backends land in a later slice.
-    b.push_str("<div id='tab5' style='display:none'><div class='card' data-testid='dataset-compilation-panel'><header style='display:flex;flex-direction:column;gap:12px'><button type='button' class='btn btn-o btn-sm' style='align-self:flex-start' data-testid='dataset-compilation-back' onclick=\"location.href='/dataset/files/");
-    b.push_str(&id);
-    b.push_str("'\">← ");
-    b.push_str(t("Back", zh));
-    b.push_str("</button><div style='display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap'><div style='display:flex;align-items:center;gap:10px'><span class='av-lg' aria-hidden='true'>");
-    b.push_str(&initial);
-    b.push_str("</span><h2 style='margin:0;font-size:20px'>");
-    b.push_str(&name);
-    b.push_str(if zh { " 数据集" } else { "' dataset" });
-    b.push_str("</h2></div><select id='cwpMode' data-testid='dataset-compilation-mode' style='max-width:220px' onchange='cwpModeChange()'><option value='llm-wiki'>Wiki</option><option value='tree'>Tree/PageIndex</option><option value='graph'>");
-    b.push_str(t("Knowledge graph", zh));
-    b.push_str("</option><option value='mindmap'>");
-    b.push_str(if zh { "Mindmap" } else { "Mind map" });
-    b.push_str("</option><option value='timeline'>Timeline</option></select></div></header><div id='cwpBody' style='margin-top:20px;text-align:center;padding:40px 16px'><p style='color:var(--tm);margin:0 0 16px' data-testid='dataset-compilation-empty'>");
-    b.push_str(if zh { "暂无 Wiki" } else { "No wiki yet" });
-    b.push_str("</p><button type='button' class='btn btn-p' id='cwpGenerate' data-testid='dataset-compilation-generate' disabled onclick='cwpGenerate()'>");
-    b.push_str(if zh { "生成" } else { "Generate" });
-    b.push_str("</button></div><p id='cwpMsg' class='ct-message' role='status'></p></div></div>");
-    b.push_str("<script>function cwpModeChange(){var mode=document.getElementById('cwpMode').value;var msg=document.getElementById('cwpMsg');if(!msg)return;msg.textContent=mode==='llm-wiki'?'':'The '+mode+' view is not available in this build; only the compiled-page list is.';msg.style.color='var(--tm)'}async function cwpBoot(){try{var response=await fetch('/api/v1/datasets/'+encodeURIComponent(window.kbId));var data=await response.json();if(!response.ok||data.code!==0)throw new Error(data.message||('HTTP '+response.status));var kb=data.data||{};var chunks=parseInt(kb.chunk_count,10)||0;var pipeline=String(kb.pipeline_id||'').trim();var button=document.getElementById('cwpGenerate');var enabled=chunks>0&&pipeline.length>0;if(button)button.disabled=!enabled;var hint=document.getElementById('cwpMsg');if(hint&&!enabled){hint.style.color='var(--tm)';hint.textContent=(chunks>0?'This dataset has no chunk method assigned yet':'This dataset has no parsed chunks yet')+', so artifact generation cannot start. Read the list, a page, its topics or clear the artifacts above - those work today.'}}catch(error){var node=document.getElementById('cwpMsg');if(node){node.textContent=String(error.message||error);node.style.color='var(--d)'}}}async function cwpGenerate(){var node=document.getElementById('cwpMsg');if(!node)return;node.style.color='var(--tm)';node.textContent='Compiling artifacts (map, then reduce)...';try{var response=await fetch('/api/v1/datasets/'+encodeURIComponent(window.kbId)+'/artifacts/compile',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});var data=await response.json();if(data.code!==0){node.style.color='var(--d)';node.textContent=data.message||('HTTP '+response.status);return}var d=data.data||{};var compile=d.compile||{};var skipped=(d.skipped||[]).length;node.textContent='Mapped '+d.mapped+' of '+d.total+' document(s), extracts '+d.extracts+', pages created '+(compile.pages_created||0)+', modified '+(compile.pages_modified||0)+'.'+(skipped?(' '+skipped+' document(s) had nothing to extract.'):'')+(d.message?(' '+d.message):'');if((d.extracts===0)&&(d.total>0)){node.textContent+=' The model found no entities, concepts, claims, relations or topics in this dataset, so no pages were produced - that is a data result, not a failure.'}cwpBootFallback()}catch(error){node.style.color='var(--d)';node.textContent=String((error&&error.message)||error)}}function cwpBootFallback(){}if(document.getElementById('tab5'))cwpBoot();</script>");
+    // Tab 5: Artifacts (RAGFlow v0.27.2 `pages/dataset/compilation/*`): the
+    // Back + "{name}{suffix}" header and view-mode selector from index.tsx, the
+    // per-mode empty states + generation gate from empty-state.tsx, and the
+    // contents/graph left panel with the markdown detail pane from
+    // llm-wiki-view.tsx. Tree/structure modes keep a Rust-native management
+    // surface over the navigation/artifact rows.
+    b.push_str("<div id='tab5' style='display:none'>");
+    b.push_str(&cwp_markup(&id, &name, &initial, zh));
+    b.push_str("<script>const CWP={labels:");
+    b.push_str(&cwp_labels(zh).to_string());
+    b.push_str("};");
+    b.push_str(CWP_JS);
+    b.push_str("</script></div>");
     // Embedding check (`POST /api/v1/datasets/{id}/embedding/check`): before switching embedding
     // models, a user needs to know whether the vectors already stored still agree with the model.
     // Self-contained block, and the answer is printed — including the code 10 verdict.
@@ -18058,6 +18207,123 @@ connection: close
                 && zh.contains("添加数据源"),
             "the Chinese modal must be translated, not fall back to English"
         );
+    }
+
+    #[tokio::test]
+    async fn dataset_artifacts_tab_renders_upstream_compilation_shell() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Artifacts KB", "d").unwrap();
+        let html = body_of(
+            dataset_page(
+                State(state.clone()),
+                Path(kb.id.clone()),
+                Request::builder()
+                    .uri("/dataset/compilation/x")
+                    .header("Cookie", "lang=en")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        for marker in [
+            "data-testid='dataset-compilation-panel'",
+            "data-testid='dataset-compilation-back'",
+            "data-testid='dataset-compilation-mode'",
+            "data-testid='dataset-compilation-empty'",
+            "data-testid='dataset-compilation-generate'",
+            "data-testid='dataset-compilation-work'",
+            "data-testid='dataset-compilation-update'",
+            "data-testid='dataset-compilation-clear'",
+            "data-testid='dataset-compilation-search'",
+            "data-testid='dataset-compilation-list'",
+            "data-testid='dataset-compilation-detail'",
+            "data-testid='cwp-tab-contents'",
+            "data-testid='cwp-tab-graph'",
+            "id='cwpList'",
+            "id='cwpDetailBody'",
+            "No wiki yet",
+            "Tree/PageIndex",
+            "cwpLoadWiki",
+            "cwpLoadStructure",
+            "cwpLoadTree",
+            "cwpMarkdown",
+            "cwpOpenWikiLink",
+            "cwpGenerate",
+            "cwpClear",
+            "/artifacts/compile",
+            "/artifacts/topics",
+            "/navigation?page_size=1000",
+            "const CWP={labels:",
+        ] {
+            assert!(
+                html.contains(marker),
+                "missing dataset artifacts marker {marker}"
+            );
+        }
+        let mut rest = CWP_MARKUP;
+        while let Some(start) = rest.find("{{") {
+            let tail = &rest[start + 2..];
+            let end = tail.find("}}").expect("unterminated artifacts token");
+            let token = &tail[..end];
+            assert!(
+                !html.contains(&format!("{{{{{token}}}}}")),
+                "unresolved artifacts label token {{{{{token}}}}} left in the page"
+            );
+            rest = &tail[end + 2..];
+        }
+        let zh = body_of(
+            dataset_page(
+                State(state.clone()),
+                Path(kb.id),
+                Request::builder()
+                    .uri("/dataset/compilation/x")
+                    .header("Cookie", "lang=zh-CN")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        for marker in [
+            "暂无 Wiki",
+            "生成",
+            "更新",
+            "清空 Wiki",
+            "的数据集",
+            "暂无导航节点",
+            "编译中…",
+        ] {
+            assert!(zh.contains(marker), "missing zh artifacts label {marker}");
+        }
+    }
+
+    #[test]
+    fn dataset_artifacts_labels_cover_markup_and_locales() {
+        let en = cwp_labels(false);
+        let zh = cwp_labels(true);
+        assert_eq!(en["llmWiki"], "Wiki");
+        assert_eq!(en["navTree"], "Tree/PageIndex");
+        assert_eq!(en["generate"], "Generate");
+        assert_eq!(en["clearWikiTitle"], "Clear wiki");
+        assert_eq!(zh["noWikiPages"], "暂无 Wiki");
+        assert_eq!(zh["topics"], "Topic");
+        assert_eq!(zh["generate"], "生成");
+        let mut rest = CWP_MARKUP;
+        while let Some(start) = rest.find("{{") {
+            let tail = &rest[start + 2..];
+            let end = tail.find("}}").expect("unterminated markup token");
+            let key = &tail[..end];
+            assert!(
+                en.get(key).is_some() || matches!(key, "kbId" | "name" | "initial"),
+                "missing label for artifacts token {key}"
+            );
+            assert!(
+                zh.get(key).is_some() || matches!(key, "kbId" | "name" | "initial"),
+                "missing zh label for artifacts token {key}"
+            );
+            rest = &tail[end + 2..];
+        }
     }
 
     #[tokio::test]
