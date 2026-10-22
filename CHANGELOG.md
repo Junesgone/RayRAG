@@ -2,6 +2,25 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.63.0] - 2026-10-23
+
+### Files page follows the upstream folder tree
+
+- The Files header is now a real breadcrumb: `GET /api/v1/files/{id}/ancestors`
+  supplies the folder chain, `/files?folderId=<id>` selects a folder, and the
+  root crumb returns to `/files`.
+- Folder names in the table open their contents; the URL is kept in sync with
+  `history.replaceState`, so reloading or sharing the URL lands in the same
+  folder.
+- The list request now carries `parent_id`, `page`, `page_size` and `keywords`
+  instead of loading the API's default 15 root rows and paginating that page in
+  the browser. `total` from the response drives the footer, so page 2 and a
+  changed page size fetch the correct slice.
+- New folders are created inside the current folder (`parent_id`), matching
+  upstream's `CreateFolderDialog`.
+- Boundary: the first load still renders the dataset-folder grid above the file
+  table; moving a selection can target folders in the current listing and root.
+
 ## [0.62.0] - 2026-10-23
 
 ### `type=web` uploads render the page to PDF
