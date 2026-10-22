@@ -51,6 +51,11 @@ pub struct DocRecord {
     /// may replace, stored as sent after the request-level legacy normalization.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parser_config: Option<serde_json::Value>,
+    /// Upstream `Document.type`. Local uploads leave it absent (the compatibility
+    /// layer reports `doc`); empty documents created with `type=empty` store
+    /// `virtual` so list/detail responses keep their origin.
+    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
+    pub doc_type: Option<String>,
     /// Upstream `Document.pipeline_id`. Stored for parity; pipeline execution is not
     /// implemented in this engine, so the value round-trips without changing parsing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1396,7 +1401,10 @@ fn document_update_entry(
         "suffix": doc_suffix(&doc.name),
         "thumbnail": "",
         "token_count": token_count,
-        "type": filename_type(&doc.name),
+        "type": doc
+            .doc_type
+            .clone()
+            .unwrap_or_else(|| filename_type(&doc.name).to_string()),
         "update_date": crate::api::compat::ms_to_datetime_string(doc.updated_at),
         "update_time": doc.updated_at,
     })
@@ -1454,8 +1462,12 @@ pub(crate) fn doc_list_entry(
         // `_process_key_mappings`: parser_id → chunk_method.
         "chunk_method": chunk_method,
         "suffix": doc_suffix(&doc.name),
-        // `filename_type` value (pdf / doc / visual / aural / other).
-        "type": filename_type(&doc.name),
+        // `filename_type` value (pdf / doc / visual / aural / other). Empty
+        // documents store their upstream `Document.type` explicitly.
+        "type": doc
+            .doc_type
+            .clone()
+            .unwrap_or_else(|| filename_type(&doc.name).to_string()),
         "status": doc.status,
         "meta_fields": meta_fields,
         "created_at": doc.created_at,
@@ -1658,7 +1670,11 @@ pub async fn list_docs(
                 }
             }
             if let Some(type_set) = type_set.as_ref() {
-                if !type_set.contains(filename_type(&doc.name)) {
+                let doc_type = doc
+                    .doc_type
+                    .as_deref()
+                    .unwrap_or_else(|| filename_type(&doc.name));
+                if !type_set.contains(doc_type) {
                     return false;
                 }
             }

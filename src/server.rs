@@ -5,7 +5,8 @@ use axum::{
     Json, Router,
     body::Body,
     extract::{
-        DefaultBodyLimit, Extension, Multipart, Path, Query, Request, State, multipart::Field,
+        DefaultBodyLimit, Extension, FromRequest, Multipart, Path, Query, Request, State,
+        multipart::Field,
     },
     http::{HeaderMap, Method, StatusCode},
     middleware::{self, Next},
@@ -1448,6 +1449,153 @@ async fn persist_upload_field(
         tokio::fs::remove_file(&final_path).await.ok();
     }
     result
+}
+
+/// `POST /api/v1/datasets/{id}/documents` — dispatches the three upstream upload
+/// types. `empty` takes a JSON body; `local` keeps the existing multipart path.
+/// `web` is not implemented in this build and says so instead of pretending to
+/// convert HTML to PDF.
+async fn upload_document_route(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(dataset_id): Path<String>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+    request: Request,
+) -> Response {
+    let upload_type = query
+        .get("type")
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "local".to_string());
+    match upload_type.as_str() {
+        "empty" => upload_empty_document(state, auth, dataset_id, request).await,
+        "local" => match Multipart::from_request(request, &state).await {
+            Ok(multipart) => {
+                upload_document(State(state), Extension(auth), Path(dataset_id), multipart).await
+            }
+            Err(error) => api_error(StatusCode::BAD_REQUEST, &error.to_string()),
+        },
+        "web" => api_error_result(
+            StatusCode::OK,
+            code::INVALID_ARGUMENT,
+            "`type=web` is not supported by this build.",
+        ),
+        _ => api_error_result(
+            StatusCode::OK,
+            code::INVALID_ARGUMENT,
+            "`type` must be one of \"local\", \"web\", or \"empty\".",
+        ),
+    }
+}
+
+async fn upload_empty_document(
+    state: Arc<AppState>,
+    auth: AuthContext,
+    dataset_id: String,
+    request: Request,
+) -> Response {
+    if state.kbs.get(&dataset_id).is_none() {
+        return api_error_result(
+            StatusCode::OK,
+            code::INVALID_OR_MISSING_DATA,
+            &format!("Can't find the dataset with ID {dataset_id}!"),
+        );
+    }
+    if !kb_manageable(&state, &dataset_id, &auth) {
+        return api_error_result(StatusCode::OK, code::UNAUTHENTICATED, "no authorization");
+    }
+    let body = match axum::body::to_bytes(
+        request.into_body(),
+        state.max_upload_bytes.max(64 * 1024),
+    )
+    .await
+    {
+        Ok(body) => body,
+        Err(error) => {
+            return api_error_result(
+                StatusCode::OK,
+                code::INVALID_ARGUMENT,
+                &format!("Malformed request body: {error}"),
+            );
+        }
+    };
+    let payload: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(payload) => payload,
+        Err(error) => {
+            return api_error_result(
+                StatusCode::OK,
+                code::INVALID_ARGUMENT,
+                &format!("Malformed JSON body: {error}"),
+            );
+        }
+    };
+    let name = payload
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if name.is_empty() {
+        return api_error_result(
+            StatusCode::OK,
+            code::INVALID_ARGUMENT,
+            "File name can't be empty.",
+        );
+    }
+    if name.len() > 255 {
+        return api_error_result(
+            StatusCode::OK,
+            code::INVALID_ARGUMENT,
+            "File name must be 255 bytes or less.",
+        );
+    }
+    if state
+        .docs
+        .list(&dataset_id)
+        .iter()
+        .any(|doc| doc.name == name)
+    {
+        return api_error_result(
+            StatusCode::OK,
+            code::INVALID_OR_MISSING_DATA,
+            "Duplicated document name in the same dataset.",
+        );
+    }
+    let now = unix_ms();
+    let doc = crate::api::document::DocRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        name,
+        kb_id: dataset_id.clone(),
+        size: 0,
+        storage_name: String::new(),
+        content_hash: String::new(),
+        indexed_content_hash: String::new(),
+        run: "UNSTARTED".into(),
+        progress: 0.0,
+        progress_msg: String::new(),
+        chunk_count: 0,
+        created_at: now,
+        updated_at: now,
+        status: crate::api::document::enabled_status(),
+        doc_type: Some("virtual".into()),
+        ..Default::default()
+    };
+    let doc = match state.docs.insert_unique(doc) {
+        Ok(doc) => doc,
+        Err(error) => {
+            return api_error_result(StatusCode::OK, code::OPERATION_ERROR, &error.to_string());
+        }
+    };
+    if let Err(error) = state.kbs.update_counts(&dataset_id, 0, 1) {
+        let _ = state.docs.delete(&doc.id);
+        return api_error_result(StatusCode::OK, code::OPERATION_ERROR, &error.to_string());
+    }
+    let data = crate::api::document::doc_list_entry(&state, &doc, 0);
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "code": 0, "data": data })),
+    )
+        .into_response()
 }
 
 async fn upload_document(
@@ -4725,7 +4873,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/api/v1/datasets/{id}/documents",
-            post(upload_document)
+            post(upload_document_route)
                 .get(crate::api::document::list_docs)
                 // Upstream `document_api.py::delete_documents`: the bulk bar deletes a
                 // selection in one request instead of one request per file.
@@ -12733,6 +12881,71 @@ mod tests {
         assert!(doc.content_hash.chars().all(|ch| ch.is_ascii_hexdigit()));
         assert!(env.root.join("uploads").join(doc.storage_name).is_file());
         assert_eq!(json["data"][0]["run"], "UNSTART", "response body: {json}");
+    }
+
+    #[tokio::test]
+    async fn empty_upload_creates_virtual_document() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Empty KB", "")
+            .unwrap();
+        let uri = format!("/api/v1/datasets/{}/documents?type=empty", kb.id);
+        let request = |body: serde_json::Value| {
+            Request::builder()
+                .method(Method::POST)
+                .uri(uri.clone())
+                .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        };
+        let response = build_router(env.state.clone())
+            .oneshot(request(serde_json::json!({ "name": "empty-notes.md" })))
+            .await
+            .unwrap();
+        let status = response.status();
+        let json = response_json(response).await;
+        assert_eq!(status, StatusCode::OK, "response body: {json}");
+        assert_eq!(json["code"], 0, "response body: {json}");
+        assert_eq!(json["data"]["name"], "empty-notes.md");
+        assert_eq!(json["data"]["type"], "virtual");
+        assert_eq!(json["data"]["run"], "UNSTART");
+        assert_eq!(json["data"]["size"], 0);
+        assert_eq!(json["data"]["chunk_count"], 0);
+        let doc_id = json["data"]["id"].as_str().unwrap();
+        let stored = env.state.docs.get(doc_id).unwrap();
+        assert_eq!(stored.doc_type.as_deref(), Some("virtual"));
+        assert!(stored.storage_name.is_empty());
+        assert!(stored.content_hash.is_empty());
+
+        let (list_status, list) = list_json(&env, &kb.id, "").await;
+        assert_eq!(list_status, StatusCode::OK);
+        assert_eq!(list["data"]["docs"][0]["type"], "virtual");
+        assert_eq!(list["data"]["docs"][0]["name"], "empty-notes.md");
+        let (_, filtered) = list_json(&env, &kb.id, "types=virtual").await;
+        assert_eq!(filtered["data"]["docs"].as_array().unwrap().len(), 1);
+        assert_eq!(filtered["data"]["docs"][0]["name"], "empty-notes.md");
+
+        let duplicate = build_router(env.state.clone())
+            .oneshot(request(serde_json::json!({ "name": "empty-notes.md" })))
+            .await
+            .unwrap();
+        let duplicate = response_json(duplicate).await;
+        assert_eq!(duplicate["code"], 102, "response body: {duplicate}");
+        assert_eq!(
+            duplicate["message"],
+            "Duplicated document name in the same dataset."
+        );
+
+        let blank = build_router(env.state.clone())
+            .oneshot(request(serde_json::json!({ "name": "  " })))
+            .await
+            .unwrap();
+        let blank = response_json(blank).await;
+        assert_eq!(blank["code"], 101, "response body: {blank}");
+        assert_eq!(blank["message"], "File name can't be empty.");
     }
 
     fn seeded_doc(

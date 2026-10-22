@@ -2,6 +2,21 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.58.0] - 2026-10-23
+
+### Empty documents can be created through the upload route
+
+- `POST /api/v1/datasets/{id}/documents?type=empty` now accepts a JSON body
+  with a `name` and creates an upstream-style virtual document: zero bytes, no
+  object-store blob, no parse task, and `type: "virtual"` kept in storage and
+  in later list responses.
+- The existing local multipart path is unchanged behind the new dispatcher;
+  invalid `type` values use the upstream argument-error message. `type=web`
+  remains explicitly unsupported in this build instead of pretending to run
+  an HTML-to-PDF conversion.
+- Tests cover the virtual row, list persistence, the `types=virtual` filter,
+  duplicate names, and blank names.
+
 ## [0.57.0] - 2026-10-22
 
 ### DOCX previews carry their embedded images
