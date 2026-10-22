@@ -720,12 +720,31 @@ fn render_run_html(run: &docx_rs::Run, images: &HashMap<String, (String, Vec<u8>
     }
     let bold = run.run_property.bold.is_some();
     let italic = run.run_property.italic.is_some();
-    match (bold, italic) {
+    let mut html = match (bold, italic) {
         (true, true) => format!("<strong><em>{text}</em></strong>"),
         (true, false) => format!("<strong>{text}</strong>"),
         (false, true) => format!("<em>{text}</em>"),
         (false, false) => text,
+    };
+    if run.run_property.underline.is_some() {
+        html = format!("<u>{html}</u>");
     }
+    let strike = run
+        .run_property
+        .strike
+        .as_ref()
+        .map(|v| v.val)
+        .unwrap_or(false)
+        || run
+            .run_property
+            .dstrike
+            .as_ref()
+            .map(|v| v.val)
+            .unwrap_or(false);
+    if strike {
+        html = format!("<s>{html}</s>");
+    }
+    html
 }
 
 fn render_pic_html(pic: &docx_rs::Pic, images: &HashMap<String, (String, Vec<u8>)>) -> String {
@@ -735,8 +754,12 @@ fn render_pic_html(pic: &docx_rs::Pic, images: &HashMap<String, (String, Vec<u8>
     let mime = docx_image_mime(path);
     let payload = BASE64.encode(bytes);
     let alt = html_escape_text(path.rsplit('/').next().unwrap_or(path));
+    // DrawingML sizes are EMU; 9525 EMU = 1 CSS px at 96 dpi. CSS caps the
+    // rendered width at the container, so oversized images still fit.
+    let width_px = (pic.size.0 / 9525).max(1);
+    let height_px = (pic.size.1 / 9525).max(1);
     format!(
-        "<img class='docx-inline-image' src='data:{mime};base64,{payload}' alt='{alt}' loading='lazy'>"
+        "<img class='docx-inline-image' src='data:{mime};base64,{payload}' alt='{alt}' width='{width_px}' height='{height_px}' loading='lazy'>"
     )
 }
 
@@ -776,7 +799,22 @@ fn render_paragraph_html(
         .as_ref()
         .and_then(|style| docx_heading_tag(&style.val))
         .unwrap_or("p");
-    format!("<{tag} class='docx-block'>{inner}</{tag}>")
+    // Word `jc` values: left/start are the browser default; both/justified and
+    // distribute all map to CSS `justify`.
+    let align = paragraph
+        .property
+        .alignment
+        .as_ref()
+        .and_then(|justification| match justification.val.as_str() {
+            "center" => Some("center"),
+            "right" | "end" => Some("right"),
+            "both" | "justified" | "distribute" => Some("justify"),
+            _ => None,
+        });
+    let style = align
+        .map(|value| format!(" style='text-align:{value}'"))
+        .unwrap_or_default();
+    format!("<{tag} class='docx-block'{style}>{inner}</{tag}>")
 }
 
 fn render_table_html(
@@ -1188,6 +1226,27 @@ mod tests {
             zw.finish().unwrap();
         }
         buf
+    }
+
+    #[test]
+    fn preview_html_renders_underline_strike_and_alignment() {
+        let docx = docx_rs::Docx::new().add_paragraph(
+            docx_rs::Paragraph::new()
+                .align(docx_rs::AlignmentType::Center)
+                .add_run(docx_rs::Run::new().add_text("under").underline("single"))
+                .add_run(docx_rs::Run::new().add_text("strike").strike()),
+        );
+        let mut cursor = std::io::Cursor::new(Vec::new());
+        docx.build().pack(&mut cursor).unwrap();
+        let buf = cursor.into_inner();
+        let (html, truncated) = RAGFlowDocxParser::new().preview_html(&buf, 100).unwrap();
+        assert!(!truncated);
+        assert!(
+            html.contains("<p class='docx-block' style='text-align:center'>"),
+            "{html}"
+        );
+        assert!(html.contains("<u>under</u>"), "{html}");
+        assert!(html.contains("<s>strike</s>"), "{html}");
     }
 
     #[test]

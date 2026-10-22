@@ -2,6 +2,19 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.60.0] - 2026-10-23
+
+### DOCX preview keeps more of the character and paragraph formatting
+
+- Underline (`w:u`), strikethrough (`w:strike`/`w:dstrike`) and paragraph
+  alignment (`w:jc`: center/right/both/justified/distribute) now survive the
+  preview as `<u>`, `<s>` and `text-align` instead of being dropped.
+- Inline images carry their DrawingML extent (`cx`/`cy`, converted from EMU at
+  96 dpi) as `width`/`height`; the existing `max-width:100%` keeps large images
+  inside the pane.
+- Tests cover all three formatting families; the image test still asserts the
+  data URI, basename alt and the absence of relationship ids.
+
 ## [0.59.0] - 2026-10-23
 
 ### Raw upload responses are available on request
