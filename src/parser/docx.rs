@@ -78,6 +78,47 @@ impl RAGFlowDocxParser {
         Ok((secs, tbls))
     }
 
+    /// Build a small, safe HTML preview from a DOCX package.
+    ///
+    /// Upstream renders Word documents in the browser through
+    /// `@extend-ai/react-docx`; RayRAG has no npm toolchain, so this renderer
+    /// walks the OOXML model that `docx-rs` already parses and emits the
+    /// structural subset a preview needs: headings, paragraphs, inline bold /
+    /// italic runs, line breaks and tables. It intentionally does not claim to
+    /// reproduce Word's pagination, floating shapes, themes or embedded
+    /// media — the caller marks the surface `partial`.
+    ///
+    /// `max_blocks` bounds the number of top-level paragraphs/tables; the
+    /// returned flag tells the page that the document was cut rather than
+    /// silently dropping the tail.
+    pub fn preview_html(&self, data: &[u8], max_blocks: usize) -> Result<(String, bool)> {
+        let docx =
+            docx_rs::read_docx(data).map_err(|e| anyhow::anyhow!("Invalid DOCX document: {e}"))?;
+        let mut html = String::new();
+        let mut blocks = 0usize;
+        let mut truncated = false;
+
+        for child in &docx.document.children {
+            if blocks >= max_blocks {
+                truncated = true;
+                break;
+            }
+            match child {
+                docx_rs::DocumentChild::Paragraph(paragraph) => {
+                    html.push_str(&render_paragraph_html(paragraph));
+                    blocks += 1;
+                }
+                docx_rs::DocumentChild::Table(table) => {
+                    html.push_str(&render_table_html(table));
+                    blocks += 1;
+                }
+                _ => {}
+            }
+        }
+
+        Ok((html, truncated))
+    }
+
     /// `__extract_table_content` — docx_parser.py:73-77 (no DataFrame needed).
     fn extract_table_content(table: &[Vec<String>]) -> Vec<String> {
         if table.is_empty() {
@@ -616,6 +657,114 @@ fn read_zip_entry_bytes(zf: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> 
     .ok()
 }
 
+/// Escape text that came out of `docx-rs` before placing it in HTML. The
+/// reader hands back decoded XML character data, so this must run exactly once.
+fn html_escape_text(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// Map a Word paragraph style id/name to a heading tag. Word stores ids such
+/// as `Heading1` in `w:pStyle`, while the localized style name can be
+/// `heading 1` or `标题 1`; accept both before falling back to `<p>`.
+fn docx_heading_tag(style: &str) -> Option<&'static str> {
+    let lower = style.to_lowercase();
+    for (level, tag) in [
+        ("1", "h1"),
+        ("2", "h2"),
+        ("3", "h3"),
+        ("4", "h4"),
+        ("5", "h5"),
+        ("6", "h6"),
+    ] {
+        if lower.contains(&format!("heading {level}"))
+            || lower.contains(&format!("heading{level}"))
+            || lower.contains(&format!("标题 {level}"))
+            || lower.contains(&format!("标题{level}"))
+        {
+            return Some(tag);
+        }
+    }
+    None
+}
+
+fn render_run_html(run: &docx_rs::Run) -> String {
+    let mut text = String::new();
+    for child in &run.children {
+        match child {
+            docx_rs::RunChild::Text(value) => text.push_str(&html_escape_text(&value.text)),
+            docx_rs::RunChild::Tab(_) => text.push('\t'),
+            docx_rs::RunChild::Break(_) => text.push_str("<br>"),
+            // Deleted revisions, field instructions and drawings are not part
+            // of the visible text layer this preview promises.
+            _ => {}
+        }
+    }
+    if text.is_empty() {
+        return String::new();
+    }
+    let bold = run.run_property.bold.is_some();
+    let italic = run.run_property.italic.is_some();
+    match (bold, italic) {
+        (true, true) => format!("<strong><em>{text}</em></strong>"),
+        (true, false) => format!("<strong>{text}</strong>"),
+        (false, true) => format!("<em>{text}</em>"),
+        (false, false) => text,
+    }
+}
+
+fn render_paragraph_html(paragraph: &docx_rs::Paragraph) -> String {
+    let mut inner = String::new();
+    for child in &paragraph.children {
+        if let docx_rs::ParagraphChild::Run(run) = child {
+            inner.push_str(&render_run_html(run));
+        }
+    }
+    if inner.is_empty() {
+        inner.push_str("<br>");
+    }
+    let tag = paragraph
+        .property
+        .style
+        .as_ref()
+        .and_then(|style| docx_heading_tag(&style.val))
+        .unwrap_or("p");
+    format!("<{tag} class='docx-block'>{inner}</{tag}>")
+}
+
+fn render_table_html(table: &docx_rs::Table) -> String {
+    let mut out = String::from("<table class='docpreview-table docx-table'><tbody>");
+    for row in &table.rows {
+        let docx_rs::TableChild::TableRow(row) = row else {
+            continue;
+        };
+        out.push_str("<tr>");
+        for cell in &row.cells {
+            let docx_rs::TableRowChild::TableCell(cell) = cell else {
+                continue;
+            };
+            out.push_str("<td>");
+            let mut body = String::new();
+            for content in &cell.children {
+                if let docx_rs::TableCellContent::Paragraph(paragraph) = content {
+                    body.push_str(&render_paragraph_html(paragraph));
+                }
+            }
+            if body.is_empty() {
+                body.push_str("&nbsp;");
+            }
+            out.push_str(&body);
+            out.push_str("</td>");
+        }
+        out.push_str("</tr>");
+    }
+    out.push_str("</tbody></table>");
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -775,6 +924,16 @@ mod tests {
     }
 
     #[test]
+    fn preview_html_renders_docx_blocks_and_escapes_text() {
+        let data = build_minimal_docx();
+        let (html, truncated) = RAGFlowDocxParser::new().preview_html(&data, 100).unwrap();
+        assert!(!truncated);
+        assert!(html.contains("<p class='docx-block'>Hello</p>"));
+        assert!(html.contains("<p class='docx-block'>World</p>"));
+        assert!(!html.contains("<script>"));
+    }
+
+    #[test]
     fn extract_images_resolves_blip_embeds_through_rels() {
         // `get_picture` — docx_parser.py:33-70: `<a:blip r:embed="rId5"/>`
         // → word/_rels/document.xml.rels rId5 → word/media/image1.png bytes.
@@ -872,6 +1031,17 @@ mod tests {
             )
             .unwrap();
             zw.write_all(doc.as_bytes()).unwrap();
+
+            // docx-rs requires the document-level relationship part even when
+            // the document has no header/footer/image relationships.
+            let doc_rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>"#;
+            zw.start_file(
+                "word/_rels/document.xml.rels",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            zw.write_all(doc_rels.as_bytes()).unwrap();
 
             let styles = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/> "#;

@@ -4993,6 +4993,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(crate::api::document::preview_sheets),
         )
         .route(
+            "/api/v1/documents/{doc_id}/preview/docx",
+            get(crate::api::document::preview_docx),
+        )
+        .route(
             "/api/v1/documents/{doc_id}/preview/slides",
             get(crate::api::document::preview_slides),
         )
@@ -13366,6 +13370,7 @@ mod tests {
         for (id, name, storage) in [
             ("sheet-doc", "book.xlsx", "sheet-doc.xlsx"),
             ("deck-doc", "deck.pptx", "deck-doc.pptx"),
+            ("word-doc", "notes.docx", "word-doc.docx"),
         ] {
             env.state
                 .docs
@@ -13400,6 +13405,19 @@ mod tests {
         std::fs::write(
             env.root.join("uploads/deck-doc.pptx"),
             pptx_with_slide_texts(&["First slide", "Second slide"]),
+        )
+        .unwrap();
+        let mut docx_buf = std::io::Cursor::new(Vec::new());
+        docx_rs::Docx::new()
+            .add_paragraph(
+                docx_rs::Paragraph::new().add_run(docx_rs::Run::new().add_text("Hello DOCX")),
+            )
+            .build()
+            .pack(&mut docx_buf)
+            .unwrap();
+        std::fs::write(
+            env.root.join("uploads/word-doc.docx"),
+            docx_buf.into_inner(),
         )
         .unwrap();
 
@@ -13440,6 +13458,26 @@ mod tests {
         assert_eq!(payload["code"], 0);
         assert_eq!(payload["data"]["slides"][0], "First slide");
         assert_eq!(payload["data"]["slides"][1], "Second slide");
+
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/documents/word-doc/preview/docx")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload["code"], 0);
+        let html = payload["data"]["html"].as_str().unwrap();
+        assert!(html.contains("Hello DOCX"), "html={html}");
+        assert!(html.contains("docx-block"));
+        assert_eq!(payload["data"]["truncated"], false);
     }
 
     async fn explicit_reparse_queues_even_when_content_hash_is_unchanged() {

@@ -2,6 +2,23 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.56.0] - 2026-10-22
+
+### The Word previewer renders DOCX without a browser bundle
+
+- Word documents no longer stop at the “preview not available” notice. The
+  document previewer now calls `GET /api/v1/documents/{id}/preview/docx`, which
+  renders the stored package with RayRAG's own `docx-rs` walker: paragraphs,
+  heading styles, inline bold/italic runs, line breaks and tables.
+- The renderer escapes every text node before it enters the HTML and caps the
+  number of top-level blocks, returning `truncated: true` beyond the cap
+  instead of silently dropping the document tail.
+- Tests cover the parser renderer and the authenticated HTTP route (including
+  the generated HTML and `truncated` flag); the preview section test now asserts
+  the live container instead of the old pending notice.
+- This is a partial parity surface by design: pagination, themes, floating
+  shapes and embedded media remain outside the Rust-native previewer.
+
 ## [0.55.0] - 2026-10-21
 
 ### The sandbox console runs its connection probe through an executor

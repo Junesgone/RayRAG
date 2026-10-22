@@ -327,6 +327,7 @@
 | GET | `/api/v1/documents/{doc_id}/preview` | `-` |
 | GET | `/api/v1/documents/{doc_id}` | `-` |
 | GET | `/api/v1/documents/{doc_id}/preview/sheets` | `-` |
+| GET | `/api/v1/documents/{doc_id}/preview/docx` | `-` |
 | GET | `/api/v1/documents/{doc_id}/preview/slides` | `-` |
 | GET | `/api/v1/datasets/{id}/documents/{did}/download` | `-` |
 | GET | `/api/v1/datasets/{id}/documents/{did}/metadata` | `-` |

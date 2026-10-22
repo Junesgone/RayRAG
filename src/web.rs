@@ -6679,21 +6679,13 @@ fn preview_section_markup(kind: PreviewKind, zh: bool) -> String {
         PreviewKind::Spreadsheet => format!(
             "<section><div class='docpreview-panel excel-csv-previewer' data-testid='preview-excel'>{spinner}<div class='docpreview-sheets' id='dpSheets' data-testid='dp-sheets'></div><div class='docpreview-grid' id='dpGrid' data-testid='dp-grid'></div></div></section>"
         ),
-        // Upstream renders .doc/.docx through `@extend-ai/react-docx`; RayRAG's
-        // Word previewer is still pending, so the section says so in the page
-        // instead of rendering nothing (never a silent empty preview).
-        PreviewKind::Docx => {
-            let mut section =
-                String::from("<section><div class='docpreview-panel' data-testid='preview-docx'>");
-            section.push_str(&file_error_markup(t("Preview is not available yet", zh)));
-            section.push_str("<p class='docpreview-note' data-testid='dp-pending'>");
-            section.push_str(t(
-                "Word documents (.doc/.docx) have no previewer yet; the parsed text is available from the chunk workbench.",
-                zh,
-            ));
-            section.push_str("</p></div></section>");
-            section
-        }
+        // Upstream renders .doc/.docx through `@extend-ai/react-docx`; RayRAG
+        // renders the structural HTML from its own `docx-rs` walker
+        // (`GET /documents/{id}/preview/docx`), with the same partial surface
+        // as the slides reader: text, headings, inline marks and tables.
+        PreviewKind::Docx => format!(
+            "<section><div class='docpreview-panel docx-previewer' data-testid='preview-docx'>{spinner}<article class='docpreview-docx' id='dpDocx' data-testid='dp-docx' hidden></article></div></section>"
+        ),
         PreviewKind::Slides => format!(
             "<section><div class='docpreview-panel ppt-previewer' data-testid='preview-ppt'>{spinner}<div class='docpreview-slides' id='dpSlides' data-testid='dp-slides'></div></div></section>"
         ),
@@ -6890,6 +6882,17 @@ async function dpLoadSlides(){
     dpRenderSlides(payload.data||{});
   }catch(error){dpToast(String(error.message||error))}
 }
+async function dpLoadDocx(){
+  try{
+    var response=await fetch('/api/v1/documents/'+encodeURIComponent(DP_STATE.docId)+'/preview/docx');
+    var payload=await response.json();
+    if(payload.code!==0)throw new Error(payload.message||('HTTP '+payload.code));
+    var data=payload.data||{};
+    var host=dpEl('dpDocx');
+    if(host){host.innerHTML=data.html||'';host.hidden=false}
+    if(data.truncated)dpToast('Preview truncated; open the document to see the full text');
+  }catch(error){dpToast(String(error.message||error))}
+}
 async function dpBoot(){
   if(!DP_STATE.kind||!DP_STATE.url)return;
   var url=DP_STATE.url;
@@ -6897,6 +6900,7 @@ async function dpBoot(){
     if(DP_STATE.kind==='html'){await dpPreviewHtml(url);return}
     if(DP_STATE.kind==='spreadsheet'){dpSpin(true);await dpLoadGrid();dpSpin(false);return}
     if(DP_STATE.kind==='slides'){dpSpin(true);await dpLoadSlides();dpSpin(false);return}
+    if(DP_STATE.kind==='docx'){dpSpin(true);await dpLoadDocx();dpSpin(false);return}
     if(DP_STATE.kind==='txt'){
       dpSpin(true);
       var text=await dpFetchText(url);
@@ -19585,11 +19589,13 @@ connection: close
         assert!(preview_section_markup(PreviewKind::Markdown, false).contains("docpreview-md"));
         assert!(preview_section_markup(PreviewKind::Spreadsheet, false).contains("id='dpGrid'"));
         assert!(preview_section_markup(PreviewKind::Slides, false).contains("id='dpSlides'"));
-        // The docx branch is loud until its previewer lands.
+        // The docx branch renders the structural HTML returned by the Rust
+        // docx walker; it no longer shows the old "no previewer" notice.
         let docx = preview_section_markup(PreviewKind::Docx, false);
         assert!(docx.contains("data-testid='preview-docx'"));
-        assert!(docx.contains("data-testid='file-error'"));
-        assert!(docx.contains("data-testid='dp-pending'"));
+        assert!(docx.contains("id='dpDocx'"));
+        assert!(docx.contains("data-testid='dp-docx'"));
+        assert!(!docx.contains("data-testid='dp-pending'"));
         // An unknown extension renders the `fileError` notice, never a blank page.
         let none = preview_section_markup(PreviewKind::None, false);
         assert!(none.contains("data-testid='file-error'"));

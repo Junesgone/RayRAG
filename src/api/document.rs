@@ -2729,6 +2729,51 @@ pub async fn download_document(
     .await
 }
 
+/// `GET /api/v1/documents/{doc_id}/preview/docx` — the Word previewer's
+/// structural HTML. Upstream hands the bytes to `@extend-ai/react-docx` in the
+/// browser; RayRAG renders the same document model with its Rust `docx-rs`
+/// reader (`parser::docx::RAGFlowDocxParser::preview_html`) so the preview
+/// works without an npm build. Paragraphs, headings, inline bold/italic,
+/// line breaks and tables are rendered; pagination, themes, floating shapes
+/// and embedded media are deliberately outside this partial surface.
+pub async fn preview_docx(
+    State(state): State<std::sync::Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(doc_id): Path<String>,
+) -> axum::response::Response {
+    const MAX_BLOCKS: usize = 5000;
+    let Some(doc) = state.docs.get(&doc_id) else {
+        return Json(serde_json::json!({ "code": 102, "message": "document not found" }))
+            .into_response();
+    };
+    if !kb_accessible(&state, &doc.kb_id, &auth) {
+        return Json(serde_json::json!({ "code": 102, "message": "document not found" }))
+            .into_response();
+    }
+    let uploads = std::path::Path::new(&state.static_dir).join("../uploads");
+    let physical = uploads.join(&doc.storage_name);
+    let Ok(bytes) = tokio::fs::read(&physical).await else {
+        return Json(serde_json::json!({ "code": 102, "message": "This file is empty." }))
+            .into_response();
+    };
+    let (html, truncated) = match crate::parser::docx::RAGFlowDocxParser::new()
+        .preview_html(&bytes, MAX_BLOCKS)
+    {
+        Ok(result) => result,
+        Err(error) => {
+            return Json(
+                serde_json::json!({ "code": 500, "message": format!("Failed to read Word document: {error}") }),
+            )
+            .into_response();
+        }
+    };
+    Json(serde_json::json!({
+        "code": 0,
+        "data": { "html": html, "truncated": truncated },
+    }))
+    .into_response()
+}
+
 /// `GET /api/v1/documents/{doc_id}/preview/sheets` — the workbook grid the
 /// spreadsheet previewer renders. Upstream builds this in the browser through
 /// `@js-preview/excel` (`components/document-preview/hooks.ts::useFetchExcel`,

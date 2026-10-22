@@ -892,6 +892,14 @@ the paired colour picker + hex input. */
 .docpreview-slide{border:1px solid var(--bd);border-radius:var(--rs);background:var(--bg);padding:14px 16px}
 .docpreview-slide-title{margin:0 0 8px;color:var(--tm);font-size:12px;font-weight:500;text-transform:uppercase;letter-spacing:.5px}
 .docpreview-slide-body{color:var(--t);font-size:14px;line-height:1.7}
+.docx-previewer{padding:8px}
+.docpreview-docx{max-height:76vh;overflow:auto;padding:8px;color:var(--t);font-size:14px;line-height:1.7}
+.docpreview-docx .docx-block{margin:0 0 10px;white-space:pre-wrap}
+.docpreview-docx h1,.docpreview-docx h2,.docpreview-docx h3,.docpreview-docx h4,.docpreview-docx h5,.docpreview-docx h6{margin:16px 0 8px;color:var(--t);font-weight:600;line-height:1.35}
+.docpreview-docx h1{font-size:24px}.docpreview-docx h2{font-size:20px}.docpreview-docx h3{font-size:17px}
+.docpreview-docx table.docx-table{margin:10px 0;border:1px solid var(--bd)}
+.docpreview-docx table.docx-table td{white-space:normal;padding:6px 10px;border:1px solid var(--bd);vertical-align:top}
+.docpreview-docx table.docx-table p{margin:0 0 4px}
 .docpreview-note{margin:8px 0 0;color:var(--tm);font-size:12px}
 .docpreview-toast{position:sticky;bottom:0;margin:0;padding:8px 12px;border:1px solid var(--d);border-radius:var(--rs);background:var(--bgm);color:var(--d);font-size:13px}
 .docpreview-toast[hidden]{display:none!important}
