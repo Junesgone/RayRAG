@@ -2,6 +2,21 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.61.0] - 2026-10-23
+
+### Local uploads honour `parent_path` and `parser_config`
+
+- The multipart reader now collects `parent_path` and `parser_config` before
+  registering files, so clients may send those text fields before or after the
+  file part (upstream's form parser exposes all fields regardless of order).
+- `parent_path` is sanitized like upstream `sanitize_path` (backslashes,
+  `.`/`..` segments, unsafe characters) and becomes a real subfolder under the
+  uploads directory; `location` and the stored key both include it.
+- `parser_config` forwards only `table_column_mode` and `table_column_roles`,
+  merged over the dataset parser config, matching upstream's allow-list.
+- Tests place both text fields after the file and assert the nested location,
+  the merged config and the on-disk path.
+
 ## [0.60.0] - 2026-10-23
 
 ### DOCX preview keeps more of the character and paragraph formatting

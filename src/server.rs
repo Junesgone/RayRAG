@@ -1451,6 +1451,88 @@ async fn persist_upload_field(
     result
 }
 
+/// Upstream `sanitize_path` for the optional multipart `parent_path`: backslashes
+/// become slashes, leading/trailing separators are dropped, `.`/`..` segments are
+/// removed, and every character outside `[A-Za-z0-9_-/]` is stripped.
+fn sanitize_parent_path(raw: Option<&str>) -> Option<String> {
+    let raw = raw?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let normalized = raw.replace('\\', "/");
+    let normalized = normalized.trim_matches('/');
+    let parts: Vec<&str> = normalized
+        .split('/')
+        .filter(|segment| !segment.is_empty() && *segment != "." && *segment != "..")
+        .collect();
+    if parts.is_empty() {
+        return None;
+    }
+    let sanitized: String = parts
+        .join("/")
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '/'))
+        .collect();
+    (!sanitized.is_empty()).then_some(sanitized)
+}
+
+/// Upstream `_upload_local_documents` only forwards `table_column_mode` and
+/// `table_column_roles` from the multipart `parser_config`; malformed JSON or a
+/// non-object is silently ignored.
+fn parser_config_override(raw: &str) -> Option<serde_json::Value> {
+    let parsed: serde_json::Value = serde_json::from_str(raw).ok()?;
+    let object = parsed.as_object()?;
+    let mut filtered = serde_json::Map::new();
+    for key in ["table_column_mode", "table_column_roles"] {
+        if let Some(value) = object.get(key) {
+            filtered.insert(key.to_string(), value.clone());
+        }
+    }
+    (!filtered.is_empty()).then_some(serde_json::Value::Object(filtered))
+}
+
+/// Upstream stores the KB parser config merged with the request override on the
+/// document. `None` keeps the historical "follow the dataset face" behavior.
+fn merged_parser_config(
+    state: &AppState,
+    dataset_id: &str,
+    override_config: &Option<serde_json::Value>,
+) -> Option<serde_json::Value> {
+    let override_config = override_config.as_ref()?;
+    let mut merged = state
+        .kbs
+        .get(dataset_id)
+        .and_then(|kb| serde_json::from_str::<serde_json::Value>(&kb.parser_config).ok())
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+    if let Some(object) = override_config.as_object() {
+        for (key, value) in object {
+            merged.insert(key.clone(), value.clone());
+        }
+    }
+    Some(serde_json::Value::Object(merged))
+}
+
+/// Move a streamed upload under the sanitized `parent_path` folder. The stored
+/// name becomes `<parent>/<id>.<ext>`, which is also what download/delete use,
+/// so the response location and the blob on disk agree.
+async fn move_upload_into_parent(
+    upload: &mut PersistedUpload,
+    parent_path: &str,
+    upload_dir: &FsPath,
+) -> anyhow::Result<()> {
+    let directory = upload_dir.join(parent_path);
+    tokio::fs::create_dir_all(&directory).await?;
+    let target = directory.join(&upload.storage_name);
+    if target.exists() {
+        anyhow::bail!("Upload destination already exists");
+    }
+    tokio::fs::rename(&upload.path, &target).await?;
+    upload.path = target;
+    upload.storage_name = format!("{parent_path}/{}", upload.storage_name);
+    Ok(())
+}
+
 /// `POST /api/v1/datasets/{id}/documents` — dispatches the three upstream upload
 /// types. `empty` takes a JSON body; `local` keeps the existing multipart path.
 /// `web` is not implemented in this build and says so instead of pretending to
@@ -1632,14 +1714,33 @@ async fn upload_document(
     let mut succeeded = Vec::new();
     let mut failed = Vec::new();
     let mut file_count = 0_usize;
+    let mut pending: Vec<(String, String, PersistedUpload)> = Vec::new();
+    let mut parent_path: Option<String> = None;
+    let mut parser_config_request: Option<serde_json::Value> = None;
     loop {
         let field = match multipart.next_field().await {
             Ok(Some(field)) => field,
             Ok(None) => break,
             Err(error) => return api_error(StatusCode::BAD_REQUEST, &error.to_string()),
         };
-        if field.name() != Some("file") {
-            continue;
+        match field.name() {
+            // Both text fields are read before registration: multipart clients are
+            // free to put `file` before or after them, and upstream's form parser
+            // exposes every field regardless of order.
+            Some("parent_path") => {
+                if let Ok(value) = field.text().await {
+                    parent_path = sanitize_parent_path(Some(&value));
+                }
+                continue;
+            }
+            Some("parser_config") => {
+                if let Ok(value) = field.text().await {
+                    parser_config_request = parser_config_override(&value);
+                }
+                continue;
+            }
+            Some("file") => {}
+            _ => continue,
         }
         file_count += 1;
         if file_count > MAX_DOCUMENTS_PER_UPLOAD {
@@ -1651,32 +1752,8 @@ async fn upload_document(
         }
         let original_name = field.file_name().unwrap_or("uploaded").to_string();
         let doc_id = uuid::Uuid::new_v4().to_string();
-        let doc_id_for_raw = doc_id.clone();
         match persist_upload_field(field, &upload_dir, &doc_id, state.max_upload_bytes).await {
-            Ok(upload) => match register_document_upload(
-                state.clone(),
-                &auth.user_id,
-                &dataset_id,
-                doc_id,
-                upload,
-            ) {
-                Ok(data) => {
-                    if return_raw_files {
-                        let raw = state
-                            .docs
-                            .get(&doc_id_for_raw)
-                            .map(|doc| crate::api::document::raw_document_entry(&state, &doc))
-                            .unwrap_or(data);
-                        succeeded.push(raw);
-                    } else {
-                        succeeded.push(data);
-                    }
-                }
-                Err(error) => failed.push(serde_json::json!({
-                    "name": original_name,
-                    "message": error.to_string()
-                })),
-            },
+            Ok(upload) => pending.push((doc_id, original_name, upload)),
             Err(error) => failed.push(serde_json::json!({
                 "name": original_name,
                 "message": error.to_string()
@@ -1686,6 +1763,45 @@ async fn upload_document(
     if file_count == 0 {
         // Upstream: `No file part!` (ARGUMENT_ERROR) on HTTP 200.
         return api_error_result(StatusCode::OK, code::INVALID_ARGUMENT, "No file part!");
+    }
+    let parser_config = merged_parser_config(&state, &dataset_id, &parser_config_request);
+    for (doc_id, original_name, mut upload) in pending {
+        if let Some(parent) = parent_path.as_deref() {
+            if let Err(error) = move_upload_into_parent(&mut upload, parent, &upload_dir).await {
+                failed.push(serde_json::json!({
+                    "name": original_name,
+                    "message": error.to_string()
+                }));
+                continue;
+            }
+        }
+        let doc_id_for_raw = doc_id.clone();
+        match register_document_upload_with_options(
+            state.clone(),
+            &auth.user_id,
+            &dataset_id,
+            doc_id,
+            upload,
+            parser_config.clone(),
+            parent_path.clone(),
+        ) {
+            Ok(data) => {
+                if return_raw_files {
+                    let raw = state
+                        .docs
+                        .get(&doc_id_for_raw)
+                        .map(|doc| crate::api::document::raw_document_entry(&state, &doc))
+                        .unwrap_or(data);
+                    succeeded.push(raw);
+                } else {
+                    succeeded.push(data);
+                }
+            }
+            Err(error) => failed.push(serde_json::json!({
+                "name": original_name,
+                "message": error.to_string()
+            })),
+        }
     }
     if failed.is_empty() {
         // Upstream `_upload_local_documents`: `get_result(data=doc_data)` — HTTP 200, the
@@ -1736,6 +1852,18 @@ pub(crate) fn register_document_upload(
     doc_id: String,
     upload: PersistedUpload,
 ) -> anyhow::Result<serde_json::Value> {
+    register_document_upload_with_options(state, owner_id, dataset_id, doc_id, upload, None, None)
+}
+
+pub(crate) fn register_document_upload_with_options(
+    state: Arc<AppState>,
+    owner_id: &str,
+    dataset_id: &str,
+    doc_id: String,
+    upload: PersistedUpload,
+    parser_config: Option<serde_json::Value>,
+    parent_path: Option<String>,
+) -> anyhow::Result<serde_json::Value> {
     let path = upload.path.clone();
 
     let now = unix_ms();
@@ -1754,6 +1882,8 @@ pub(crate) fn register_document_upload(
         created_at: now,
         updated_at: now,
         status: crate::api::document::enabled_status(),
+        parser_config,
+        parent_path,
         ..Default::default()
     };
     let doc = state.docs.insert_unique(doc)?;
@@ -12956,6 +13086,59 @@ mod tests {
         assert!(doc.get("dataset_id").is_none(), "response body: {json}");
         assert!(doc.get("chunk_method").is_none(), "response body: {json}");
         assert!(doc.get("chunk_count").is_none(), "response body: {json}");
+    }
+
+    #[tokio::test]
+    async fn multipart_upload_applies_parent_path_and_parser_config_after_file() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Folder KB", "")
+            .unwrap();
+        let boundary = "rayrag-test-boundary";
+        // The text fields deliberately come after the file: upstream's form parser
+        // exposes them regardless of part order, and the deferred registration must
+        // do the same.
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"folder.txt\"\r\nContent-Type: text/plain\r\n\r\nfolder body\r\n\
+             --{boundary}\r\nContent-Disposition: form-data; name=\"parent_path\"\r\n\r\n../reports\\2026\r\n\
+             --{boundary}\r\nContent-Disposition: form-data; name=\"parser_config\"\r\n\r\n{{\"table_column_mode\":\"header\",\"graphrag\":{{\"use_graphrag\":true}}}}\r\n\
+             --{boundary}--\r\n"
+        );
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/datasets/{}/documents", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let json = response_json(response).await;
+        assert_eq!(status, StatusCode::OK, "response body: {json}");
+        assert_eq!(json["code"], 0, "response body: {json}");
+        let doc = &json["data"][0];
+        let id = doc["id"].as_str().unwrap();
+        assert_eq!(
+            doc["location"].as_str().unwrap(),
+            format!("reports/2026/{id}.txt")
+        );
+        assert_eq!(doc["parser_config"]["table_column_mode"], "header");
+        assert!(doc["parser_config"].get("graphrag").is_none(), "{json}");
+        assert!(
+            env.root
+                .join("uploads/reports/2026")
+                .join(format!("{id}.txt"))
+                .is_file()
+        );
     }
 
     #[tokio::test]

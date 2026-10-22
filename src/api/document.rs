@@ -56,6 +56,10 @@ pub struct DocRecord {
     /// `virtual` so list/detail responses keep their origin.
     #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
     pub doc_type: Option<String>,
+    /// Upstream `Document.location` parent folder path. `None` keeps the
+    /// historical flat layout (the document id is the whole location).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_path: Option<String>,
     /// Upstream `Document.pipeline_id`. Stored for parity; pipeline execution is not
     /// implemented in this engine, so the value round-trips without changing parsing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1451,6 +1455,7 @@ pub(crate) fn doc_list_entry(
         "dataset_id": doc.kb_id,
         "size": doc.size,
         "storage_name": doc.storage_name,
+        "location": document_location(doc),
         "content_hash": doc.content_hash,
         "indexed_content_hash": doc.indexed_content_hash,
         // `_process_run_mapping`: the REST surface reports TaskStatus names.
@@ -1519,11 +1524,17 @@ pub(crate) fn raw_document_entry(
         "name": doc.name,
         "source_type": "local",
         "suffix": doc_suffix(&doc.name),
-        "location": doc.storage_name,
+        "location": document_location(doc),
         "size": doc.size,
         "thumbnail": "",
         "content_hash": doc.content_hash,
     })
+}
+
+fn document_location(doc: &DocRecord) -> String {
+    // `storage_name` is the physical key under `uploads/`; `move_upload_into_parent`
+    // prefixes the sanitized folder, so this is also the upstream `location`.
+    doc.storage_name.clone()
 }
 
 /// GET /api/v1/datasets/{kb_id}/documents — list docs in KB
