@@ -70,7 +70,7 @@
 ## /files
 | 覆盖（上游快照元素组） | 验证证据（CDP 实点 + 截图） | 状态 |
 |---|---|---|
-| 面包屑（`folderId`/祖先链）、文件夹进入、上传/新建文件夹/批量移动/批量链接/重命名/删除、搜索与服务端分页 | files-folder-nav-cdp（root→child→ancestor→root，URL 同步，0 pageerror）；v0.63.0 隔离实例 `:9392` | ✅ |
+| 面包屑（`folderId`/祖先链）、前进后退（pushState/popstate）、文件夹进入、全树移动选择器、上传/新建文件夹/批量移动/批量链接/重命名/删除、搜索与服务端分页 | files-folder-nav-cdp（root→child→back→forward→root，URL 同步，0 pageerror）；files-move-tree-cdp（6 个路径选项，移动到嵌套目录）；v0.64.0 隔离实例 `:9392` | ✅ |
 | 按钮 / 下拉 / 标签 / 悬停弹窗 / 分页（详见 ragflow-ui-map.json 对应条目） | files-page-cdp；布局审计 layout-audit-cdp/layout-audit-detail-cdp（溢出/不可见/低对比/截断=0）；0 pageerror | ✅ |
 
 ## /files/skills
