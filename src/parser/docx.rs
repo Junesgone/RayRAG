@@ -13,6 +13,7 @@
 
 use crate::parser::{Parse, new_document};
 use crate::{Document, Result};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use quick_xml::Reader;
 use quick_xml::events::Event;
 use std::collections::HashMap;
@@ -84,9 +85,10 @@ impl RAGFlowDocxParser {
     /// `@extend-ai/react-docx`; RayRAG has no npm toolchain, so this renderer
     /// walks the OOXML model that `docx-rs` already parses and emits the
     /// structural subset a preview needs: headings, paragraphs, inline bold /
-    /// italic runs, line breaks and tables. It intentionally does not claim to
-    /// reproduce Word's pagination, floating shapes, themes or embedded
-    /// media — the caller marks the surface `partial`.
+    /// italic runs, line breaks, tables and embedded images (inlined at their
+    /// run position as data URIs). It intentionally does not claim to reproduce
+    /// Word's pagination, floating-shape positioning, themes, headers/footers or
+    /// audio/video media — the caller marks the surface `partial`.
     ///
     /// `max_blocks` bounds the number of top-level paragraphs/tables; the
     /// returned flag tells the page that the document was cut rather than
@@ -94,6 +96,11 @@ impl RAGFlowDocxParser {
     pub fn preview_html(&self, data: &[u8], max_blocks: usize) -> Result<(String, bool)> {
         let docx =
             docx_rs::read_docx(data).map_err(|e| anyhow::anyhow!("Invalid DOCX document: {e}"))?;
+        let images: HashMap<String, (String, Vec<u8>)> = docx
+            .images
+            .iter()
+            .map(|(id, path, buffer, _)| (id.clone(), (path.clone(), buffer.0.clone())))
+            .collect();
         let mut html = String::new();
         let mut blocks = 0usize;
         let mut truncated = false;
@@ -105,11 +112,11 @@ impl RAGFlowDocxParser {
             }
             match child {
                 docx_rs::DocumentChild::Paragraph(paragraph) => {
-                    html.push_str(&render_paragraph_html(paragraph));
+                    html.push_str(&render_paragraph_html(paragraph, &images));
                     blocks += 1;
                 }
                 docx_rs::DocumentChild::Table(table) => {
-                    html.push_str(&render_table_html(table));
+                    html.push_str(&render_table_html(table, &images));
                     blocks += 1;
                 }
                 _ => {}
@@ -691,15 +698,20 @@ fn docx_heading_tag(style: &str) -> Option<&'static str> {
     None
 }
 
-fn render_run_html(run: &docx_rs::Run) -> String {
+fn render_run_html(run: &docx_rs::Run, images: &HashMap<String, (String, Vec<u8>)>) -> String {
     let mut text = String::new();
     for child in &run.children {
         match child {
             docx_rs::RunChild::Text(value) => text.push_str(&html_escape_text(&value.text)),
             docx_rs::RunChild::Tab(_) => text.push('\t'),
             docx_rs::RunChild::Break(_) => text.push_str("<br>"),
-            // Deleted revisions, field instructions and drawings are not part
-            // of the visible text layer this preview promises.
+            docx_rs::RunChild::Drawing(drawing) => {
+                if let Some(docx_rs::DrawingData::Pic(pic)) = &drawing.data {
+                    text.push_str(&render_pic_html(pic, images));
+                }
+            }
+            // Deleted revisions and field instructions are not part of the
+            // visible text layer this preview promises.
             _ => {}
         }
     }
@@ -716,11 +728,43 @@ fn render_run_html(run: &docx_rs::Run) -> String {
     }
 }
 
-fn render_paragraph_html(paragraph: &docx_rs::Paragraph) -> String {
+fn render_pic_html(pic: &docx_rs::Pic, images: &HashMap<String, (String, Vec<u8>)>) -> String {
+    let Some((path, bytes)) = images.get(&pic.id) else {
+        return String::new();
+    };
+    let mime = docx_image_mime(path);
+    let payload = BASE64.encode(bytes);
+    let alt = html_escape_text(path.rsplit('/').next().unwrap_or(path));
+    format!(
+        "<img class='docx-inline-image' src='data:{mime};base64,{payload}' alt='{alt}' loading='lazy'>"
+    )
+}
+
+fn docx_image_mime(path: &str) -> &'static str {
+    let extension = path
+        .rsplit('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    match extension.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "svg" => "image/svg+xml",
+        _ => "application/octet-stream",
+    }
+}
+
+fn render_paragraph_html(
+    paragraph: &docx_rs::Paragraph,
+    images: &HashMap<String, (String, Vec<u8>)>,
+) -> String {
     let mut inner = String::new();
     for child in &paragraph.children {
         if let docx_rs::ParagraphChild::Run(run) = child {
-            inner.push_str(&render_run_html(run));
+            inner.push_str(&render_run_html(run, images));
         }
     }
     if inner.is_empty() {
@@ -735,7 +779,10 @@ fn render_paragraph_html(paragraph: &docx_rs::Paragraph) -> String {
     format!("<{tag} class='docx-block'>{inner}</{tag}>")
 }
 
-fn render_table_html(table: &docx_rs::Table) -> String {
+fn render_table_html(
+    table: &docx_rs::Table,
+    images: &HashMap<String, (String, Vec<u8>)>,
+) -> String {
     let mut out = String::from("<table class='docpreview-table docx-table'><tbody>");
     for row in &table.rows {
         let docx_rs::TableChild::TableRow(row) = row else {
@@ -750,7 +797,7 @@ fn render_table_html(table: &docx_rs::Table) -> String {
             let mut body = String::new();
             for content in &cell.children {
                 if let docx_rs::TableCellContent::Paragraph(paragraph) = content {
-                    body.push_str(&render_paragraph_html(paragraph));
+                    body.push_str(&render_paragraph_html(paragraph, images));
                 }
             }
             if body.is_empty() {
@@ -1051,5 +1098,108 @@ mod tests {
             zw.finish().unwrap();
         }
         buf
+    }
+
+    fn build_docx_with_image() -> Vec<u8> {
+        let mut buf = Vec::new();
+        {
+            let mut zw = zip::ZipWriter::new(Cursor::new(&mut buf));
+            let ct = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Default Extension="png" ContentType="image/png"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+</Types>"#;
+            zw.start_file(
+                "[Content_Types].xml",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            zw.write_all(ct.as_bytes()).unwrap();
+
+            let rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>"#;
+            zw.start_file("_rels/.rels", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zw.write_all(rels.as_bytes()).unwrap();
+
+            let doc = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+  xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+  xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+  xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
+  <w:body>
+    <w:p><w:r><w:t>Before image</w:t></w:r></w:p>
+    <w:p><w:r><w:drawing>
+      <wp:inline distT="0" distB="0" distL="0" distR="0">
+        <wp:extent cx="1000000" cy="1000000"/>
+        <wp:docPr id="1" name="Picture 1"/>
+        <a:graphic>
+          <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+            <pic:pic>
+              <pic:nvPicPr><pic:cNvPr id="1" name="pixel.png"/><pic:cNvPicPr/></pic:nvPicPr>
+              <pic:blipFill><a:blip r:embed="rIdImg"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>
+              <pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000000" cy="1000000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>
+            </pic:pic>
+          </a:graphicData>
+        </a:graphic>
+      </wp:inline>
+    </w:drawing></w:r></w:p>
+    <w:p><w:r><w:t>After image</w:t></w:r></w:p>
+  </w:body>
+</w:document>"#;
+            zw.start_file(
+                "word/document.xml",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            zw.write_all(doc.as_bytes()).unwrap();
+
+            let doc_rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rIdImg" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/>
+</Relationships>"#;
+            zw.start_file(
+                "word/_rels/document.xml.rels",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            zw.write_all(doc_rels.as_bytes()).unwrap();
+
+            let styles = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>"#;
+            zw.start_file("word/styles.xml", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zw.write_all(styles.as_bytes()).unwrap();
+
+            let png = BASE64
+                .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
+                .unwrap();
+            zw.start_file(
+                "word/media/image1.png",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            zw.write_all(&png).unwrap();
+            zw.finish().unwrap();
+        }
+        buf
+    }
+
+    #[test]
+    fn preview_html_embeds_inline_images_as_data_uris() {
+        let data = build_docx_with_image();
+        let (html, truncated) = RAGFlowDocxParser::new().preview_html(&data, 100).unwrap();
+        assert!(!truncated);
+        assert!(html.contains("Before image"), "{html}");
+        assert!(html.contains("After image"), "{html}");
+        assert!(html.contains("class='docx-inline-image'"), "{html}");
+        assert!(html.contains("src='data:image/png;base64,"), "{html}");
+        assert!(html.contains("alt='image1.png'"), "{html}");
+        assert!(!html.contains("rIdImg"), "{html}");
     }
 }

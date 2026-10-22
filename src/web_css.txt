@@ -895,6 +895,7 @@ the paired colour picker + hex input. */
 .docx-previewer{padding:8px}
 .docpreview-docx{max-height:76vh;overflow:auto;padding:8px;color:var(--t);font-size:14px;line-height:1.7}
 .docpreview-docx .docx-block{margin:0 0 10px;white-space:pre-wrap}
+.docx-inline-image{display:block;max-width:100%;height:auto;margin:8px 0;border-radius:4px}
 .docpreview-docx h1,.docpreview-docx h2,.docpreview-docx h3,.docpreview-docx h4,.docpreview-docx h5,.docpreview-docx h6{margin:16px 0 8px;color:var(--t);font-weight:600;line-height:1.35}
 .docpreview-docx h1{font-size:24px}.docpreview-docx h2{font-size:20px}.docpreview-docx h3{font-size:17px}
 .docpreview-docx table.docx-table{margin:10px 0;border:1px solid var(--bd)}

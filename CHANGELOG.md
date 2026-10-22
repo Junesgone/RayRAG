@@ -2,6 +2,20 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.57.0] - 2026-10-22
+
+### DOCX previews carry their embedded images
+
+- The Word previewer now renders inline pictures in the same reading order as
+  the surrounding text, embedding each `word/media` image as a `data:` URI so
+  the page needs no extra fetch or public file URL.
+- Table-cell pictures go through the same renderer; the image's relationship id
+  never reaches the HTML. The alternative text is the media file name and the
+  CSS keeps images inside the preview column.
+- A parser test builds a DOCX with a PNG drawing and asserts the data URI and
+  surrounding paragraphs. Pagination, floating-shape positioning, themes,
+  headers/footers and audio/video media remain outside the Rust-native surface.
+
 ## [0.56.0] - 2026-10-22
 
 ### The Word previewer renders DOCX without a browser bundle
