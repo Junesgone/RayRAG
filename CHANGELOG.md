@@ -2,6 +2,24 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.64.0] - 2026-10-23
+
+### Files: browser history and a full-tree move picker
+
+- Folder navigation now uses `history.pushState`; `popstate` restores the folder
+  named by `?folderId=`, so Back and Forward traverse the file tree instead of
+  leaving the list behind.
+- The move dialog lazily walks every visible folder (paged at 200 rows per
+  request, four folders in flight) and labels each option with its full path,
+  instead of listing only the folders on the current page.
+- The picker excludes the folders being moved and their descendants, and every
+  row now has the same Move action as the bulk bar.
+- Moves use upstream's `POST /api/v1/files/move` with `src_file_ids` and
+  `dest_file_id` rather than one PATCH per file.
+- Boundary: the option list is a path-labelled `<select>`, not the upstream
+  `AsyncTreeSelect` visual tree; very large trees are collected eagerly when the
+  dialog opens.
+
 ## [0.63.0] - 2026-10-23
 
 ### Files page follows the upstream folder tree
