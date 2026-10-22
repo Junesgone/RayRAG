@@ -1490,6 +1490,42 @@ pub(crate) fn doc_list_entry(
     })
 }
 
+/// Raw document shape used by the local upload route when
+/// `?return_raw_files=true`: upstream returns the stored document dictionary
+/// (`kb_id`, `parser_id`, `location`, `content_hash`, …) instead of applying
+/// the API's key/run mapping. The values come from the same parser face as the
+/// mapped row; no field is invented.
+pub(crate) fn raw_document_entry(
+    state: &crate::server::AppState,
+    doc: &DocRecord,
+) -> serde_json::Value {
+    let (parser_id, parser_config, pipeline_id) = document_parser_face(state, doc);
+    let owner_id = state
+        .kbs
+        .get(&doc.kb_id)
+        .map(|kb| kb.owner_id)
+        .unwrap_or_default();
+    serde_json::json!({
+        "id": doc.id,
+        "kb_id": doc.kb_id,
+        "parser_id": parser_id,
+        "pipeline_id": pipeline_id,
+        "parser_config": parser_config,
+        "created_by": owner_id,
+        "type": doc
+            .doc_type
+            .clone()
+            .unwrap_or_else(|| filename_type(&doc.name).to_string()),
+        "name": doc.name,
+        "source_type": "local",
+        "suffix": doc_suffix(&doc.name),
+        "location": doc.storage_name,
+        "size": doc.size,
+        "thumbnail": "",
+        "content_hash": doc.content_hash,
+    })
+}
+
 /// GET /api/v1/datasets/{kb_id}/documents — list docs in KB
 ///
 /// The upstream query face (`_get_docs_with_request` / `_get_doc_filters_with_request`):

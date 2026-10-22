@@ -2,6 +2,19 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.59.0] - 2026-10-23
+
+### Raw upload responses are available on request
+
+- `POST /api/v1/datasets/{id}/documents?return_raw_files=true` now returns the
+  stored document fields upstream exposes in raw mode (`kb_id`, `parser_id`,
+  `location`, `content_hash`, `source_type`, …) instead of the mapped API row
+  (`dataset_id`, `chunk_method`, `chunk_count`, …).
+- The raw branch also applies to partial-success envelopes; the default mapping
+  is unchanged. Values come from the same parser face and stored record as the
+  mapped row, so no field is invented.
+- Tests assert the internal key set and the absence of mapped aliases.
+
 ## [0.58.0] - 2026-10-23
 
 ### Empty documents can be created through the upload route

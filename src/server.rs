@@ -1467,11 +1467,22 @@ async fn upload_document_route(
         .map(|value| value.trim().to_ascii_lowercase())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "local".to_string());
+    let return_raw_files = query
+        .get("return_raw_files")
+        .map(|value| value.trim().eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
     match upload_type.as_str() {
         "empty" => upload_empty_document(state, auth, dataset_id, request).await,
         "local" => match Multipart::from_request(request, &state).await {
             Ok(multipart) => {
-                upload_document(State(state), Extension(auth), Path(dataset_id), multipart).await
+                upload_document(
+                    State(state),
+                    Extension(auth),
+                    Path(dataset_id),
+                    multipart,
+                    return_raw_files,
+                )
+                .await
             }
             Err(error) => api_error(StatusCode::BAD_REQUEST, &error.to_string()),
         },
@@ -1603,6 +1614,7 @@ async fn upload_document(
     Extension(auth): Extension<AuthContext>,
     Path(dataset_id): Path<String>,
     mut multipart: Multipart,
+    return_raw_files: bool,
 ) -> Response {
     if state.kbs.get(&dataset_id).is_none() {
         // Upstream: `Can't find the dataset with ID …!` (DATA_ERROR), delivered on HTTP 200.
@@ -1639,6 +1651,7 @@ async fn upload_document(
         }
         let original_name = field.file_name().unwrap_or("uploaded").to_string();
         let doc_id = uuid::Uuid::new_v4().to_string();
+        let doc_id_for_raw = doc_id.clone();
         match persist_upload_field(field, &upload_dir, &doc_id, state.max_upload_bytes).await {
             Ok(upload) => match register_document_upload(
                 state.clone(),
@@ -1647,7 +1660,18 @@ async fn upload_document(
                 doc_id,
                 upload,
             ) {
-                Ok(data) => succeeded.push(data),
+                Ok(data) => {
+                    if return_raw_files {
+                        let raw = state
+                            .docs
+                            .get(&doc_id_for_raw)
+                            .map(|doc| crate::api::document::raw_document_entry(&state, &doc))
+                            .unwrap_or(data);
+                        succeeded.push(raw);
+                    } else {
+                        succeeded.push(data);
+                    }
+                }
                 Err(error) => failed.push(serde_json::json!({
                     "name": original_name,
                     "message": error.to_string()
@@ -1667,7 +1691,9 @@ async fn upload_document(
         // Upstream `_upload_local_documents`: `get_result(data=doc_data)` — HTTP 200, the
         // mapped documents as an **array**, and no `message` key on success.
         let mut data = serde_json::Value::Array(succeeded);
-        crate::api::compat::enrich_documents(&mut data);
+        if !return_raw_files {
+            crate::api::compat::enrich_documents(&mut data);
+        }
         return (
             StatusCode::OK,
             Json(serde_json::json!({ "code": 0, "data": data })),
@@ -1693,7 +1719,9 @@ async fn upload_document(
     // A partial success keeps upstream's mixed envelope: code 500, the failure lines in
     // `message`, and the documents that did land in `data`.
     let mut data = serde_json::Value::Array(succeeded);
-    crate::api::compat::enrich_documents(&mut data);
+    if !return_raw_files {
+        crate::api::compat::enrich_documents(&mut data);
+    }
     (
         StatusCode::OK,
         Json(serde_json::json!({ "code": code::SERVER_ERROR, "message": message, "data": data })),
@@ -12881,6 +12909,53 @@ mod tests {
         assert!(doc.content_hash.chars().all(|ch| ch.is_ascii_hexdigit()));
         assert!(env.root.join("uploads").join(doc.storage_name).is_file());
         assert_eq!(json["data"][0]["run"], "UNSTART", "response body: {json}");
+    }
+
+    #[tokio::test]
+    async fn multipart_upload_return_raw_files_keeps_internal_keys() {
+        let env = test_env();
+        let kb = env.state.kbs.create_for("test-user", "Raw KB", "").unwrap();
+        let boundary = "rayrag-test-boundary";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"raw.txt\"\r\nContent-Type: text/plain\r\n\r\nraw body\r\n--{boundary}--\r\n"
+        );
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!(
+                        "/api/v1/datasets/{}/documents?return_raw_files=true",
+                        kb.id
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let json = response_json(response).await;
+        assert_eq!(status, StatusCode::OK, "response body: {json}");
+        assert_eq!(json["code"], 0, "response body: {json}");
+        let doc = &json["data"][0];
+        assert_eq!(doc["name"], "raw.txt");
+        assert_eq!(doc["kb_id"], kb.id);
+        assert_eq!(doc["type"], "doc");
+        assert_eq!(doc["source_type"], "local");
+        assert_eq!(doc["suffix"], "txt");
+        assert!(
+            doc["location"]
+                .as_str()
+                .unwrap()
+                .starts_with(doc["id"].as_str().unwrap())
+        );
+        assert!(doc.get("dataset_id").is_none(), "response body: {json}");
+        assert!(doc.get("chunk_method").is_none(), "response body: {json}");
+        assert!(doc.get("chunk_count").is_none(), "response body: {json}");
     }
 
     #[tokio::test]
