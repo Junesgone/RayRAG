@@ -2,6 +2,24 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.62.0] - 2026-10-23
+
+### `type=web` uploads render the page to PDF
+
+- `POST /api/v1/datasets/{id}/documents?type=web` now accepts multipart
+  `name` and `url`, validates the URL with the shared SSRF guard, renders the
+  page with headless Chromium, and ingests the generated PDF like a local
+  upload (`name.pdf`, PDF parser, normal parse queue).
+- Missing fields, an oversized name and invalid/private URLs return the
+  upstream argument-error messages; a Chromium failure returns a server error
+  with a bounded stderr excerpt.
+- The runtime image installs `chromium` and CJK fonts and sets
+  `RAYRAG_CHROMIUM_BIN`; tests cover field validation and the private-URL
+  rejection without invoking the browser.
+- Boundary: the SSRF guard checks the top-level URL; subresources requested by
+  Chromium are not individually filtered, and the browser runs as root with
+  `--no-sandbox` inside the container.
+
 ## [0.61.0] - 2026-10-23
 
 ### Local uploads honour `parent_path` and `parser_config`

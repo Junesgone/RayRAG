@@ -1534,9 +1534,8 @@ async fn move_upload_into_parent(
 }
 
 /// `POST /api/v1/datasets/{id}/documents` — dispatches the three upstream upload
-/// types. `empty` takes a JSON body; `local` keeps the existing multipart path.
-/// `web` is not implemented in this build and says so instead of pretending to
-/// convert HTML to PDF.
+/// types. `empty` takes a JSON body, `local` keeps the multipart path, and `web`
+/// renders the URL to PDF with headless Chromium before ingesting it.
 async fn upload_document_route(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -1568,17 +1567,193 @@ async fn upload_document_route(
             }
             Err(error) => api_error(StatusCode::BAD_REQUEST, &error.to_string()),
         },
-        "web" => api_error_result(
-            StatusCode::OK,
-            code::INVALID_ARGUMENT,
-            "`type=web` is not supported by this build.",
-        ),
+        "web" => upload_web_document(state, auth, dataset_id, request).await,
         _ => api_error_result(
             StatusCode::OK,
             code::INVALID_ARGUMENT,
             "`type` must be one of \"local\", \"web\", or \"empty\".",
         ),
     }
+}
+
+/// `POST /api/v1/datasets/{id}/documents?type=web` — render an http(s) page to
+/// PDF with headless Chromium, then ingest it like a local upload. The URL is
+/// checked with the same SSRF guard as the crawler before Chromium sees it.
+async fn upload_web_document(
+    state: Arc<AppState>,
+    auth: AuthContext,
+    dataset_id: String,
+    request: Request,
+) -> Response {
+    if state.kbs.get(&dataset_id).is_none() {
+        return api_error_result(
+            StatusCode::OK,
+            code::INVALID_OR_MISSING_DATA,
+            &format!("Can't find the dataset with ID {dataset_id}!"),
+        );
+    }
+    if !kb_manageable(&state, &dataset_id, &auth) {
+        return api_error_result(StatusCode::OK, code::UNAUTHENTICATED, "no authorization");
+    }
+    let mut multipart = match Multipart::from_request(request, &state).await {
+        Ok(multipart) => multipart,
+        Err(error) => return api_error(StatusCode::BAD_REQUEST, &error.to_string()),
+    };
+    let mut name = String::new();
+    let mut url = String::new();
+    loop {
+        let field = match multipart.next_field().await {
+            Ok(Some(field)) => field,
+            Ok(None) => break,
+            Err(error) => return api_error(StatusCode::BAD_REQUEST, &error.to_string()),
+        };
+        let field_name = field.name().map(str::to_string);
+        match field_name.as_deref() {
+            Some("name") => {
+                if let Ok(value) = field.text().await {
+                    name = value.trim().to_string();
+                }
+            }
+            Some("url") => {
+                if let Ok(value) = field.text().await {
+                    url = value.trim().to_string();
+                }
+            }
+            _ => {}
+        }
+    }
+    if name.is_empty() {
+        return api_error_result(StatusCode::OK, code::INVALID_ARGUMENT, "Lack of \"name\"");
+    }
+    if url.is_empty() {
+        return api_error_result(StatusCode::OK, code::INVALID_ARGUMENT, "Lack of \"url\"");
+    }
+    if name.len() > 255 {
+        return api_error_result(
+            StatusCode::OK,
+            code::INVALID_ARGUMENT,
+            "File name must be 255 bytes or less.",
+        );
+    }
+    if url.len() > 4096 {
+        return api_error_result(
+            StatusCode::OK,
+            code::INVALID_ARGUMENT,
+            "The URL format is invalid",
+        );
+    }
+    let checked_url = url.clone();
+    let safe = tokio::task::spawn_blocking(move || {
+        crate::common::ssrf_guard::assert_url_is_safe(&checked_url)
+    })
+    .await;
+    match safe {
+        Ok(Ok(_)) => {}
+        _ => {
+            return api_error_result(
+                StatusCode::OK,
+                code::INVALID_ARGUMENT,
+                "The URL format is invalid",
+            );
+        }
+    }
+    let pdf = match render_url_to_pdf(&url).await {
+        Ok(pdf) => pdf,
+        Err(error) => {
+            return api_error_result(
+                StatusCode::OK,
+                code::SERVER_ERROR,
+                &format!("html2pdf failed: {error}"),
+            );
+        }
+    };
+    let upload_dir = FsPath::new(&state.static_dir).join("../uploads");
+    if let Err(error) = tokio::fs::create_dir_all(&upload_dir).await {
+        return api_error_result(
+            StatusCode::OK,
+            code::SERVER_ERROR,
+            &format!("Cannot create upload directory: {error}"),
+        );
+    }
+    let doc_id = uuid::Uuid::new_v4().to_string();
+    let storage_name = format!("{doc_id}.pdf");
+    let path = upload_dir.join(&storage_name);
+    if let Err(error) = tokio::fs::write(&path, &pdf).await {
+        return api_error_result(
+            StatusCode::OK,
+            code::SERVER_ERROR,
+            &format!("Cannot store the generated PDF: {error}"),
+        );
+    }
+    let mut hasher = xxhash_rust::xxh3::Xxh3::new();
+    hasher.update(&pdf);
+    let upload = PersistedUpload {
+        name: format!("{name}.pdf"),
+        storage_name,
+        path,
+        size: pdf.len(),
+        content_hash: format!("{:032x}", hasher.digest128()),
+        cleanup_on_drop: true,
+    };
+    match register_document_upload(state, &auth.user_id, &dataset_id, doc_id, upload) {
+        Ok(data) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "code": 0, "data": data })),
+        )
+            .into_response(),
+        Err(error) => api_error_result(StatusCode::OK, code::SERVER_ERROR, &error.to_string()),
+    }
+}
+
+async fn render_url_to_pdf(url: &str) -> anyhow::Result<Vec<u8>> {
+    let binary = std::env::var("RAYRAG_CHROMIUM_BIN").unwrap_or_else(|_| "chromium".to_string());
+    let stamp = uuid::Uuid::new_v4();
+    let pdf_path = std::env::temp_dir().join(format!("rayrag-web-{stamp}.pdf"));
+    let profile_dir = std::env::temp_dir().join(format!("rayrag-chrome-{stamp}"));
+    let mut command = tokio::process::Command::new(binary);
+    command
+        .arg("--headless=new")
+        .arg("--no-sandbox")
+        .arg("--disable-gpu")
+        .arg("--disable-dev-shm-usage")
+        .arg("--no-first-run")
+        .arg("--no-pdf-header-footer")
+        .arg("--virtual-time-budget=15000")
+        .arg(format!("--user-data-dir={}", profile_dir.display()))
+        .arg(format!("--print-to-pdf={}", pdf_path.display()))
+        .arg(url)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    let output =
+        match tokio::time::timeout(std::time::Duration::from_secs(45), command.output()).await {
+            Ok(output) => output?,
+            Err(_) => anyhow::bail!("Chromium timed out while rendering the page"),
+        };
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr.trim();
+    if !output.status.success() {
+        anyhow::bail!(
+            "Chromium exited with {}: {}",
+            output.status,
+            stderr.chars().take(400).collect::<String>()
+        );
+    }
+    let bytes = tokio::fs::read(&pdf_path).await;
+    tokio::fs::remove_file(&pdf_path).await.ok();
+    tokio::fs::remove_dir_all(&profile_dir).await.ok();
+    let bytes = bytes?;
+    if !bytes.starts_with(b"%PDF") {
+        anyhow::bail!(
+            "Chromium did not produce a PDF{}",
+            if stderr.is_empty() {
+                String::new()
+            } else {
+                format!(": {}", stderr.chars().take(400).collect::<String>())
+            }
+        );
+    }
+    Ok(bytes)
 }
 
 async fn upload_empty_document(
@@ -13139,6 +13314,37 @@ mod tests {
                 .join(format!("{id}.txt"))
                 .is_file()
         );
+    }
+
+    #[tokio::test]
+    async fn web_upload_validates_fields_and_blocks_private_urls() {
+        let env = test_env();
+        let kb = env.state.kbs.create_for("test-user", "Web KB", "").unwrap();
+        let boundary = "rayrag-test-boundary";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"name\"\r\n\r\npage\r\n\
+             --{boundary}\r\nContent-Disposition: form-data; name=\"url\"\r\n\r\nhttp://127.0.0.1:8080/\r\n\
+             --{boundary}--\r\n"
+        );
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/datasets/{}/documents?type=web", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let json = response_json(response).await;
+        assert_eq!(json["code"], code::INVALID_ARGUMENT, "{json}");
+        assert_eq!(json["message"], "The URL format is invalid", "{json}");
+        assert!(env.state.docs.list(&kb.id).is_empty());
     }
 
     #[tokio::test]

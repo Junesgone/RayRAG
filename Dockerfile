@@ -93,9 +93,12 @@ ARG DEBIAN_MIRROR=
 ARG DEBIAN_SECURITY_MIRROR=
 COPY docker/mirror-setup.sh /usr/local/bin/rayrag-mirror-setup
 RUN chmod 0755 /usr/local/bin/rayrag-mirror-setup \
- && rayrag-mirror-setup "${RAYRAG_MIRROR_PROFILE}" "${DEBIAN_MIRROR}" "${DEBIAN_SECURITY_MIRROR}" base curl libssl3 zlib1g python3 nodejs openssh-client sshpass
+ && rayrag-mirror-setup "${RAYRAG_MIRROR_PROFILE}" "${DEBIAN_MIRROR}" "${DEBIAN_SECURITY_MIRROR}" base curl libssl3 zlib1g python3 nodejs openssh-client sshpass chromium fonts-noto-cjk
 # `openssh-client` backs the SSH sandbox provider (`src/ssh_exec.rs`, upstream
 # `agent/sandbox/providers/ssh.py`); `sshpass` only carries password auth.
+# `chromium` + CJK fonts back the `type=web` upload (URL → PDF); the image grows
+# by roughly the browser package, which is the cost of matching upstream.
+ENV RAYRAG_CHROMIUM_BIN=/usr/bin/chromium
 
 WORKDIR /app
 COPY --from=builder /usr/local/bin/rayrag-built /usr/local/bin/rayrag
