@@ -19640,6 +19640,7 @@ connection: close
             ".docpreview-table thead{",
             ".docpreview-error{",
             ".docpreview-md blockquote{",
+            ".docpreview-docx .docx-header",
         ] {
             assert!(css.contains(selector), "preview css {selector} missing");
         }

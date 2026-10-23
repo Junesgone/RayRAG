@@ -87,8 +87,10 @@ impl RAGFlowDocxParser {
     /// structural subset a preview needs: headings, paragraphs, inline bold /
     /// italic runs, line breaks, tables and embedded images (inlined at their
     /// run position as data URIs). It intentionally does not claim to reproduce
-    /// Word's pagination, floating-shape positioning, themes, headers/footers or
-    /// audio/video media — the caller marks the surface `partial`.
+    /// Word's pagination, floating-shape positioning, themes or audio/video
+    /// media. Headers and footers are rendered once at the top/bottom of the
+    /// preview rather than repeated per page — the caller marks the surface
+    /// `partial`.
     ///
     /// `max_blocks` bounds the number of top-level paragraphs/tables; the
     /// returned flag tells the page that the document was cut rather than
@@ -104,6 +106,21 @@ impl RAGFlowDocxParser {
         let mut html = String::new();
         let mut blocks = 0usize;
         let mut truncated = false;
+
+        let mut header_html = String::new();
+        let mut header_ids: Vec<String> = Vec::new();
+        for (rid, header) in docx.document.section_property.get_headers() {
+            if header_ids.iter().any(|seen| seen == rid) {
+                continue;
+            }
+            header_ids.push(rid.clone());
+            header_html.push_str(&render_header_html(header, &images));
+        }
+        if !header_html.is_empty() {
+            html.push_str("<header class='docx-header'>");
+            html.push_str(&header_html);
+            html.push_str("</header>");
+        }
 
         for child in &docx.document.children {
             if blocks >= max_blocks {
@@ -121,6 +138,21 @@ impl RAGFlowDocxParser {
                 }
                 _ => {}
             }
+        }
+
+        let mut footer_html = String::new();
+        let mut footer_ids: Vec<String> = Vec::new();
+        for (rid, footer) in docx.document.section_property.get_footers() {
+            if footer_ids.iter().any(|seen| seen == rid) {
+                continue;
+            }
+            footer_ids.push(rid.clone());
+            footer_html.push_str(&render_footer_html(footer, &images));
+        }
+        if !footer_html.is_empty() {
+            html.push_str("<footer class='docx-footer'>");
+            html.push_str(&footer_html);
+            html.push_str("</footer>");
         }
 
         Ok((html, truncated))
@@ -780,6 +812,44 @@ fn docx_image_mime(path: &str) -> &'static str {
     }
 }
 
+fn render_header_html(
+    header: &docx_rs::Header,
+    images: &HashMap<String, (String, Vec<u8>)>,
+) -> String {
+    let mut html = String::new();
+    for child in &header.children {
+        match child {
+            docx_rs::HeaderChild::Paragraph(paragraph) => {
+                html.push_str(&render_paragraph_html(paragraph, images));
+            }
+            docx_rs::HeaderChild::Table(table) => {
+                html.push_str(&render_table_html(table, images));
+            }
+            _ => {}
+        }
+    }
+    html
+}
+
+fn render_footer_html(
+    footer: &docx_rs::Footer,
+    images: &HashMap<String, (String, Vec<u8>)>,
+) -> String {
+    let mut html = String::new();
+    for child in &footer.children {
+        match child {
+            docx_rs::FooterChild::Paragraph(paragraph) => {
+                html.push_str(&render_paragraph_html(paragraph, images));
+            }
+            docx_rs::FooterChild::Table(table) => {
+                html.push_str(&render_table_html(table, images));
+            }
+            _ => {}
+        }
+    }
+    html
+}
+
 fn render_paragraph_html(
     paragraph: &docx_rs::Paragraph,
     images: &HashMap<String, (String, Vec<u8>)>,
@@ -1078,6 +1148,88 @@ mod tests {
     }
 
     /// Build a minimal valid DOCX (document.xml + styles.xml + [Content_Types].xml).
+    fn build_docx_with_header_footer() -> Vec<u8> {
+        let mut buf = Vec::new();
+        {
+            let mut zw = zip::ZipWriter::new(Cursor::new(&mut buf));
+            let ct = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+  <Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>
+  <Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>
+</Types>"#;
+            zw.start_file(
+                "[Content_Types].xml",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            zw.write_all(ct.as_bytes()).unwrap();
+
+            let rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>"#;
+            zw.start_file("_rels/.rels", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zw.write_all(rels.as_bytes()).unwrap();
+
+            let doc = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <w:body>
+    <w:p><w:r><w:t>Body text</w:t></w:r></w:p>
+    <w:sectPr>
+      <w:headerReference w:type="default" r:id="rIdHeader1"/>
+      <w:footerReference w:type="default" r:id="rIdFooter1"/>
+    </w:sectPr>
+  </w:body>
+</w:document>"#;
+            zw.start_file(
+                "word/document.xml",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            zw.write_all(doc.as_bytes()).unwrap();
+
+            let doc_rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rIdHeader1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>
+  <Relationship Id="rIdFooter1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>
+</Relationships>"#;
+            zw.start_file(
+                "word/_rels/document.xml.rels",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            zw.write_all(doc_rels.as_bytes()).unwrap();
+
+            let header = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:p><w:r><w:t>Confidential header</w:t></w:r></w:p>
+</w:hdr>"#;
+            zw.start_file("word/header1.xml", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zw.write_all(header.as_bytes()).unwrap();
+
+            let footer = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:p><w:r><w:t>Page footer</w:t></w:r></w:p>
+</w:ftr>"#;
+            zw.start_file("word/footer1.xml", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zw.write_all(footer.as_bytes()).unwrap();
+
+            let styles = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>"#;
+            zw.start_file("word/styles.xml", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zw.write_all(styles.as_bytes()).unwrap();
+            zw.finish().unwrap();
+        }
+        buf
+    }
+
     fn build_minimal_docx() -> Vec<u8> {
         let mut buf = Vec::new();
         {
@@ -1260,5 +1412,25 @@ mod tests {
         assert!(html.contains("src='data:image/png;base64,"), "{html}");
         assert!(html.contains("alt='image1.png'"), "{html}");
         assert!(!html.contains("rIdImg"), "{html}");
+    }
+
+    #[test]
+    fn preview_html_renders_header_and_footer() {
+        let data = build_docx_with_header_footer();
+        let (html, truncated) = RAGFlowDocxParser::new().preview_html(&data, 100).unwrap();
+        assert!(!truncated);
+        assert!(html.contains("<header class='docx-header'>"), "{html}");
+        assert!(html.contains("Confidential header"), "{html}");
+        assert!(html.contains("<footer class='docx-footer'>"), "{html}");
+        assert!(html.contains("Page footer"), "{html}");
+        assert!(html.contains("Body text"), "{html}");
+        assert!(
+            html.find("Confidential header").unwrap() < html.find("Body text").unwrap(),
+            "{html}"
+        );
+        assert!(
+            html.find("Body text").unwrap() < html.find("Page footer").unwrap(),
+            "{html}"
+        );
     }
 }

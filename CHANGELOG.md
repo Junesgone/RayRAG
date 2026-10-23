@@ -2,6 +2,20 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.65.0] - 2026-10-23
+
+### DOCX: show the document header and footer
+
+- `preview_html` now walks the section's header and footer parts and renders
+  their paragraphs and tables before/after the body, instead of silently
+  dropping them.
+- The default, first-page, and even-page references are de-duplicated by
+  relationship id, so a document that points several slots at one part does not
+  repeat it.
+- Boundary: headers/footers appear once at the top/bottom of the flowing
+  preview; they are not repeated per rendered page (RayRAG still has no
+  pagination). Floating shapes, themes, and audio/video media remain partial.
+
 ## [0.64.0] - 2026-10-23
 
 ### Files: browser history and a full-tree move picker
