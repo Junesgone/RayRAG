@@ -1,0 +1,17 @@
+appname               = rayrag
+version               = 0.0.0
+display_name          = RayRAG
+desc                  = RAGFlow-compatible RAG server in Rust with built-in PostgreSQL and zvec, packaged as a native NAS app.
+source                = thirdparty
+platform              = x86
+maintainer            = Junesgone
+maintainer_url        = https://github.com/Junesgone/RayRAG
+distributor           = Junesgone
+distributor_url       = https://github.com/Junesgone/RayRAG
+desktop_uidir         = ui
+desktop_applaunchname = rayrag.main
+service_port          = 9395
+checkport             = true
+ctl_stop              = true
+os_min_version        = 1.1.3100
+changelog             = v0.92.0: 数据集 Configuration 切换 Pipeline 模式时刷新数据管道下拉；双向保存 E2E 验证。
