@@ -1,0 +1,17 @@
+appname               = rayrag
+version               = 0.0.0
+display_name          = RayRAG
+desc                  = RAGFlow-compatible RAG server in Rust with built-in PostgreSQL and zvec, packaged as a native NAS app.
+source                = thirdparty
+platform              = x86
+maintainer            = Junesgone
+maintainer_url        = https://github.com/Junesgone/RayRAG
+distributor           = Junesgone
+distributor_url       = https://github.com/Junesgone/RayRAG
+desktop_uidir         = ui
+desktop_applaunchname = rayrag.main
+service_port          = 9395
+checkport             = true
+ctl_stop              = true
+os_min_version        = 1.1.3100
+changelog             = v0.91.0: 数据集 Configuration 移除无效 Rerank 控件、修复加载 JS 异常、保存提示中英文本地化。
