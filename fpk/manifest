@@ -1,0 +1,17 @@
+appname               = rayrag
+version               = 0.0.0
+display_name          = RayRAG
+desc                  = RAGFlow-compatible RAG server in Rust with built-in PostgreSQL and zvec, packaged as a native NAS app.
+source                = thirdparty
+platform              = x86
+maintainer            = Junesgone
+maintainer_url        = https://github.com/Junesgone/RayRAG
+distributor           = Junesgone
+distributor_url       = https://github.com/Junesgone/RayRAG
+desktop_uidir         = ui
+desktop_applaunchname = rayrag.main
+service_port          = 9395
+checkport             = true
+ctl_stop              = true
+os_min_version        = 1.1.3100
+changelog             = v0.85.0: 创建知识库弹窗 Parse type 切换与按钮修复；WebDAV 数据源可读取根目录/指定目录；FPK 使用 RayRAG 品牌图标。
