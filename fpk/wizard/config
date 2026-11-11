@@ -1,0 +1,21 @@
+[
+  {
+    "stepTitle": "RayRAG settings",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "Changing the PostgreSQL password here updates the bundled database and the RayRAG environment file, then restarts the app. Model, retrieval and account settings live in the RayRAG first-run guide and settings pages."
+      },
+      {
+        "type": "password",
+        "field": "wizard_db_password",
+        "label": "PostgreSQL password (user admin)",
+        "initValue": "admin",
+        "rules": [
+          { "required": true, "message": "Enter the database password" },
+          { "pattern": "^[A-Za-z0-9._-]{1,64}$", "message": "Use letters, digits and . _ - only" }
+        ]
+      }
+    ]
+  }
+]
