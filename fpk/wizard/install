@@ -1,0 +1,21 @@
+[
+  {
+    "stepTitle": "Install RayRAG",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "RayRAG installs a PostgreSQL instance and a zvec vector store inside the app data directory, then starts the Rust server on port 9395. The first login is admin / admin and the first-run guide lets you change it."
+      },
+      {
+        "type": "password",
+        "field": "wizard_db_password",
+        "label": "PostgreSQL password (user admin)",
+        "initValue": "admin",
+        "rules": [
+          { "required": true, "message": "Enter the database password" },
+          { "pattern": "^[A-Za-z0-9._-]{1,64}$", "message": "Use letters, digits and . _ - only" }
+        ]
+      }
+    ]
+  }
+]
