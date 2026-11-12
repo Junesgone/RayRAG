@@ -1,0 +1,6 @@
+#!/bin/bash
+DIR=$(cd "$(dirname "$0")" && pwd)
+. "$DIR/rayrag-fpk-common"
+stop_all
+log_msg "uninstall_init: services stopped"
+exit 0
