@@ -1,0 +1,29 @@
+#!/bin/bash
+DIR=$(cd "$(dirname "$0")" && pwd)
+. "$DIR/rayrag-fpk-common"
+
+case "$1" in
+  start)
+    start_all
+    exit $?
+    ;;
+  stop)
+    stop_all
+    exit 0
+    ;;
+  restart)
+    stop_all
+    start_all
+    exit $?
+    ;;
+  status)
+    if rayrag_running && pg_running; then
+      exit 0
+    fi
+    exit 3
+    ;;
+  *)
+    echo "Unknown command: $1" >>"$FPK_LOG"
+    exit 1
+    ;;
+esac

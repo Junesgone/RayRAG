@@ -1,0 +1,5 @@
+#!/bin/bash
+DIR=$(cd "$(dirname "$0")" && pwd)
+. "$DIR/rayrag-fpk-common"
+log_msg "uninstall_callback: keeping user data in $FPK_SHARE"
+exit 0

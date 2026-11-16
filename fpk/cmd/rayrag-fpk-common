@@ -1,0 +1,236 @@
+#!/bin/bash
+# Shared helpers for the RayRAG NAS package lifecycle scripts.
+# shellcheck shell=bash
+
+FPK_RUNTIME="${TRIM_APPDEST:-/var/apps/rayrag/target}/runtime"
+FPK_VAR="${TRIM_PKGVAR:-/tmp/rayrag-fpk-var}"
+FPK_LOG="${FPK_VAR}/rayrag-fpk.log"
+FPK_ENV="${FPK_VAR}/rayrag.env"
+FPK_SERVICE_PORT="${TRIM_SERVICE_PORT:-9395}"
+FPK_DB_PORT="55434"
+FPK_DB_USER="admin"
+FPK_DB_NAME="rayrag"
+DATA_SHARE="${TRIM_DATA_SHARE_PATHS%%:*}"
+if [ -z "$DATA_SHARE" ]; then DATA_SHARE="$FPK_VAR/share"; fi
+FPK_SHARE="$DATA_SHARE"
+FPK_DATA="${FPK_SHARE}/data"
+FPK_PGDATA="${FPK_SHARE}/pgdata"
+FPK_PGSOCK="${FPK_VAR}/pgsock"
+FPK_PGSQL="${FPK_RUNTIME}/pgsql"
+FPK_PIDFILE="${FPK_VAR}/rayrag.pid"
+FPK_APP_USER="${TRIM_USERNAME:-}"
+FPK_APP_GROUP="${TRIM_GROUPNAME:-}"
+export LD_LIBRARY_PATH="${FPK_RUNTIME}/lib:${FPK_PGSQL}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+
+mkdir -p "$FPK_VAR" "$FPK_PGSOCK" "$FPK_DATA/static" "$FPK_SHARE" 2>/dev/null || true
+
+log_msg() {
+  echo "$(date '+%Y-%m-%d %H:%M:%S') - $*" >>"$FPK_LOG"
+}
+
+fail_msg() {
+  log_msg "ERROR: $*"
+  if [ -n "${TRIM_TEMP_LOGFILE:-}" ]; then
+    echo "$*" >>"$TRIM_TEMP_LOGFILE" 2>/dev/null || true
+  fi
+}
+
+# The NAS platform runs install/config callbacks as root but the app process must run as
+# the package user (PostgreSQL refuses to run as root). Drop privileges for
+# every database/app command when we are root and TRIM_USERNAME is known.
+run_as_app() {
+  if [ "$(id -u)" = "0" ] && [ -n "$FPK_APP_USER" ]; then
+    runuser -u "$FPK_APP_USER" -- "$@"
+  else
+    "$@"
+  fi
+}
+
+fix_ownership() {
+  if [ "$(id -u)" = "0" ] && [ -n "$FPK_APP_USER" ]; then
+    chown -R "$FPK_APP_USER:${FPK_APP_GROUP:-$FPK_APP_USER}" "$FPK_VAR" "$FPK_SHARE" 2>/dev/null || true
+  fi
+}
+
+db_password_from_env() {
+  [ -f "$FPK_ENV" ] || return 0
+  sed -n 's|^RAYRAG_POSTGRES_URL=postgresql://admin:\([^@]*\)@.*|\1|p' "$FPK_ENV" | head -n 1
+}
+
+write_env_file() {
+  local password="$1"
+  local port="${2:-$FPK_SERVICE_PORT}"
+  umask 077
+  {
+    echo "# RayRAG NAS app environment (managed by the package lifecycle scripts)."
+    echo "RAYRAG_ENV_FILE=$FPK_ENV"
+    echo "RAYRAG_CMD_TIMEOUT=7200"
+    echo "RAYRAG_PORT=$port"
+    echo "RAYRAG_POSTGRES_URL=postgresql://admin:$password@127.0.0.1:$FPK_DB_PORT/$FPK_DB_NAME"
+    echo "RAYRAG_VECTOR_BACKEND=zvec"
+    echo "RAYRAG_DATA_DIR=$FPK_DATA"
+    echo "RAYRAG_STATIC_DIR=$FPK_DATA/static"
+    echo "RAYRAG_ADMIN_EMAIL=admin"
+    echo "RAYRAG_ADMIN_PASSWORD=admin"
+    echo "RAYRAG_ADMIN_NICKNAME=admin"
+    echo "RAYRAG_ALLOW_REGISTRATION=true"
+    echo "# Model, provider and retrieval settings are managed by the RayRAG first-run guide."
+  } >"$FPK_ENV"
+  chmod 644 "$FPK_ENV"
+  fix_ownership
+}
+
+sync_static() {
+  [ -d "$FPK_RUNTIME/static" ] || return 0
+  cp -a "$FPK_RUNTIME/static/." "$FPK_DATA/static/" || return 1
+  fix_ownership
+}
+
+pg_initialized() { [ -f "$FPK_PGDATA/PG_VERSION" ]; }
+
+pg_running() {
+  [ -x "$FPK_PGSQL/bin/pg_ctl" ] && run_as_app "$FPK_PGSQL/bin/pg_ctl" -D "$FPK_PGDATA" status >/dev/null 2>&1
+}
+
+init_pg_cluster() {
+  local password="$1"
+  if pg_initialized; then return 0; fi
+  mkdir -p "$FPK_PGDATA" || return 1
+  fix_ownership
+  local pwfile="$FPK_VAR/.pgpw"
+  (umask 077; printf '%s\n' "$password" >"$pwfile")
+  fix_ownership
+  run_as_app "$FPK_PGSQL/bin/initdb" -D "$FPK_PGDATA" -U "$FPK_DB_USER" --pwfile="$pwfile" --encoding=UTF8 --locale=C >>"$FPK_VAR/install.log" 2>&1
+  local rc=$?
+  rm -f "$pwfile"
+  if [ $rc -ne 0 ]; then
+    fail_msg "initdb failed (see $FPK_VAR/install.log)"
+    return 1
+  fi
+  printf 'CREATE DATABASE %s;\n' "$FPK_DB_NAME" | run_as_app "$FPK_PGSQL/bin/postgres" --single -D "$FPK_PGDATA" postgres >>"$FPK_VAR/install.log" 2>&1
+  if [ $? -ne 0 ]; then
+    fail_msg "could not create the rayrag database (see $FPK_VAR/install.log)"
+    return 1
+  fi
+  fix_ownership
+  log_msg "PostgreSQL cluster initialized at $FPK_PGDATA"
+  return 0
+}
+
+start_pg() {
+  if pg_running; then return 0; fi
+  if ! pg_initialized; then
+    fail_msg "PostgreSQL cluster missing at $FPK_PGDATA"
+    return 1
+  fi
+  fix_ownership
+  run_as_app "$FPK_PGSQL/bin/pg_ctl" -D "$FPK_PGDATA" -l "$FPK_VAR/postgres.log" -o "-p $FPK_DB_PORT -k $FPK_PGSOCK -c listen_addresses=127.0.0.1" start >>"$FPK_LOG" 2>&1 || true
+  local i=0
+  while [ $i -lt 60 ]; do
+    if pg_running; then
+      log_msg "PostgreSQL is running"
+      return 0
+    fi
+    sleep 0.5
+    i=$((i + 1))
+  done
+  fail_msg "PostgreSQL did not start (see $FPK_VAR/postgres.log)"
+  return 1
+}
+
+stop_pg() {
+  if pg_running; then
+    run_as_app "$FPK_PGSQL/bin/pg_ctl" -D "$FPK_PGDATA" stop -m fast >>"$FPK_LOG" 2>&1 || true
+  fi
+}
+
+rayrag_pid() {
+  [ -f "$FPK_PIDFILE" ] || return 0
+  head -n 1 "$FPK_PIDFILE" | tr -d '[:space:]'
+}
+
+rayrag_running() {
+  local pid
+  pid=$(rayrag_pid)
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+# TCP readiness probe without depending on curl: the server is ready when the
+# service port accepts a connection. Databases migrations can take a few
+# seconds on upgrade, so start waits for this instead of a fixed sleep.
+rayrag_ready() {
+  (exec 3<>"/dev/tcp/127.0.0.1/$FPK_SERVICE_PORT") >/dev/null 2>&1
+}
+
+start_rayrag() {
+  if rayrag_running; then return 0; fi
+  sync_static || return 1
+  if [ ! -x "$FPK_RUNTIME/rayrag" ]; then
+    fail_msg "RayRAG binary missing at $FPK_RUNTIME/rayrag"
+    return 1
+  fi
+  local password
+  password=$(db_password_from_env)
+  [ -n "$password" ] || password="${wizard_db_password:-admin}"
+  log_msg "Starting RayRAG on port $FPK_SERVICE_PORT"
+  cd "$FPK_DATA" || return 1
+  fix_ownership
+  if [ "$(id -u)" = "0" ] && [ -n "$FPK_APP_USER" ]; then
+    runuser -u "$FPK_APP_USER" -- env \
+      RAYRAG_ENV_FILE="$FPK_ENV" \
+      RAYRAG_STATIC_DIR="$FPK_DATA/static" \
+      RAYRAG_POSTGRES_URL="postgresql://admin:$password@127.0.0.1:$FPK_DB_PORT/$FPK_DB_NAME" \
+      RAYRAG_VECTOR_BACKEND=zvec \
+      "$FPK_RUNTIME/rayrag" serve --port "$FPK_SERVICE_PORT" --static-dir "$FPK_DATA/static" >>"$FPK_VAR/rayrag.log" 2>&1 &
+  else
+    env \
+      RAYRAG_ENV_FILE="$FPK_ENV" \
+      RAYRAG_STATIC_DIR="$FPK_DATA/static" \
+      RAYRAG_POSTGRES_URL="postgresql://admin:$password@127.0.0.1:$FPK_DB_PORT/$FPK_DB_NAME" \
+      RAYRAG_VECTOR_BACKEND=zvec \
+      "$FPK_RUNTIME/rayrag" serve --port "$FPK_SERVICE_PORT" --static-dir "$FPK_DATA/static" >>"$FPK_VAR/rayrag.log" 2>&1 &
+  fi
+  echo $! >"$FPK_PIDFILE"
+  local i=0
+  while [ $i -lt 90 ]; do
+    if ! rayrag_running; then
+      fail_msg "RayRAG exited during startup (see $FPK_VAR/rayrag.log)"
+      tail -n 20 "$FPK_VAR/rayrag.log" >>"$FPK_LOG" 2>/dev/null || true
+      rm -f "$FPK_PIDFILE"
+      return 1
+    fi
+    if rayrag_ready; then
+      log_msg "RayRAG is ready on port $FPK_SERVICE_PORT"
+      return 0
+    fi
+    sleep 1
+    i=$((i + 1))
+  done
+  fail_msg "RayRAG did not become ready on port $FPK_SERVICE_PORT (see $FPK_VAR/rayrag.log)"
+  return 1
+}
+
+stop_rayrag() {
+  if ! rayrag_running; then
+    rm -f "$FPK_PIDFILE"
+    pkill -f "$FPK_RUNTIME/rayrag serve" 2>/dev/null || true
+    return 0
+  fi
+  local pid i
+  pid=$(rayrag_pid)
+  kill -TERM "$pid" 2>/dev/null || true
+  i=0
+  while [ $i -lt 30 ] && kill -0 "$pid" 2>/dev/null; do
+    sleep 0.5
+    i=$((i + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL "$pid" 2>/dev/null || true
+  fi
+  pkill -f "$FPK_RUNTIME/rayrag serve" 2>/dev/null || true
+  rm -f "$FPK_PIDFILE"
+  return 0
+}
+
+start_all() { start_pg || return 1; start_rayrag || return 1; return 0; }
+stop_all() { stop_rayrag || true; stop_pg || true; return 0; }
