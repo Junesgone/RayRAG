@@ -1,0 +1,526 @@
+{
+ "clickclack": [
+  {
+   "label": "Bot Token",
+   "name": "config.credential.token",
+   "required": true,
+   "type": "password"
+  }
+ ],
+ "dingtalk": [
+  {
+   "label": "Client ID",
+   "name": "config.credential.client_id",
+   "placeholder": "dingxxxxxxxxxxxx",
+   "required": true,
+   "type": "text"
+  },
+  {
+   "label": "Client Secret",
+   "name": "config.credential.client_secret",
+   "required": true,
+   "type": "password"
+  }
+ ],
+ "discord": [
+  {
+   "label": "Bot Token",
+   "name": "config.credential.token",
+   "required": true,
+   "type": "password"
+  },
+  {
+   "label": "Application ID",
+   "name": "config.credential.application_id",
+   "placeholder": "1234567890",
+   "required": false,
+   "type": "text"
+  }
+ ],
+ "feishu": [
+  {
+   "label": "App ID",
+   "name": "config.credential.app_id",
+   "placeholder": "cli_xxxxxxxxxxxxxxxx",
+   "required": true,
+   "type": "text"
+  },
+  {
+   "label": "App Secret",
+   "name": "config.credential.app_secret",
+   "required": true,
+   "type": "password"
+  },
+  {
+   "defaultValue": "'feishu'",
+   "label": "Domain",
+   "name": "config.credential.domain",
+   "options": [
+    {
+     "label": "Feishu (mainland)",
+     "value": "feishu"
+    },
+    {
+     "label": "Lark (international)",
+     "value": "lark"
+    }
+   ],
+   "required": true,
+   "type": "select"
+  }
+ ],
+ "googlechat": [
+  {
+   "defaultValue": "'webhook_url'",
+   "label": "Auth Mode",
+   "name": "config.auth_mode",
+   "options": [
+    {
+     "label": "Webhook URL",
+     "value": "webhook_url"
+    },
+    {
+     "label": "Service Account JSON",
+     "value": "service_account"
+    },
+    {
+     "label": "Service Account File",
+     "value": "service_account_file"
+    }
+   ],
+   "required": true,
+   "type": "select"
+  },
+  {
+   "label": "Webhook URL",
+   "name": "config.credential.webhook_url",
+   "placeholder": "https://chat.googleapis.com/v1/spaces/.../messages?key=...&token=...",
+   "required": false,
+   "type": "text"
+  },
+  {
+   "label": "Service Account JSON",
+   "name": "config.credential.service_account",
+   "placeholder": "{ \"type\": \"service_account\", ... }",
+   "required": false,
+   "type": "textarea"
+  },
+  {
+   "label": "Service Account File Path",
+   "name": "config.credential.service_account_file",
+   "placeholder": "/path/to/sa.json",
+   "required": false,
+   "type": "text"
+  }
+ ],
+ "irc": [
+  {
+   "label": "Host",
+   "name": "config.credential.host",
+   "placeholder": "irc.libera.chat",
+   "required": true,
+   "type": "text"
+  },
+  {
+   "label": "Port",
+   "name": "config.credential.port",
+   "placeholder": "6697",
+   "required": true,
+   "type": "number"
+  },
+  {
+   "defaultValue": "true",
+   "label": "TLS",
+   "name": "config.credential.tls",
+   "required": false,
+   "type": "switch"
+  },
+  {
+   "label": "Nick",
+   "name": "config.credential.nick",
+   "placeholder": "my-bot",
+   "required": true,
+   "type": "text"
+  },
+  {
+   "label": "Username",
+   "name": "config.credential.username",
+   "placeholder": "Defaults to nick",
+   "required": false,
+   "type": "text"
+  },
+  {
+   "label": "Server Password",
+   "name": "config.credential.password",
+   "required": false,
+   "type": "password"
+  },
+  {
+   "label": "NickServ Account",
+   "name": "config.credential.nickserv.account",
+   "required": false,
+   "type": "text"
+  },
+  {
+   "label": "NickServ Password",
+   "name": "config.credential.nickserv.password",
+   "required": false,
+   "type": "password"
+  }
+ ],
+ "line": [
+  {
+   "label": "Channel Secret",
+   "name": "config.credential.channel_secret",
+   "required": true,
+   "type": "password"
+  },
+  {
+   "label": "Channel Access Token",
+   "name": "config.credential.channel_access_token",
+   "required": true,
+   "type": "password"
+  }
+ ],
+ "matrix": [
+  {
+   "label": "Homeserver",
+   "name": "config.credential.homeserver",
+   "placeholder": "https://matrix.example.org",
+   "required": true,
+   "type": "text"
+  },
+  {
+   "label": "User ID",
+   "name": "config.credential.user_id",
+   "placeholder": "@bot:example.org",
+   "required": true,
+   "type": "text"
+  },
+  {
+   "label": "Access Token",
+   "name": "config.credential.access_token",
+   "required": false,
+   "type": "password"
+  },
+  {
+   "label": "Password",
+   "name": "config.credential.password",
+   "required": false,
+   "type": "password"
+  },
+  {
+   "label": "Device ID",
+   "name": "config.credential.device_id",
+   "placeholder": "OPENCLAW_BOT",
+   "required": false,
+   "type": "text"
+  }
+ ],
+ "mattermost": [
+  {
+   "label": "Base URL",
+   "name": "config.credential.base_url",
+   "placeholder": "https://mattermost.example.com",
+   "required": true,
+   "type": "text"
+  },
+  {
+   "label": "Bot Token",
+   "name": "config.credential.bot_token",
+   "required": true,
+   "type": "password"
+  }
+ ],
+ "msteams": [
+  {
+   "label": "App ID",
+   "name": "config.credential.app_id",
+   "placeholder": "00000000-0000-0000-0000-000000000000",
+   "required": true,
+   "type": "text"
+  },
+  {
+   "label": "App Password",
+   "name": "config.credential.app_password",
+   "required": true,
+   "type": "password"
+  },
+  {
+   "label": "Tenant ID",
+   "name": "config.credential.tenant_id",
+   "placeholder": "00000000-0000-0000-0000-000000000000",
+   "required": true,
+   "type": "text"
+  }
+ ],
+ "nextcloud_talk": [
+  {
+   "label": "Base URL",
+   "name": "config.credential.base_url",
+   "placeholder": "https://nextcloud.example.com",
+   "required": true,
+   "type": "text"
+  },
+  {
+   "label": "Bot Secret",
+   "name": "config.credential.bot_secret",
+   "required": true,
+   "type": "password"
+  }
+ ],
+ "nostr": [
+  {
+   "label": "Private Key",
+   "name": "config.credential.private_key",
+   "placeholder": "nsec1xxxx or hex",
+   "required": true,
+   "type": "password"
+  },
+  {
+   "label": "Relays",
+   "name": "config.credential.relays",
+   "placeholder": "wss://relay.damus.io",
+   "required": false,
+   "type": "tag"
+  }
+ ],
+ "qqbot": [
+  {
+   "label": "App ID",
+   "name": "config.credential.app_id",
+   "placeholder": "102000000",
+   "required": true,
+   "type": "text"
+  },
+  {
+   "label": "Client Secret",
+   "name": "config.credential.client_secret",
+   "required": true,
+   "type": "password"
+  },
+  {
+   "label": "Base URL",
+   "name": "config.credential.base_url",
+   "placeholder": "https://api.sgroup.qq.com",
+   "required": false,
+   "type": "text"
+  }
+ ],
+ "slack": [
+  {
+   "label": "Bot Token",
+   "name": "config.credential.bot_token",
+   "placeholder": "xoxb-xxxx",
+   "required": true,
+   "type": "password"
+  },
+  {
+   "label": "App Token",
+   "name": "config.credential.app_token",
+   "placeholder": "xapp-xxxx (socket mode)",
+   "required": false,
+   "type": "password"
+  },
+  {
+   "label": "Signing Secret",
+   "name": "config.credential.signing_secret",
+   "required": false,
+   "type": "password"
+  },
+  {
+   "label": "User Token",
+   "name": "config.credential.user_token",
+   "placeholder": "xoxp-xxxx",
+   "required": false,
+   "type": "password"
+  }
+ ],
+ "synology_chat": [
+  {
+   "label": "Token",
+   "name": "config.credential.token",
+   "required": true,
+   "type": "password"
+  },
+  {
+   "label": "Incoming URL",
+   "name": "config.credential.incoming_url",
+   "placeholder": "https://nas.example.com/webapi/entry.cgi?...",
+   "required": true,
+   "type": "text"
+  }
+ ],
+ "telegram": [
+  {
+   "label": "Bot Token",
+   "name": "config.credential.token",
+   "placeholder": "From @BotFather",
+   "required": true,
+   "type": "password"
+  }
+ ],
+ "tlon": [
+  {
+   "label": "Ship",
+   "name": "config.credential.ship",
+   "placeholder": "~sampel-palnet",
+   "required": true,
+   "type": "text"
+  },
+  {
+   "label": "URL",
+   "name": "config.credential.url",
+   "placeholder": "https://sampel-palnet.tlon.network",
+   "required": true,
+   "type": "text"
+  },
+  {
+   "label": "Code",
+   "name": "config.credential.code",
+   "required": true,
+   "type": "password"
+  }
+ ],
+ "twitch": [
+  {
+   "label": "Username",
+   "name": "config.credential.username",
+   "placeholder": "my-bot",
+   "required": true,
+   "type": "text"
+  },
+  {
+   "label": "Access Token",
+   "name": "config.credential.access_token",
+   "placeholder": "oauth:xxxx",
+   "required": true,
+   "type": "password"
+  },
+  {
+   "label": "Client ID",
+   "name": "config.credential.client_id",
+   "required": true,
+   "type": "text"
+  },
+  {
+   "label": "Channel",
+   "name": "config.credential.channel",
+   "placeholder": "target-channel-name",
+   "required": true,
+   "type": "text"
+  }
+ ],
+ "wecom": [
+  {
+   "defaultValue": "'webhook'",
+   "label": "Connection Type",
+   "name": "config.credential.connection_type",
+   "options": [
+    {
+     "label": "Webhook",
+     "value": "webhook"
+    },
+    {
+     "label": "WebSocket",
+     "value": "websocket"
+    }
+   ],
+   "required": true,
+   "type": "select"
+  },
+  {
+   "label": "Bot ID",
+   "name": "config.credential.bot_id",
+   "placeholder": "AIBOTID",
+   "required": true,
+   "type": "text"
+  },
+  {
+   "label": "Secret",
+   "name": "config.credential.secret",
+   "placeholder": "App Secret / Long-connection Secret",
+   "required": true,
+   "type": "password"
+  },
+  {
+   "label": "Corp ID",
+   "name": "config.credential.corp_id",
+   "placeholder": "ww1234567890abcdef",
+   "required": true,
+   "type": "text"
+  },
+  {
+   "label": "Agent ID",
+   "name": "config.credential.agent_id",
+   "placeholder": "1000001",
+   "required": true,
+   "type": "number"
+  },
+  {
+   "label": "Token",
+   "name": "config.credential.token",
+   "required": true,
+   "type": "password"
+  },
+  {
+   "label": "AES Key",
+   "name": "config.credential.aes_key",
+   "placeholder": "43 chars",
+   "required": true,
+   "type": "password"
+  }
+ ],
+ "whatsapp": [],
+ "yuanbao": [
+  {
+   "label": "App Key",
+   "name": "config.credential.app_key",
+   "required": true,
+   "type": "text"
+  },
+  {
+   "label": "App Secret",
+   "name": "config.credential.app_secret",
+   "required": true,
+   "type": "password"
+  },
+  {
+   "label": "Token",
+   "name": "config.credential.token",
+   "placeholder": "Optional pre-signed token",
+   "required": false,
+   "type": "password"
+  }
+ ],
+ "zalo": [
+  {
+   "label": "Bot Token",
+   "name": "config.credential.bot_token",
+   "required": true,
+   "type": "password"
+  }
+ ],
+ "zalouser": [
+  {
+   "label": "Cookies (JSON)",
+   "name": "config.credential.cookies",
+   "placeholder": "{ ... }",
+   "required": true,
+   "type": "textarea"
+  },
+  {
+   "label": "IMEI",
+   "name": "config.credential.imei",
+   "required": true,
+   "type": "text"
+  },
+  {
+   "label": "User Agent",
+   "name": "config.credential.user_agent",
+   "placeholder": "Mozilla/5.0 ...",
+   "required": true,
+   "type": "text"
+  }
+ ]
+}
