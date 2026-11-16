@@ -1,0 +1,35 @@
+#!/bin/bash
+DIR=$(cd "$(dirname "$0")" && pwd)
+. "$DIR/rayrag-fpk-common"
+
+new_password="${wizard_db_password:-}"
+[ -n "$new_password" ] || new_password=$(db_password_from_env)
+[ -n "$new_password" ] || new_password="admin"
+case "$new_password" in
+  *[!A-Za-z0-9._-]*|"")
+    fail_msg "Invalid PostgreSQL password. Use letters, digits and . _ - only."
+    exit 1
+    ;;
+esac
+
+old_password=$(db_password_from_env)
+# The database credential follows the RayRAG administrator account once the first
+# administrator has been registered; the app records the rotated DSN next to the
+# runtime in pg_credentials.json. Re-applying the install-time wizard password here
+# would desynchronise the two, so keep the managed credential after that point.
+if [ -f "$FPK_RUNTIME/static/pg_credentials.json" ]; then
+  log_msg "config_callback: the database password follows the RayRAG administrator account; keeping it"
+  new_password="$old_password"
+fi
+stop_all
+if [ -n "$old_password" ] && [ "$old_password" != "$new_password" ]; then
+  printf "ALTER ROLE admin PASSWORD '%s';\n" "$new_password" | "$FPK_PGSQL/bin/postgres" --single -D "$FPK_PGDATA" postgres >>"$FPK_VAR/install.log" 2>&1
+  if [ $? -ne 0 ]; then
+    fail_msg "could not update the PostgreSQL password (see $FPK_VAR/install.log)"
+    exit 1
+  fi
+fi
+write_env_file "$new_password" || { fail_msg "could not write $FPK_ENV"; exit 1; }
+start_all || exit 1
+log_msg "config_callback: settings applied"
+exit 0
