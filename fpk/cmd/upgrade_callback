@@ -1,0 +1,10 @@
+#!/bin/bash
+DIR=$(cd "$(dirname "$0")" && pwd)
+. "$DIR/rayrag-fpk-common"
+
+password=$(db_password_from_env)
+[ -n "$password" ] || password="${wizard_db_password:-admin}"
+write_env_file "$password" || { fail_msg "could not write $FPK_ENV"; exit 1; }
+start_all || exit 1
+log_msg "upgrade_callback: RayRAG upgraded and restarted"
+exit 0
