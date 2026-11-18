@@ -1,0 +1,6 @@
+#!/bin/bash
+DIR=$(cd "$(dirname "$0")" && pwd)
+. "$DIR/rayrag-fpk-common"
+log_msg "install_init: preparing directories"
+mkdir -p "$FPK_VAR" "$FPK_SHARE" "$FPK_DATA/static"
+exit 0
