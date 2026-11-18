@@ -2,6 +2,14 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.126.5] - 2026-11-19
+
+### OCR failure guidance
+
+- Explain how to configure OXR and PaddleOCR when an explicitly selected OCR layout has no client.
+- Include service address, authentication, model or algorithm checks and reparse instructions when OCR requests fail.
+- Report empty PaddleOCR responses with recovery steps before document chunking begins.
+
 ## [0.126.4] - 2026-11-19
 
 ### Spreadsheet extraction

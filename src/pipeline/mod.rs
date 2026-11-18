@@ -590,13 +590,14 @@ impl Pipeline {
         if is_oxr_layout(&self.config.layout_recognize)
             && (mime == "application/pdf" || crate::ocr::supports_ocr(mime))
         {
+            let guidance = "Configure OXR_BASE_URL and OXR_API_KEY (if required), verify the OXR parsing service is reachable and its model is loaded, then reparse. 请配置 OXR 客户端地址和密钥，检查解析服务连接与模型加载状态后重新解析。";
             let client = self.oxr.as_ref().ok_or_else(|| {
-                anyhow::anyhow!("OXR layout requested but OXR_BASE_URL is not configured")
+                anyhow::anyhow!("OXR layout requested but OXR_BASE_URL is not configured. {guidance}")
             })?;
             let output = client
                 .parse_file(name, data)
                 .await
-                .map_err(|error| anyhow::anyhow!("OXR parsing failed for {name}: {error}"))?;
+                .map_err(|error| anyhow::anyhow!("OXR parsing failed for {name}: {error}. {guidance}"))?;
             let mut document = parser::new_document(name, output.content, mime, data.len());
             document.metadata.insert(
                 crate::chunk::RAGFLOW_POSITION_TAGS_METADATA.to_string(),
@@ -608,18 +609,19 @@ impl Pipeline {
         if is_paddleocr_layout(&self.config.layout_recognize)
             && (crate::ocr::supports_ocr(mime) || mime == "application/pdf")
         {
+            let guidance = "Configure RAYRAG_OCR_PROVIDER=paddleocr, PADDLEOCR_BASE_URL, PADDLEOCR_ACCESS_TOKEN (if required) and PADDLEOCR_ALGORITHM, verify the client connection and model availability, then reparse. 请配置 PaddleOCR 客户端地址、访问令牌和算法模型，检查服务连接后重新解析。";
             let ocr = self.ocr.as_ref().ok_or_else(|| {
                 anyhow::anyhow!(
-                    "PaddleOCR layout requested but RAYRAG_OCR_PROVIDER=paddleocr is not configured"
+                    "PaddleOCR layout requested but RAYRAG_OCR_PROVIDER=paddleocr is not configured. {guidance}"
                 )
             })?;
             let text = ocr
                 .ocr_file(name, data)
                 .await
-                .map_err(|error| anyhow::anyhow!("PaddleOCR parsing failed for {name}: {error}"))?;
+                .map_err(|error| anyhow::anyhow!("PaddleOCR parsing failed for {name}: {error}. {guidance}"))?;
             if text.trim().is_empty() {
                 anyhow::bail!(
-                    "PaddleOCR returned no text for {name}; a local OCR fallback is not configured"
+                    "PaddleOCR returned no text for {name}. {guidance}"
                 );
             }
             let content = if crate::ocr::supports_ocr(mime) {
