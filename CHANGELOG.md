@@ -2,6 +2,14 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.126.6] - 2026-11-19
+
+### External PDF parser configuration
+
+- Add provider-specific setup and retry guidance for SoMark, Mistral OCR and MinerU availability and parsing failures.
+- Preserve HTTP status in SoMark submission errors for authentication diagnosis.
+- Accept current MinerU engine and hybrid backend names and require a model server URL for both HTTP model backends.
+
 ## [0.126.5] - 2026-11-19
 
 ### OCR failure guidance

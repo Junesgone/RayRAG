@@ -447,16 +447,21 @@ impl Pipeline {
         }
 
         if is_somark_layout(&self.config.layout_recognize) && mime == "application/pdf" {
+            let guidance = "Check the SoMark provider's somark_base_url and somark_api_key or SOMARK_BASE_URL and SOMARK_API_KEY (if authentication is required), verify the parsing service and its models are available, then reparse. 请检查 SoMark 客户端地址、认证和模型服务，修复后重新解析。";
             let client = self.somark.as_ref().ok_or_else(|| {
-                anyhow::anyhow!("SoMark layout requested but SOMARK_BASE_URL is not configured")
+                anyhow::anyhow!("SoMark layout requested but no client is configured. {guidance}")
             })?;
-            client.check_installation().await?;
+            client.check_installation().await.map_err(|error| {
+                anyhow::anyhow!("SoMark availability check failed for {name}: {error}. {guidance}")
+            })?;
             let options =
                 crate::parser::somark::SoMarkRequestOptions::from_parser_config(&self.config);
             let output = client
                 .parse_pdf(name, data, Some(&options))
                 .await
-                .map_err(|error| anyhow::anyhow!("SoMark parsing failed for {name}: {error}"))?;
+                .map_err(|error| {
+                    anyhow::anyhow!("SoMark parsing failed for {name}: {error}. {guidance}")
+                })?;
             let mut document = parser::new_document(name, output.content, mime, data.len());
             document.metadata.insert(
                 crate::chunk::RAGFLOW_POSITION_TAGS_METADATA.to_string(),
@@ -466,12 +471,15 @@ impl Pipeline {
         }
 
         if is_mistral_ocr_layout(&self.config.layout_recognize) && mime == "application/pdf" {
+            let guidance = "Check the Mistral OCR provider's API key, mistral_ocr_base_url and mistral_ocr_model or MISTRAL_OCR_API_KEY, MISTRAL_OCR_BASE_URL and MISTRAL_OCR_MODEL, verify access to /models and /ocr and model availability, then reparse. 请检查 Mistral OCR 客户端地址、密钥和 OCR 模型权限，修复后重新解析。";
             let client = self.mistral_ocr.as_ref().ok_or_else(|| {
                 anyhow::anyhow!(
-                    "Mistral OCR layout requested but MISTRAL_OCR_API_KEY is not configured"
+                    "Mistral OCR layout requested but no client is configured. {guidance}"
                 )
             })?;
-            client.check_installation().await?;
+            client.check_installation().await.map_err(|error| {
+                anyhow::anyhow!("Mistral OCR availability check failed for {name}: {error}. {guidance}")
+            })?;
             let output = client
                 .parse_pdf(
                     name,
@@ -481,7 +489,7 @@ impl Pipeline {
                 )
                 .await
                 .map_err(|error| {
-                    anyhow::anyhow!("Mistral OCR parsing failed for {name}: {error}")
+                    anyhow::anyhow!("Mistral OCR parsing failed for {name}: {error}. {guidance}")
                 })?;
             let mut document = parser::new_document(name, output.content, mime, data.len());
             document.metadata.insert(
@@ -527,16 +535,25 @@ impl Pipeline {
         }
 
         if is_mineru_layout(&self.config.layout_recognize) && mime == "application/pdf" {
+            let guidance = "Check the MinerU provider's mineru_apiserver, mineru_api_key and mineru_backend or MINERU_APISERVER, MINERU_API_KEY (if authentication is required) and MINERU_BACKEND. Verify access to /openapi.json and /file_parse and that the selected backend's models are loaded; set MINERU_SERVER_URL for an HTTP model backend, then reparse. 请检查 MinerU 客户端地址、认证和解析后端，确认模型服务已加载，修复后重新解析。";
             let client = self.mineru.as_ref().ok_or_else(|| {
-                anyhow::anyhow!("MinerU layout requested but MINERU_APISERVER is not configured")
+                anyhow::anyhow!("MinerU layout requested but no client is configured. {guidance}")
             })?;
-            client.check_installation().await?;
-            let options =
-                crate::parser::mineru::MinerURequestOptions::from_parser_config(&self.config)?;
+            client.check_installation().await.map_err(|error| {
+                anyhow::anyhow!("MinerU availability check failed for {name}: {error}. {guidance}")
+            })?;
+            let options = crate::parser::mineru::MinerURequestOptions::from_parser_config(&self.config)
+                .map_err(|error| {
+                    anyhow::anyhow!(
+                        "MinerU parser settings are invalid for {name}: {error}. {guidance}"
+                    )
+                })?;
             let output = client
                 .parse_pdf(name, data, &options)
                 .await
-                .map_err(|error| anyhow::anyhow!("MinerU parsing failed for {name}: {error}"))?;
+                .map_err(|error| {
+                    anyhow::anyhow!("MinerU parsing failed for {name}: {error}. {guidance}")
+                })?;
             return Ok(parser::new_document(name, output.content, mime, data.len()));
         }
 

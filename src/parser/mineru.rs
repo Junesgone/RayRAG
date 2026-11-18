@@ -12,8 +12,11 @@ use std::fmt;
 use std::io::{Cursor, Read};
 use std::time::{Duration, Instant};
 
-const MINERU_BACKENDS: [&str; 7] = [
+const MINERU_BACKENDS: [&str; 10] = [
     "pipeline",
+    "vlm-engine",
+    "hybrid-engine",
+    "hybrid-http-client",
     "vlm-http-client",
     "vlm-transformers",
     "vlm-vllm-engine",
@@ -313,9 +316,15 @@ impl MinerUClient {
             );
         }
 
-        if self.config.backend == "vlm-http-client" {
+        if matches!(
+            self.config.backend.as_str(),
+            "vlm-http-client" | "hybrid-http-client"
+        ) {
             let server_url = self.config.server_url.as_deref().ok_or_else(|| {
-                anyhow::anyhow!("MINERU_SERVER_URL is required for vlm-http-client backend")
+                anyhow::anyhow!(
+                    "MINERU_SERVER_URL is required for {} backend; configure the model server URL and retry",
+                    self.config.backend
+                )
             })?;
             // The fixed Python parser treats this probe as informational once a
             // non-empty URL exists.
