@@ -1,0 +1,21 @@
+[
+  {
+    "stepTitle": "Install RayRAG",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "RayRAG installs PostgreSQL and zvec inside the app data directory and starts on port 9395. Register your account in the browser. The first registration becomes the administrator, and its password is synchronized to PostgreSQL."
+      },
+      {
+        "type": "password",
+        "field": "wizard_db_password",
+        "label": "PostgreSQL password (user admin)",
+        "initValue": "admin",
+        "rules": [
+          { "required": true, "message": "Enter the database password" },
+          { "pattern": "^[A-Za-z0-9._-]{1,64}$", "message": "Use letters, digits and . _ - only" }
+        ]
+      }
+    ]
+  }
+]
