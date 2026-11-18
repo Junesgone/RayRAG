@@ -2,6 +2,13 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.126.7] - 2026-11-19
+
+### PDF service recovery guidance
+
+- Add client address, authentication, model readiness and retry guidance to OpenDataLoader, MonkeyOCRv2 and Docling conversion failures.
+- Include setup instructions when OpenDataLoader or MonkeyOCRv2 has no configured client.
+
 ## [0.126.6] - 2026-11-19
 
 ### External PDF parser configuration

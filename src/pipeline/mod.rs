@@ -500,6 +500,7 @@ impl Pipeline {
         }
 
         if is_monkeyocrv2_layout(&self.config.layout_recognize) && mime == "application/pdf" {
+            let guidance = "Check parser_config.monkeyocrv2_server_url or MONKEYOCRV2_SERVER_URL, verify access to /health and /parse from RayRAG and that the OCR models are loaded, then reparse. 请检查 MonkeyOCRv2 客户端地址、服务连接和模型加载状态，修复后重新解析。";
             let override_url = self
                 .config
                 .monkeyocrv2_server_url
@@ -512,7 +513,7 @@ impl Pipeline {
                 )?,
                 (None, Some(client)) => client.clone(),
                 (None, None) => anyhow::bail!(
-                    "MonkeyOCRv2 layout requested but MONKEYOCRV2_SERVER_URL is not configured"
+                    "MonkeyOCRv2 layout requested but no client is configured. {guidance}"
                 ),
             };
             if !client.check_installation().await? {
@@ -524,7 +525,7 @@ impl Pipeline {
                 .parse_pdf(name, data, 0, 99999)
                 .await
                 .map_err(|error| {
-                    anyhow::anyhow!("MonkeyOCRv2 parsing failed for {name}: {error}")
+                    anyhow::anyhow!("MonkeyOCRv2 parsing failed for {name}: {error}. {guidance}")
                 })?;
             let mut document = parser::new_document(name, output.content, mime, data.len());
             document.metadata.insert(
@@ -558,9 +559,10 @@ impl Pipeline {
         }
 
         if is_opendataloader_layout(&self.config.layout_recognize) && mime == "application/pdf" {
+            let guidance = "Check the OpenDataLoader provider's opendataloader_apiserver and opendataloader_api_key or OPENDATALOADER_APISERVER and OPENDATALOADER_API_KEY (if authentication is required). Verify access to /health and /file_parse and that the selected parsing models are loaded, then reparse. 请检查 OpenDataLoader 客户端地址、密钥、服务连接和模型加载状态，修复后重新解析。";
             let client = self.opendataloader.as_ref().ok_or_else(|| {
                 anyhow::anyhow!(
-                    "OpenDataLoader layout requested but OPENDATALOADER_APISERVER is not configured"
+                    "OpenDataLoader layout requested but no client is configured. {guidance}"
                 )
             })?;
             if !client.check_installation().await {
@@ -580,12 +582,13 @@ impl Pipeline {
                 )
                 .await
                 .map_err(|error| {
-                    anyhow::anyhow!("OpenDataLoader parsing failed for {name}: {error}")
+                    anyhow::anyhow!("OpenDataLoader parsing failed for {name}: {error}. {guidance}")
                 })?;
             return Ok(parser::new_document(name, output.content, mime, data.len()));
         }
 
         if is_docling_layout(&self.config.layout_recognize) && mime == "application/pdf" {
+            let guidance = "Check DOCLING_SERVER_URL and DOCLING_API_KEY (if authentication is required), verify access to /v1/convert/source and that the Docling parsing models are loaded, then reparse. 请检查 Docling 客户端地址、密钥、服务连接和模型加载状态，修复后重新解析。";
             if let Some(client) = self.docling.as_ref() {
                 if !client.check_installation().await {
                     anyhow::bail!(
@@ -593,7 +596,7 @@ impl Pipeline {
                     );
                 }
                 let output = client.parse_pdf(name, data).await.map_err(|error| {
-                    anyhow::anyhow!("Docling parsing failed for {name}: {error}")
+                    anyhow::anyhow!("Docling parsing failed for {name}: {error}. {guidance}")
                 })?;
                 return Ok(parser::new_document(name, output.content, mime, data.len()));
             }
