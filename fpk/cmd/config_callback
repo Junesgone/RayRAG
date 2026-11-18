@@ -1,0 +1,56 @@
+#!/bin/bash
+DIR=$(cd "$(dirname "$0")" && pwd)
+. "$DIR/rayrag-fpk-common"
+
+# The server persists the administrator-managed DSN in the writable state volume.
+if [ -f "$FPK_DATA/static/pg_credentials.json" ]; then
+  log_msg "config_callback: keeping the database credential managed by the RayRAG administrator account"
+  stop_all
+  start_all || exit 1
+  exit 0
+fi
+
+new_password="${wizard_db_password:-}"
+[ -n "$new_password" ] || new_password=$(db_password_from_env)
+[ -n "$new_password" ] || new_password="admin"
+case "$new_password" in
+  *[!A-Za-z0-9._-]*|"")
+    fail_msg "Invalid PostgreSQL password. Use letters, digits and . _ - only."
+    exit 1
+    ;;
+esac
+
+old_password=$(db_password_from_env)
+if [ -f "$FPK_ENV" ] && [ -z "$old_password" ]; then
+  fail_msg "Cannot read the bootstrap PostgreSQL credential. Keep the existing env and update the database credential through the RayRAG administrator account."
+  exit 1
+fi
+case "$old_password" in
+  *[!A-Za-z0-9._-]*)
+    fail_msg "The database credential is outside the bootstrap password format. Change it through the RayRAG administrator account."
+    exit 1
+    ;;
+esac
+stop_all
+if [ -n "$old_password" ] && [ "$old_password" != "$new_password" ]; then
+  printf "ALTER ROLE admin PASSWORD '%s';\n" "$new_password" | run_as_app "$FPK_PGSQL/bin/postgres" --single -D "$FPK_PGDATA" postgres >>"$FPK_VAR/install.log" 2>&1
+  if [ $? -ne 0 ]; then
+    fail_msg "could not update the PostgreSQL password (see $FPK_VAR/install.log)"
+    start_all || fail_msg "could not restart services with the previous settings"
+    exit 1
+  fi
+fi
+if ! write_env_file "$new_password" "$FPK_SERVICE_PORT" true; then
+  if [ -n "$old_password" ] && [ "$old_password" != "$new_password" ]; then
+    if ! printf "ALTER ROLE admin PASSWORD '%s';\n" "$old_password" | run_as_app "$FPK_PGSQL/bin/postgres" --single -D "$FPK_PGDATA" postgres >>"$FPK_VAR/install.log" 2>&1; then
+      fail_msg "Could not restore the previous PostgreSQL password after the environment write failed. Restore the database credential before restarting (see $FPK_VAR/install.log)."
+      exit 1
+    fi
+  fi
+  fail_msg "could not write $FPK_ENV; the previous database password was retained"
+  start_all || fail_msg "could not restart services with the previous settings"
+  exit 1
+fi
+start_all || exit 1
+log_msg "config_callback: settings applied"
+exit 0
