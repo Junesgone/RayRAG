@@ -5,6 +5,7 @@
 ### 文档解析配置
 
 - JPG/JPEG/PNG/WebP/GIF/BMP/TIFF 需要可用的 OCR 客户端，或在模型设置中配置支持图片输入的提供商（API 地址、密钥、模型名），并选择租户默认“图像转文本”模型。BMP/TIFF 在限制解码尺寸和内存的前提下转为 PNG 发送；有效小图不再按文件字节数跳过。缺少配置、请求失败或返回空内容会提示错误，不再将图片元数据占位符当作正文。
+- 独立 `picture` 解析入口也执行 OCR／文字提取，缺少识别配置时返回配置指引。
 - SVG 目前仅提取文字元素；仅含路径或已转曲文字的图片请先导出为 PNG/JPEG，再配置 OCR 客户端或图像转文本模型。仅有图片标记而没有正文的 SVG 不会被视为解析成功。
 - 本地/局域网视觉模型不设总请求超时；公网视觉模型使用 `RAYRAG_MODEL_TIMEOUT`。连接超时和响应体大小限制仍保留，避免不可达服务或异常响应无限占用资源。
 - OCR 代理使用 `RAYRAG_OCR_PROVIDER=proxy` 和 `RAYRAG_OCR_BASE_URL`；PaddleOCR 使用 `RAYRAG_OCR_PROVIDER=paddleocr`、`PADDLEOCR_BASE_URL`、`PADDLEOCR_ACCESS_TOKEN`；DeepSeek OCR 使用 `RAYRAG_OCR_PROVIDER=deepseek`、`RAYRAG_OCR_BASE_URL`、`RAYRAG_OCR_API_KEY`。修改服务端环境配置后重启并重新解析。

@@ -184,46 +184,19 @@ impl Parse for BookParser {
 // ── Picture / Image Content Parser ─────────────────────────────
 
 #[derive(Default)]
-pub struct PictureParser;
+pub struct PictureParser {
+    figure: crate::parser::figure::FigureParser,
+}
 impl PictureParser {
     pub fn new() -> Self {
-        Self
-    }
-    fn extract(&self, name: &str, data: &[u8]) -> Result<String> {
-        let basename = std::path::Path::new(name)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("image");
-        let size_mb = data.len() as f64 / 1_048_576.0;
-        let fmt = detect_format(data);
-        let text = format!(
-            "<!--PICTURE_START-->\n[Image: {}] [{:.1}MB] [Format: {}]\n<!--PICTURE_END-->\n",
-            basename, size_mb, fmt
-        );
-        Ok(text)
+        Self {
+            figure: crate::parser::figure::FigureParser::new(),
+        }
     }
 }
 impl Parse for PictureParser {
     fn parse(&self, name: &str, data: &[u8]) -> Result<Document> {
-        Ok(new_document(
-            name,
-            self.extract(name, data)?,
-            "image/png",
-            data.len(),
-        ))
-    }
-}
-
-fn detect_format(data: &[u8]) -> &'static str {
-    if data.len() < 4 {
-        return "unknown";
-    }
-    match &data[0..4] {
-        [0x89, b'P', b'N', b'G'] => "PNG",
-        [0xFF, 0xD8, 0xFF, _] => "JPEG",
-        [b'G', b'I', b'F', b'8'] => "GIF",
-        [b'R', b'I', b'F', b'F'] => "WEBP",
-        _ => "unknown",
+        self.figure.parse(name, data)
     }
 }
 

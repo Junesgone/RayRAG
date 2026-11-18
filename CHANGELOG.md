@@ -2,6 +2,13 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.126.8] - 2026-11-19
+
+### Standalone image extraction
+
+- Route the standalone picture parser through OCR and SVG text extraction.
+- Return client and image-to-text model configuration guidance when image content cannot be extracted.
+
 ## [0.126.7] - 2026-11-19
 
 ### PDF service recovery guidance

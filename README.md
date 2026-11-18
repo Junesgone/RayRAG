@@ -6,6 +6,7 @@
 
 - JPG/JPEG/PNG/WebP/GIF/BMP/TIFF require a working OCR client or a tenant default image-to-text model with image-input support, API base URL and credentials. BMP/TIFF are converted to PNG for vision requests with bounded decoding; valid small images are not skipped by file size. Missing clients, failed requests and empty output produce actionable errors instead of metadata-only chunks.
 - SVG parsing extracts text elements only. For path-only or outlined text images, export PNG/JPEG and configure OCR or an image-to-text model; marker-only SVG output is rejected.
+- The standalone `picture` parser also extracts image text and returns setup guidance when recognition is unavailable.
 - OCR proxy: `RAYRAG_OCR_PROVIDER=proxy` and `RAYRAG_OCR_BASE_URL`. PaddleOCR: `RAYRAG_OCR_PROVIDER=paddleocr`, `PADDLEOCR_BASE_URL`, `PADDLEOCR_ACCESS_TOKEN`. DeepSeek OCR: `RAYRAG_OCR_PROVIDER=deepseek`, `RAYRAG_OCR_BASE_URL`, `RAYRAG_OCR_API_KEY`. Restart the server after environment changes and reparse.
 - Explicit PaddleOCR layouts also use `PADDLEOCR_ALGORITHM`. OXR layouts require `OXR_BASE_URL` and `OXR_API_KEY` when authentication is required. Missing clients, request failures and empty responses include configuration and retry steps.
 - SoMark requires `SOMARK_BASE_URL` and `SOMARK_API_KEY` when authentication is required. Mistral OCR uses `MISTRAL_OCR_API_KEY`, `MISTRAL_OCR_BASE_URL` and `MISTRAL_OCR_MODEL`. Verify the parsing service and model permissions, then reparse.
