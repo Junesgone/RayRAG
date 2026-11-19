@@ -2,6 +2,15 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.126.23] - 2026-11-19
+
+### PDF width-table integrity
+
+- Resolve indirect CID and simple-font width arrays, numeric values and descriptors.
+- Reject invalid character ranges, incomplete entries and non-finite metrics before producing position tags.
+- Charge repeated width assignments against the page font budget during expansion.
+- Preserve CID DW values independently of simple-font MissingWidth defaults.
+
 ## [0.126.22] - 2026-11-19
 
 ### PDF CMap streaming and expansion bounds

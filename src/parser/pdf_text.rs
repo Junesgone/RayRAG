@@ -974,6 +974,12 @@ fn show_text(
     let max_y = corners
         .iter()
         .fold(start_y.max(end_y), |acc, (_, y)| acc.max(*y));
+    anyhow::ensure!(
+        [min_x, max_x, min_y, max_y, start_y, size]
+            .iter()
+            .all(|value| value.is_finite()),
+        "PDF font metrics or text transform produced non-finite coordinates"
+    );
     let run_cost = text.capacity() as u64 + 2 * std::mem::size_of::<Run>() as u64;
     budget.run_bytes = budget.run_bytes.checked_sub(run_cost).ok_or_else(|| {
         anyhow::anyhow!("PDF positioned text exceeds the RAYRAG_PDF_STREAM_LIMIT_BYTES page budget")
@@ -1202,49 +1208,56 @@ fn font_metrics(
     }
 
     if two_byte {
-        if let Some(descendant) = font
-            .get(b"DescendantFonts")
-            .ok()
-            .and_then(|object| deref(doc, object))
-            .and_then(|object| object.as_array().ok())
-            .and_then(|fonts| fonts.first())
-            .and_then(|first| as_dict(doc, first))
-        {
-            metrics.default_width = descendant
-                .get(b"DW")
-                .ok()
-                .and_then(as_number)
-                .unwrap_or(1000.0);
-            if let Ok(widths) = descendant.get(b"W").and_then(Object::as_array) {
-                parse_cid_widths(widths, &mut metrics.widths);
-            }
-            if let Some(descriptor) = dict_entry(doc, descendant, b"FontDescriptor") {
-                apply_descriptor(descriptor, &mut metrics);
-            }
+        let descendants = optional_font_value(doc, font, b"DescendantFonts")?
+            .ok_or_else(|| anyhow::anyhow!("PDF Type0 font has no DescendantFonts"))?
+            .as_array()
+            .map_err(|_| anyhow::anyhow!("PDF DescendantFonts must be an array"))?;
+        anyhow::ensure!(
+            descendants.len() == 1,
+            "PDF DescendantFonts must contain one CID font"
+        );
+        let descendant = as_dict(doc, &descendants[0])
+            .ok_or_else(|| anyhow::anyhow!("PDF DescendantFonts entry is not a font dictionary"))?;
+        metrics.default_width = match optional_font_value(doc, descendant, b"DW")? {
+            Some(value) => font_number(doc, value, "/DW")?,
+            None => 1000.0,
+        };
+        if let Some(value) = optional_font_value(doc, descendant, b"W")? {
+            let widths = value
+                .as_array()
+                .map_err(|_| anyhow::anyhow!("PDF /W must be an array"))?;
+            parse_cid_widths(doc, widths, &mut metrics.widths, budget)?;
+        }
+        if let Some(value) = optional_font_value(doc, descendant, b"FontDescriptor")? {
+            let descriptor = as_dict(doc, value)
+                .ok_or_else(|| anyhow::anyhow!("PDF FontDescriptor must be a dictionary"))?;
+            apply_descriptor(doc, descriptor, &mut metrics)?;
         }
     } else {
-        let first_char = font
-            .get(b"FirstChar")
-            .ok()
-            .and_then(as_number)
-            .unwrap_or(0.0) as u16;
-        if let Ok(widths) = font.get(b"Widths").and_then(Object::as_array) {
-            for (index, width) in widths.iter().enumerate() {
-                if let Some(value) = as_number(width) {
-                    metrics
-                        .widths
-                        .insert(first_char.wrapping_add(index as u16), value);
-                }
+        if let Some(value) = optional_font_value(doc, font, b"Widths")? {
+            let widths = value
+                .as_array()
+                .map_err(|_| anyhow::anyhow!("PDF /Widths must be an array"))?;
+            let first = match optional_font_value(doc, font, b"FirstChar")? {
+                Some(value) => font_code(doc, value, 255, "/FirstChar")?,
+                None => 0,
+            };
+            anyhow::ensure!(
+                widths.len() <= 256 - usize::from(first),
+                "PDF /Widths exceeds the single-byte character range"
+            );
+            for (offset, value) in widths.iter().enumerate() {
+                let width = font_number(doc, value, "/Widths value")?;
+                insert_font_width(&mut metrics.widths, first + offset as u16, width, budget)?;
             }
         }
-        if let Some(descriptor) = dict_entry(doc, font, b"FontDescriptor") {
-            apply_descriptor(descriptor, &mut metrics);
+        if let Some(value) = optional_font_value(doc, font, b"FontDescriptor")? {
+            let descriptor = as_dict(doc, value)
+                .ok_or_else(|| anyhow::anyhow!("PDF FontDescriptor must be a dictionary"))?;
+            apply_descriptor(doc, descriptor, &mut metrics)?;
         }
     }
-    let cost = (metrics.widths.capacity() as u64)
-        .saturating_mul(64)
-        .saturating_add(256);
-    budget.font_mapping_bytes = budget.font_mapping_bytes.checked_sub(cost).ok_or_else(|| {
+    budget.font_mapping_bytes = budget.font_mapping_bytes.checked_sub(256).ok_or_else(|| {
         anyhow::anyhow!(
             "PDF selected font tables exceed the RAYRAG_PDF_STREAM_LIMIT_BYTES page budget"
         )
@@ -1252,56 +1265,116 @@ fn font_metrics(
     Ok(metrics)
 }
 
-fn apply_descriptor(descriptor: &Dictionary, metrics: &mut FontMetrics) {
-    if let Some(missing) = descriptor.get(b"MissingWidth").ok().and_then(as_number)
-        && metrics.default_width == 500.0
-    {
-        metrics.default_width = missing;
-    }
-    if let Some(ascent) = descriptor.get(b"Ascent").ok().and_then(as_number) {
-        metrics.ascent = (ascent / 1000.0).clamp(0.5, 1.2);
-    }
-    if let Some(descent) = descriptor.get(b"Descent").ok().and_then(as_number) {
-        metrics.descent = (descent / 1000.0).clamp(-0.6, 0.0);
-    }
+fn optional_font_value<'a>(
+    doc: &'a Document,
+    font: &'a Dictionary,
+    key: &[u8],
+) -> crate::Result<Option<&'a Object>> {
+    let Ok(value) = font.get(key) else {
+        return Ok(None);
+    };
+    let value = deref(doc, value).ok_or_else(|| {
+        anyhow::anyhow!(
+            "PDF font /{} reference cannot be resolved",
+            String::from_utf8_lossy(key)
+        )
+    })?;
+    Ok(if matches!(value, Object::Null) {
+        None
+    } else {
+        Some(value)
+    })
 }
 
-/// `/W [c [w…] cfirst clast w …]` — widths per CID, in 1000-unit text space.
-fn parse_cid_widths(widths: &[Object], out: &mut HashMap<u16, f64>) {
+fn font_number(doc: &Document, object: &Object, field: &str) -> crate::Result<f64> {
+    deref(doc, object)
+        .and_then(as_number)
+        .filter(|value| value.is_finite())
+        .ok_or_else(|| anyhow::anyhow!("PDF font {field} must be a finite number"))
+}
+
+fn font_code(doc: &Document, object: &Object, maximum: u16, field: &str) -> crate::Result<u16> {
+    let number = font_number(doc, object, field)?;
+    anyhow::ensure!(
+        number.fract() == 0.0 && number >= 0.0 && number <= f64::from(maximum),
+        "PDF font {field} must be an integer from 0 through {maximum}"
+    );
+    Ok(number as u16)
+}
+
+fn insert_font_width(
+    out: &mut HashMap<u16, f64>,
+    code: u16,
+    width: f64,
+    budget: &mut PdfTextBudget<'_>,
+) -> crate::Result<()> {
+    budget.font_mapping_bytes = budget.font_mapping_bytes.checked_sub(64).ok_or_else(|| {
+        anyhow::anyhow!("PDF width expansion exceeds the RAYRAG_PDF_STREAM_LIMIT_BYTES page budget")
+    })?;
+    out.insert(code, width);
+    Ok(())
+}
+
+fn apply_descriptor(
+    doc: &Document,
+    descriptor: &Dictionary,
+    metrics: &mut FontMetrics,
+) -> crate::Result<()> {
+    if !metrics.two_byte {
+        if let Some(value) = optional_font_value(doc, descriptor, b"MissingWidth")? {
+            metrics.default_width = font_number(doc, value, "/MissingWidth")?;
+        }
+    }
+    if let Some(value) = optional_font_value(doc, descriptor, b"Ascent")? {
+        metrics.ascent = (font_number(doc, value, "/Ascent")? / 1000.0).clamp(0.5, 1.2);
+    }
+    if let Some(value) = optional_font_value(doc, descriptor, b"Descent")? {
+        metrics.descent = (font_number(doc, value, "/Descent")? / 1000.0).clamp(-0.6, 0.0);
+    }
+    Ok(())
+}
+
+/// Width assignments, including repeated ranges, consume the page font budget.
+fn parse_cid_widths(
+    doc: &Document,
+    widths: &[Object],
+    out: &mut HashMap<u16, f64>,
+    budget: &mut PdfTextBudget<'_>,
+) -> crate::Result<()> {
     let mut index = 0;
     while index < widths.len() {
-        let Some(start) = as_number(&widths[index]) else {
-            index += 1;
-            continue;
-        };
-        let start = start.max(0.0) as u16;
-        match widths.get(index + 1) {
-            Some(Object::Array(list)) => {
-                for (offset, width) in list.iter().enumerate() {
-                    if let Some(value) = as_number(width) {
-                        out.insert(start.wrapping_add(offset as u16), value);
-                    }
+        let start = font_code(doc, &widths[index], u16::MAX, "/W start CID")?;
+        let next = widths
+            .get(index + 1)
+            .and_then(|value| deref(doc, value))
+            .ok_or_else(|| anyhow::anyhow!("PDF /W has an incomplete width entry"))?;
+        match next {
+            Object::Array(list) => {
+                anyhow::ensure!(
+                    list.len() <= 65536 - usize::from(start),
+                    "PDF /W array exceeds the CID range"
+                );
+                for (offset, value) in list.iter().enumerate() {
+                    let width = font_number(doc, value, "/W width")?;
+                    insert_font_width(out, start + offset as u16, width, budget)?;
                 }
                 index += 2;
             }
-            Some(end) => {
-                let Some(end) = as_number(end) else {
-                    index += 1;
-                    continue;
-                };
-                let Some(width) = widths.get(index + 2).and_then(as_number) else {
-                    index += 1;
-                    continue;
-                };
-                let end = (end.max(0.0) as u16).max(start);
+            end => {
+                let end = font_code(doc, end, u16::MAX, "/W end CID")?;
+                anyhow::ensure!(end >= start, "PDF /W has a descending CID range");
+                let value = widths
+                    .get(index + 2)
+                    .ok_or_else(|| anyhow::anyhow!("PDF /W range has no width"))?;
+                let width = font_number(doc, value, "/W width")?;
                 for code in start..=end {
-                    out.insert(code, width);
+                    insert_font_width(out, code, width, budget)?;
                 }
                 index += 3;
             }
-            None => break,
         }
     }
+    Ok(())
 }
 
 /// Borrowed tokens keep CMap parsing independent of line breaks and token counts.
