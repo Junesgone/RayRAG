@@ -2,6 +2,13 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.126.11] - 2026-11-19
+
+### PDF font failure reporting
+
+- Reject unreadable or invalid PDF ToUnicode font mapping streams before chunking.
+- Include the page, font name, original error and embedded-font export or OCR configuration guidance.
+
 ## [0.126.10] - 2026-11-19
 
 ### PDF page failure reporting

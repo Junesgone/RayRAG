@@ -14,7 +14,7 @@
 - MinerU 使用 `MINERU_APISERVER`、`MINERU_BACKEND`，服务要求认证时填写 `MINERU_API_KEY`。当前后端包括 `pipeline`、`vlm-engine`、`hybrid-engine`、`vlm-http-client`、`hybrid-http-client`，两个 HTTP 模型后端均需 `MINERU_SERVER_URL`，既有后端名称继续兼容。
 - 外部 PDF 解析失败会附带提供商名称和配置检查步骤。请确认 RayRAG 能访问服务端点、后端模型已加载，修正配置后重新解析。
 - 内置 PDF 解析器只读取文本层。扫描 PDF 需在知识库解析配置中选择 OCR 布局后端（如 PaddleOCR）并配置其服务地址和凭据；仅配置普通图片 OCR 不会给内置 PDF 解析器增加页面渲染能力。
-- PDF 任一页内容流解码失败时，解析会报告页码和恢复建议。请修复并重新导出上传，或配置 OCR 文档解析客户端后重新解析。
+- PDF 任一页内容流或 ToUnicode 字体映射流解码失败时，解析会报告页码和恢复建议；字体映射错误同时包含字体名称。请修复并嵌入字体重新导出上传，或配置 OCR 文档解析客户端后重新解析。
 - Word/Excel 使用 DOCX/XLSX；旧版 DOC/XLS 请先另存为对应格式。CLI `parse` 使用环境客户端配置，不会自动加载网页租户的视觉模型。
 - CSV／XLSX 正文提取包含 1000 行之后的数据及 XLSX 全部工作表。CSV 读取失败会提示修复、另存为 UTF-8 CSV 并重新上传。
 - 损坏或加密的 Office/PDF 会显示文件名、底层错误和修复步骤。请修复并导出未加密的 DOCX/XLSX/PPTX/PDF 后重新上传；PDF 错误同时提示检查所选 OCR 客户端的地址、密钥和模型配置。

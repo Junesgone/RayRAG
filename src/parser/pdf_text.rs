@@ -249,7 +249,9 @@ pub fn try_extract_positioned_lines(doc: &Document) -> crate::Result<Vec<Positio
         let Some(geometry) = PageGeometry::of(doc, page_id) else {
             continue;
         };
-        let fonts = page_fonts(doc, page_id);
+        let fonts = page_fonts(doc, page_id).map_err(|error| anyhow::anyhow!(
+            "PDF page {number} font extraction failed: {error}. Repair or export an unencrypted PDF with embedded fonts and upload it again, or select a configured OCR document parser and reparse. PDF 字体提取失败，请修复并嵌入字体重新导出上传，或配置 OCR 解析客户端后重新解析。"
+        ))?;
         let mut runs = Vec::new();
         let mut state = State::default();
         let mut stack = Vec::new();
@@ -803,15 +805,18 @@ fn win_ansi_char(byte: u8) -> char {
     }
 }
 
-fn page_fonts(doc: &Document, page_id: lopdf::ObjectId) -> HashMap<String, FontMetrics> {
+fn page_fonts(
+    doc: &Document,
+    page_id: lopdf::ObjectId,
+) -> crate::Result<HashMap<String, FontMetrics>> {
     let mut fonts = HashMap::new();
     let Some(resources) =
         inherited(doc, page_id, b"Resources").and_then(|value| as_dict(doc, value))
     else {
-        return fonts;
+        return Ok(fonts);
     };
     let Some(font_dict) = dict_entry(doc, resources, b"Font") else {
-        return fonts;
+        return Ok(fonts);
     };
     for (name, value) in font_dict.iter() {
         let Some(font) = as_dict(doc, value) else {
@@ -819,10 +824,12 @@ fn page_fonts(doc: &Document, page_id: lopdf::ObjectId) -> HashMap<String, FontM
         };
         fonts.insert(
             String::from_utf8_lossy(name).into_owned(),
-            font_metrics(doc, font),
+            font_metrics(doc, font).map_err(|error| {
+                anyhow::anyhow!("font {}: {error}", String::from_utf8_lossy(name))
+            })?,
         );
     }
-    fonts
+    Ok(fonts)
 }
 
 /// Resolve an inheritable page attribute through the page tree.
@@ -861,7 +868,7 @@ fn deref<'a>(doc: &'a Document, object: &'a Object) -> Option<&'a Object> {
     }
 }
 
-fn font_metrics(doc: &Document, font: &Dictionary) -> FontMetrics {
+fn font_metrics(doc: &Document, font: &Dictionary) -> crate::Result<FontMetrics> {
     let subtype = font
         .get(b"Subtype")
         .and_then(Object::as_name_str)
@@ -875,24 +882,16 @@ fn font_metrics(doc: &Document, font: &Dictionary) -> FontMetrics {
         ascent: 0.75,
         descent: -0.25,
     };
-    if let Some(content) = font
-        .get(b"ToUnicode")
-        .ok()
-        .and_then(|object| deref(doc, object))
-        .and_then(|object| object.as_stream().ok())
-        .and_then(|stream| {
-            super::pdf_stream::plain_content_limited(
-                stream,
-                super::pdf_stream::stream_limit_bytes(),
-                "PDF /ToUnicode CMap",
-            )
-            .map_err(|error| {
-                tracing::warn!(%error, "Skipping PDF /ToUnicode CMap");
-                error
-            })
-            .ok()
-        })
-    {
+    if let Ok(object) = font.get(b"ToUnicode") {
+        let stream = deref(doc, object)
+            .ok_or_else(|| anyhow::anyhow!("PDF /ToUnicode CMap reference cannot be resolved"))?
+            .as_stream()
+            .map_err(|error| anyhow::anyhow!("PDF /ToUnicode CMap is not a stream: {error}"))?;
+        let content = super::pdf_stream::plain_content_limited(
+            stream,
+            super::pdf_stream::stream_limit_bytes(),
+            "PDF /ToUnicode CMap",
+        )?;
         metrics.to_unicode = parse_to_unicode(&content);
     }
 
@@ -936,7 +935,7 @@ fn font_metrics(doc: &Document, font: &Dictionary) -> FontMetrics {
             apply_descriptor(descriptor, &mut metrics);
         }
     }
-    metrics
+    Ok(metrics)
 }
 
 fn apply_descriptor(descriptor: &Dictionary, metrics: &mut FontMetrics) {
