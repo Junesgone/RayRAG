@@ -198,6 +198,8 @@ fn build_reranker(config: &RerankerConfig) -> Result<Option<Arc<dyn Reranker>>> 
     Ok(Some(Arc::new(reranker)))
 }
 
+const RERANKER_GUIDANCE: &str = "Check the reranker API base URL, credentials, model name and service status, then retry retrieval. 请检查重排服务地址、凭据、模型和运行状态后重试检索。";
+
 /// Remote HTTP reranker (mxbai-rerank / Cohere API compatible).
 ///
 /// Sends POST to `{base_url}/v1/rerank` with:
@@ -291,9 +293,24 @@ impl Reranker for RemoteReranker {
             req = req.bearer_auth(key);
         }
 
-        let resp = req.send().await?;
+        let resp = req.send().await.map_err(|error| {
+            anyhow::anyhow!(
+                "Reranker API request failed: {}. {RERANKER_GUIDANCE}",
+                error.without_url()
+            )
+        })?;
         let status = resp.status();
-        let json: serde_json::Value = resp.json().await?;
+        let json: serde_json::Value = crate::common::cmd_timeout::read_json_limited(
+            resp,
+            crate::common::cmd_timeout::body_limit_bytes(),
+            "Reranker API",
+        )
+        .await
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "Reranker API response failed (HTTP {status}): {error}. {RERANKER_GUIDANCE}"
+            )
+        })?;
 
         if !status.is_success() {
             let err_msg = json
@@ -301,7 +318,7 @@ impl Reranker for RemoteReranker {
                 .and_then(|e| e.get("message"))
                 .and_then(|m| m.as_str())
                 .unwrap_or("Unknown error");
-            anyhow::bail!("Reranker API error ({}): {}", status, err_msg);
+            anyhow::bail!("Reranker API error ({status}): {err_msg}. {RERANKER_GUIDANCE}");
         }
 
         let results = json["results"]

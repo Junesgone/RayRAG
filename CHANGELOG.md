@@ -2,6 +2,14 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.126.19] - 2026-11-19
+
+### Reranker response bounds and diagnostics
+
+- Apply the configured HTTP response-body size limit before decoding reranker JSON.
+- Report HTTP and malformed JSON responses with endpoint, credential, model and service recovery guidance.
+- Remove endpoint URLs from reranker request failures to protect credentials and query tokens.
+
 ## [0.126.18] - 2026-11-19
 
 ### Local model connection timeouts
