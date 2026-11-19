@@ -327,18 +327,47 @@ fn apply_predictor(
         .map_err(|_| anyhow::anyhow!("{what} predictor row exceeds platform range"))?;
 
     if predictor == 2 {
-        // TIFF predictor: each sample is the delta from the one before it.
-        if bits != 8 {
-            anyhow::bail!("{what} uses TIFF prediction with {bits} bits per component");
-        }
+        // TIFF differences are per color component, with samples packed MSB first.
         anyhow::ensure!(
             data.len().is_multiple_of(row_len),
             "{what} has a truncated TIFF predictor row"
         );
+        let samples = usize::try_from(row_bits / bits)
+            .map_err(|_| anyhow::anyhow!("{what} TIFF sample count exceeds platform range"))?;
+        let colors = usize::try_from(colors)
+            .map_err(|_| anyhow::anyhow!("{what} TIFF color count exceeds platform range"))?;
+        let bits = bits as usize;
         let mut out = data;
         for row in out.chunks_mut(row_len) {
-            for index in bytes_per_pixel..row.len() {
-                row[index] = row[index].wrapping_add(row[index - bytes_per_pixel]);
+            match bits {
+                8 => {
+                    for index in colors..samples {
+                        row[index] = row[index].wrapping_add(row[index - colors]);
+                    }
+                }
+                16 => {
+                    for sample in colors..samples {
+                        let index = sample * 2;
+                        let previous = (sample - colors) * 2;
+                        let delta = u16::from_be_bytes([row[index], row[index + 1]]);
+                        let left = u16::from_be_bytes([row[previous], row[previous + 1]]);
+                        row[index..index + 2]
+                            .copy_from_slice(&delta.wrapping_add(left).to_be_bytes());
+                    }
+                }
+                _ => {
+                    let mask = (1u8 << bits) - 1;
+                    for sample in colors..samples {
+                        let bit = sample * bits;
+                        let previous = (sample - colors) * bits;
+                        let shift = 8 - bits - bit % 8;
+                        let previous_shift = 8 - bits - previous % 8;
+                        let delta = (row[bit / 8] >> shift) & mask;
+                        let left = (row[previous / 8] >> previous_shift) & mask;
+                        let value = delta.wrapping_add(left) & mask;
+                        row[bit / 8] = (row[bit / 8] & !(mask << shift)) | (value << shift);
+                    }
+                }
             }
         }
         return Ok(out);

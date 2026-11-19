@@ -2,6 +2,15 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.126.27] - 2026-11-19
+
+### PDF TIFF predictor bit depths
+
+- Reconstruct TIFF Predictor 2 samples at 1, 2, 4, 8 and 16 bits per component.
+- Preserve color-channel separation, big-endian 16-bit arithmetic, row resets and packed padding bits.
+- Reuse bounded Flate/LZW filter chains and existing predictor dimension checks.
+- Keep truncated predictor rows visible before text is indexed.
+
 ## [0.126.26] - 2026-11-19
 
 ### Bounded LZW and RunLength PDF text
