@@ -2,6 +2,15 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.126.25] - 2026-11-19
+
+### Indirect PDF filter parameters
+
+- Resolve indirect filter names, parameter arrays, dictionaries and predictor values through the current document.
+- Share document-aware decoding across page streams, nested Forms and Unicode font mappings.
+- Accept indirect Contents arrays and reject missing, cyclic or non-stream content entries before partial indexing.
+- Bound parameter reference chains and preserve actionable page and font errors.
+
 ## [0.126.24] - 2026-11-19
 
 ### Bounded PDF metadata loading

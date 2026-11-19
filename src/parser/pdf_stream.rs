@@ -45,17 +45,71 @@ fn load_document_limited(data: &[u8], limit: u64) -> Result<lopdf::Document> {
 
 /// Decode a stream to plain bytes, refusing more than `limit` bytes of output.
 pub fn plain_content_limited(stream: &Stream, limit: u64, what: &str) -> Result<Vec<u8>> {
-    let filters = match stream.dict.get(b"Filter") {
-        Err(_) | Ok(Object::Null) => Vec::new(),
-        Ok(_) => stream
-            .filters()
-            .map_err(|error| anyhow::anyhow!("{what} has an invalid Filter: {error}"))?,
+    decode_stream(None, stream, limit, what)
+}
+
+/// Resolve indirect filter settings through the same document as the stream.
+pub fn plain_content_limited_in(
+    doc: &lopdf::Document,
+    stream: &Stream,
+    limit: u64,
+    what: &str,
+) -> Result<Vec<u8>> {
+    decode_stream(Some(doc), stream, limit, what)
+}
+
+fn resolve_stream_value<'a>(
+    doc: Option<&'a lopdf::Document>,
+    mut value: &'a Object,
+    what: &str,
+) -> Result<&'a Object> {
+    for _ in 0..32 {
+        let Object::Reference(id) = value else {
+            return Ok(value);
+        };
+        value = doc.and_then(|doc| doc.objects.get(id)).ok_or_else(|| {
+            anyhow::anyhow!("{what} reference {} {} cannot be resolved", id.0, id.1)
+        })?;
+    }
+    anyhow::ensure!(
+        !matches!(value, Object::Reference(_)),
+        "{what} reference chain is cyclic or exceeds 32 levels"
+    );
+    Ok(value)
+}
+
+fn decode_stream(
+    doc: Option<&lopdf::Document>,
+    stream: &Stream,
+    limit: u64,
+    what: &str,
+) -> Result<Vec<u8>> {
+    let filter = stream
+        .dict
+        .get(b"Filter")
+        .ok()
+        .map(|value| resolve_stream_value(doc, value, what))
+        .transpose()?;
+    let filters = match filter {
+        None | Some(Object::Null) => Vec::new(),
+        Some(Object::Name(name)) => vec![name.as_slice()],
+        Some(Object::Array(names)) => names
+            .iter()
+            .map(|value| {
+                resolve_stream_value(doc, value, what)?
+                    .as_name()
+                    .map_err(|_| anyhow::anyhow!("{what} Filter entry must be a name"))
+            })
+            .collect::<Result<Vec<_>>>()?,
+        _ => anyhow::bail!("{what} Filter must be a name or array"),
     };
     let params = stream
         .dict
         .get(b"DecodeParms")
         .or_else(|_| stream.dict.get(b"DP"))
-        .ok();
+        .ok()
+        .map(|value| resolve_stream_value(doc, value, what))
+        .transpose()?;
     match params {
         Some(Object::Array(values)) => anyhow::ensure!(
             values.len() == filters.len(),
@@ -80,6 +134,9 @@ pub fn plain_content_limited(stream: &Stream, limit: u64, what: &str) -> Result<
             Some(Object::Array(values)) => values.get(index),
             other => other,
         };
+        let value = value
+            .map(|value| resolve_stream_value(doc, value, what))
+            .transpose()?;
         let params = match value {
             None | Some(Object::Null) => None,
             Some(Object::Dictionary(dictionary)) => Some(dictionary),
@@ -88,7 +145,7 @@ pub fn plain_content_limited(stream: &Stream, limit: u64, what: &str) -> Result<
         content = match *filter {
             b"FlateDecode" | b"Fl" => {
                 let decoded = inflate_limited(&content, limit, what)?;
-                apply_predictor(decoded, params, limit, what)?
+                apply_predictor(doc, decoded, params, limit, what)?
             }
             b"ASCIIHexDecode" | b"AHx" => decode_ascii_hex(&content, limit, what)?,
             b"ASCII85Decode" | b"A85" => decode_ascii85(&content, limit, what)?,
@@ -129,6 +186,7 @@ fn inflate_limited(input: &[u8], limit: u64, what: &str) -> Result<Vec<u8>> {
 
 /// `DecodeParms` predictor handling (PNG predictors 10-15 plus TIFF predictor 2).
 fn apply_predictor(
+    doc: Option<&lopdf::Document>,
     data: Vec<u8>,
     params: Option<&Dictionary>,
     limit: u64,
@@ -138,9 +196,14 @@ fn apply_predictor(
         return Ok(data);
     };
     let parameter = |key: &[u8], default| -> Result<u64> {
-        match params.get(key) {
-            Err(_) | Ok(Object::Null) => Ok(default),
-            Ok(value) => value
+        let value = params
+            .get(key)
+            .ok()
+            .map(|value| resolve_stream_value(doc, value, what))
+            .transpose()?;
+        match value {
+            None | Some(Object::Null) => Ok(default),
+            Some(value) => value
                 .as_i64()
                 .ok()
                 .and_then(|value| u64::try_from(value).ok())
@@ -369,19 +432,27 @@ pub fn page_content_limited(
     limit: u64,
     what: &str,
 ) -> Result<Vec<u8>> {
+    let page = doc
+        .get_dictionary(page_id)
+        .map_err(|error| anyhow::anyhow!("{what} page dictionary cannot be read: {error}"))?;
+    let Some(contents) = page.get(b"Contents").ok() else {
+        return Ok(Vec::new());
+    };
+    let contents = resolve_stream_value(Some(doc), contents, what)?;
+    let streams = match contents {
+        Object::Null => return Ok(Vec::new()),
+        Object::Array(values) => values.as_slice(),
+        other => std::slice::from_ref(other),
+    };
     let mut content = Vec::new();
-    for object_id in doc.get_page_contents(page_id) {
-        let Ok(stream) = doc.get_object(object_id).and_then(Object::as_stream) else {
-            continue;
-        };
+    for (index, object) in streams.iter().enumerate() {
+        let object = resolve_stream_value(Some(doc), object, what)?;
+        let stream = object
+            .as_stream()
+            .map_err(|_| anyhow::anyhow!("{what} Contents entry {index} is not a stream"))?;
         let remaining = limit.saturating_sub(content.len() as u64);
-        if remaining == 0 {
-            anyhow::bail!(
-                "{what} reaches the {} MiB safety limit",
-                limit / (1024 * 1024)
-            );
-        }
-        content.extend_from_slice(&plain_content_limited(stream, remaining, what)?);
+        let decoded = plain_content_limited_in(doc, stream, remaining, what)?;
+        content.extend_from_slice(&decoded);
     }
     Ok(content)
 }

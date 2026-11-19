@@ -689,7 +689,8 @@ impl ContentInterpreter<'_> {
         if self.depth >= 32 {
             anyhow::bail!("PDF Form nesting exceeds 32 levels");
         }
-        let bytes = super::pdf_stream::plain_content_limited(
+        let bytes = super::pdf_stream::plain_content_limited_in(
+            self.doc,
             stream,
             self.remaining_bytes,
             "PDF Form content",
@@ -1200,8 +1201,12 @@ fn font_metrics(
                 .as_stream()
                 .map_err(|error| anyhow::anyhow!("PDF /ToUnicode CMap is not a stream: {error}"))?;
             let limit = budget.limit;
-            let content =
-                super::pdf_stream::plain_content_limited(stream, limit, "PDF /ToUnicode CMap")?;
+            let content = super::pdf_stream::plain_content_limited_in(
+                doc,
+                stream,
+                limit,
+                "PDF /ToUnicode CMap",
+            )?;
             metrics.to_unicode =
                 parse_to_unicode_with_budget(&content, &mut budget.font_mapping_bytes)?;
         }
