@@ -2,6 +2,16 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.126.28] - 2026-11-19
+
+### Explicit PDF simple-font encodings
+
+- Use declared Standard, WinAnsi, MacRoman and MacExpert tables when no usable ToUnicode mapping is present.
+- Resolve indirect Encoding and Differences settings, including Adobe glyph names, Unicode names and composed glyph sequences.
+- Budget base tables and repeated overrides, rejecting unsupported glyphs and out-of-range codes before indexing.
+- Preserve existing ToUnicode precedence and position metadata through normal parsing and chunking.
+- Advance empty mapped glyphs and reject raw-byte fallback when text drawing has no usable Unicode output.
+
 ## [0.126.27] - 2026-11-19
 
 ### PDF TIFF predictor bit depths

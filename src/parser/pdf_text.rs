@@ -941,13 +941,15 @@ fn show_text(
         return Ok(());
     }
     let text = font.decode(&codes, &mut *budget.output_bytes)?;
-    if text.is_empty() {
-        return Ok(());
-    }
     let advance: f64 = codes
         .iter()
         .map(|code| font.advance(*code, size, &state.text))
         .sum();
+    if text.is_empty() {
+        anyhow::ensure!(advance.is_finite(), "PDF font advance is not finite");
+        state.tm = Matrix::translate(advance, 0.0).mul(state.tm);
+        return Ok(());
+    }
 
     // The text rendering matrix is `Tfs × Tm × CTM`; every coordinate below is
     // already in text space (multiples of the font size), so applying
@@ -1009,6 +1011,7 @@ struct FontMetrics {
     default_width: f64,
     two_byte: bool,
     to_unicode: HashMap<u16, String>,
+    explicit_simple_encoding: bool,
     ascent: f64,
     descent: f64,
 }
@@ -1043,6 +1046,10 @@ impl FontMetrics {
             for code in codes {
                 if let Some(mapped) = self.to_unicode.get(code) {
                     append_pdf_text(&mut text, mapped, remaining)?;
+                } else if self.explicit_simple_encoding {
+                    anyhow::bail!(
+                        "PDF font Encoding has no Unicode mapping for character code {code}"
+                    );
                 } else if self.to_unicode.is_empty() {
                     let mut buffer = [0; 4];
                     append_pdf_text(
@@ -1190,6 +1197,7 @@ fn font_metrics(
         default_width: 500.0,
         two_byte,
         to_unicode: HashMap::new(),
+        explicit_simple_encoding: false,
         ascent: 0.75,
         descent: -0.25,
     };
@@ -1212,6 +1220,10 @@ fn font_metrics(
         }
     }
 
+    if !two_byte && metrics.to_unicode.is_empty() {
+        metrics.explicit_simple_encoding =
+            parse_simple_font_encoding(doc, font, &mut metrics.to_unicode, budget)?;
+    }
     if two_byte {
         let descendants = optional_font_value(doc, font, b"DescendantFonts")?
             .ok_or_else(|| anyhow::anyhow!("PDF Type0 font has no DescendantFonts"))?
@@ -1268,6 +1280,181 @@ fn font_metrics(
         )
     })?;
     Ok(metrics)
+}
+
+fn base_font_encoding(name: &[u8]) -> crate::Result<[Option<u16>; 256]> {
+    anyhow::ensure!(
+        matches!(
+            name,
+            b"StandardEncoding" | b"WinAnsiEncoding" | b"MacRomanEncoding" | b"MacExpertEncoding"
+        ),
+        "PDF font Encoding {} is unsupported without a usable ToUnicode map",
+        String::from_utf8_lossy(name)
+    );
+    let mut font = Dictionary::new();
+    font.set("Type", "Font");
+    font.set("Encoding", Object::Name(name.to_vec()));
+    let document = Document::new();
+    let lopdf::Encoding::OneByteEncoding(table) = font.get_font_encoding(&document)? else {
+        anyhow::bail!("PDF font Encoding did not resolve to a single-byte table");
+    };
+    Ok(std::array::from_fn(|index| {
+        table[index].map(|glyph| glyph.utf16_code_unit())
+    }))
+}
+
+fn adobe_glyph_character(name: &str) -> crate::Result<Option<char>> {
+    let mut encoding = Dictionary::new();
+    encoding.set(
+        "Differences",
+        vec![Object::Integer(0), Object::Name(name.as_bytes().to_vec())],
+    );
+    let mut font = Dictionary::new();
+    font.set("Type", "Font");
+    font.set("Encoding", encoding);
+    let document = Document::new();
+    match font.get_font_encoding(&document)? {
+        lopdf::Encoding::Differences(differences) => Ok(differences
+            .map
+            .get(&0)
+            .and_then(|glyph| char::from_u32(u32::from(glyph.utf16_code_unit())))),
+        _ => Ok(None),
+    }
+}
+
+fn glyph_name_unicode(name: &[u8]) -> crate::Result<String> {
+    if name == b".notdef" {
+        return Ok(String::new());
+    }
+    let name = std::str::from_utf8(name)
+        .map_err(|_| anyhow::anyhow!("PDF font Differences glyph name is not ASCII"))?;
+    let name = name.split('.').next().unwrap_or_default();
+    let mut text = String::new();
+    for component in name.split('_') {
+        anyhow::ensure!(
+            !component.is_empty(),
+            "PDF font Differences contains an empty glyph component"
+        );
+        if let Some(hex) = component
+            .strip_prefix("uni")
+            .filter(|hex| !hex.is_empty() && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        {
+            anyhow::ensure!(
+                hex.len().is_multiple_of(4),
+                "PDF font Differences glyph {component} has invalid Unicode groups"
+            );
+            let units = hex.as_bytes().chunks_exact(4).map(|group| {
+                u16::from_str_radix(std::str::from_utf8(group).expect("hexadecimal ASCII"), 16)
+                    .expect("four hexadecimal digits")
+            });
+            for character in char::decode_utf16(units) {
+                text.push(character.map_err(|_| {
+                    anyhow::anyhow!("PDF font Differences glyph {component} has invalid Unicode")
+                })?);
+            }
+        } else if let Some(hex) = component.strip_prefix('u').filter(|hex| {
+            (4..=6).contains(&hex.len()) && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
+        }) {
+            let value = u32::from_str_radix(hex, 16)
+                .ok()
+                .and_then(char::from_u32)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("PDF font Differences glyph {component} has invalid Unicode")
+                })?;
+            text.push(value);
+        } else if let Some(character) = adobe_glyph_character(component)? {
+            text.push(character);
+        } else {
+            anyhow::bail!(
+                "PDF font Differences glyph {component} is unsupported; export the PDF with a ToUnicode map"
+            );
+        }
+    }
+    Ok(text)
+}
+
+fn parse_simple_font_encoding(
+    doc: &Document,
+    font: &Dictionary,
+    map: &mut HashMap<u16, String>,
+    budget: &mut PdfTextBudget<'_>,
+) -> crate::Result<bool> {
+    let Some(value) = optional_font_value(doc, font, b"Encoding")? else {
+        return Ok(false);
+    };
+    let (base, differences) = match value {
+        Object::Name(name) => (base_font_encoding(name)?, None),
+        Object::Dictionary(encoding) => {
+            if let Some(value) = optional_font_value(doc, encoding, b"Type")? {
+                anyhow::ensure!(
+                    value.as_name().ok() == Some(b"Encoding"),
+                    "PDF font Encoding dictionary has an invalid Type"
+                );
+            }
+            let name = optional_font_value(doc, encoding, b"BaseEncoding")?
+                .map(|value| {
+                    value
+                        .as_name()
+                        .map_err(|_| anyhow::anyhow!("PDF font BaseEncoding must be a name"))
+                })
+                .transpose()?
+                .unwrap_or(b"StandardEncoding");
+            (
+                base_font_encoding(name)?,
+                optional_font_value(doc, encoding, b"Differences")?,
+            )
+        }
+        _ => anyhow::bail!("PDF font Encoding must be a name or dictionary"),
+    };
+    for (code, glyph) in base.iter().enumerate() {
+        if let Some(glyph) = glyph {
+            let character = char::from_u32(u32::from(*glyph)).ok_or_else(|| {
+                anyhow::anyhow!("PDF font base Encoding contains invalid Unicode")
+            })?;
+            insert_cmap_mapping(
+                map,
+                code as u16,
+                character.to_string(),
+                &mut budget.font_mapping_bytes,
+            )?;
+        }
+    }
+    if let Some(value) = differences {
+        let values = value
+            .as_array()
+            .map_err(|_| anyhow::anyhow!("PDF font Differences must be an array"))?;
+        let mut code = None;
+        for value in values {
+            let value = deref(doc, value).ok_or_else(|| {
+                anyhow::anyhow!("PDF font Differences reference cannot be resolved")
+            })?;
+            match value {
+                Object::Integer(value) => {
+                    anyhow::ensure!(
+                        (0..=255).contains(value),
+                        "PDF font Differences code must be from 0 through 255"
+                    );
+                    code = Some(*value as u16);
+                }
+                Object::Name(name) => {
+                    let current = code.filter(|code| *code <= 255).ok_or_else(|| {
+                        anyhow::anyhow!("PDF font Differences glyph has no valid character code")
+                    })?;
+                    insert_cmap_mapping(
+                        map,
+                        current,
+                        glyph_name_unicode(name)?,
+                        &mut budget.font_mapping_bytes,
+                    )?;
+                    code = Some(current + 1);
+                }
+                _ => anyhow::bail!(
+                    "PDF font Differences entries must be integer codes or glyph names"
+                ),
+            }
+        }
+    }
+    Ok(true)
 }
 
 fn optional_font_value<'a>(
@@ -1496,7 +1683,7 @@ fn insert_cmap_mapping(
     let cost = (text.capacity() as u64).saturating_add(64);
     *remaining = remaining.checked_sub(cost).ok_or_else(|| {
         anyhow::anyhow!(
-            "PDF /ToUnicode CMap expansion exceeds the RAYRAG_PDF_STREAM_LIMIT_BYTES budget"
+            "PDF font Unicode mapping expansion exceeds the RAYRAG_PDF_STREAM_LIMIT_BYTES page budget"
         )
     })?;
     map.insert(code, text);

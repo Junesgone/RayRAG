@@ -120,11 +120,15 @@ impl PdfParser {
             )?;
             let content = lopdf::content::Content::decode(&bytes)
                 .map_err(|error| anyhow::anyhow!("PDF page {number}: {error}"))?;
-            if content_to_text(&content).trim().is_empty()
-                && content
-                    .operations
-                    .iter()
-                    .any(|operation| matches!(operation.operator.as_str(), "Do" | "BI" | "ID"))
+            if !content_to_text(&content).trim().is_empty() {
+                anyhow::bail!(
+                    "PDF page {number} draws text with no usable Unicode output. Repair or export the PDF with embedded fonts and a ToUnicode map, upload it again, or select a configured OCR document parser (layout_recognize)."
+                );
+            }
+            if content
+                .operations
+                .iter()
+                .any(|operation| matches!(operation.operator.as_str(), "Do" | "BI" | "ID"))
             {
                 anyhow::bail!(
                     "No text extracted from PDF page {number} containing image or Form content. The built-in parser cannot render this page for OCR. Select an OCR document layout backend in the dataset parser settings (layout_recognize), configure its API URL, credentials and model, then reparse the whole document. A generic image OCR client does not provide PDF rendering. PDF 第 {number} 页含图像或 Form 内容但未提取到文字，请选择支持 PDF 的 OCR 文档解析后端并配置服务地址、凭据和模型后重新解析全文。"
