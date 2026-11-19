@@ -202,19 +202,23 @@ const RERANKER_GUIDANCE: &str = "Check the reranker API base URL, credentials, m
 
 /// Remote HTTP reranker (mxbai-rerank / Cohere API compatible).
 ///
-/// Sends POST to `{base_url}/v1/rerank` with:
-/// ```json
-/// {"query": "...", "documents": [...], "top_k": N, "model": "bge-reranker-v2-m3"}
-/// ```
-///
-/// `model` is sent only when `RERANK_MODEL` (or the provider's rerank model) names
-/// one: a single-model endpoint rejects an unknown name, and omitting the field keeps
-/// those deployments working.
-///
-/// Expects response:
-/// ```json
-/// {"results": [{"index": 0, "relevance_score": 0.99}, ...]}
-/// ```
+/// Provider protocol shaping the request and response. RAGFlow proxies every
+/// provider through `similarity()`: it asks for `top_n = len(documents)`,
+/// normalizes out-of-range scores, sorts and only then applies top-k.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RerankProtocol {
+    /// OpenAI-compatible rerank (TEI, vLLM, Xinference, Cohere, Jina, MWS, ...):
+    /// POST with `query`/`documents`/`top_n` and a `results` array.
+    OpenAi,
+    /// NVIDIA retrieval reranking: `query: {text}`, `passages: [{text}]`,
+    /// response `rankings: [{index, logit}]`.
+    Nvidia,
+}
+
+/// Sends POST to the provider endpoint, asking it to score **every** document
+/// with `top_n = documents.len()`; the caller sorts and truncates to top-k.
+/// Out-of-range scores (NVIDIA logits, raw cosine similarities) are min-max
+/// normalized exactly like RAGFlow's `Base._normalize_rank`.
 pub struct RemoteReranker {
     /// Reranker API base URL (e.g., http://127.0.0.1:8899)
     base_url: String,
@@ -260,12 +264,65 @@ impl RemoteReranker {
         self
     }
 
+    fn protocol(&self) -> RerankProtocol {
+        let base = self.base_url.to_ascii_lowercase();
+        let model = self
+            .model
+            .as_deref()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if base.contains("ai.api.nvidia.com")
+            || base.contains("/retrieval/nvidia")
+            || model.starts_with("nvidia/")
+            || model.starts_with("nv-")
+        {
+            RerankProtocol::Nvidia
+        } else {
+            RerankProtocol::OpenAi
+        }
+    }
+
     fn endpoint(&self) -> String {
+        if self.protocol() == RerankProtocol::Nvidia {
+            return self.nvidia_endpoint();
+        }
+        if self.base_url.ends_with("/rerank") {
+            return self.base_url.clone();
+        }
         if self.base_url.ends_with("/v1") {
             format!("{}/rerank", self.base_url)
         } else {
             format!("{}/v1/rerank", self.base_url)
         }
+    }
+
+    /// Mirrors RAGFlow `NvidiaRerank.__init__`: a full `/reranking` endpoint is
+    /// kept, otherwise the model-specific path is appended to the base URL.
+    fn nvidia_endpoint(&self) -> String {
+        if self.base_url.ends_with("/reranking") || self.base_url.ends_with("/rerank") {
+            return self.base_url.clone();
+        }
+        let base = if self.base_url.is_empty() {
+            "https://ai.api.nvidia.com/v1/retrieval/nvidia/".to_string()
+        } else {
+            format!("{}/", self.base_url.trim_end_matches('/'))
+        };
+        match self.model.as_deref() {
+            Some("nvidia/nv-rerankqa-mistral-4b-v3") => {
+                format!("{base}nv-rerankqa-mistral-4b-v3/reranking")
+            }
+            _ => format!("{base}reranking"),
+        }
+    }
+
+    fn nvidia_model(&self) -> Option<String> {
+        self.model.as_deref().map(|model| {
+            if model == "nvidia/rerank-qa-mistral-4b" {
+                "nv-rerank-qa-mistral-4b:1".to_string()
+            } else {
+                model.to_string()
+            }
+        })
     }
 }
 
@@ -277,14 +334,32 @@ impl Reranker for RemoteReranker {
         documents: &[String],
         top_k: usize,
     ) -> Result<Vec<(usize, f32)>> {
+        if documents.is_empty() || top_k == 0 {
+            return Ok(Vec::new());
+        }
+        let protocol = self.protocol();
         let url = self.endpoint();
-
-        let mut body = serde_json::json!({
-            "query": query,
-            "documents": documents,
-            "top_k": top_k,
-        });
-        if let Some(model) = &self.model {
+        let mut body = match protocol {
+            RerankProtocol::OpenAi => serde_json::json!({
+                "query": query,
+                "documents": documents,
+                // RAGFlow asks every provider for scores covering all input
+                // documents, then sorts and takes top-k locally.
+                "top_n": documents.len(),
+            }),
+            RerankProtocol::Nvidia => serde_json::json!({
+                "model": self.nvidia_model().unwrap_or_default(),
+                "query": {"text": query},
+                "passages": documents
+                    .iter()
+                    .map(|text| serde_json::json!({"text": text}))
+                    .collect::<Vec<_>>(),
+                "top_n": documents.len(),
+            }),
+        };
+        if protocol == RerankProtocol::OpenAi
+            && let Some(model) = &self.model
+        {
             body["model"] = serde_json::Value::String(model.clone());
         }
 
@@ -321,34 +396,96 @@ impl Reranker for RemoteReranker {
             anyhow::bail!("Reranker API error ({status}): {err_msg}. {RERANKER_GUIDANCE}");
         }
 
-        let results = json["results"]
-            .as_array()
-            .ok_or_else(|| anyhow::anyhow!("Invalid reranker response: missing 'results' array"))?;
+        let mut ranked = match protocol {
+            RerankProtocol::OpenAi => parse_rerank_results(&json, documents.len())?,
+            RerankProtocol::Nvidia => parse_nvidia_rankings(&json, documents.len())?,
+        };
+        normalize_rerank_scores(&mut ranked);
+        ranked.sort_by(|left, right| {
+            right
+                .1
+                .partial_cmp(&left.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        ranked.truncate(top_k.min(documents.len()));
+        Ok(ranked)
+    }
+}
 
-        let mut ranked: Vec<(usize, f32)> = Vec::with_capacity(results.len());
-        let mut seen = HashSet::new();
-        for r in results {
-            let index = r["index"]
-                .as_u64()
-                .ok_or_else(|| anyhow::anyhow!("Invalid reranker response: missing index"))?
-                as usize;
-            let score = r["relevance_score"].as_f64().ok_or_else(|| {
-                anyhow::anyhow!("Invalid reranker response: missing relevance_score")
-            })? as f32;
-            if index >= documents.len() || !score.is_finite() || !seen.insert(index) {
-                anyhow::bail!("Invalid reranker response entry: index={index}, score={score}");
-            }
-            ranked.push((index, score));
-        }
-        if ranked.len() != documents.len().min(top_k) {
+fn parse_rerank_results(json: &serde_json::Value, expected: usize) -> Result<Vec<(usize, f32)>> {
+    let results = json["results"].as_array().ok_or_else(|| {
+        anyhow::anyhow!("Invalid reranker response: missing 'results' array. {RERANKER_GUIDANCE}")
+    })?;
+    parse_ranked_entries(results, expected, "relevance_score", "results")
+}
+
+fn parse_nvidia_rankings(json: &serde_json::Value, expected: usize) -> Result<Vec<(usize, f32)>> {
+    let rankings = json["rankings"].as_array().ok_or_else(|| {
+        anyhow::anyhow!(
+            "Invalid NVIDIA reranker response: missing 'rankings' array. {RERANKER_GUIDANCE}"
+        )
+    })?;
+    parse_ranked_entries(rankings, expected, "logit", "rankings")
+}
+
+fn parse_ranked_entries(
+    entries: &[serde_json::Value],
+    expected: usize,
+    score_field: &str,
+    label: &str,
+) -> Result<Vec<(usize, f32)>> {
+    if entries.len() != expected {
+        anyhow::bail!(
+            "Invalid reranker response: expected {expected} scores in '{label}', got {}. Ask the endpoint to score every submitted document (top_n), or check the model/provider configuration. {RERANKER_GUIDANCE}",
+            entries.len()
+        );
+    }
+    let mut ranked = Vec::with_capacity(entries.len());
+    let mut seen = HashSet::new();
+    for entry in entries {
+        let index = entry["index"].as_u64().ok_or_else(|| {
+            anyhow::anyhow!("Invalid reranker response: missing index in '{label}'")
+        })? as usize;
+        let score = entry[score_field].as_f64().ok_or_else(|| {
+            anyhow::anyhow!("Invalid reranker response: missing {score_field} in '{label}'")
+        })? as f32;
+        if index >= expected || !score.is_finite() || !seen.insert(index) {
             anyhow::bail!(
-                "Invalid reranker response: expected {} results, got {}",
-                documents.len().min(top_k),
-                ranked.len()
+                "Invalid reranker response entry in '{label}': index={index}, score={score}. {RERANKER_GUIDANCE}"
             );
         }
+        ranked.push((index, score));
+    }
+    Ok(ranked)
+}
 
-        Ok(ranked)
+/// RAGFlow \`Base._normalize_rank\`: calibrated [0,1] scores are preserved, while
+/// out-of-range provider output (NVIDIA logits, raw cosine similarities) is
+/// min-max mapped. A spreadless batch is clamped instead of being zeroed.
+fn normalize_rerank_scores(ranked: &mut [(usize, f32)]) {
+    if ranked.is_empty() {
+        return;
+    }
+    let min = ranked
+        .iter()
+        .map(|entry| entry.1)
+        .fold(f32::INFINITY, f32::min);
+    let max = ranked
+        .iter()
+        .map(|entry| entry.1)
+        .fold(f32::NEG_INFINITY, f32::max);
+    if min >= 0.0 && max <= 1.0 {
+        return;
+    }
+    let span = max - min;
+    if span < 1e-3 {
+        for entry in ranked.iter_mut() {
+            entry.1 = entry.1.clamp(0.0, 1.0);
+        }
+    } else {
+        for entry in ranked.iter_mut() {
+            entry.1 = (entry.1 - min) / span;
+        }
     }
 }
 

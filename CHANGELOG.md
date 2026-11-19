@@ -2,6 +2,21 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.4] - 2026-11-20
+
+### Reranker provider protocol parity
+
+- Ask OpenAI-compatible rerank endpoints to score every submitted document with
+  `top_n = documents.len()` like RAGFlow's `Base.similarity`, then sort and truncate
+  top-k locally; accept a full `/rerank` endpoint without appending another path.
+- Normalize out-of-range provider scores with RAGFlow's rule: preserve calibrated
+  [0,1] scores, min-max map wider batches, and clamp spreadless batches. NVIDIA logits
+  therefore no longer corrupt hybrid weighting.
+- Add NVIDIA's native retrieval-rerank protocol: model-specific `/reranking` paths,
+  `query.text`/`passages` request shape, `rankings`+`logit` response, and the
+  `nvidia/rerank-qa-mistral-4b` model-name remap.
+- Missing, short, duplicate or non-finite scores fail with provider/model guidance.
+
 ## [0.127.3] - 2026-11-20
 
 ### Legacy XLS workbooks and magic-byte detection
