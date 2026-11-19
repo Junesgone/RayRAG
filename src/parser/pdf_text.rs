@@ -251,11 +251,24 @@ pub fn try_extract_positioned_lines(doc: &Document) -> crate::Result<Vec<Positio
                 "PDF page {number} has no valid CropBox or MediaBox geometry. Repair or export the PDF with a valid page box and upload it again. PDF 页面缺少有效的 CropBox/MediaBox，请修复页面尺寸后重新导出并上传。"
             )
         })?;
+        let rotation = match inherited(doc, page_id, b"Rotate") {
+            Some(value) => value.as_i64().ok(),
+            None => Some(0),
+        };
+        let geometry = rotation.and_then(|rotation| geometry.rotated(rotation)).ok_or_else(|| {
+            anyhow::anyhow!(
+                "PDF page {number} has an invalid Rotate value. Use a multiple of 90 degrees, repair or export the PDF, and upload it again. PDF 页面旋转角度无效，请修复为 90 度的整数倍后重新导出上传。"
+            )
+        })?;
         let mut runs = Vec::new();
-        let mut state = State::default();
+        let mut state = State {
+            ctm: geometry.page_transform,
+            ..State::default()
+        };
         let resources = inherited(doc, page_id, b"Resources").and_then(|value| as_dict(doc, value));
         let mut interpreter = ContentInterpreter {
             doc,
+            page_resources: resources,
             forms: Vec::new(),
             depth: 0,
             remaining_bytes: super::pdf_stream::stream_limit_bytes(),
@@ -308,7 +321,7 @@ impl Matrix {
         }
     }
 
-    /// `self × other`: the transform `other` is applied first, then `self`.
+    /// Row-vector composition: apply `self` first, then `other`.
     fn mul(self, other: Matrix) -> Matrix {
         Matrix {
             a: self.a * other.a + self.b * other.c,
@@ -334,6 +347,8 @@ impl Matrix {
 struct PageGeometry {
     origin_x: f64,
     top_edge: f64,
+    width: f64,
+    page_transform: Matrix,
     /// Page height in points, for the cumulative heights `_line_tag` needs.
     height: f64,
 }
@@ -364,10 +379,33 @@ impl PageGeometry {
             Some(PageGeometry {
                 origin_x: left,
                 top_edge: top,
+                width: right - left,
+                page_transform: Matrix::IDENTITY,
                 height: top - bottom,
             })
         };
         from_box(b"CropBox").or_else(|| from_box(b"MediaBox"))
+    }
+
+    fn rotated(mut self, rotation: i64) -> Option<Self> {
+        let left = self.origin_x;
+        let right = left + self.width;
+        let top = self.top_edge;
+        let bottom = top - self.height;
+        let rotation = rotation.rem_euclid(360);
+        self.page_transform = match rotation {
+            0 => return Some(self),
+            90 => Matrix::new(0.0, -1.0, 1.0, 0.0, -bottom, right),
+            180 => Matrix::new(-1.0, 0.0, 0.0, -1.0, right, top),
+            270 => Matrix::new(0.0, 1.0, -1.0, 0.0, top, -left),
+            _ => return None,
+        };
+        if rotation != 180 {
+            std::mem::swap(&mut self.width, &mut self.height);
+        }
+        self.origin_x = 0.0;
+        self.top_edge = self.height;
+        Some(self)
     }
 
     fn project_x(&self, x: f64) -> f64 {
@@ -545,6 +583,7 @@ fn operand_matrix(operands: &[Object]) -> Option<Matrix> {
 
 struct ContentInterpreter<'a> {
     doc: &'a Document,
+    page_resources: Option<&'a Dictionary>,
     forms: Vec<lopdf::ObjectId>,
     depth: usize,
     remaining_bytes: u64,
@@ -620,7 +659,7 @@ impl ContentInterpreter<'_> {
                 as_dict(self.doc, value)
                     .ok_or_else(|| anyhow::anyhow!("PDF Form Resources is not a dictionary"))?,
             ),
-            Err(_) => resources,
+            Err(_) => self.page_resources,
         };
         let mut form_state = state.clone();
         if let Ok(value) = stream.dict.get(b"Matrix") {
@@ -963,7 +1002,10 @@ fn inherited<'a>(doc: &'a Document, page_id: lopdf::ObjectId, key: &[u8]) -> Opt
     for _ in 0..32 {
         let page = doc.get_dictionary(current).ok()?;
         if let Ok(value) = page.get(key) {
-            return deref(doc, value);
+            let value = deref(doc, value)?;
+            if !matches!(value, Object::Null) {
+                return Some(value);
+            }
         }
         let parent = page.get(b"Parent").ok().and_then(|value| match value {
             Object::Reference(id) => Some(*id),

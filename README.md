@@ -12,7 +12,7 @@
 - SoMark requires `SOMARK_BASE_URL` and `SOMARK_API_KEY` when authentication is required. Mistral OCR uses `MISTRAL_OCR_API_KEY`, `MISTRAL_OCR_BASE_URL` and `MISTRAL_OCR_MODEL`. Verify the parsing service and model permissions, then reparse.
 - MinerU uses `MINERU_APISERVER`, `MINERU_API_KEY` when authentication is required, and `MINERU_BACKEND`. Supported current backends are `pipeline`, `vlm-engine`, `hybrid-engine`, `vlm-http-client` and `hybrid-http-client`. Both HTTP model backends require `MINERU_SERVER_URL`. Legacy backend names remain accepted.
 - External PDF parsing failures include the provider name and configuration checks. Ensure RayRAG can reach the provider endpoint and its models are loaded, then retry parsing after correcting the settings.
-- Local/LAN vision endpoints have no total request timeout; public endpoints use `RAYRAG_MODEL_TIMEOUT`. Connection timeouts and response-size limits still apply.
+- Local/LAN vision endpoints have no connection or total request timeout; public endpoints use a 10-second connection timeout and `RAYRAG_MODEL_TIMEOUT`. Response-size limits still apply.
 - The built-in PDF parser reads text layers only. For scanned PDFs select an OCR layout backend in the dataset parser settings and configure its endpoint/credentials. A generic image OCR client does not add PDF page rendering.
 - In mixed PDFs, a page with drawn image or Form content and no extracted text reports its page number and OCR layout setup steps. Configure a PDF-capable OCR backend and reparse the whole document.
 - Nested PDF Form text is extracted with its local fonts and coordinates. Broken or cyclic Form references report the page and resource name with repair or OCR setup steps. Full page rendering and text inside scanned images still require a PDF-capable OCR backend.
@@ -243,9 +243,9 @@ catalogue is unreachable (you then simply see the last copy it had).
 > `http://192.168.1.10:11434`).
 
 Local OpenAI-compatible endpoints (loopback, private/LAN IPs, single-label hostnames,
-`.local`/`.lan`/`.home`/`.internal`) are called **without a total request timeout**, so a
-slow local GPU model can finish; public providers keep the `RAYRAG_MODEL_TIMEOUT` budget
-(default 300 s). Set it lower only if your remote gateway should give up sooner.
+`.local`/`.lan`/`.home`/`.internal`) are called **without connection or total request timeouts**, so a
+slow local GPU model can finish; public providers use a 10-second connection timeout and keep
+the `RAYRAG_MODEL_TIMEOUT` budget (default 300 s). Set it lower only if your remote gateway should give up sooner.
 
 ### 3.5 Through environment variables (good for fleets)
 

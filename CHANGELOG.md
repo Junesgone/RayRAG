@@ -2,6 +2,19 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.126.20] - 2026-11-19
+
+### PDF rotation and workspace persistence
+
+- Apply inherited PDF page rotation before text positioning and line grouping, with correct displayed page heights and position tags.
+- Treat null inherited PDF attributes as absent and resolve nested Forms without resource dictionaries against page resources.
+- Report invalid PDF rotation values with page-specific repair guidance.
+- Preserve chat applications across restart by accepting both list and legacy map snapshots.
+- Persist chat applications atomically through the PostgreSQL snapshot mirror and publish mutations only after saving succeeds.
+- Dismiss the new-folder dialog with Escape and return keyboard focus to Add file.
+- Keep dismissal scoped to the open new-folder dialog and respect handled keyboard events.
+- Update English and Chinese model timeout documentation to reflect local connection policy.
+
 ## [0.126.19] - 2026-11-19
 
 ### Reranker response bounds and diagnostics

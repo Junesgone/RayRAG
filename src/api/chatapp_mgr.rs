@@ -12,7 +12,7 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Mutex, RwLock};
+use std::sync::RwLock;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatApp {
@@ -50,10 +50,22 @@ pub struct ChatApp {
     pub created_at: u64,
 }
 
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum ChatAppSnapshot {
+    List(Vec<ChatApp>),
+    Map(HashMap<String, ChatApp>),
+}
+
+impl Default for ChatAppSnapshot {
+    fn default() -> Self {
+        Self::Map(HashMap::new())
+    }
+}
+
 pub struct ChatAppStore {
     apps: RwLock<HashMap<String, ChatApp>>,
     metadata_path: String,
-    save_lock: Mutex<()>,
 }
 
 impl ChatAppStore {
@@ -64,33 +76,33 @@ impl ChatAppStore {
             .to_string_lossy()
             .to_string();
         crate::persistence::restore_if_missing(std::path::Path::new(&metadata_path))?;
-        // Same rule as the data-source store: a corrupt or old-schema file is never read
-        // as an empty deployment. Reading it as empty would delete every chat app on the
-        // next save, silently and with HTTP 200 everywhere; the loader keeps the damaged
-        // file as a timestamped backup, logs the reason and starts empty.
-        let apps: HashMap<String, ChatApp> =
+        // Current writers store an array. Also accept legacy maps keyed by app id.
+        // Only incompatible or malformed snapshots go through the quarantine path.
+        let snapshot: ChatAppSnapshot =
             crate::persistence::load_json_or_quarantine(std::path::Path::new(&metadata_path))?;
+        let apps = match snapshot {
+            ChatAppSnapshot::List(apps) => {
+                apps.into_iter().map(|app| (app.id.clone(), app)).collect()
+            }
+            ChatAppSnapshot::Map(apps) => apps,
+        };
         Ok(Self {
             apps: RwLock::new(apps),
             metadata_path,
-            save_lock: Mutex::new(()),
         })
     }
 
-    fn persist(&self) -> Result<()> {
-        let _guard = self
-            .save_lock
-            .lock()
-            .map_err(|_| anyhow::anyhow!("save lock poisoned"))?;
-        let apps = self
-            .apps
-            .read()
-            .map_err(|_| anyhow::anyhow!("apps lock poisoned"))?;
-        let json = serde_json::to_string_pretty(&apps.values().cloned().collect::<Vec<_>>())?;
-        let tmp = format!("{}.tmp", self.metadata_path);
-        std::fs::write(&tmp, json)?;
-        std::fs::rename(&tmp, &self.metadata_path)?;
-        Ok(())
+    fn persist(&self, apps: &HashMap<String, ChatApp>) -> Result<()> {
+        crate::persistence::save_json(
+            std::path::Path::new(&self.metadata_path),
+            &apps.values().collect::<Vec<_>>(),
+        )
+        .map_err(|error| {
+            tracing::error!(path = %self.metadata_path, %error, "Failed to save chat applications");
+            anyhow::anyhow!(
+                "Failed to save chat applications: {error:#}. Check state storage permissions and available disk space, then retry."
+            )
+        })
     }
 
     pub fn list(&self) -> Vec<ChatApp> {
@@ -105,20 +117,22 @@ impl ChatAppStore {
     }
 
     pub fn insert(&self, app: ChatApp) -> Result<()> {
-        self.apps
-            .write()
-            .expect("apps lock")
-            .insert(app.id.clone(), app);
-        self.persist()
+        let mut apps = self.apps.write().expect("apps lock");
+        let mut next = apps.clone();
+        next.insert(app.id.clone(), app);
+        self.persist(&next)?;
+        *apps = next;
+        Ok(())
     }
 
     pub fn rename(&self, id: &str, name: &str) -> Result<Option<ChatApp>> {
         let mut apps = self.apps.write().expect("apps lock");
-        if let Some(app) = apps.get_mut(id) {
+        if let Some(mut app) = apps.get(id).cloned() {
             app.name = name.to_string();
-            let app = app.clone();
-            drop(apps);
-            self.persist()?;
+            let mut next = apps.clone();
+            next.insert(id.to_string(), app.clone());
+            self.persist(&next)?;
+            *apps = next;
             Ok(Some(app))
         } else {
             Ok(None)
@@ -126,10 +140,14 @@ impl ChatAppStore {
     }
 
     pub fn remove(&self, id: &str) -> Result<Option<ChatApp>> {
-        let removed = self.apps.write().expect("apps lock").remove(id);
-        if removed.is_some() {
-            self.persist()?;
+        let mut apps = self.apps.write().expect("apps lock");
+        if !apps.contains_key(id) {
+            return Ok(None);
         }
+        let mut next = apps.clone();
+        let removed = next.remove(id);
+        self.persist(&next)?;
+        *apps = next;
         Ok(removed)
     }
 }
