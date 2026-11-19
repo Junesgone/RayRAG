@@ -188,7 +188,15 @@ impl PdfParser {
                     .map_err(|error| anyhow::anyhow!("PDF page {page_num}: {error}"))
             }) {
                 Ok(content) => {
-                    text.push_str(&content_to_text(&content));
+                    let page_text = content_to_text(&content);
+                    let next_size = (text.len() as u64)
+                        .saturating_add(page_text.len() as u64)
+                        .saturating_add(1);
+                    anyhow::ensure!(
+                        next_size <= super::pdf_stream::stream_limit_bytes(),
+                        "PDF page {page_num} fallback text exceeds the RAYRAG_PDF_STREAM_LIMIT_BYTES document budget. Repair or export the PDF with embedded fonts and upload it again, or select a configured OCR parser."
+                    );
+                    text.push_str(&page_text);
                     text.push('\n');
                 }
                 // A refusal must be visible: silence here would look like an empty page.

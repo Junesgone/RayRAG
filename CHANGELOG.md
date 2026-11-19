@@ -2,6 +2,16 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.126.22] - 2026-11-19
+
+### PDF CMap streaming and expansion bounds
+
+- Parse Unicode mappings independently of line breaks, including comments, arrays and hexadecimal whitespace.
+- Reject mismatched ranges, overflowing source codes and malformed UTF-16 with page-specific repair guidance.
+- Bound reserved mapping capacity, selected page font tables, positioned page text and cumulative document output using RAYRAG_PDF_STREAM_LIMIT_BYTES.
+- Release page operation buffers before assembling retained lines and reject unsupported mixed-width codespaces or external usecmap references explicitly.
+- Synchronize the PDF budget description and minimum validation in first-run setup and the environment template.
+
 ## [0.126.21] - 2026-11-19
 
 ### PDF font integrity

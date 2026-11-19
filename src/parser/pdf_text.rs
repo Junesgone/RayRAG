@@ -224,6 +224,8 @@ pub fn extract_positioned_lines(doc: &Document) -> Vec<PositionedLine> {
 /// Extract every text line, rejecting unreadable page streams before indexing.
 pub fn try_extract_positioned_lines(doc: &Document) -> crate::Result<Vec<PositionedLine>> {
     let mut lines = Vec::new();
+    let resource_limit = super::pdf_stream::stream_limit_bytes();
+    let mut remaining_text_bytes = resource_limit;
     let mut pages: Vec<(u32, lopdf::ObjectId)> = doc
         .get_pages()
         .iter()
@@ -271,14 +273,38 @@ pub fn try_extract_positioned_lines(doc: &Document) -> crate::Result<Vec<Positio
             page_resources: resources,
             forms: Vec::new(),
             depth: 0,
-            remaining_bytes: super::pdf_stream::stream_limit_bytes(),
+            remaining_bytes: resource_limit,
             remaining_operations: 1_000_000,
+            text_budget: PdfTextBudget {
+                limit: resource_limit,
+                font_mapping_bytes: resource_limit,
+                run_bytes: resource_limit,
+                output_bytes: &mut remaining_text_bytes,
+            },
         };
         interpreter.walk(&content, resources, &mut state, &mut runs)
             .map_err(|error| anyhow::anyhow!(
                 "PDF page {number} text extraction failed: {error}. Repair or export an unencrypted PDF with embedded fonts and upload it again, or select a configured OCR document parser and reparse. PDF 页面提取失败，请修复并嵌入字体重新导出上传，或配置 OCR 解析客户端后重新解析。"
             ))?;
-        lines.extend(geometry.lines(number as usize, runs));
+        drop(interpreter);
+        drop(state);
+        drop(content);
+        let raw_text_bytes = runs.iter().map(|run| run.text.len() as u64).sum::<u64>();
+        let page_lines = geometry.lines(number as usize, runs);
+        let visible_text_bytes = page_lines
+            .iter()
+            .map(|line| line.text.len() as u64)
+            .sum::<u64>();
+        let metadata_bytes = page_lines
+            .iter()
+            .map(|line| {
+                (line.text.capacity() - line.text.len()) as u64
+                    + 2 * std::mem::size_of::<PositionedLine>() as u64
+            })
+            .sum::<u64>();
+        let cost = metadata_bytes.saturating_add(visible_text_bytes.saturating_sub(raw_text_bytes));
+        remaining_text_bytes = remaining_text_bytes.checked_sub(cost).ok_or_else(|| anyhow::anyhow!("PDF page {number} position metadata exceeds the RAYRAG_PDF_STREAM_LIMIT_BYTES document budget. Split or export a smaller PDF and upload it again."))?;
+        lines.extend(page_lines);
     }
     Ok(lines)
 }
@@ -581,6 +607,13 @@ fn operand_matrix(operands: &[Object]) -> Option<Matrix> {
     ))
 }
 
+struct PdfTextBudget<'a> {
+    limit: u64,
+    font_mapping_bytes: u64,
+    run_bytes: u64,
+    output_bytes: &'a mut u64,
+}
+
 struct ContentInterpreter<'a> {
     doc: &'a Document,
     page_resources: Option<&'a Dictionary>,
@@ -588,6 +621,7 @@ struct ContentInterpreter<'a> {
     depth: usize,
     remaining_bytes: u64,
     remaining_operations: usize,
+    text_budget: PdfTextBudget<'a>,
 }
 
 impl ContentInterpreter<'_> {
@@ -607,7 +641,14 @@ impl ContentInterpreter<'_> {
                 })?;
             if operation.operator != "Do" {
                 apply_operation(
-                    self.doc, resources, &mut fonts, &mut stack, state, runs, operation,
+                    self.doc,
+                    resources,
+                    &mut fonts,
+                    &mut stack,
+                    state,
+                    runs,
+                    operation,
+                    &mut self.text_budget,
                 )?;
                 continue;
             }
@@ -697,6 +738,7 @@ fn apply_operation(
     state: &mut State,
     runs: &mut Vec<Run>,
     operation: &lopdf::content::Operation,
+    budget: &mut PdfTextBudget<'_>,
 ) -> crate::Result<()> {
     let operands = &operation.operands;
     match operation.operator.as_str() {
@@ -751,14 +793,14 @@ fn apply_operation(
                         .and_then(as_number)
                         .filter(|size| size.is_finite())
                         .ok_or_else(|| anyhow::anyhow!("PDF ExtGState Font size is invalid"))?;
-                    state.text.font = Some(std::sync::Arc::new(font_metrics(doc, font).map_err(
-                        |error| {
+                    state.text.font = Some(std::sync::Arc::new(
+                        font_metrics(doc, font, budget).map_err(|error| {
                             anyhow::anyhow!(
                                 "ExtGState {} font: {error}",
                                 String::from_utf8_lossy(name)
                             )
-                        },
-                    )?));
+                        })?,
+                    ));
                     state.text.size = size;
                 }
             }
@@ -770,7 +812,7 @@ fn apply_operation(
                 .ok_or_else(|| {
                     anyhow::anyhow!("PDF Tf operation has no valid font resource name")
                 })?;
-            let font = resource_font(doc, resources, fonts, name)?;
+            let font = resource_font(doc, resources, fonts, name, budget)?;
             let size = operand_number(operands, 1)
                 .filter(|size| size.is_finite())
                 .ok_or_else(|| {
@@ -835,7 +877,7 @@ fn apply_operation(
         }
         "Tj" => {
             if let Some(Object::String(bytes, _)) = operands.first() {
-                show_text(state, runs, bytes)?;
+                show_text(state, runs, bytes, budget)?;
             }
         }
         "'" | "\"" => {
@@ -854,14 +896,14 @@ fn apply_operation(
             state.tlm = Matrix::translate(0.0, -leading).mul(state.tlm);
             state.tm = state.tlm;
             if let Some(Object::String(bytes, _)) = operands.get(text_index) {
-                show_text(state, runs, bytes)?;
+                show_text(state, runs, bytes, budget)?;
             }
         }
         "TJ" => {
             if let Some(Object::Array(items)) = operands.first() {
                 for item in items {
                     match item {
-                        Object::String(bytes, _) => show_text(state, runs, bytes)?,
+                        Object::String(bytes, _) => show_text(state, runs, bytes, budget)?,
                         other => {
                             if let Some(adjustment) = as_number(other) {
                                 let shift = -adjustment / 1000.0
@@ -880,7 +922,12 @@ fn apply_operation(
     Ok(())
 }
 
-fn show_text(state: &mut State, runs: &mut Vec<Run>, bytes: &[u8]) -> crate::Result<()> {
+fn show_text(
+    state: &mut State,
+    runs: &mut Vec<Run>,
+    bytes: &[u8],
+    budget: &mut PdfTextBudget<'_>,
+) -> crate::Result<()> {
     if bytes.is_empty() {
         return Ok(());
     }
@@ -888,11 +935,11 @@ fn show_text(state: &mut State, runs: &mut Vec<Run>, bytes: &[u8]) -> crate::Res
         anyhow::anyhow!("PDF text operation has no selected font (Tf or ExtGState Font)")
     })?;
     let size = state.text.size;
-    let codes = font.codes(bytes);
+    let codes = font.codes(bytes)?;
     if codes.is_empty() {
         return Ok(());
     }
-    let text = font.decode(&codes);
+    let text = font.decode(&codes, &mut *budget.output_bytes)?;
     if text.is_empty() {
         return Ok(());
     }
@@ -927,6 +974,10 @@ fn show_text(state: &mut State, runs: &mut Vec<Run>, bytes: &[u8]) -> crate::Res
     let max_y = corners
         .iter()
         .fold(start_y.max(end_y), |acc, (_, y)| acc.max(*y));
+    let run_cost = text.capacity() as u64 + 2 * std::mem::size_of::<Run>() as u64;
+    budget.run_bytes = budget.run_bytes.checked_sub(run_cost).ok_or_else(|| {
+        anyhow::anyhow!("PDF positioned text exceeds the RAYRAG_PDF_STREAM_LIMIT_BYTES page budget")
+    })?;
     runs.push(Run {
         text,
         x0: min_x,
@@ -958,36 +1009,46 @@ struct FontMetrics {
 impl FontMetrics {
     /// Split a PDF string into character codes: two bytes per code for CID
     /// fonts (`Type0`), one otherwise.
-    fn codes(&self, bytes: &[u8]) -> Vec<u16> {
+    fn codes(&self, bytes: &[u8]) -> crate::Result<Vec<u16>> {
         if self.two_byte {
-            bytes
+            anyhow::ensure!(
+                bytes.len().is_multiple_of(2),
+                "PDF text contains an incomplete two-byte font code"
+            );
+            Ok(bytes
                 .chunks_exact(2)
                 .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
-                .collect()
+                .collect())
         } else {
-            bytes.iter().map(|byte| u16::from(*byte)).collect()
+            Ok(bytes.iter().map(|byte| u16::from(*byte)).collect())
         }
     }
 
-    fn decode(&self, codes: &[u16]) -> String {
-        if !self.to_unicode.is_empty() {
-            return codes
-                .iter()
-                .map(|code| {
-                    self.to_unicode
-                        .get(code)
-                        .cloned()
-                        .unwrap_or_else(|| fallback_char(*code, self.two_byte))
-                })
-                .collect();
+    fn decode(&self, codes: &[u16], remaining: &mut u64) -> crate::Result<String> {
+        let mut text = String::new();
+        if self.to_unicode.is_empty() && self.two_byte {
+            for character in char::decode_utf16(codes.iter().copied()) {
+                let mut buffer = [0; 4];
+                let character = character.unwrap_or('\u{fffd}');
+                append_pdf_text(&mut text, character.encode_utf8(&mut buffer), remaining)?;
+            }
+        } else {
+            for code in codes {
+                if let Some(mapped) = self.to_unicode.get(code) {
+                    append_pdf_text(&mut text, mapped, remaining)?;
+                } else if self.to_unicode.is_empty() {
+                    let mut buffer = [0; 4];
+                    append_pdf_text(
+                        &mut text,
+                        win_ansi_char(*code as u8).encode_utf8(&mut buffer),
+                        remaining,
+                    )?;
+                } else {
+                    append_pdf_text(&mut text, &fallback_char(*code, self.two_byte), remaining)?;
+                }
+            }
         }
-        if self.two_byte {
-            return String::from_utf16_lossy(codes);
-        }
-        codes
-            .iter()
-            .map(|code| win_ansi_char(*code as u8))
-            .collect::<String>()
+        Ok(text)
     }
 
     /// Advance in text space (the units the text matrix moves in).
@@ -1001,6 +1062,16 @@ impl FontMetrics {
         let word_spacing = if code == 32 { state.word_spacing } else { 0.0 };
         (width * size + state.char_spacing + word_spacing) * state.horizontal_scale / 100.0
     }
+}
+
+fn append_pdf_text(text: &mut String, value: &str, remaining: &mut u64) -> crate::Result<()> {
+    *remaining = remaining.checked_sub(value.len() as u64).ok_or_else(|| {
+        anyhow::anyhow!(
+            "PDF extracted text exceeds the RAYRAG_PDF_STREAM_LIMIT_BYTES document budget"
+        )
+    })?;
+    text.push_str(value);
+    Ok(())
 }
 
 fn fallback_char(code: u16, two_byte: bool) -> String {
@@ -1035,6 +1106,7 @@ fn resource_font(
     resources: Option<&Dictionary>,
     fonts: &mut HashMap<Vec<u8>, std::sync::Arc<FontMetrics>>,
     name: &[u8],
+    budget: &mut PdfTextBudget<'_>,
 ) -> crate::Result<std::sync::Arc<FontMetrics>> {
     if let Some(font) = fonts.get(name) {
         return Ok(font.clone());
@@ -1050,7 +1122,7 @@ fn resource_font(
             )
         })?;
     let metrics = std::sync::Arc::new(
-        font_metrics(doc, font)
+        font_metrics(doc, font, budget)
             .map_err(|error| anyhow::anyhow!("font {}: {error}", String::from_utf8_lossy(name)))?,
     );
     fonts.insert(name.to_vec(), metrics.clone());
@@ -1096,7 +1168,11 @@ fn deref<'a>(doc: &'a Document, object: &'a Object) -> Option<&'a Object> {
     }
 }
 
-fn font_metrics(doc: &Document, font: &Dictionary) -> crate::Result<FontMetrics> {
+fn font_metrics(
+    doc: &Document,
+    font: &Dictionary,
+    budget: &mut PdfTextBudget<'_>,
+) -> crate::Result<FontMetrics> {
     let subtype = font
         .get(b"Subtype")
         .and_then(Object::as_name_str)
@@ -1117,12 +1193,11 @@ fn font_metrics(doc: &Document, font: &Dictionary) -> crate::Result<FontMetrics>
             let stream = object
                 .as_stream()
                 .map_err(|error| anyhow::anyhow!("PDF /ToUnicode CMap is not a stream: {error}"))?;
-            let content = super::pdf_stream::plain_content_limited(
-                stream,
-                super::pdf_stream::stream_limit_bytes(),
-                "PDF /ToUnicode CMap",
-            )?;
-            metrics.to_unicode = parse_to_unicode(&content);
+            let limit = budget.limit;
+            let content =
+                super::pdf_stream::plain_content_limited(stream, limit, "PDF /ToUnicode CMap")?;
+            metrics.to_unicode =
+                parse_to_unicode_with_budget(&content, &mut budget.font_mapping_bytes)?;
         }
     }
 
@@ -1166,6 +1241,14 @@ fn font_metrics(doc: &Document, font: &Dictionary) -> crate::Result<FontMetrics>
             apply_descriptor(descriptor, &mut metrics);
         }
     }
+    let cost = (metrics.widths.capacity() as u64)
+        .saturating_mul(64)
+        .saturating_add(256);
+    budget.font_mapping_bytes = budget.font_mapping_bytes.checked_sub(cost).ok_or_else(|| {
+        anyhow::anyhow!(
+            "PDF selected font tables exceed the RAYRAG_PDF_STREAM_LIMIT_BYTES page budget"
+        )
+    })?;
     Ok(metrics)
 }
 
@@ -1221,185 +1304,361 @@ fn parse_cid_widths(widths: &[Object], out: &mut HashMap<u16, f64>) {
     }
 }
 
-/// One token of a `/ToUnicode` CMap program.
+/// Borrowed tokens keep CMap parsing independent of line breaks and token counts.
 #[derive(Debug, PartialEq)]
-enum CMapToken {
-    /// `<0041>`
-    Hex(String),
-    /// `[<0041> <0042>]`
-    Array(Vec<String>),
-    /// `beginbfchar` / `endbfrange` / …
-    Word(String),
+enum CMapToken<'a> {
+    Hex(&'a [u8]),
+    Literal(&'a [u8]),
+    Word(&'a [u8]),
+    ArrayStart,
+    ArrayEnd,
 }
 
-fn cmap_tokens(line: &str) -> Vec<CMapToken> {
-    let bytes = line.as_bytes();
-    let mut tokens = Vec::new();
-    let mut index = 0;
-    while index < bytes.len() {
-        match bytes[index] {
-            b'<' => {
-                if let Some(end) = line[index..].find('>') {
-                    tokens.push(CMapToken::Hex(line[index + 1..index + end].to_owned()));
-                    index += end + 1;
-                } else {
-                    break;
+fn cmap_whitespace(byte: u8) -> bool {
+    byte == 0 || byte.is_ascii_whitespace()
+}
+
+struct CMapReader<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> CMapReader<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, offset: 0 }
+    }
+
+    fn next(&mut self) -> crate::Result<Option<CMapToken<'a>>> {
+        while self.offset < self.bytes.len() {
+            let start = self.offset;
+            let byte = self.bytes[self.offset];
+            self.offset += 1;
+            match byte {
+                byte if cmap_whitespace(byte) => continue,
+                b'%' => {
+                    while self.offset < self.bytes.len()
+                        && !matches!(self.bytes[self.offset], b'\n' | b'\r')
+                    {
+                        self.offset += 1;
+                    }
+                }
+                b'(' => {
+                    let mut depth = 1;
+                    while self.offset < self.bytes.len() && depth > 0 {
+                        match self.bytes[self.offset] {
+                            b'\\' => self.offset += 1,
+                            b'(' => depth += 1,
+                            b')' => depth -= 1,
+                            _ => {}
+                        }
+                        self.offset += 1;
+                    }
+                    anyhow::ensure!(
+                        depth == 0,
+                        "PDF /ToUnicode has an unterminated literal string"
+                    );
+                    return Ok(Some(CMapToken::Literal(
+                        &self.bytes[start + 1..self.offset - 1],
+                    )));
+                }
+                b'<' if self.bytes.get(self.offset) == Some(&b'<') => {
+                    self.offset += 1;
+                    return Ok(Some(CMapToken::Word(&self.bytes[start..self.offset])));
+                }
+                b'<' => {
+                    let end = self.bytes[self.offset..]
+                        .iter()
+                        .position(|byte| *byte == b'>')
+                        .map(|length| self.offset + length)
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("PDF /ToUnicode has an unterminated hex string")
+                        })?;
+                    let value = &self.bytes[self.offset..end];
+                    self.offset = end + 1;
+                    return Ok(Some(CMapToken::Hex(value)));
+                }
+                b'[' => return Ok(Some(CMapToken::ArrayStart)),
+                b']' => return Ok(Some(CMapToken::ArrayEnd)),
+                b'>' => {
+                    if self.bytes.get(self.offset) == Some(&b'>') {
+                        self.offset += 1;
+                    }
+                    return Ok(Some(CMapToken::Word(&self.bytes[start..self.offset])));
+                }
+                b')' => anyhow::bail!("PDF /ToUnicode has an unmatched literal string delimiter"),
+                _ => {
+                    while self.offset < self.bytes.len()
+                        && !cmap_whitespace(self.bytes[self.offset])
+                        && !b"<>[]()%/".contains(&self.bytes[self.offset])
+                    {
+                        self.offset += 1;
+                    }
+                    return Ok(Some(CMapToken::Word(&self.bytes[start..self.offset])));
                 }
             }
-            b'[' => {
-                let end = line[index..].find(']').map(|offset| index + offset);
-                let Some(end) = end else { break };
-                let inner: Vec<String> = cmap_tokens(&line[index + 1..end])
-                    .into_iter()
-                    .filter_map(|token| match token {
-                        CMapToken::Hex(value) => Some(value),
-                        _ => None,
-                    })
-                    .collect();
-                tokens.push(CMapToken::Array(inner));
-                index = end + 1;
-            }
-            _ => {
-                let start = index;
-                while index < bytes.len()
-                    && !bytes[index].is_ascii_whitespace()
-                    && bytes[index] != b'<'
-                    && bytes[index] != b'['
-                {
-                    index += 1;
-                }
-                if index > start {
-                    tokens.push(CMapToken::Word(line[start..index].to_owned()));
-                } else {
-                    index += 1;
-                }
-            }
+        }
+        Ok(None)
+    }
+
+    fn string_bytes(&mut self) -> crate::Result<Vec<u8>> {
+        match self.next()? {
+            Some(token) => cmap_string_bytes(token),
+            None => anyhow::bail!("PDF /ToUnicode mapping requires a byte string"),
         }
     }
-    tokens
 }
 
-/// Minimal `/ToUnicode` CMap reader: `beginbfchar` and `beginbfrange`
-/// sections mapping codes to UTF-16BE strings.
-fn parse_to_unicode(content: &[u8]) -> HashMap<u16, String> {
+/// Bound expanded mapping text and per-entry work, including overwritten entries.
+fn insert_cmap_mapping(
+    map: &mut HashMap<u16, String>,
+    code: u16,
+    text: String,
+    remaining: &mut u64,
+) -> crate::Result<()> {
+    let cost = (text.capacity() as u64).saturating_add(64);
+    *remaining = remaining.checked_sub(cost).ok_or_else(|| {
+        anyhow::anyhow!(
+            "PDF /ToUnicode CMap expansion exceeds the RAYRAG_PDF_STREAM_LIMIT_BYTES budget"
+        )
+    })?;
+    map.insert(code, text);
+    Ok(())
+}
+
+
+
+fn parse_to_unicode_with_budget(
+    content: &[u8],
+    remaining: &mut u64,
+) -> crate::Result<HashMap<u16, String>> {
+    let mut reader = CMapReader::new(content);
     let mut map = HashMap::new();
-    let text = String::from_utf8_lossy(content);
-    let mut section = "";
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if trimmed.ends_with("beginbfchar") {
-            section = "bfchar";
-            continue;
-        }
-        if trimmed.ends_with("beginbfrange") {
-            section = "bfrange";
-            continue;
-        }
-        if trimmed == "endbfchar" || trimmed == "endbfrange" || trimmed == "endcmap" {
-            section = "";
-            continue;
-        }
-        let tokens = cmap_tokens(trimmed);
-        match section {
-            "bfchar" => {
-                let hexes: Vec<&String> = tokens
-                    .iter()
-                    .filter_map(|token| match token {
-                        CMapToken::Hex(value) => Some(value),
-                        _ => None,
-                    })
-                    .collect();
-                for pair in hexes.chunks(2) {
-                    if let [code, target] = pair
-                        && let (Some(code), Some(text)) = (to_u16(code), utf16_string(target))
-                    {
-                        map.insert(code, text);
+    let mut section: Option<&[u8]> = None;
+    let mut code_space_width = None;
+    while let Some(token) = reader.next()? {
+        match token {
+            CMapToken::Word(b"begincodespacerange") => {
+                anyhow::ensure!(
+                    section.is_none(),
+                    "PDF /ToUnicode has nested mapping sections"
+                );
+                section = Some(b"codespace");
+            }
+            CMapToken::Word(b"endcodespacerange") => {
+                anyhow::ensure!(
+                    section == Some(b"codespace"),
+                    "PDF /ToUnicode has an unexpected endcodespacerange"
+                );
+                section = None;
+            }
+            CMapToken::Word(b"usecmap") => anyhow::bail!(
+                "PDF /ToUnicode usecmap requires an external CMap unsupported by the native parser"
+            ),
+            CMapToken::Word(b"beginbfchar") => {
+                anyhow::ensure!(
+                    section.is_none(),
+                    "PDF /ToUnicode has nested mapping sections"
+                );
+                section = Some(b"bfchar");
+            }
+            CMapToken::Word(b"beginbfrange") => {
+                anyhow::ensure!(
+                    section.is_none(),
+                    "PDF /ToUnicode has nested mapping sections"
+                );
+                section = Some(b"bfrange");
+            }
+            CMapToken::Word(b"endbfchar") => {
+                anyhow::ensure!(
+                    section == Some(b"bfchar"),
+                    "PDF /ToUnicode has an unexpected endbfchar"
+                );
+                section = None;
+            }
+            CMapToken::Word(b"endbfrange") => {
+                anyhow::ensure!(
+                    section == Some(b"bfrange"),
+                    "PDF /ToUnicode has an unexpected endbfrange"
+                );
+                section = None;
+            }
+            CMapToken::Word(b"endcmap") => break,
+            source @ (CMapToken::Hex(_) | CMapToken::Literal(_))
+                if section == Some(b"codespace") =>
+            {
+                let (start, width) = cmap_source_code(&cmap_string_bytes(source)?)?;
+                let (end, end_width) = cmap_source_code(&reader.string_bytes()?)?;
+                anyhow::ensure!(
+                    width == end_width && end >= start,
+                    "PDF /ToUnicode codespace range is invalid"
+                );
+                anyhow::ensure!(
+                    code_space_width.is_none_or(|previous| previous == width),
+                    "PDF /ToUnicode mixed-width codespaces are unsupported by the native parser"
+                );
+                code_space_width = Some(width);
+            }
+            source @ (CMapToken::Hex(_) | CMapToken::Literal(_)) if section == Some(b"bfchar") => {
+                let (code, _) = cmap_source_code(&cmap_string_bytes(source)?)?;
+                let target = reader.string_bytes()?;
+                insert_cmap_mapping(&mut map, code, cmap_unicode(&target)?, remaining)?;
+            }
+            source @ (CMapToken::Hex(_) | CMapToken::Literal(_)) if section == Some(b"bfrange") => {
+                let (start, start_width) = cmap_source_code(&cmap_string_bytes(source)?)?;
+                let (end, end_width) = cmap_source_code(&reader.string_bytes()?)?;
+                anyhow::ensure!(
+                    start_width == end_width,
+                    "PDF /ToUnicode source range lengths do not match"
+                );
+                anyhow::ensure!(end >= start, "PDF /ToUnicode has a descending source range");
+                match reader.next()? {
+                    Some(target @ (CMapToken::Hex(_) | CMapToken::Literal(_))) => {
+                        let mut target = cmap_string_bytes(target)?;
+                        for code in start..=end {
+                            insert_cmap_mapping(&mut map, code, cmap_unicode(&target)?, remaining)?;
+                            if code != end {
+                                anyhow::ensure!(
+                                    increment_cmap_bytes(&mut target),
+                                    "PDF /ToUnicode destination range overflows"
+                                );
+                            }
+                        }
                     }
+                    Some(CMapToken::ArrayStart) => {
+                        for code in start..=end {
+                            let target = reader.string_bytes()?;
+                            insert_cmap_mapping(&mut map, code, cmap_unicode(&target)?, remaining)?;
+                        }
+                        anyhow::ensure!(
+                            reader.next()? == Some(CMapToken::ArrayEnd),
+                            "PDF /ToUnicode range array length does not match its source range"
+                        );
+                    }
+                    _ => anyhow::bail!("PDF /ToUnicode range requires a hex string or array"),
                 }
             }
-            "bfrange" => {
-                let mut index = 0;
-                while index + 2 < tokens.len() {
-                    let (start, end) = match (&tokens[index], &tokens[index + 1]) {
-                        (CMapToken::Hex(start), CMapToken::Hex(end)) => (start, end),
-                        _ => {
-                            index += 1;
-                            continue;
-                        }
-                    };
-                    let target = &tokens[index + 2];
-                    index += 3;
-                    let (Some(start), Some(end)) = (to_u16(start), to_u16(end)) else {
-                        continue;
-                    };
-                    let end = end.max(start);
-                    match target {
-                        CMapToken::Array(values) => {
-                            for (offset, value) in values.iter().enumerate() {
-                                if let Some(text) = utf16_string(value) {
-                                    map.insert(start.wrapping_add(offset as u16), text);
-                                }
-                            }
-                        }
-                        CMapToken::Hex(value) => {
-                            let Some(mut points) = utf16_codepoints(value) else {
-                                continue;
-                            };
-                            if points.is_empty() {
-                                continue;
-                            }
-                            for code in start..=end {
-                                map.insert(code, encode_utf16(&points));
-                                let last = points.len() - 1;
-                                points[last] += 1;
-                            }
-                        }
-                        CMapToken::Word(_) => {}
-                    }
-                }
-            }
+            _ if section.is_some() => anyhow::bail!("PDF /ToUnicode has an invalid mapping entry"),
             _ => {}
         }
     }
-    map
+    anyhow::ensure!(
+        section.is_none(),
+        "PDF /ToUnicode has an unterminated mapping section"
+    );
+    Ok(map)
 }
 
-fn to_u16(value: &str) -> Option<u16> {
-    u32::from_str_radix(value.trim(), 16)
-        .ok()
-        .map(|value| value as u16)
-}
-
-fn utf16_codepoints(value: &str) -> Option<Vec<u32>> {
-    Some(
-        hex_bytes(value)?
-            .chunks_exact(2)
-            .map(|pair| u32::from(u16::from_be_bytes([pair[0], pair[1]])))
-            .collect(),
-    )
-}
-
-fn utf16_string(value: &str) -> Option<String> {
-    Some(encode_utf16(&utf16_codepoints(value)?))
-}
-
-fn encode_utf16(points: &[u32]) -> String {
-    let units: Vec<u16> = points.iter().map(|value| *value as u16).collect();
-    String::from_utf16_lossy(&units)
-}
-
-fn hex_bytes(value: &str) -> Option<Vec<u8>> {
-    let trimmed = value.trim();
-    if !trimmed.len().is_multiple_of(2) {
-        return None;
+fn cmap_string_bytes(token: CMapToken<'_>) -> crate::Result<Vec<u8>> {
+    match token {
+        CMapToken::Hex(value) => decode_cmap_hex(value),
+        CMapToken::Literal(value) => {
+            let mut bytes = Vec::new();
+            let mut offset = 0;
+            while offset < value.len() {
+                let byte = value[offset];
+                offset += 1;
+                if byte == b'\\' {
+                    let escaped = *value.get(offset).ok_or_else(|| {
+                        anyhow::anyhow!("PDF /ToUnicode has an incomplete literal escape")
+                    })?;
+                    offset += 1;
+                    match escaped {
+                        b'n' => bytes.push(b'\n'),
+                        b'r' => bytes.push(b'\r'),
+                        b't' => bytes.push(b'\t'),
+                        b'b' => bytes.push(8),
+                        b'f' => bytes.push(12),
+                        b'\n' => {}
+                        b'\r' => {
+                            if value.get(offset) == Some(&b'\n') {
+                                offset += 1;
+                            }
+                        }
+                        b'0'..=b'7' => {
+                            let mut octal = u16::from(escaped - b'0');
+                            let mut digits = 1;
+                            while digits < 3
+                                && value
+                                    .get(offset)
+                                    .is_some_and(|byte| matches!(*byte, b'0'..=b'7'))
+                            {
+                                octal = octal * 8 + u16::from(value[offset] - b'0');
+                                offset += 1;
+                                digits += 1;
+                            }
+                            bytes.push(octal as u8);
+                        }
+                        other => bytes.push(other),
+                    }
+                } else if byte == b'\r' {
+                    bytes.push(b'\n');
+                    if value.get(offset) == Some(&b'\n') {
+                        offset += 1;
+                    }
+                } else {
+                    bytes.push(byte);
+                }
+            }
+            Ok(bytes)
+        }
+        _ => anyhow::bail!("PDF /ToUnicode mapping requires a byte string"),
     }
-    (0..trimmed.len())
-        .step_by(2)
-        .map(|index| u8::from_str_radix(&trimmed[index..index + 2], 16).ok())
-        .collect()
+}
+
+fn decode_cmap_hex(value: &[u8]) -> crate::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    let mut high = None;
+    for byte in value.iter().copied().filter(|byte| !cmap_whitespace(*byte)) {
+        let digit = match byte {
+            b'0'..=b'9' => byte - b'0',
+            b'a'..=b'f' => byte - b'a' + 10,
+            b'A'..=b'F' => byte - b'A' + 10,
+            _ => anyhow::bail!("PDF /ToUnicode contains an invalid hex digit"),
+        };
+        if let Some(high) = high.take() {
+            bytes.push(high * 16 + digit);
+        } else {
+            high = Some(digit);
+        }
+    }
+    if let Some(high) = high {
+        bytes.push(high * 16);
+    }
+    Ok(bytes)
+}
+
+fn cmap_source_code(bytes: &[u8]) -> crate::Result<(u16, usize)> {
+    let code = match bytes {
+        [low] => u16::from(*low),
+        [high, low] => u16::from_be_bytes([*high, *low]),
+        _ => anyhow::bail!("PDF /ToUnicode source codes must contain one or two bytes"),
+    };
+    Ok((code, bytes.len()))
+}
+
+fn cmap_unicode(bytes: &[u8]) -> crate::Result<String> {
+    anyhow::ensure!(
+        bytes.len().is_multiple_of(2),
+        "PDF /ToUnicode destination is not UTF-16BE"
+    );
+    char::decode_utf16(
+        bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_be_bytes([pair[0], pair[1]])),
+    )
+    .collect::<std::result::Result<String, _>>()
+    .map_err(|error| anyhow::anyhow!("PDF /ToUnicode destination contains invalid UTF-16: {error}"))
+}
+
+fn increment_cmap_bytes(bytes: &mut [u8]) -> bool {
+    for byte in bytes.iter_mut().rev() {
+        if *byte != u8::MAX {
+            *byte += 1;
+            return true;
+        }
+        *byte = 0;
+    }
+    false
 }
 
 

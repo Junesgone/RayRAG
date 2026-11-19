@@ -509,8 +509,8 @@ fn field_specs() -> Vec<(
             "PDF 流解压上限（字节）",
             "resources",
             FieldKind::Number,
-            "Largest decompressed PDF stream; guards against expansion bombs",
-            "单个 PDF 流解压后的上限，用于防御解压炸弹",
+            "PDF stream decoding, page font/text storage and document text output each use this limit; default 67108864 bytes, minimum 1048576; empty uses the default",
+            "分别限制 PDF 流解压、页内字体/文本存储和整份文档文本输出；默认 67108864 字节，最小 1048576；留空使用默认值",
             true,
             Vec::new(),
         ),
@@ -1252,6 +1252,9 @@ fn validate(key: &str, value: &str) -> anyhow::Result<()> {
             .map_err(|_| anyhow::anyhow!("'{key}' must be a number, got '{value}'"))?;
         if parsed <= 0 {
             anyhow::bail!("'{key}' must be greater than zero");
+        }
+        if key == "RAYRAG_PDF_STREAM_LIMIT_BYTES" && parsed < 1_048_576 {
+            anyhow::bail!("'RAYRAG_PDF_STREAM_LIMIT_BYTES' must be at least 1048576 bytes (1 MiB)");
         }
         if key == "RAYRAG_CMD_TIMEOUT" && parsed > 7200 {
             anyhow::bail!("'RAYRAG_CMD_TIMEOUT' is capped at 7200 seconds (2 hours)");
