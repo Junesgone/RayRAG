@@ -158,22 +158,75 @@ impl Parse for TxtParser {
     }
 }
 
-/// Decode bytes to UTF-8, falling back to UTF-16 LE when a BOM is present.
+/// Decode document bytes using the BOM order RAGFlow's decode_text applies:
+/// UTF-32 BE/LE, UTF-16 BE/LE, UTF-8 BOM, then plain UTF-8. Invalid bytes are
+/// reported with an actionable re-upload message instead of being replaced.
 pub fn decode_text(data: &[u8]) -> Result<String> {
-    String::from_utf8(data.to_vec()).or_else(|_| {
-        if data.len() >= 2 {
-            let bom = u16::from_le_bytes([data[0], data[1]]);
-            if bom == 0xFEFF {
-                let utf16: Vec<u16> = data[2..]
-                    .chunks(2)
-                    .map(|c| u16::from_le_bytes([c[0], c[1]]))
-                    .collect();
-                return String::from_utf16(&utf16)
-                    .map_err(|e| anyhow::anyhow!("UTF-16 decode error: {e}"));
-            }
-        }
-        Err(anyhow::anyhow!("Failed to decode text"))
+    if data.starts_with(&[0x00, 0x00, 0xFE, 0xFF]) {
+        return decode_utf32(&data[4..], true);
+    }
+    if data.starts_with(&[0xFF, 0xFE, 0x00, 0x00]) {
+        return decode_utf32(&data[4..], false);
+    }
+    if data.starts_with(&[0xFE, 0xFF]) {
+        return decode_utf16(&data[2..], true);
+    }
+    if data.starts_with(&[0xFF, 0xFE]) {
+        return decode_utf16(&data[2..], false);
+    }
+    if let Some(payload) = data.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
+        return std::str::from_utf8(payload)
+            .map(str::to_owned)
+            .map_err(|error| anyhow::anyhow!("UTF-8 decode error: {error}. {DECODE_GUIDANCE}"));
+    }
+    std::str::from_utf8(data).map(str::to_owned).map_err(|error| {
+        anyhow::anyhow!(
+            "Text decoding failed: the file is not valid UTF-8 and has no UTF-8/UTF-16/UTF-32 BOM ({error}). {DECODE_GUIDANCE}"
+        )
     })
+}
+
+const DECODE_GUIDANCE: &str = "请将文件另存为 UTF-8 或带 BOM 的 UTF-16 后重新上传 / Save the file as UTF-8, or as UTF-16/UTF-32 with a BOM, then upload again.";
+
+fn decode_utf16(data: &[u8], big_endian: bool) -> Result<String> {
+    if data.len() % 2 != 0 {
+        anyhow::bail!("UTF-16 decode error: the byte length is odd. {DECODE_GUIDANCE}");
+    }
+    let units = data
+        .chunks_exact(2)
+        .map(|chunk| {
+            if big_endian {
+                u16::from_be_bytes([chunk[0], chunk[1]])
+            } else {
+                u16::from_le_bytes([chunk[0], chunk[1]])
+            }
+        })
+        .collect::<Vec<_>>();
+    String::from_utf16(&units)
+        .map_err(|error| anyhow::anyhow!("UTF-16 decode error: {error}. {DECODE_GUIDANCE}"))
+}
+
+fn decode_utf32(data: &[u8], big_endian: bool) -> Result<String> {
+    if data.len() % 4 != 0 {
+        anyhow::bail!(
+            "UTF-32 decode error: the byte length is not a multiple of four. {DECODE_GUIDANCE}"
+        );
+    }
+    let mut text = String::with_capacity(data.len() / 2);
+    for chunk in data.chunks_exact(4) {
+        let value = if big_endian {
+            u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])
+        } else {
+            u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])
+        };
+        let Some(character) = char::from_u32(value) else {
+            anyhow::bail!(
+                "UTF-32 decode error: U+{value:04X} is not a Unicode scalar value. {DECODE_GUIDANCE}"
+            );
+        };
+        text.push(character);
+    }
+    Ok(text)
 }
 
 

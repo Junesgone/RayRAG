@@ -2,6 +2,19 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.2] - 2026-11-20
+
+### Spreadsheet dates and BOM-aware text decoding
+
+- Convert XLSX date/time cells with openpyxl/RAGFlow's style-driven rules: builtin number
+  formats 14-22 and 45-47, custom formats, the 1900 and 1904 date systems, millisecond
+  rounding and Python's datetime/time string shapes.
+- Keep General numeric cells numeric; serials outside the representable date range become
+  `#VALUE!` like openpyxl instead of leaking a raw serial into chunk text.
+- Decode CSV and plain text with RAGFlow's BOM precedence: UTF-32 BE/LE, UTF-16 BE/LE, UTF-8
+  BOM, then plain UTF-8. Invalid bytes return re-upload guidance instead of replacement
+  characters.
+
 ## [0.127.1] - 2026-11-20
 
 ### Restore executable bits in the published tree

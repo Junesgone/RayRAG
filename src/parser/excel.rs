@@ -10,8 +10,9 @@ use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 use serde_json::Value;
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{Cursor, Read, Write};
+use time::{Date, Duration, Month};
 
 const MAX_WORKBOOK_XML_BYTES: u64 = 64 << 20;
 
@@ -26,6 +27,15 @@ pub(crate) struct SpreadsheetSheet {
     pub merged_ranges: Vec<(u32, u32, u32, u32)>,
 }
 
+/// Date/time styles resolved from `xl/styles.xml`, indexed by the cell `s`
+/// attribute. openpyxl converts a numeric cell to a datetime when its style's
+/// number format is a date/time format; RAGFlow prints that datetime with
+/// `str()`, so the raw Excel serial must never reach the chunk text.
+#[derive(Debug, Default, Clone)]
+struct DateStyles {
+    cell_is_date: Vec<bool>,
+}
+
 #[derive(Default)]
 pub struct ExcelParser;
 
@@ -36,11 +46,8 @@ impl ExcelParser {
 
     /// Parse CSV data into text table format.
     fn parse_csv(&self, data: &[u8]) -> Result<String> {
-        let content = std::str::from_utf8(data).map_err(|error| {
-            anyhow::anyhow!(
-                "CSV UTF-8 decode failed: {error}. 请将文件另存为 UTF-8 CSV 后重新上传 / Save the file as UTF-8 CSV, then upload again."
-            )
-        })?;
+        let content = crate::parser::txt::decode_text(data)
+            .map_err(|error| anyhow::anyhow!("CSV text decoding failed: {error}"))?;
 
         let mut csv_reader = csv::ReaderBuilder::new()
             .has_headers(true)
@@ -105,6 +112,16 @@ pub(crate) fn read_xlsx_sheets(
         .map(|xml| parse_shared_strings(&xml))
         .transpose()?
         .unwrap_or_default();
+    let date_styles = read_zip_text(&mut archive, "xl/styles.xml")?
+        .as_deref()
+        .map(parse_date_styles)
+        .transpose()?
+        .unwrap_or_default();
+    let date1904 = read_zip_text(&mut archive, "xl/workbook.xml")?
+        .as_deref()
+        .map(workbook_uses_1904)
+        .transpose()?
+        .unwrap_or(false);
     let descriptors = resolve_sheet_descriptors(&mut archive)?;
 
     let mut sheets = Vec::with_capacity(descriptors.len());
@@ -114,8 +131,13 @@ pub(crate) fn read_xlsx_sheets(
                 "XLSX worksheet {name:?} is missing ({path}). 请修复并另存为 XLSX 后重新上传 / Repair and save the workbook as XLSX, then upload again."
             );
         };
-        let (rows, merged_ranges, truncated) =
-            parse_sheet_rows(&xml, &shared_strings, max_rows_per_sheet)?;
+        let (rows, merged_ranges, truncated) = parse_sheet_rows(
+            &xml,
+            &shared_strings,
+            max_rows_per_sheet,
+            &date_styles,
+            date1904,
+        )?;
         sheets.push(SpreadsheetSheet {
             name,
             rows,
@@ -517,16 +539,186 @@ fn parse_shared_strings(xml: &str) -> Result<Vec<String>> {
     Ok(strings)
 }
 
+/// Resolve which cell styles represent dates/times.
+///
+/// openpyxl reads xl/styles.xml, maps each cell s="N" to the Nth xf in
+/// cellXfs, and converts numeric cells whose number format is a date/time
+/// format to a Python datetime. RAGFlow then prints that value with str().
+fn parse_date_styles(xml: &str) -> Result<DateStyles> {
+    let mut reader = Reader::from_str(xml);
+    let mut custom_formats: HashMap<u32, String> = HashMap::new();
+    let mut cell_xfs: Vec<u32> = Vec::new();
+    let mut in_cell_xfs = false;
+    loop {
+        match reader.read_event()? {
+            Event::Start(event) | Event::Empty(event) => match event.local_name().as_ref() {
+                b"numFmt" => {
+                    if let Some(id) = attribute_value(&event, b"numFmtId", reader.decoder())?
+                        .and_then(|value| value.parse::<u32>().ok())
+                    {
+                        if let Some(code) =
+                            attribute_value(&event, b"formatCode", reader.decoder())?
+                        {
+                            custom_formats.insert(id, code);
+                        }
+                    }
+                }
+                b"cellXfs" => in_cell_xfs = true,
+                b"xf" if in_cell_xfs => {
+                    let id = attribute_value(&event, b"numFmtId", reader.decoder())?
+                        .and_then(|value| value.parse::<u32>().ok())
+                        .unwrap_or(0);
+                    cell_xfs.push(id);
+                }
+                _ => {}
+            },
+            Event::End(event) if event.local_name().as_ref() == b"cellXfs" => {
+                in_cell_xfs = false;
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    let cell_is_date = cell_xfs
+        .into_iter()
+        .map(|id| match custom_formats.get(&id) {
+            Some(code) => is_date_format(code),
+            None => builtin_is_date_format(id),
+        })
+        .collect();
+    Ok(DateStyles { cell_is_date })
+}
+
+fn builtin_is_date_format(id: u32) -> bool {
+    matches!(id, 14..=22 | 45..=47)
+}
+
+/// Mirror openpyxl is_date_format: inspect the first section, ignore quoted
+/// literals and bracketed colours/conditions, then look for a date/time token.
+fn is_date_format(code: &str) -> bool {
+    let first = code.split(';').next().unwrap_or("");
+    let mut cleaned = String::with_capacity(first.len());
+    let mut chars = first.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' => {
+                for quoted in chars.by_ref() {
+                    if quoted == '"' {
+                        break;
+                    }
+                }
+            }
+            '[' => {
+                for bracketed in chars.by_ref() {
+                    if bracketed == ']' {
+                        break;
+                    }
+                }
+            }
+            '\\' | '_' | '*' => {
+                chars.next();
+            }
+            _ => cleaned.push(ch),
+        }
+    }
+    cleaned
+        .chars()
+        .any(|ch| matches!(ch.to_ascii_lowercase(), 'd' | 'm' | 'h' | 'y' | 's'))
+}
+
+/// Read the workbook's 1904 date-system flag (workbookPr date1904="1").
+fn workbook_uses_1904(xml: &str) -> Result<bool> {
+    let mut reader = Reader::from_str(xml);
+    loop {
+        match reader.read_event()? {
+            Event::Start(event) | Event::Empty(event)
+                if event.local_name().as_ref() == b"workbookPr" =>
+            {
+                return Ok(matches!(
+                    attribute_value(&event, b"date1904", reader.decoder())?.as_deref(),
+                    Some("1") | Some("true") | Some("TRUE")
+                ));
+            }
+            Event::Eof => return Ok(false),
+            _ => {}
+        }
+    }
+}
+
+/// Convert an Excel serial to the string Python's str() produced for
+/// openpyxl's datetime/time value. Mirrors openpyxl.utils.datetime.from_excel,
+/// including the 1900 leap-year adjustment and millisecond rounding.
+fn excel_serial_text(serial: f64, date1904: bool) -> Option<String> {
+    if !serial.is_finite() {
+        return None;
+    }
+    let day = serial.floor();
+    let fraction = serial - day;
+    let millis = (fraction * 86_400_000.0).round();
+    if !millis.is_finite() {
+        return None;
+    }
+    let millis = millis as i64;
+    let extra_days = millis.div_euclid(86_400_000);
+    let remaining_millis = millis.rem_euclid(86_400_000);
+    if (0.0..1.0).contains(&serial) && extra_days == 0 {
+        return Some(format_excel_clock(remaining_millis));
+    }
+    let mut days = day as i64;
+    if serial > 0.0 && serial < 60.0 && !date1904 {
+        days += 1;
+    }
+    let epoch = if date1904 {
+        Date::from_calendar_date(1904, Month::January, 1)
+    } else {
+        Date::from_calendar_date(1899, Month::December, 30)
+    }
+    .ok()?;
+    let date = epoch.checked_add(Duration::days(days.checked_add(extra_days)?))?;
+    Some(format!(
+        "{} {}",
+        format_excel_date(date),
+        format_excel_clock(remaining_millis)
+    ))
+}
+
+fn format_excel_date(date: Date) -> String {
+    format!(
+        "{:04}-{:02}-{:02}",
+        date.year(),
+        date.month() as u8,
+        date.day()
+    )
+}
+
+fn format_excel_clock(millis: i64) -> String {
+    let seconds = millis.div_euclid(1000);
+    let micros = (millis.rem_euclid(1000)) * 1000;
+    let mut text = format!(
+        "{:02}:{:02}:{:02}",
+        seconds.div_euclid(3600) % 24,
+        seconds.div_euclid(60) % 60,
+        seconds % 60
+    );
+    if micros != 0 {
+        text.push_str(&format!(".{micros:06}"));
+    }
+    text
+}
+
 fn parse_sheet_rows(
     xml: &str,
     shared_strings: &[String],
     max_rows: usize,
+    date_styles: &DateStyles,
+    date1904: bool,
 ) -> Result<(Vec<Vec<String>>, Vec<(u32, u32, u32, u32)>, bool)> {
     let mut reader = Reader::from_str(xml);
     let mut rows = Vec::new();
     let mut cells = Vec::new();
     let mut cell_kind = String::new();
     let mut cell_column = None;
+    let mut cell_style = None;
     let mut cell_value = String::new();
     let mut in_cell_value = false;
     let mut in_row = false;
@@ -562,6 +754,8 @@ fn parse_sheet_rows(
                 cell_column = attribute_value(&event, b"r", reader.decoder())?
                     .as_deref()
                     .and_then(column_index);
+                cell_style = attribute_value(&event, b"s", reader.decoder())?
+                    .and_then(|value| value.parse::<usize>().ok());
                 cell_value.clear();
             }
             Event::Start(event)
@@ -582,7 +776,7 @@ fn parse_sheet_rows(
                 in_cell_value = false;
             }
             Event::End(event) if event.local_name().as_ref() == b"c" => {
-                let value = match cell_kind.as_str() {
+                let mut value = match cell_kind.as_str() {
                     "s" => {
                         let index = cell_value.parse::<usize>().map_err(|_| {
                             anyhow::anyhow!(
@@ -602,6 +796,18 @@ fn parse_sheet_rows(
                     },
                     _ => cell_value.clone(),
                 };
+                if (cell_kind.is_empty() || cell_kind == "n")
+                    && cell_style.is_some_and(|style| {
+                        date_styles
+                            .cell_is_date
+                            .get(style)
+                            .copied()
+                            .unwrap_or(false)
+                    })
+                    && let Ok(serial) = cell_value.parse::<f64>()
+                {
+                    value = excel_serial_text(serial, date1904).unwrap_or_else(|| "#VALUE!".into());
+                }
                 let column = cell_column.unwrap_or(cells.len()).min(16_383);
                 if cells.len() <= column {
                     cells.resize(column + 1, String::new());

@@ -383,6 +383,13 @@ docker compose down
 docker compose down -v
 ```
 
+### Release versioning
+
+RayRAG publishes small `0.x.y` releases. Every round ships a new version number and a matching
+GitHub release, so upgrade notes always identify the exact code you are running. `1.0.0` is
+reserved until the maintainer explicitly approves it; do not expect an automatic jump to `1.0.0`.
+Upgrading within the `0.x` line keeps the existing data volume and configuration.
+
 ---
 
 ## 6. No Docker: pure Linux install

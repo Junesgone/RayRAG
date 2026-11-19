@@ -14,4 +14,4 @@ service_port          = 9395
 checkport             = true
 ctl_stop              = true
 os_min_version        = 1.1.3100
-changelog             = v0.127.1: 修复发布包内脚本可执行权限；沿用 v0.127.0 的 PDF 内联图像修复，避免图像二进制破坏正文或注入伪文本。
+changelog             = v0.127.2: XLSX 日期单元格按 RAGFlow/openpyxl 规则输出日期时间，CSV/TXT 支持 UTF-8/16/32 BOM 解码；沿用 PDF 内联图像修复。
