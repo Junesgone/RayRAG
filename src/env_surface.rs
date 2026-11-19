@@ -56,6 +56,10 @@ pub const INTERNAL_ENV: &[(&str, &str)] = &[
         "set by docker compose itself; selects optional model profiles",
     ),
     (
+        "RAYRAG_POSTGRES_ROTATION_TEST_URL",
+        "test-only disposable PostgreSQL rotation target; never deployment configuration",
+    ),
+    (
         "RAGFLOW_CRYPTO_KEY",
         "upstream-compatible crypto key of the parity tooling only",
     ),

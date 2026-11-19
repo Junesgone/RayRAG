@@ -242,7 +242,11 @@ pub fn try_extract_positioned_lines(doc: &Document) -> crate::Result<Vec<Positio
             &format!("PDF page {number} content"),
         )
         .and_then(|bytes| {
-            lopdf::content::Content::decode(&bytes)
+            let (stripped, _) = super::pdf_inline::strip_inline_images(
+                &bytes,
+                &format!("PDF page {number} content"),
+            )?;
+            lopdf::content::Content::decode(&stripped)
                 .map_err(|error| anyhow::anyhow!("PDF page {number}: {error}"))
         })
         .map_err(|error| anyhow::anyhow!(
@@ -696,7 +700,9 @@ impl ContentInterpreter<'_> {
             "PDF Form content",
         )?;
         self.remaining_bytes -= bytes.len() as u64;
-        let content = lopdf::content::Content::decode(&bytes)?;
+        let (stripped, _) = super::pdf_inline::strip_inline_images(&bytes, "PDF Form content")?;
+        let content = lopdf::content::Content::decode(&stripped)?;
+        drop(stripped);
         drop(bytes);
         let form_resources = match stream.dict.get(b"Resources") {
             Ok(value) => Some(

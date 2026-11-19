@@ -683,7 +683,11 @@ impl MinerUParser {
                 &format!("PDF page {page_num} content"),
             )
             .and_then(|bytes| {
-                lopdf::content::Content::decode(&bytes)
+                let (stripped, _) = super::pdf_inline::strip_inline_images(
+                    &bytes,
+                    &format!("PDF page {page_num} content"),
+                )?;
+                lopdf::content::Content::decode(&stripped)
                     .map_err(|error| anyhow::anyhow!("PDF page {page_num}: {error}"))
             });
             match decoded {

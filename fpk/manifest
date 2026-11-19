@@ -1,7 +1,7 @@
 appname               = rayrag
 version               = 0.0.0
 display_name          = RayRAG
-desc                  = RAGFlow-compatible RAG server in Rust with built-in PostgreSQL and zvec, packaged as a native NAS app.
+desc                  = RayRAG：Rust 编写的 RAGFlow 兼容 RAG 服务，内置 PostgreSQL 与 zvec，开箱即用。
 source                = thirdparty
 platform              = x86
 maintainer            = Junesgone
@@ -14,4 +14,4 @@ service_port          = 9395
 checkport             = true
 ctl_stop              = true
 os_min_version        = 1.1.3100
-changelog             = v0.94.0: 数据集 Configuration 的 Link data source 与数据源页面打通：弹层选择真实数据源、保存 connectors 持久化、关联后自动同步。
+changelog             = v0.127.0: PDF 内联图像按不透明数据跳过，避免图像二进制破坏正文或注入伪文本；有图无字的页面继续提示配置 OCR。

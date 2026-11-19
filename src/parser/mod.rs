@@ -18,6 +18,7 @@ pub mod opendataloader;
 pub mod oxr;
 pub mod paddleocr_layout;
 pub mod pdf;
+mod pdf_inline;
 pub mod pdf_stream;
 pub mod pdf_text;
 pub mod pdfbox;

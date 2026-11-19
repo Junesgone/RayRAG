@@ -2,6 +2,20 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.0] - 2026-11-19
+
+### Inline PDF images are opaque during text extraction
+
+- Remove `BI ... ID ... EI` image spans before decoding page and Form content streams,
+  matching pdfminer's treatment in RAGFlow.
+- Honour ASCII85's `~>` terminator and an explicit `/L` length; otherwise stop at the
+  `EI` keyword boundary used by pdfminer.
+- Report the stripped spans separately so a page with images and no text still returns the
+  OCR setup guidance instead of an empty result.
+- Reject a missing `ID` operator, unterminated literal strings and malformed image
+  dictionaries with page/Form context instead of silently losing following text.
+- Apply the same sanitization to the native, Docling and MinerU local fallbacks.
+
 ## [0.126.29] - 2026-11-19
 
 ### Partial PDF Unicode mapping fallback
