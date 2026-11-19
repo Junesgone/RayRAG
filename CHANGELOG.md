@@ -2,6 +2,16 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.1] - 2026-11-20
+
+### Restore executable bits in the published tree
+
+- Mark the Docker entrypoint, mirror setup script, FPK build script and FPK command
+  callbacks executable, so `./fpk/build-fpk.sh` and direct script invocations work in a
+  fresh clone.
+- Normalize generated JSON/CSV fixtures to regular non-executable files.
+- No runtime behavior changes; the inline-image parser fix from v0.127.0 is unchanged.
+
 ## [0.127.0] - 2026-11-19
 
 ### Inline PDF images are opaque during text extraction
