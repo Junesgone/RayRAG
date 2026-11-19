@@ -16,6 +16,7 @@
 - The built-in PDF parser reads text layers only. For scanned PDFs select an OCR layout backend in the dataset parser settings and configure its endpoint/credentials. A generic image OCR client does not add PDF page rendering.
 - In mixed PDFs, a page with drawn image or Form content and no extracted text reports its page number and OCR layout setup steps. Configure a PDF-capable OCR backend and reparse the whole document.
 - Nested PDF Form text is extracted with its local fonts and coordinates. Broken or cyclic Form references report the page and resource name with repair or OCR setup steps. Full page rendering and text inside scanned images still require a PDF-capable OCR backend.
+- PDF single-quote and double-quote text operations retain their text, line spacing and character/word spacing during extraction.
 - If a PDF page or ToUnicode font mapping stream cannot be decoded, parsing fails with the page number and recovery guidance. Font mapping failures include the font name. Repair and export the PDF with embedded fonts, or select a configured OCR document parser and retry.
 - Convert legacy DOC/XLS to DOCX/XLSX. CLI `parse` loads environment clients, not the web tenant's vision model.
 - CSV and XLSX extraction includes rows beyond 1000 and all XLSX worksheets. CSV read failures include UTF-8 repair and re-upload guidance.

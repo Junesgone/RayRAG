@@ -724,18 +724,21 @@ fn apply_operation(
             }
         }
         "'" | "\"" => {
-            if operation.operator.as_str() == "\"" {
+            let text_index = if operation.operator.as_str() == "\"" {
                 if let Some(word_spacing) = operand_number(operands, 0) {
                     state.text.word_spacing = word_spacing;
                 }
                 if let Some(char_spacing) = operand_number(operands, 1) {
                     state.text.char_spacing = char_spacing;
                 }
-            }
+                2
+            } else {
+                0
+            };
             let leading = state.text.leading;
             state.tlm = Matrix::translate(0.0, -leading).mul(state.tlm);
             state.tm = state.tlm;
-            if let Some(Object::String(bytes, _)) = operands.get(2) {
+            if let Some(Object::String(bytes, _)) = operands.get(text_index) {
                 show_text(doc, fonts, state, runs, bytes);
             }
         }

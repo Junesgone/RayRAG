@@ -2,6 +2,14 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.126.14] - 2026-11-19
+
+### PDF quoted text extraction
+
+- Preserve text drawn by the single-quote PDF operator after moving to the next line.
+- Keep double-quote word and character spacing and subsequent text positioning consistent with explicit PDF text operations.
+- Verify quoted lines through chunking, test embeddings and retrieval.
+
 ## [0.126.13] - 2026-11-19
 
 ### Nested PDF text extraction
