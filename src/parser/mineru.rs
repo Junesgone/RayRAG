@@ -671,7 +671,7 @@ impl MinerUParser {
     }
 
     fn extract_text(&self, data: &[u8]) -> Result<String> {
-        let doc = lopdf::Document::load_mem(data)?;
+        let doc = super::pdf_stream::load_document(data)?;
         let mut text = String::new();
 
         // Extract with structure detection

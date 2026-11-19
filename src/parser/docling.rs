@@ -297,7 +297,7 @@ impl DoclingParser {
         match ext.as_str() {
             "pdf" => {
                 let mut text = String::from("<!--DOCUMENT_START-->\n");
-                let doc = lopdf::Document::load_mem(data)?;
+                let doc = super::pdf_stream::load_document(data)?;
                 for (page_num, &page_id) in &doc.get_pages() {
                     let decoded = super::pdf_stream::page_content_limited(
                         &doc,

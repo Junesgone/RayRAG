@@ -50,7 +50,7 @@ impl PdfParser {
     /// entries, mirroring RAGFlow `extract_pdf_outlines`. Returns `Ok(vec![])`
     /// when the document has no outline or it cannot be parsed.
     pub fn extract_outlines(data: &[u8]) -> Result<Vec<OutlineEntry>> {
-        let doc = lopdf::Document::load_mem(data)?;
+        let doc = super::pdf_stream::load_document(data)?;
         let mut named_destinations = indexmap::IndexMap::new();
         let outlines = match doc.get_outlines(None, None, &mut named_destinations) {
             Ok(Some(outlines)) => outlines,
@@ -76,12 +76,14 @@ impl PdfParser {
                     lopdf::Outline::Destination(dest) => {
                         let title = dest
                             .title()
+                            .ok()
                             .and_then(|t| t.as_str().ok())
                             .map(String::from_utf8_lossy)
                             .unwrap_or_default()
                             .into_owned();
                         let page = dest
                             .page()
+                            .ok()
                             .and_then(|p| p.as_reference().ok())
                             .and_then(|id| page_ids.get(&id.0).copied())
                             .unwrap_or(0) as usize;
@@ -102,7 +104,7 @@ impl PdfParser {
     /// the chunker projects into `position_int`. The raw operator walk stays as
     /// the fallback for streams the interpreter cannot follow.
     async fn extract_text(&self, data: &[u8]) -> Result<String> {
-        let doc = lopdf::Document::load_mem(data)?;
+        let doc = super::pdf_stream::load_document(data)?;
         let lines = pdf_text::try_extract_positioned_lines(&doc)?;
         let text_pages: std::collections::HashSet<usize> =
             lines.iter().map(|line| line.page).collect();

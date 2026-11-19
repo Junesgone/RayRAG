@@ -1181,9 +1181,9 @@ fn font_metrics(
 ) -> crate::Result<FontMetrics> {
     let subtype = font
         .get(b"Subtype")
-        .and_then(Object::as_name_str)
+        .and_then(Object::as_name)
         .unwrap_or_default();
-    let two_byte = subtype == "Type0";
+    let two_byte = subtype == b"Type0";
     let mut metrics = FontMetrics {
         widths: HashMap::new(),
         default_width: 500.0,

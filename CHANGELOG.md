@@ -2,6 +2,15 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.126.24] - 2026-11-19
+
+### Bounded PDF metadata loading
+
+- Upgrade lopdf to 0.47 and explicitly limit object and cross-reference stream decompression through the existing PDF resource setting.
+- Share the bounded loader across native PDF text, outlines, Docling and MinerU local extraction.
+- Apply DecodeParms arrays by filter position and report invalid filter/parameter structures.
+- Validate predictor dimensions without silently clamping valid row sizes, and reject truncated TIFF rows.
+
 ## [0.126.23] - 2026-11-19
 
 ### PDF width-table integrity

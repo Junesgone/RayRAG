@@ -28,26 +28,72 @@ pub fn stream_limit_bytes() -> u64 {
         .unwrap_or(DEFAULT_PDF_STREAM_BYTES)
 }
 
+/// Load metadata streams with the same explicit bound used for page parsing.
+pub fn load_document(data: &[u8]) -> Result<lopdf::Document> {
+    load_document_limited(data, stream_limit_bytes())
+}
+
+fn load_document_limited(data: &[u8], limit: u64) -> Result<lopdf::Document> {
+    let limit = usize::try_from(limit)
+        .map_err(|_| anyhow::anyhow!("PDF stream limit exceeds this platform address space"))?;
+    lopdf::Document::load_mem_with_options(
+        data, lopdf::LoadOptions::with_max_decompressed_size(limit),
+    ).map_err(|error| anyhow::anyhow!(
+        "PDF loading failed under RAYRAG_PDF_STREAM_LIMIT_BYTES={limit}: {error}. Repair or export an unencrypted PDF and upload it again. For a trusted large document, increase the PDF resource limit in deployment setup or the environment file."
+    ))
+}
+
 /// Decode a stream to plain bytes, refusing more than `limit` bytes of output.
 pub fn plain_content_limited(stream: &Stream, limit: u64, what: &str) -> Result<Vec<u8>> {
-    let filters = stream.filters().unwrap_or_default();
+    let filters = match stream.dict.get(b"Filter") {
+        Err(_) | Ok(Object::Null) => Vec::new(),
+        Ok(_) => stream
+            .filters()
+            .map_err(|error| anyhow::anyhow!("{what} has an invalid Filter: {error}"))?,
+    };
     let params = stream
         .dict
         .get(b"DecodeParms")
         .or_else(|_| stream.dict.get(b"DP"))
-        .ok()
-        .and_then(|object| object.as_dict().ok());
-
+        .ok();
+    match params {
+        Some(Object::Array(values)) => anyhow::ensure!(
+            values.len() == filters.len(),
+            "{what} DecodeParms length does not match Filter count"
+        ),
+        Some(Object::Dictionary(_)) => anyhow::ensure!(
+            filters.len() == 1,
+            "{what} DecodeParms dictionary requires a single filter"
+        ),
+        None | Some(Object::Null) => {}
+        _ => anyhow::bail!("{what} DecodeParms must be a dictionary or array"),
+    }
+    if filters.is_empty() {
+        anyhow::ensure!(
+            stream.content.len() as u64 <= limit,
+            "{what} exceeds the safety limit before copying"
+        );
+    }
     let mut content = stream.content.clone();
-    for filter in &filters {
-        content = match filter.as_str() {
-            "FlateDecode" | "Fl" => {
+    for (index, filter) in filters.iter().enumerate() {
+        let value = match params {
+            Some(Object::Array(values)) => values.get(index),
+            other => other,
+        };
+        let params = match value {
+            None | Some(Object::Null) => None,
+            Some(Object::Dictionary(dictionary)) => Some(dictionary),
+            _ => anyhow::bail!("{what} DecodeParms entry {index} must be a dictionary or null"),
+        };
+        content = match *filter {
+            b"FlateDecode" | b"Fl" => {
                 let decoded = inflate_limited(&content, limit, what)?;
                 apply_predictor(decoded, params, limit, what)?
             }
-            "ASCIIHexDecode" | "AHx" => decode_ascii_hex(&content, limit, what)?,
-            "ASCII85Decode" | "A85" => decode_ascii85(&content, limit, what)?,
+            b"ASCIIHexDecode" | b"AHx" => decode_ascii_hex(&content, limit, what)?,
+            b"ASCII85Decode" | b"A85" => decode_ascii85(&content, limit, what)?,
             other => {
+                let other = String::from_utf8_lossy(other);
                 anyhow::bail!(
                     "{what} uses the '{other}' filter, which this build does not decode with a size cap"
                 );
@@ -91,43 +137,61 @@ fn apply_predictor(
     let Some(params) = params else {
         return Ok(data);
     };
-    let predictor = params
-        .get(b"Predictor")
-        .ok()
-        .and_then(|value| value.as_i64().ok())
-        .unwrap_or(1);
-    if predictor <= 1 {
+    let parameter = |key: &[u8], default| -> Result<u64> {
+        match params.get(key) {
+            Err(_) | Ok(Object::Null) => Ok(default),
+            Ok(value) => value
+                .as_i64()
+                .ok()
+                .and_then(|value| u64::try_from(value).ok())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "{what} predictor /{} must be a nonnegative integer",
+                        String::from_utf8_lossy(key)
+                    )
+                }),
+        }
+    };
+    let predictor = parameter(b"Predictor", 1)?;
+    if predictor == 1 {
         return Ok(data);
     }
-    let columns = params
-        .get(b"Columns")
-        .ok()
-        .and_then(|value| value.as_i64().ok())
-        .unwrap_or(1)
-        .clamp(1, 64 * 1024) as usize;
-    let colors = params
-        .get(b"Colors")
-        .ok()
-        .and_then(|value| value.as_i64().ok())
-        .unwrap_or(1)
-        .clamp(1, 32) as usize;
-    let bits = params
-        .get(b"BitsPerComponent")
-        .ok()
-        .and_then(|value| value.as_i64().ok())
-        .unwrap_or(8)
-        .clamp(1, 16) as usize;
-    let bytes_per_pixel = (colors * bits).div_ceil(8);
-    let row_len = (colors * bits * columns).div_ceil(8);
-    if row_len == 0 {
-        return Ok(data);
-    }
+    anyhow::ensure!(
+        predictor == 2 || (10..=15).contains(&predictor),
+        "{what} uses invalid predictor {predictor}"
+    );
+    let columns = parameter(b"Columns", 1)?;
+    let colors = parameter(b"Colors", 1)?;
+    let bits = parameter(b"BitsPerComponent", 8)?;
+    anyhow::ensure!(
+        columns > 0 && colors > 0 && [1, 2, 4, 8, 16].contains(&bits),
+        "{what} has invalid predictor geometry"
+    );
+    let pixel_bits = colors
+        .checked_mul(bits)
+        .ok_or_else(|| anyhow::anyhow!("{what} predictor dimensions overflow"))?;
+    let row_bits = pixel_bits
+        .checked_mul(columns)
+        .ok_or_else(|| anyhow::anyhow!("{what} predictor dimensions overflow"))?;
+    let bytes_per_pixel = usize::try_from(pixel_bits.div_ceil(8))
+        .map_err(|_| anyhow::anyhow!("{what} predictor pixel exceeds platform range"))?;
+    let row_len = row_bits.div_ceil(8);
+    anyhow::ensure!(
+        row_len <= limit,
+        "{what} predictor row exceeds the safety limit"
+    );
+    let row_len = usize::try_from(row_len)
+        .map_err(|_| anyhow::anyhow!("{what} predictor row exceeds platform range"))?;
 
     if predictor == 2 {
         // TIFF predictor: each sample is the delta from the one before it.
         if bits != 8 {
             anyhow::bail!("{what} uses TIFF prediction with {bits} bits per component");
         }
+        anyhow::ensure!(
+            data.len().is_multiple_of(row_len),
+            "{what} has a truncated TIFF predictor row"
+        );
         let mut out = data;
         for row in out.chunks_mut(row_len) {
             for index in bytes_per_pixel..row.len() {
@@ -138,7 +202,9 @@ fn apply_predictor(
     }
 
     // PNG predictors: every row is prefixed with its filter type byte.
-    let stride = row_len + 1;
+    let stride = row_len
+        .checked_add(1)
+        .ok_or_else(|| anyhow::anyhow!("{what} predictor stride overflows"))?;
     let rows = data.len() / stride;
     if rows * stride != data.len() {
         anyhow::bail!("{what} has a truncated predictor row");
