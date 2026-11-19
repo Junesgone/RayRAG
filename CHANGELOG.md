@@ -2,6 +2,14 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.126.17] - 2026-11-19
+
+### Snapshot recovery diagnostics
+
+- Preserve both the PostgreSQL mirror failure and the local snapshot rollback error when recovery fails.
+- Report failures to remove a new local snapshot, with state-directory repair guidance and structured error logs.
+- Verify new snapshot cleanup and failed recovery for existing and newly created state files.
+
 ## [0.126.16] - 2026-11-19
 
 ### PDF rectangle compatibility

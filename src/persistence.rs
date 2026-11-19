@@ -37,11 +37,23 @@ fn atomic_write_with_mirror(
     if let Some(mirror) = mirror
         && let Err(error) = mirror.store(path, data)
     {
-        if let Some(previous) = previous {
-            atomic_write_local(path, &previous)?;
-        } else {
-            std::fs::remove_file(path).ok();
-            sync_parent(path)?;
+        let rollback = match previous {
+            Some(previous) => atomic_write_local(path, &previous),
+            None => match std::fs::remove_file(path) {
+                Ok(()) => sync_parent(path),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(error.into()),
+            },
+        };
+        if let Err(rollback_error) = rollback {
+            tracing::error!(
+                path = %path.display(), %error, %rollback_error,
+                "Snapshot mirror write and local rollback both failed"
+            );
+            anyhow::bail!(
+                "snapshot mirror write failed: {error:#}; local rollback failed for {}: {rollback_error:#}. Check state directory permissions and storage, then repair the local snapshot before retrying.",
+                path.display()
+            );
         }
         return Err(error);
     }
