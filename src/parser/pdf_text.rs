@@ -341,20 +341,24 @@ struct PageGeometry {
 impl PageGeometry {
     fn of(doc: &Document, page_id: lopdf::ObjectId) -> Option<Self> {
         let from_box = |key: &[u8]| {
-            let rect = inherited(doc, page_id, key).and_then(|object| deref(doc, object))?;
+            let rect = inherited(doc, page_id, key)?;
             let numbers = rect.as_array().ok()?;
             if numbers.len() != 4 {
                 return None;
             }
             let values: [f64; 4] = std::array::from_fn(|index| {
-                numbers[index]
-                    .as_float()
-                    .ok()
-                    .map(f64::from)
+                deref(doc, &numbers[index])
+                    .and_then(as_number)
                     .unwrap_or(f64::NAN)
             });
-            let [left, bottom, right, top] = values;
-            if !values.iter().all(|value| value.is_finite()) || right <= left || top <= bottom {
+            if !values.iter().all(|value| value.is_finite()) {
+                return None;
+            }
+            // PDF rectangles may specify either pair of diagonally opposite corners.
+            let [x0, y0, x1, y1] = values;
+            let (left, right) = (x0.min(x1), x0.max(x1));
+            let (bottom, top) = (y0.min(y1), y0.max(y1));
+            if right == left || top == bottom {
                 return None;
             }
             Some(PageGeometry {

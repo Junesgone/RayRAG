@@ -3485,7 +3485,7 @@ dependencies = [
 
 [[package]]
 name = "rayrag"
-version = "0.126.15"
+version = "0.126.16"
 dependencies = [
  "aes",
  "anyhow",

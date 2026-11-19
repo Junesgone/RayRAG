@@ -2,6 +2,14 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.126.16] - 2026-11-19
+
+### PDF rectangle compatibility
+
+- Accept either diagonal corner order in PDF MediaBox and CropBox rectangles.
+- Resolve inherited page boxes and indirect numeric coordinates before projecting text positions.
+- Keep explicit page repair guidance for non-numeric, non-finite and zero-sized page boxes.
+
 ## [0.126.15] - 2026-11-19
 
 ### PDF and DOCX parsing diagnostics
