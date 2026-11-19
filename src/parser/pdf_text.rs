@@ -246,9 +246,11 @@ pub fn try_extract_positioned_lines(doc: &Document) -> crate::Result<Vec<Positio
         .map_err(|error| anyhow::anyhow!(
             "PDF page {number} text extraction failed: {error}. Repair or export an unencrypted PDF and upload it again, or select a configured OCR document parser and reparse. PDF 页面提取失败，请修复并重新导出上传，或配置 OCR 解析客户端后重新解析。"
         ))?;
-        let Some(geometry) = PageGeometry::of(doc, page_id) else {
-            continue;
-        };
+        let geometry = PageGeometry::of(doc, page_id).ok_or_else(|| {
+            anyhow::anyhow!(
+                "PDF page {number} has no valid CropBox or MediaBox geometry. Repair or export the PDF with a valid page box and upload it again. PDF 页面缺少有效的 CropBox/MediaBox，请修复页面尺寸后重新导出并上传。"
+            )
+        })?;
         let mut runs = Vec::new();
         let mut state = State::default();
         let resources = inherited(doc, page_id, b"Resources").and_then(|value| as_dict(doc, value));
@@ -338,20 +340,30 @@ struct PageGeometry {
 
 impl PageGeometry {
     fn of(doc: &Document, page_id: lopdf::ObjectId) -> Option<Self> {
-        let rect =
-            inherited(doc, page_id, b"CropBox").or_else(|| inherited(doc, page_id, b"MediaBox"))?;
-        let numbers = rect.as_array().ok()?;
-        if numbers.len() != 4 {
-            return None;
-        }
-        let value = |index: usize| numbers[index].as_float().ok().map(f64::from);
-        let bottom_edge = value(1)?;
-        let top_edge = value(3).or(Some(bottom_edge))?;
-        Some(PageGeometry {
-            origin_x: value(0)?,
-            top_edge,
-            height: (top_edge - bottom_edge).max(0.0),
-        })
+        let from_box = |key: &[u8]| {
+            let rect = inherited(doc, page_id, key).and_then(|object| deref(doc, object))?;
+            let numbers = rect.as_array().ok()?;
+            if numbers.len() != 4 {
+                return None;
+            }
+            let values: [f64; 4] = std::array::from_fn(|index| {
+                numbers[index]
+                    .as_float()
+                    .ok()
+                    .map(f64::from)
+                    .unwrap_or(f64::NAN)
+            });
+            let [left, bottom, right, top] = values;
+            if !values.iter().all(|value| value.is_finite()) || right <= left || top <= bottom {
+                return None;
+            }
+            Some(PageGeometry {
+                origin_x: left,
+                top_edge: top,
+                height: top - bottom,
+            })
+        };
+        from_box(b"CropBox").or_else(|| from_box(b"MediaBox"))
     }
 
     fn project_x(&self, x: f64) -> f64 {

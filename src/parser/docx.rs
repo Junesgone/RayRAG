@@ -504,30 +504,78 @@ fn parse_document_xml(
     (paragraphs, tables)
 }
 
-/// Read a named zip entry as UTF-8 (index lookup avoids borrow conflicts).
+fn validate_docx_xml(xml: &str) -> Result<()> {
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().check_comments = true;
+    let mut depth = 0usize;
+    let mut roots = 0usize;
+    loop {
+        let event = reader.read_event()?;
+        match &event {
+            Event::Start(element) | Event::Empty(element) => {
+                if depth == 0 {
+                    roots += 1;
+                    anyhow::ensure!(roots == 1, "multiple XML root elements");
+                }
+                for attribute in element.attributes() {
+                    attribute?.decode_and_unescape_value(reader.decoder())?;
+                }
+                if matches!(event, Event::Start(_)) {
+                    depth += 1;
+                }
+            }
+            Event::End(_) => {
+                // quick-xml checks the closing name against its open-element stack.
+                depth = depth
+                    .checked_sub(1)
+                    .ok_or_else(|| anyhow::anyhow!("unexpected XML closing element"))?;
+            }
+            Event::Text(text) => {
+                let text = text.unescape()?;
+                anyhow::ensure!(
+                    depth > 0 || text.trim().is_empty(),
+                    "text outside XML root element"
+                );
+            }
+            Event::CData(_) => {
+                anyhow::ensure!(depth > 0, "CDATA outside XML root element");
+            }
+            Event::Eof => {
+                anyhow::ensure!(
+                    depth == 0,
+                    "unexpected end of XML with {depth} unclosed elements"
+                );
+                anyhow::ensure!(roots == 1, "XML root element missing");
+                return Ok(());
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Read and validate a named UTF-8 XML part before extracting partial content.
 ///
 /// The member is read through the shared size cap: a docx is an archive whose header
 /// can claim any size, and reading it unbounded is how a small file becomes a large
 /// allocation.
 fn read_zip_entry(zf: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> Result<Option<String>> {
-    for i in 0..zf.len() {
-        let Ok(mut f) = zf.by_index(i) else {
-            continue;
-        };
-        if f.name() == name {
-            let declared = f.size();
-            // A member that exists but is too large must not read as "missing": the
-            // operator needs to see that the safety cap refused it.
-            let bytes = crate::parser::read_member_limited(
-                &mut f,
-                declared,
-                crate::parser::MAX_ZIP_MEMBER_BYTES,
-                &format!("DOCX part '{name}'"),
-            )?;
-            return Ok(Some(String::from_utf8_lossy(&bytes).to_string()));
-        }
-    }
-    Ok(None)
+    let mut file = match zf.by_name(name) {
+        Ok(file) => file,
+        Err(zip::result::ZipError::FileNotFound) => return Ok(None),
+        Err(error) => anyhow::bail!("Cannot read DOCX part '{name}': {error}"),
+    };
+    let declared = file.size();
+    let bytes = crate::parser::read_member_limited(
+        &mut file,
+        declared,
+        crate::parser::MAX_ZIP_MEMBER_BYTES,
+        &format!("DOCX part '{name}'"),
+    )?;
+    let xml = String::from_utf8(bytes)
+        .map_err(|error| anyhow::anyhow!("Invalid UTF-8 in DOCX part '{name}': {error}"))?;
+    validate_docx_xml(&xml)
+        .map_err(|error| anyhow::anyhow!("Invalid XML in DOCX part '{name}': {error}"))?;
+    Ok(Some(xml))
 }
 
 /// Port of `DocxParser` — Parse adapter joining paragraphs and tables.
@@ -573,9 +621,8 @@ impl Parse for DocxParser {
         );
         // `get_picture` — docx_parser.py:33-70: count embedded images so
         // downstream image-context steps know whether this document has any.
-        if let Ok(images) = extract_images(data)
-            && !images.is_empty()
-        {
+        let images = extract_images(data)?;
+        if !images.is_empty() {
             doc.metadata
                 .insert("image_count".to_string(), images.len().to_string());
         }

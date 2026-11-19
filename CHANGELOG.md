@@ -2,6 +2,16 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.126.15] - 2026-11-19
+
+### PDF and DOCX parsing diagnostics
+
+- Report the page number and repair guidance when neither page box provides valid geometry.
+- Fall back from an invalid CropBox to a valid MediaBox and validate finite, positive page dimensions.
+- Reject malformed XML and invalid UTF-8 in DOCX parts with specific repair guidance.
+- Propagate DOCX image extraction failures instead of returning partial success.
+- Verify PDF text extraction and multi-format ingestion through focused Debug regressions.
+
 ## [0.126.14] - 2026-11-19
 
 ### PDF quoted text extraction
