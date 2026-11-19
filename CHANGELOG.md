@@ -2,6 +2,16 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.126.21] - 2026-11-19
+
+### PDF font integrity
+
+- Fail before chunking when a PDF selects a missing font or draws nonempty text without selecting a font.
+- Report malformed font selections with page and nested Form context plus repair guidance.
+- Preserve raw PDF font resource names to avoid non-UTF-8 name collisions.
+- Support ExtGState font selection and load only fonts actually selected by text operations.
+- Treat optional null Unicode mappings as absent while keeping errors for damaged mappings on selected fonts.
+
 ## [0.126.20] - 2026-11-19
 
 ### PDF rotation and workspace persistence

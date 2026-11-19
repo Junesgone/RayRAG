@@ -598,7 +598,7 @@ impl ContentInterpreter<'_> {
         state: &mut State,
         runs: &mut Vec<Run>,
     ) -> crate::Result<()> {
-        let fonts = resource_fonts(self.doc, resources)?;
+        let mut fonts = HashMap::new();
         let mut stack = Vec::new();
         for operation in &content.operations {
             self.remaining_operations =
@@ -606,7 +606,9 @@ impl ContentInterpreter<'_> {
                     anyhow::anyhow!("PDF Form expansion exceeds the page operation limit")
                 })?;
             if operation.operator != "Do" {
-                apply_operation(self.doc, &fonts, &mut stack, state, runs, operation);
+                apply_operation(
+                    self.doc, resources, &mut fonts, &mut stack, state, runs, operation,
+                )?;
                 continue;
             }
             let name = operation
@@ -689,12 +691,13 @@ impl ContentInterpreter<'_> {
 
 fn apply_operation(
     doc: &Document,
-    fonts: &HashMap<String, std::sync::Arc<FontMetrics>>,
+    resources: Option<&Dictionary>,
+    fonts: &mut HashMap<Vec<u8>, std::sync::Arc<FontMetrics>>,
     stack: &mut Vec<State>,
     state: &mut State,
     runs: &mut Vec<Run>,
     operation: &lopdf::content::Operation,
-) {
+) -> crate::Result<()> {
     let operands = &operation.operands;
     match operation.operator.as_str() {
         // `q`/`Q` save and restore the whole graphics state, text state included.
@@ -714,13 +717,70 @@ fn apply_operation(
             state.tlm = Matrix::IDENTITY;
         }
         "ET" => {}
+        "gs" => {
+            let name = operands
+                .first()
+                .and_then(|value| value.as_name().ok())
+                .ok_or_else(|| anyhow::anyhow!("PDF gs operation has no ExtGState name"))?;
+            let graphics = resources
+                .and_then(|resources| dict_entry(doc, resources, b"ExtGState"))
+                .and_then(|states| states.get(name).ok())
+                .and_then(|value| as_dict(doc, value))
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "PDF ExtGState {} is missing or invalid",
+                        String::from_utf8_lossy(name)
+                    )
+                })?;
+            if let Ok(value) = graphics.get(b"Font") {
+                let value = deref(doc, value).ok_or_else(|| {
+                    anyhow::anyhow!("PDF ExtGState Font reference cannot be resolved")
+                })?;
+                if !matches!(value, Object::Null) {
+                    let values = value.as_array().map_err(|_| {
+                        anyhow::anyhow!("PDF ExtGState Font must be a font and size array")
+                    })?;
+                    anyhow::ensure!(
+                        values.len() == 2,
+                        "PDF ExtGState Font must contain a font and size"
+                    );
+                    let font = as_dict(doc, &values[0]).ok_or_else(|| {
+                        anyhow::anyhow!("PDF ExtGState Font is not a font dictionary")
+                    })?;
+                    let size = deref(doc, &values[1])
+                        .and_then(as_number)
+                        .filter(|size| size.is_finite())
+                        .ok_or_else(|| anyhow::anyhow!("PDF ExtGState Font size is invalid"))?;
+                    state.text.font = Some(std::sync::Arc::new(font_metrics(doc, font).map_err(
+                        |error| {
+                            anyhow::anyhow!(
+                                "ExtGState {} font: {error}",
+                                String::from_utf8_lossy(name)
+                            )
+                        },
+                    )?));
+                    state.text.size = size;
+                }
+            }
+        }
         "Tf" => {
-            if let Some(name) = operands.first().and_then(|value| value.as_name_str().ok()) {
-                state.text.font = fonts.get(name).cloned();
-            }
-            if let Some(size) = operand_number(operands, 1) {
-                state.text.size = size;
-            }
+            let name = operands
+                .first()
+                .and_then(|value| value.as_name().ok())
+                .ok_or_else(|| {
+                    anyhow::anyhow!("PDF Tf operation has no valid font resource name")
+                })?;
+            let font = resource_font(doc, resources, fonts, name)?;
+            let size = operand_number(operands, 1)
+                .filter(|size| size.is_finite())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "PDF font {} has an invalid Tf size",
+                        String::from_utf8_lossy(name)
+                    )
+                })?;
+            state.text.font = Some(font);
+            state.text.size = size;
         }
         "Tc" => {
             if let Some(value) = operand_number(operands, 0) {
@@ -775,7 +835,7 @@ fn apply_operation(
         }
         "Tj" => {
             if let Some(Object::String(bytes, _)) = operands.first() {
-                show_text(doc, fonts, state, runs, bytes);
+                show_text(state, runs, bytes)?;
             }
         }
         "'" | "\"" => {
@@ -794,14 +854,14 @@ fn apply_operation(
             state.tlm = Matrix::translate(0.0, -leading).mul(state.tlm);
             state.tm = state.tlm;
             if let Some(Object::String(bytes, _)) = operands.get(text_index) {
-                show_text(doc, fonts, state, runs, bytes);
+                show_text(state, runs, bytes)?;
             }
         }
         "TJ" => {
             if let Some(Object::Array(items)) = operands.first() {
                 for item in items {
                     match item {
-                        Object::String(bytes, _) => show_text(doc, fonts, state, runs, bytes),
+                        Object::String(bytes, _) => show_text(state, runs, bytes)?,
                         other => {
                             if let Some(adjustment) = as_number(other) {
                                 let shift = -adjustment / 1000.0
@@ -817,26 +877,24 @@ fn apply_operation(
         }
         _ => {}
     }
+    Ok(())
 }
 
-fn show_text(
-    _doc: &Document,
-    _fonts: &HashMap<String, std::sync::Arc<FontMetrics>>,
-    state: &mut State,
-    runs: &mut Vec<Run>,
-    bytes: &[u8],
-) {
-    let Some(font) = state.text.font.as_ref() else {
-        return;
-    };
+fn show_text(state: &mut State, runs: &mut Vec<Run>, bytes: &[u8]) -> crate::Result<()> {
+    if bytes.is_empty() {
+        return Ok(());
+    }
+    let font = state.text.font.as_ref().ok_or_else(|| {
+        anyhow::anyhow!("PDF text operation has no selected font (Tf or ExtGState Font)")
+    })?;
     let size = state.text.size;
     let codes = font.codes(bytes);
     if codes.is_empty() {
-        return;
+        return Ok(());
     }
     let text = font.decode(&codes);
     if text.is_empty() {
-        return;
+        return Ok(());
     }
     let advance: f64 = codes
         .iter()
@@ -880,6 +938,7 @@ fn show_text(
     });
     // Advance the text matrix by the run width, in text-space units.
     state.tm = Matrix::translate(advance, 0.0).mul(state.tm);
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -971,29 +1030,31 @@ fn win_ansi_char(byte: u8) -> char {
     }
 }
 
-fn resource_fonts(
+fn resource_font(
     doc: &Document,
     resources: Option<&Dictionary>,
-) -> crate::Result<HashMap<String, std::sync::Arc<FontMetrics>>> {
-    let mut fonts = HashMap::new();
-    let Some(resources) = resources else {
-        return Ok(fonts);
-    };
-    let Some(font_dict) = dict_entry(doc, resources, b"Font") else {
-        return Ok(fonts);
-    };
-    for (name, value) in font_dict.iter() {
-        let Some(font) = as_dict(doc, value) else {
-            continue;
-        };
-        fonts.insert(
-            String::from_utf8_lossy(name).into_owned(),
-            std::sync::Arc::new(font_metrics(doc, font).map_err(|error| {
-                anyhow::anyhow!("font {}: {error}", String::from_utf8_lossy(name))
-            })?),
-        );
+    fonts: &mut HashMap<Vec<u8>, std::sync::Arc<FontMetrics>>,
+    name: &[u8],
+) -> crate::Result<std::sync::Arc<FontMetrics>> {
+    if let Some(font) = fonts.get(name) {
+        return Ok(font.clone());
     }
-    Ok(fonts)
+    let font = resources
+        .and_then(|resources| dict_entry(doc, resources, b"Font"))
+        .and_then(|fonts| fonts.get(name).ok())
+        .and_then(|value| as_dict(doc, value))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "PDF font {} is missing or invalid in the active Resources dictionary",
+                String::from_utf8_lossy(name)
+            )
+        })?;
+    let metrics = std::sync::Arc::new(
+        font_metrics(doc, font)
+            .map_err(|error| anyhow::anyhow!("font {}: {error}", String::from_utf8_lossy(name)))?,
+    );
+    fonts.insert(name.to_vec(), metrics.clone());
+    Ok(metrics)
 }
 
 /// Resolve an inheritable page attribute through the page tree.
@@ -1050,16 +1111,19 @@ fn font_metrics(doc: &Document, font: &Dictionary) -> crate::Result<FontMetrics>
         descent: -0.25,
     };
     if let Ok(object) = font.get(b"ToUnicode") {
-        let stream = deref(doc, object)
-            .ok_or_else(|| anyhow::anyhow!("PDF /ToUnicode CMap reference cannot be resolved"))?
-            .as_stream()
-            .map_err(|error| anyhow::anyhow!("PDF /ToUnicode CMap is not a stream: {error}"))?;
-        let content = super::pdf_stream::plain_content_limited(
-            stream,
-            super::pdf_stream::stream_limit_bytes(),
-            "PDF /ToUnicode CMap",
-        )?;
-        metrics.to_unicode = parse_to_unicode(&content);
+        let object = deref(doc, object)
+            .ok_or_else(|| anyhow::anyhow!("PDF /ToUnicode CMap reference cannot be resolved"))?;
+        if !matches!(object, Object::Null) {
+            let stream = object
+                .as_stream()
+                .map_err(|error| anyhow::anyhow!("PDF /ToUnicode CMap is not a stream: {error}"))?;
+            let content = super::pdf_stream::plain_content_limited(
+                stream,
+                super::pdf_stream::stream_limit_bytes(),
+                "PDF /ToUnicode CMap",
+            )?;
+            metrics.to_unicode = parse_to_unicode(&content);
+        }
     }
 
     if two_byte {
