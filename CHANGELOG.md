@@ -2,6 +2,18 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.5] - 2026-11-20
+
+### Mistral OCR page-box position scaling
+
+- Rescale Mistral OCR block bboxes from the provider's page `dimensions` into the
+  PDF's displayed page box (CropBox/MediaBox with inherited rotation).
+- RAGFlow renders page images at 72 DPI, so the page box is the same coordinate
+  space; positions now agree with native PDF position tags instead of carrying raw
+  provider pixels. Unloadable PDFs keep the OCR text and log a position warning.
+- Apply the same scaling to text, table and image-block tags, with lower-bound
+  clamping matching upstream.
+
 ## [0.127.4] - 2026-11-20
 
 ### Reranker provider protocol parity

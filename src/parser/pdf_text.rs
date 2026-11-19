@@ -221,6 +221,36 @@ pub fn extract_positioned_lines(doc: &Document) -> Vec<PositionedLine> {
     })
 }
 
+/// Displayed page-box dimensions in PDF points, in page-number order.
+///
+/// RAGFlow's Mistral parser renders page images at 72 DPI (zoomin=1), so the
+/// rendered pixel size equals this page box (with rotation applied). Exposing
+/// the boxes lets position tags use the same coordinate space without pulling
+/// a PDF renderer into the binary.
+pub(crate) fn page_box_sizes(doc: &Document) -> Vec<(u32, f64, f64)> {
+    let mut pages: Vec<(u32, lopdf::ObjectId)> = doc
+        .get_pages()
+        .iter()
+        .map(|(number, id)| (*number, *id))
+        .collect();
+    pages.sort_by_key(|(number, _)| *number);
+    let mut sizes = Vec::with_capacity(pages.len());
+    for (number, page_id) in pages {
+        let Some(geometry) = PageGeometry::of(doc, page_id) else {
+            continue;
+        };
+        let rotation = match inherited(doc, page_id, b"Rotate") {
+            Some(value) => value.as_i64().ok(),
+            None => Some(0),
+        };
+        let Some(geometry) = rotation.and_then(|rotation| geometry.rotated(rotation)) else {
+            continue;
+        };
+        sizes.push((number, geometry.width, geometry.height));
+    }
+    sizes
+}
+
 /// Extract every text line, rejecting unreadable page streams before indexing.
 pub fn try_extract_positioned_lines(doc: &Document) -> crate::Result<Vec<PositionedLine>> {
     let mut lines = Vec::new();

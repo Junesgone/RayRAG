@@ -10,11 +10,11 @@
 //! base64 data URIs; larger ones use the `/files` upload → signed URL → OCR →
 //! delete flow, exactly like the upstream parser.
 //!
-//! Bounded divergences (documented for the parity ledger): upstream rescales
-//! bboxes to locally rendered page pixels before tagging, and best-effort
-//! captions figures through the tenant vision model. RayRAG keeps the OCR
-//! coordinate space and renders `<!--IMAGE_START-->` markers; page rendering
-//! and figure description stay with the existing figure/vision stage.
+//! Mistral reports bboxes in its own page-dimension space. Upstream renders
+//! page images at 72 DPI (zoomin=1) and rescales each box to those pixels;
+//! RayRAG rescales to the equivalent PDF page box (CropBox/MediaBox with
+//! rotation) instead. Figure captioning through the tenant vision model remains
+//! a documented divergence.
 
 use crate::Result;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
@@ -415,12 +415,24 @@ impl MistralOcrClient {
         };
         let payload = self.ocr_payload(&document, pages.as_deref());
         let response = self.post_ocr(&payload).await?;
-        convert_response(&response, self.config.keep_header_footer)
+        let page_sizes = pdf_page_sizes(data);
+        convert_response_with_sizes(&response, self.config.keep_header_footer, &page_sizes)
     }
 }
 
-/// Normalize a `/v1/ocr` response into marker-aware content.
+/// Normalize a `/v1/ocr` response into marker-aware content without page-box
+/// rescaling (tests and non-PDF callers).
 fn convert_response(response: &Value, keep_header_footer: bool) -> Result<MistralOcrOutput> {
+    convert_response_with_sizes(response, keep_header_footer, &[])
+}
+
+/// Normalize a `/v1/ocr` response, rescaling bboxes from each page's
+/// `dimensions` into the target PDF page box when available.
+fn convert_response_with_sizes(
+    response: &Value,
+    keep_header_footer: bool,
+    page_sizes: &[Option<(f64, f64)>],
+) -> Result<MistralOcrOutput> {
     let mut sections: Vec<String> = Vec::new();
     let mut image_sequence = 0usize;
     let mut page_count = 0usize;
@@ -428,6 +440,11 @@ fn convert_response(response: &Value, keep_header_footer: bool) -> Result<Mistra
         page_count = pages.len();
         for page in pages {
             let page_index = page.get("index").and_then(int_like).unwrap_or(0);
+            let page_size = page_dimensions(page);
+            let target_size = page_sizes
+                .get(page_index.max(0) as usize)
+                .copied()
+                .flatten();
             let Some(blocks) = page.get("blocks").and_then(Value::as_array) else {
                 continue;
             };
@@ -445,7 +462,7 @@ fn convert_response(response: &Value, keep_header_footer: bool) -> Result<Mistra
                     if bbox.is_none() {
                         continue;
                     }
-                    let tag = line_tag(page_index, bbox);
+                    let tag = line_tag(page_index, bbox, page_size, target_size);
                     image_sequence += 1;
                     let caption = block
                         .get("content")
@@ -470,7 +487,7 @@ fn convert_response(response: &Value, keep_header_footer: bool) -> Result<Mistra
                 if text.is_empty() {
                     continue;
                 }
-                let tag = line_tag(page_index, bbox);
+                let tag = line_tag(page_index, bbox, page_size, target_size);
                 if internal == "table" {
                     sections.push(format!("<!--TABLE_START-->\n{text}{tag}\n<!--TABLE_END-->"));
                 } else {
@@ -491,7 +508,12 @@ fn convert_response(response: &Value, keep_header_footer: bool) -> Result<Mistra
 }
 
 /// `@@page\tx0\tx1\ttop\tbott##` (1-based page), one decimal like upstream.
-fn line_tag(page_index: i64, bbox: Option<[f64; 4]>) -> String {
+fn line_tag(
+    page_index: i64,
+    bbox: Option<[f64; 4]>,
+    source_size: Option<(f64, f64)>,
+    target_size: Option<(f64, f64)>,
+) -> String {
     let [mut x0, mut top, mut x1, mut bott] = bbox.unwrap_or([0.0; 4]);
     if x0 > x1 {
         std::mem::swap(&mut x0, &mut x1);
@@ -499,10 +521,62 @@ fn line_tag(page_index: i64, bbox: Option<[f64; 4]>) -> String {
     if top > bott {
         std::mem::swap(&mut top, &mut bott);
     }
+    if let (Some((src_w, src_h)), Some((page_w, page_h))) = (source_size, target_size) {
+        if src_w > 0.0 && src_h > 0.0 && page_w > 0.0 && page_h > 0.0 {
+            x0 = (x0 / src_w) * page_w;
+            x1 = (x1 / src_w) * page_w;
+            top = (top / src_h) * page_h;
+            bott = (bott / src_h) * page_h;
+        }
+    }
+    x0 = x0.max(0.0);
+    x1 = x1.max(0.0);
+    top = top.max(0.0);
+    bott = bott.max(0.0);
     format!(
         "@@{}\t{x0:.1}\t{x1:.1}\t{top:.1}\t{bott:.1}##",
         page_index + 1
     )
+}
+
+fn page_dimensions(page: &Value) -> Option<(f64, f64)> {
+    let dimensions = page.get("dimensions")?;
+    let width = dimensions
+        .get("width")
+        .and_then(float_like)
+        .filter(|value| value.is_finite() && *value > 0.0)?;
+    let height = dimensions
+        .get("height")
+        .and_then(float_like)
+        .filter(|value| value.is_finite() && *value > 0.0)?;
+    Some((width, height))
+}
+
+/// PDF page boxes in page order, or an empty list when the payload is not a
+/// loadable PDF (the OCR text is still useful; only positions stay in the
+/// provider coordinate space).
+fn pdf_page_sizes(data: &[u8]) -> Vec<Option<(f64, f64)>> {
+    let document = match crate::parser::pdf_stream::load_document(data) {
+        Ok(document) => document,
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                "Mistral OCR could not load the PDF page boxes; OCR positions will use provider coordinates"
+            );
+            return Vec::new();
+        }
+    };
+    let sizes = crate::parser::pdf_text::page_box_sizes(&document);
+    let Some(max_page) = sizes.iter().map(|(number, _, _)| *number).max() else {
+        return Vec::new();
+    };
+    let mut output = vec![None; max_page as usize];
+    for (number, width, height) in sizes {
+        if number > 0 {
+            output[(number - 1) as usize] = Some((width, height));
+        }
+    }
+    output
 }
 
 fn block_bbox(block: &Value) -> Option<[f64; 4]> {
