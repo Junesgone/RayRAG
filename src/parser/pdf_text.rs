@@ -1012,6 +1012,8 @@ struct FontMetrics {
     two_byte: bool,
     to_unicode: HashMap<u16, String>,
     explicit_simple_encoding: bool,
+    fallback_encoding: HashMap<u16, String>,
+    fallback_encoding_error: Option<String>,
     ascent: f64,
     descent: f64,
 }
@@ -1044,8 +1046,16 @@ impl FontMetrics {
             }
         } else {
             for code in codes {
-                if let Some(mapped) = self.to_unicode.get(code) {
+                if let Some(mapped) = self
+                    .to_unicode
+                    .get(code)
+                    .or_else(|| self.fallback_encoding.get(code))
+                {
                     append_pdf_text(&mut text, mapped, remaining)?;
+                } else if let Some(error) = &self.fallback_encoding_error {
+                    anyhow::bail!(
+                        "PDF font fallback Encoding is required for character code {code}: {error}"
+                    );
                 } else if self.explicit_simple_encoding {
                     anyhow::bail!(
                         "PDF font Encoding has no Unicode mapping for character code {code}"
@@ -1198,6 +1208,8 @@ fn font_metrics(
         two_byte,
         to_unicode: HashMap::new(),
         explicit_simple_encoding: false,
+        fallback_encoding: HashMap::new(),
+        fallback_encoding_error: None,
         ascent: 0.75,
         descent: -0.25,
     };
@@ -1220,9 +1232,30 @@ fn font_metrics(
         }
     }
 
-    if !two_byte && metrics.to_unicode.is_empty() {
-        metrics.explicit_simple_encoding =
-            parse_simple_font_encoding(doc, font, &mut metrics.to_unicode, budget)?;
+    if !two_byte {
+        if metrics.to_unicode.is_empty() {
+            metrics.explicit_simple_encoding =
+                parse_simple_font_encoding(doc, font, &mut metrics.to_unicode, budget)?;
+        } else {
+            let mut fallback = HashMap::new();
+            match parse_simple_font_encoding(doc, font, &mut fallback, budget) {
+                Ok(explicit) => {
+                    metrics.explicit_simple_encoding = explicit;
+                    metrics.fallback_encoding = fallback;
+                }
+                Err(error) if error.downcast_ref::<FontMappingLimitExceeded>().is_some() => {
+                    return Err(error);
+                }
+                Err(error) => {
+                    let message = error.to_string();
+                    budget.font_mapping_bytes = budget
+                        .font_mapping_bytes
+                        .checked_sub(message.capacity() as u64)
+                        .ok_or(FontMappingLimitExceeded)?;
+                    metrics.fallback_encoding_error = Some(message);
+                }
+            }
+        }
     }
     if two_byte {
         let descendants = optional_font_value(doc, font, b"DescendantFonts")?
@@ -1274,11 +1307,15 @@ fn font_metrics(
             apply_descriptor(doc, descriptor, &mut metrics)?;
         }
     }
-    budget.font_mapping_bytes = budget.font_mapping_bytes.checked_sub(256).ok_or_else(|| {
-        anyhow::anyhow!(
-            "PDF selected font tables exceed the RAYRAG_PDF_STREAM_LIMIT_BYTES page budget"
-        )
-    })?;
+    let font_cost = (std::mem::size_of::<FontMetrics>() as u64).saturating_add(256);
+    budget.font_mapping_bytes = budget
+        .font_mapping_bytes
+        .checked_sub(font_cost)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "PDF selected font tables exceed the RAYRAG_PDF_STREAM_LIMIT_BYTES page budget"
+            )
+        })?;
     Ok(metrics)
 }
 
@@ -1673,6 +1710,10 @@ impl<'a> CMapReader<'a> {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("PDF font Unicode mapping expansion exceeds the RAYRAG_PDF_STREAM_LIMIT_BYTES page budget")]
+struct FontMappingLimitExceeded;
+
 /// Bound expanded mapping text and per-entry work, including overwritten entries.
 fn insert_cmap_mapping(
     map: &mut HashMap<u16, String>,
@@ -1681,11 +1722,9 @@ fn insert_cmap_mapping(
     remaining: &mut u64,
 ) -> crate::Result<()> {
     let cost = (text.capacity() as u64).saturating_add(64);
-    *remaining = remaining.checked_sub(cost).ok_or_else(|| {
-        anyhow::anyhow!(
-            "PDF font Unicode mapping expansion exceeds the RAYRAG_PDF_STREAM_LIMIT_BYTES page budget"
-        )
-    })?;
+    *remaining = remaining
+        .checked_sub(cost)
+        .ok_or(FontMappingLimitExceeded)?;
     map.insert(code, text);
     Ok(())
 }

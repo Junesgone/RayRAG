@@ -2,6 +2,15 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.126.29] - 2026-11-19
+
+### Partial PDF Unicode mapping fallback
+
+- Use declared simple-font Encoding and Differences for character codes omitted from a partial ToUnicode map.
+- Preserve primary Unicode mapping precedence and defer invalid fallback errors until an uncovered code requires them.
+- Keep fallback allocation within the shared page font budget and propagate budget exhaustion immediately.
+- Preserve Unicode text and position metadata through normal parsing and chunking.
+
 ## [0.126.28] - 2026-11-19
 
 ### Explicit PDF simple-font encodings
