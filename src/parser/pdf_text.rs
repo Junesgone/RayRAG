@@ -213,8 +213,16 @@ fn is_english_char(ch: char) -> bool {
         )
 }
 
-/// Extract every text line of `doc`, page by page, in reading order.
+/// Compatibility entry point returning no lines when extraction fails.
 pub fn extract_positioned_lines(doc: &Document) -> Vec<PositionedLine> {
+    try_extract_positioned_lines(doc).unwrap_or_else(|error| {
+        tracing::warn!(%error, "PDF text extraction failed");
+        Vec::new()
+    })
+}
+
+/// Extract every text line, rejecting unreadable page streams before indexing.
+pub fn try_extract_positioned_lines(doc: &Document) -> crate::Result<Vec<PositionedLine>> {
     let mut lines = Vec::new();
     let mut pages: Vec<(u32, lopdf::ObjectId)> = doc
         .get_pages()
@@ -223,13 +231,9 @@ pub fn extract_positioned_lines(doc: &Document) -> Vec<PositionedLine> {
         .collect();
     pages.sort_by_key(|(number, _id)| *number);
     for (number, page_id) in pages {
-        let Some(geometry) = PageGeometry::of(doc, page_id) else {
-            continue;
-        };
-        let fonts = page_fonts(doc, page_id);
         // Capped decode (see `pdf_stream`): an inflated page stream must not decide how
         // much memory this process uses.
-        let content = match super::pdf_stream::page_content_limited(
+        let content = super::pdf_stream::page_content_limited(
             doc,
             page_id,
             super::pdf_stream::stream_limit_bytes(),
@@ -238,13 +242,14 @@ pub fn extract_positioned_lines(doc: &Document) -> Vec<PositionedLine> {
         .and_then(|bytes| {
             lopdf::content::Content::decode(&bytes)
                 .map_err(|error| anyhow::anyhow!("PDF page {number}: {error}"))
-        }) {
-            Ok(content) => content,
-            Err(error) => {
-                tracing::warn!(%error, page = number, "Skipping PDF page content");
-                continue;
-            }
+        })
+        .map_err(|error| anyhow::anyhow!(
+            "PDF page {number} text extraction failed: {error}. Repair or export an unencrypted PDF and upload it again, or select a configured OCR document parser and reparse. PDF 页面提取失败，请修复并重新导出上传，或配置 OCR 解析客户端后重新解析。"
+        ))?;
+        let Some(geometry) = PageGeometry::of(doc, page_id) else {
+            continue;
         };
+        let fonts = page_fonts(doc, page_id);
         let mut runs = Vec::new();
         let mut state = State::default();
         let mut stack = Vec::new();
@@ -253,7 +258,7 @@ pub fn extract_positioned_lines(doc: &Document) -> Vec<PositionedLine> {
         }
         lines.extend(geometry.lines(number as usize, runs));
     }
-    lines
+    Ok(lines)
 }
 
 // ---------------------------------------------------------------------------

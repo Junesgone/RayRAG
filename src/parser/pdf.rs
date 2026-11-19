@@ -103,15 +103,11 @@ impl PdfParser {
     /// the fallback for streams the interpreter cannot follow.
     async fn extract_text(&self, data: &[u8]) -> Result<String> {
         let doc = lopdf::Document::load_mem(data)?;
-        let tagged = pdf_text::tagged_content(&pdf_text::extract_positioned_lines(&doc));
+        let tagged = pdf_text::tagged_content(&pdf_text::try_extract_positioned_lines(&doc)?);
         if !tagged.trim().is_empty() {
             return Ok(tagged);
         }
         let mut text = String::new();
-        // Pages whose stream was refused by the size cap. Reported at the end when
-        // they are the reason the document produced nothing: "DONE, 0 chunks" would
-        // otherwise hide a bomb (or a broken file) behind a successful status.
-        let mut refused_streams = 0usize;
 
         // Try OCR first if client is available. A probe that fails is reported instead of
         // being folded into `false`: without the log line a scanned PDF becomes
@@ -170,19 +166,10 @@ impl PdfParser {
                     text.push('\n');
                 }
                 // A refusal must be visible: silence here would look like an empty page.
-                Err(error) => {
-                    refused_streams += 1;
-                    tracing::warn!(%error, page = page_num, "Skipping PDF page content");
-                }
+                Err(error) => return Err(error),
             }
         }
 
-        if text.trim().is_empty() && refused_streams > 0 {
-            anyhow::bail!(
-                "PDF content could not be decoded: {refused_streams} page stream(s) exceeded the {} MiB safety limit",
-                super::pdf_stream::stream_limit_bytes() / (1024 * 1024)
-            );
-        }
         Ok(text)
     }
 

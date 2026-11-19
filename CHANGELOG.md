@@ -2,6 +2,13 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.126.10] - 2026-11-19
+
+### PDF page failure reporting
+
+- Reject PDFs with unreadable page streams before chunking, including when other pages contain readable text.
+- Include the failing page number, original decoding error and repair or OCR configuration guidance.
+
 ## [0.126.9] - 2026-11-19
 
 ### Complete spreadsheet extraction
