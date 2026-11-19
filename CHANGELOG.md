@@ -2,6 +2,15 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.126.13] - 2026-11-19
+
+### Nested PDF text extraction
+
+- Extract text from nested Form XObjects using local resources and composed transformation matrices.
+- Preserve inherited fonts and restore the caller's graphics state after each Form.
+- Reject damaged or cyclic Forms with page and XObject details plus repair and OCR setup guidance.
+- Bound Form nesting, aggregate decoded Form bytes and page operations before indexing.
+
 ## [0.126.12] - 2026-11-19
 
 ### Mixed PDF page failure reporting

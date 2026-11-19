@@ -249,15 +249,20 @@ pub fn try_extract_positioned_lines(doc: &Document) -> crate::Result<Vec<Positio
         let Some(geometry) = PageGeometry::of(doc, page_id) else {
             continue;
         };
-        let fonts = page_fonts(doc, page_id).map_err(|error| anyhow::anyhow!(
-            "PDF page {number} font extraction failed: {error}. Repair or export an unencrypted PDF with embedded fonts and upload it again, or select a configured OCR document parser and reparse. PDF 字体提取失败，请修复并嵌入字体重新导出上传，或配置 OCR 解析客户端后重新解析。"
-        ))?;
         let mut runs = Vec::new();
         let mut state = State::default();
-        let mut stack = Vec::new();
-        for operation in &content.operations {
-            apply_operation(doc, &fonts, &mut stack, &mut state, &mut runs, operation);
-        }
+        let resources = inherited(doc, page_id, b"Resources").and_then(|value| as_dict(doc, value));
+        let mut interpreter = ContentInterpreter {
+            doc,
+            forms: Vec::new(),
+            depth: 0,
+            remaining_bytes: super::pdf_stream::stream_limit_bytes(),
+            remaining_operations: 1_000_000,
+        };
+        interpreter.walk(&content, resources, &mut state, &mut runs)
+            .map_err(|error| anyhow::anyhow!(
+                "PDF page {number} text extraction failed: {error}. Repair or export an unencrypted PDF with embedded fonts and upload it again, or select a configured OCR document parser and reparse. PDF 页面提取失败，请修复并嵌入字体重新导出上传，或配置 OCR 解析客户端后重新解析。"
+            ))?;
         lines.extend(geometry.lines(number as usize, runs));
     }
     Ok(lines)
@@ -453,7 +458,7 @@ impl PageGeometry {
 
 #[derive(Debug, Clone, Default)]
 struct TextState {
-    font: String,
+    font: Option<std::sync::Arc<FontMetrics>>,
     size: f64,
     char_spacing: f64,
     word_spacing: f64,
@@ -522,9 +527,114 @@ fn operand_matrix(operands: &[Object]) -> Option<Matrix> {
     ))
 }
 
+struct ContentInterpreter<'a> {
+    doc: &'a Document,
+    forms: Vec<lopdf::ObjectId>,
+    depth: usize,
+    remaining_bytes: u64,
+    remaining_operations: usize,
+}
+
+impl ContentInterpreter<'_> {
+    fn walk(
+        &mut self,
+        content: &lopdf::content::Content,
+        resources: Option<&Dictionary>,
+        state: &mut State,
+        runs: &mut Vec<Run>,
+    ) -> crate::Result<()> {
+        let fonts = resource_fonts(self.doc, resources)?;
+        let mut stack = Vec::new();
+        for operation in &content.operations {
+            self.remaining_operations =
+                self.remaining_operations.checked_sub(1).ok_or_else(|| {
+                    anyhow::anyhow!("PDF Form expansion exceeds the page operation limit")
+                })?;
+            if operation.operator != "Do" {
+                apply_operation(self.doc, &fonts, &mut stack, state, runs, operation);
+                continue;
+            }
+            let name = operation
+                .operands
+                .first()
+                .and_then(|value| value.as_name().ok())
+                .ok_or_else(|| anyhow::anyhow!("PDF Do operation has no XObject name"))?;
+            self.draw_form(name, resources, state, runs)
+                .map_err(|error| {
+                    anyhow::anyhow!("XObject {}: {error}", String::from_utf8_lossy(name))
+                })?;
+        }
+        Ok(())
+    }
+
+    fn draw_form(
+        &mut self,
+        name: &[u8],
+        resources: Option<&Dictionary>,
+        state: &State,
+        runs: &mut Vec<Run>,
+    ) -> crate::Result<()> {
+        let objects = resources
+            .and_then(|resources| dict_entry(self.doc, resources, b"XObject"))
+            .ok_or_else(|| anyhow::anyhow!("PDF XObject resources are missing"))?;
+        let object = objects.get(name)?;
+        let stream = deref(self.doc, object)
+            .ok_or_else(|| anyhow::anyhow!("PDF XObject reference cannot be resolved"))?
+            .as_stream()?;
+        if stream.dict.get(b"Subtype")?.as_name()? != b"Form" {
+            return Ok(());
+        }
+        let id = object.as_reference().ok();
+        if id.is_some_and(|id| self.forms.contains(&id)) {
+            anyhow::bail!("PDF Form has a cyclic XObject reference");
+        }
+        if self.depth >= 32 {
+            anyhow::bail!("PDF Form nesting exceeds 32 levels");
+        }
+        let bytes = super::pdf_stream::plain_content_limited(
+            stream,
+            self.remaining_bytes,
+            "PDF Form content",
+        )?;
+        self.remaining_bytes -= bytes.len() as u64;
+        let content = lopdf::content::Content::decode(&bytes)?;
+        drop(bytes);
+        let form_resources = match stream.dict.get(b"Resources") {
+            Ok(value) => Some(
+                as_dict(self.doc, value)
+                    .ok_or_else(|| anyhow::anyhow!("PDF Form Resources is not a dictionary"))?,
+            ),
+            Err(_) => resources,
+        };
+        let mut form_state = state.clone();
+        if let Ok(value) = stream.dict.get(b"Matrix") {
+            let values = deref(self.doc, value)
+                .ok_or_else(|| anyhow::anyhow!("PDF Form Matrix reference cannot be resolved"))?
+                .as_array()?;
+            if values.len() != 6 {
+                anyhow::bail!("PDF Form Matrix must contain six numbers");
+            }
+            let matrix = operand_matrix(values)
+                .ok_or_else(|| anyhow::anyhow!("PDF Form Matrix must contain six numbers"))?;
+            form_state.ctm = matrix.mul(form_state.ctm);
+        }
+        // Form execution implicitly saves and restores the caller's graphics state.
+        if let Some(id) = id {
+            self.forms.push(id);
+        }
+        self.depth += 1;
+        let result = self.walk(&content, form_resources, &mut form_state, runs);
+        self.depth -= 1;
+        if id.is_some() {
+            self.forms.pop();
+        }
+        result
+    }
+}
+
 fn apply_operation(
     doc: &Document,
-    fonts: &HashMap<String, FontMetrics>,
+    fonts: &HashMap<String, std::sync::Arc<FontMetrics>>,
     stack: &mut Vec<State>,
     state: &mut State,
     runs: &mut Vec<Run>,
@@ -550,10 +660,8 @@ fn apply_operation(
         }
         "ET" => {}
         "Tf" => {
-            if let Ok(name) = operands[0].clone().as_name_str().map(str::to_owned)
-                && !operands.is_empty()
-            {
-                state.text.font = name;
+            if let Some(name) = operands.first().and_then(|value| value.as_name_str().ok()) {
+                state.text.font = fonts.get(name).cloned();
             }
             if let Some(size) = operand_number(operands, 1) {
                 state.text.size = size;
@@ -655,12 +763,12 @@ fn apply_operation(
 
 fn show_text(
     _doc: &Document,
-    fonts: &HashMap<String, FontMetrics>,
+    _fonts: &HashMap<String, std::sync::Arc<FontMetrics>>,
     state: &mut State,
     runs: &mut Vec<Run>,
     bytes: &[u8],
 ) {
-    let Some(font) = fonts.get(&state.text.font) else {
+    let Some(font) = state.text.font.as_ref() else {
         return;
     };
     let size = state.text.size;
@@ -805,14 +913,12 @@ fn win_ansi_char(byte: u8) -> char {
     }
 }
 
-fn page_fonts(
+fn resource_fonts(
     doc: &Document,
-    page_id: lopdf::ObjectId,
-) -> crate::Result<HashMap<String, FontMetrics>> {
+    resources: Option<&Dictionary>,
+) -> crate::Result<HashMap<String, std::sync::Arc<FontMetrics>>> {
     let mut fonts = HashMap::new();
-    let Some(resources) =
-        inherited(doc, page_id, b"Resources").and_then(|value| as_dict(doc, value))
-    else {
+    let Some(resources) = resources else {
         return Ok(fonts);
     };
     let Some(font_dict) = dict_entry(doc, resources, b"Font") else {
@@ -824,9 +930,9 @@ fn page_fonts(
         };
         fonts.insert(
             String::from_utf8_lossy(name).into_owned(),
-            font_metrics(doc, font).map_err(|error| {
+            std::sync::Arc::new(font_metrics(doc, font).map_err(|error| {
                 anyhow::anyhow!("font {}: {error}", String::from_utf8_lossy(name))
-            })?,
+            })?),
         );
     }
     Ok(fonts)
