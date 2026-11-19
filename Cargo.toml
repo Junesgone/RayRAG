@@ -1,6 +1,6 @@
 [package]
 name = "rayrag"
-version = "0.126.25"
+version = "0.126.26"
 edition = "2024"
 description = "RayRAG: RAGFlow parsing pipeline rewritten in Rust, powered by zvec"
 authors = ["Boss"]
@@ -20,6 +20,7 @@ postgres-backend = ["dep:postgres"]
 
 [dependencies]
 flate2 = "1"
+weezl = "0.2.1"         # Bounded, fallible PDF LZW decoding
 # Real zvec vector database bindings. The backend is opt-in so the default
 # build never downloads or links a native library. Set ZVEC_LIB_DIR when
 # building with --features zvec-backend.

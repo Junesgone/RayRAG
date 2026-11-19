@@ -7,7 +7,8 @@
 //! the *stream's* idea of how much memory to use rather than its own.
 //!
 //! This module decodes the filters RayRAG actually meets in text extraction
-//! (`FlateDecode`, `ASCIIHexDecode`, `ASCII85Decode`, and the PNG predictors that ride
+//! (`FlateDecode`, `LZWDecode`, `RunLengthDecode`, `ASCIIHexDecode`, `ASCII85Decode`,
+//! and the PNG predictors that ride
 //! along with deflate) with a hard output cap, and refuses anything else loudly instead
 //! of handing it to an unbounded decoder. The cap is
 //! `RAYRAG_PDF_STREAM_LIMIT_BYTES` (default 64 MiB).
@@ -147,6 +148,20 @@ fn decode_stream(
                 let decoded = inflate_limited(&content, limit, what)?;
                 apply_predictor(doc, decoded, params, limit, what)?
             }
+            b"LZWDecode" | b"LZW" => {
+                let early_change = params
+                    .and_then(|params| params.get(b"EarlyChange").ok())
+                    .map(|value| resolve_stream_value(doc, value, what))
+                    .transpose()?;
+                let early_change = match early_change {
+                    None | Some(Object::Null) | Some(Object::Integer(1)) => true,
+                    Some(Object::Integer(0)) => false,
+                    _ => anyhow::bail!("{what} LZW EarlyChange must be 0 or 1"),
+                };
+                let decoded = decode_lzw(&content, early_change, limit, what)?;
+                apply_predictor(doc, decoded, params, limit, what)?
+            }
+            b"RunLengthDecode" | b"RL" => decode_run_length(&content, limit, what)?,
             b"ASCIIHexDecode" | b"AHx" => decode_ascii_hex(&content, limit, what)?,
             b"ASCII85Decode" | b"A85" => decode_ascii85(&content, limit, what)?,
             other => {
@@ -165,6 +180,71 @@ fn decode_stream(
         );
     }
     Ok(content)
+}
+
+/// Decode through a fixed scratch buffer and reject partial or over-limit output.
+fn decode_lzw(input: &[u8], early_change: bool, limit: u64, what: &str) -> Result<Vec<u8>> {
+    use weezl::{BitOrder, LzwStatus, decode::Decoder};
+    let mut decoder = if early_change {
+        Decoder::with_tiff_size_switch(BitOrder::Msb, 8)
+    } else {
+        Decoder::new(BitOrder::Msb, 8)
+    };
+    let mut input = input;
+    let mut output = Vec::new();
+    let mut buffer = [0; 8192];
+    loop {
+        let result = decoder.decode_bytes(input, &mut buffer);
+        let next = (output.len() as u64).saturating_add(result.consumed_out as u64);
+        anyhow::ensure!(next <= limit, "{what} LZW output exceeds the safety limit");
+        output.extend_from_slice(&buffer[..result.consumed_out]);
+        input = &input[result.consumed_in..];
+        match result.status {
+            Ok(LzwStatus::Done) => return Ok(output),
+            Ok(LzwStatus::NoProgress) => {
+                anyhow::bail!("{what} LZW stream is truncated or has no end code")
+            }
+            Err(error) => anyhow::bail!("{what} LZW decoding failed: {error}"),
+            Ok(LzwStatus::Ok) => anyhow::ensure!(
+                result.consumed_in > 0 || result.consumed_out > 0,
+                "{what} LZW decoder made no progress"
+            ),
+        }
+    }
+}
+
+fn decode_run_length(input: &[u8], limit: u64, what: &str) -> Result<Vec<u8>> {
+    let mut offset = 0;
+    let mut output = Vec::new();
+    while let Some(&length) = input.get(offset) {
+        offset += 1;
+        if length == 128 {
+            return Ok(output);
+        }
+        let count = if length <= 127 {
+            usize::from(length) + 1
+        } else {
+            257 - usize::from(length)
+        };
+        anyhow::ensure!(
+            (output.len() as u64).saturating_add(count as u64) <= limit,
+            "{what} RunLength output exceeds the safety limit"
+        );
+        if length <= 127 {
+            let literal = input
+                .get(offset..offset + count)
+                .ok_or_else(|| anyhow::anyhow!("{what} RunLength literal is truncated"))?;
+            output.extend_from_slice(literal);
+            offset += count;
+        } else {
+            let byte = *input
+                .get(offset)
+                .ok_or_else(|| anyhow::anyhow!("{what} RunLength repeat is truncated"))?;
+            output.resize(output.len() + count, byte);
+            offset += 1;
+        }
+    }
+    anyhow::bail!("{what} RunLength stream has no end marker")
 }
 
 /// Inflate with a hard output ceiling: the decoder stops as soon as it produced more

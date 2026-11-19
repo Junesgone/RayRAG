@@ -3573,7 +3573,7 @@ dependencies = [
 
 [[package]]
 name = "rayrag"
-version = "0.126.25"
+version = "0.126.26"
 dependencies = [
  "aes 0.8.4",
  "anyhow",
@@ -3630,6 +3630,7 @@ dependencies = [
  "unicode-segmentation",
  "url",
  "uuid",
+ "weezl 0.2.1",
  "xxhash-rust",
  "zip 2.4.2",
  "zvec-rust",

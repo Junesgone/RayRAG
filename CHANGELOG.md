@@ -2,6 +2,15 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.126.26] - 2026-11-19
+
+### Bounded LZW and RunLength PDF text
+
+- Decode LZW and RunLength text streams with per-filter output limits.
+- Support LZW EarlyChange 0/1, indirect settings, aliases and existing predictor chains.
+- Reject malformed codes, truncated runs and missing end markers before partial text is indexed.
+- Preserve decoded Unicode text and position metadata through normal PDF parsing and chunking.
+
 ## [0.126.25] - 2026-11-19
 
 ### Indirect PDF filter parameters
