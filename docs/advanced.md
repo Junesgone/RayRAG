@@ -778,9 +778,8 @@ export RAYRAG_POSTGRES_URL=postgresql://admin:admin@127.0.0.1:5432/rayrag   # �
 export RAYRAG_VECTOR_BACKEND=zvec
 export RAYRAG_ZVEC_DIR=/var/lib/rayrag/zvec
 export ZVEC_LIB_DIR=/path/to/zvec/build/lib
-export RAYRAG_ADMIN_EMAIL=admin
-# 不设置则初始登录 admin/admin；设置则至少 12 位
-export RAYRAG_ADMIN_PASSWORD='replace-with-a-strong-admin-password'
+# 不预置任何管理员账户：首次在浏览器注册的账户自动成为管理员，
+# 其密码会同步到 PostgreSQL 管理员角色。
 cargo build --release --locked   # postgres-backend + zvec-backend 都是默认 feature
 ./target/release/rayrag serve --port 9380
 ```
@@ -831,13 +830,13 @@ feature 时静默回退。下载源均可通过 `.env` 的 `DEBIAN_MIRROR`、
 ```bash
 # 纯 Linux（宿主机）
 cargo build --release --features postgres-backend,zvec-backend
-RAYRAG_PORT=9390 RAYRAG_ADMIN_PASSWORD=xxx ./target/release/rayrag
+RAYRAG_PORT=9390 ./target/release/rayrag
 
 # 纯 Docker
 RAYRAG_FEATURES=postgres-backend,zvec-backend \
-RAYRAG_POSTGRES_PASSWORD=xxx RAYRAG_ADMIN_PASSWORD=xxx \
+RAYRAG_POSTGRES_PASSWORD=xxx \
 docker compose up -d --build
-# 浏览器打开 http://<host>:9390 （默认 admin / 上面设置的密码）
+# 浏览器打开 http://<host>:9390，注册的第一个账户即管理员（无预置账户）
 ```
 
 GPU 四链路（embedding/LLM/rerank/OCR）通过环境变量注入：

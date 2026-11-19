@@ -93,43 +93,10 @@ impl UserStore {
                 .map(|u| (u.email.clone(), u))
                 .collect()
         } else {
-            // No account is pre-created. The first registration becomes the RayRAG
-            // administrator, so a fresh deployment no longer starts with a well-known
-            // admin/admin account and no random password is generated. An operator who
-            // explicitly configures the legacy seed variables still gets that account.
-            let configured_email = std::env::var("RAYRAG_ADMIN_EMAIL")
-                .ok()
-                .filter(|value| !value.trim().is_empty());
-            let configured_password = std::env::var("RAYRAG_ADMIN_PASSWORD")
-                .ok()
-                .filter(|value| !value.trim().is_empty());
-            if configured_email.is_none() && configured_password.is_none() {
-                HashMap::new()
-            } else {
-                let initial_email = configured_email.unwrap_or_else(|| "admin".into());
-                let initial_nickname = std::env::var("RAYRAG_ADMIN_NICKNAME")
-                    .ok()
-                    .filter(|value| !value.trim().is_empty())
-                    .unwrap_or_else(|| "admin".into());
-                let initial_password = configured_password.ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "RAYRAG_ADMIN_EMAIL is set but RAYRAG_ADMIN_PASSWORD is not; set both to seed the account"
-                    )
-                })?;
-                let admin = User {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    nickname: initial_nickname,
-                    email: initial_email,
-                    password_hash: hash_password(&initial_password)?,
-                    role: "admin".into(),
-                    avatar: String::new(),
-                    timezone: String::new(),
-                    created_at: now_ms(),
-                };
-                let mut map = HashMap::new();
-                map.insert(admin.email.clone(), admin);
-                map
-            }
+            // No account is pre-created, ever. The first registration becomes the RayRAG
+            // administrator; the legacy RAYRAG_ADMIN_* seed variables are deliberately
+            // ignored so a deployment can never start with a known admin account.
+            HashMap::new()
         };
 
         let store = Self {

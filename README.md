@@ -281,8 +281,8 @@ and run `docker compose up -d`.
 
 **Q3 — are there password rules?**
 Choose a password of at least **12 characters** when registering or changing your password.
-For an explicitly preconfigured account, set both `RAYRAG_ADMIN_EMAIL` and
-`RAYRAG_ADMIN_PASSWORD` before the first startup.
+There is no preset admin account: the first account registered in the browser becomes the
+administrator.
 
 **Q4 — I forgot the login password.**
 Use **Forgot password** on the login page and follow the verification-code flow.

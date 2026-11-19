@@ -98,7 +98,7 @@ enum Commands {
         #[arg(long, default_value = "admin")]
         email: String,
 
-        /// Admin password (defaults to RAYRAG_ADMIN_PASSWORD env)
+        /// Account password for the benchmark login (required)
         #[arg(long)]
         password: Option<String>,
 
@@ -360,10 +360,11 @@ async fn main() -> anyhow::Result<()> {
             rerank,
         } => {
             use std::time::Instant;
-            let password = password.unwrap_or_else(|| {
-                std::env::var("RAYRAG_ADMIN_PASSWORD")
-                    .expect("--password missing; set RAYRAG_ADMIN_PASSWORD env")
-            });
+            let password = password.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "--password is required for benchmark login (use the registered account password)"
+                )
+            })?;
             let client = rayrag::common::cmd_timeout::model_client();
             // 登录拿 token
             let login: serde_json::Value = client

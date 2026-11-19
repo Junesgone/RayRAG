@@ -14,4 +14,4 @@ service_port          = 9395
 checkport             = true
 ctl_stop              = true
 os_min_version        = 1.1.3100
-changelog             = v0.127.5: Mistral OCR 位置按 PDF 页面框缩放，与 72 DPI 原生坐标对齐；沿用重排器、旧版 XLS、日期、BOM 与 PDF 内联图像修复。
+changelog             = v0.127.6: 彻底移除旧版管理员账号种子，首次注册即管理员；沿用 Mistral OCR、重排器、旧版 XLS 等修复。

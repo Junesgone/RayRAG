@@ -2,6 +2,19 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.6] - 2026-11-20
+
+### No preset administrator account
+
+- Remove the legacy `RAYRAG_ADMIN_EMAIL`/`RAYRAG_ADMIN_NICKNAME`/`RAYRAG_ADMIN_PASSWORD`
+  seeding path: a new account store is always empty, even when those variables remain in an
+  inherited environment file.
+- The first account registered in the browser is the administrator; the PostgreSQL
+  administrator role's password follows that account. Removing the seed closes the
+  known-account backdoor and restores the documented first-run flow.
+- The benchmark command now requires an explicit `--password`; the admin variables are
+  removed from the environment template and user documentation.
+
 ## [0.127.5] - 2026-11-20
 
 ### Mistral OCR page-box position scaling

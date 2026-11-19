@@ -7963,24 +7963,11 @@ pub async fn run(
     );
 
     // No account is pre-created: the first registration becomes the administrator and the
-    // PostgreSQL administrator role's password follows that account. Say so at startup; when
-    // the operator explicitly configured the legacy seed account, warn if it is weak.
+    // PostgreSQL administrator role's password follows that account.
     if no_users_yet {
         tracing::info!(
             "no account exists yet; the first registration becomes the RayRAG administrator"
         );
-    } else if let Some(value) = std::env::var("RAYRAG_ADMIN_PASSWORD").ok() {
-        let value = value.trim().to_ascii_lowercase();
-        let weak = value.starts_with("replace-with")
-            || value == "changeme"
-            || value == "password"
-            || value == "admin"
-            || value.len() < 12;
-        if weak {
-            tracing::warn!(
-                "RAYRAG_ADMIN_PASSWORD is a weak placeholder; change the password after signing in"
-            );
-        }
     }
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
