@@ -36,8 +36,11 @@ impl ExcelParser {
 
     /// Parse CSV data into text table format.
     fn parse_csv(&self, data: &[u8]) -> Result<String> {
-        let content =
-            String::from_utf8(data.to_vec()).map_err(|e| anyhow::anyhow!("UTF-8 decode: {}", e))?;
+        let content = std::str::from_utf8(data).map_err(|error| {
+            anyhow::anyhow!(
+                "CSV UTF-8 decode failed: {error}. 请将文件另存为 UTF-8 CSV 后重新上传 / Save the file as UTF-8 CSV, then upload again."
+            )
+        })?;
 
         let mut csv_reader = csv::ReaderBuilder::new()
             .has_headers(true)
@@ -45,56 +48,31 @@ impl ExcelParser {
             .from_reader(content.as_bytes());
 
         let mut text = String::new();
-        let mut row_count = 0;
-
-        let mut skipped_rows = 0usize;
-        // Headers
-        match csv_reader.headers() {
-            Ok(headers) => {
-                text.push_str("<!--TABLE_START-->\n");
-                text.push_str(&format!(
-                    "| {} |\n",
-                    headers.iter().collect::<Vec<_>>().join(" | ")
-                ));
-                text.push_str(&format!(
-                    "|{}|\n",
-                    headers.iter().map(|_| "---").collect::<Vec<_>>().join("|")
-                ));
-            }
-            Err(error) => {
-                tracing::warn!(%error, "CSV header row is unreadable; continuing without a header");
-            }
-        }
+        let headers = csv_reader.headers().map_err(|error| {
+            anyhow::anyhow!(
+                "CSV header read failed: {error}. 请修复文件并另存为 UTF-8 CSV 后重新上传 / Repair and save the file as UTF-8 CSV, then upload again."
+            )
+        })?;
+        text.push_str("<!--TABLE_START-->\n");
+        text.push_str(&format!(
+            "| {} |\n",
+            headers.iter().collect::<Vec<_>>().join(" | ")
+        ));
+        text.push_str(&format!(
+            "|{}|\n",
+            headers.iter().map(|_| "---").collect::<Vec<_>>().join("|")
+        ));
 
         for result in csv_reader.records() {
-            match result {
-                Ok(record) => {
-                    text.push_str(&format!(
-                        "| {} |\n",
-                        record.iter().collect::<Vec<_>>().join(" | ")
-                    ));
-                    row_count += 1;
-                }
-                Err(error) => {
-                    // Dropping malformed rows one by one used to make a broken file look
-                    // like a successfully parsed (but almost empty) table.
-                    skipped_rows += 1;
-                    if skipped_rows <= 5 {
-                        tracing::warn!(%error, row = row_count + skipped_rows, "Skipping a malformed CSV row");
-                    }
-                }
-            }
-            if row_count > 1000 {
-                text.push_str("| ... (truncated) |\n");
-                break;
-            }
-        }
-        if skipped_rows > 0 {
-            tracing::warn!(
-                %skipped_rows,
-                parsed_rows = row_count,
-                "CSV parse skipped malformed rows; the extracted table is incomplete"
-            );
+            let record = result.map_err(|error| {
+                anyhow::anyhow!(
+                    "CSV record read failed: {error}. 请修复文件并另存为 UTF-8 CSV 后重新上传 / Repair and save the file as UTF-8 CSV, then upload again."
+                )
+            })?;
+            text.push_str(&format!(
+                "| {} |\n",
+                record.iter().collect::<Vec<_>>().join(" | ")
+            ));
         }
         text.push_str("<!--TABLE_END-->\n");
 
@@ -103,16 +81,13 @@ impl ExcelParser {
 
     /// Parse XLSX data by reading shared strings and sheet XML directly.
     fn parse_xlsx(&self, data: &[u8]) -> Result<String> {
-        let sheets = read_xlsx_sheets(data, 1000)?;
+        let sheets = read_xlsx_sheets(data, usize::MAX)?;
         let mut text = String::new();
         for sheet in &sheets {
             text.push_str(&format!("## {}\n\n", sheet.name));
             text.push_str("<!--TABLE_START-->\n");
             for cells in &sheet.rows {
                 text.push_str(&format!("| {} |\n", cells.join(" | ")));
-            }
-            if sheet.truncated {
-                text.push_str("| ... (truncated) |\n");
             }
             text.push_str("<!--TABLE_END-->\n");
         }
@@ -732,7 +707,7 @@ impl Parse for ExcelParser {
         Ok(new_document(
             name,
             content,
-            if name.ends_with(".csv") {
+            if name.to_lowercase().ends_with(".csv") {
                 "text/csv"
             } else {
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"

@@ -2,6 +2,13 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.126.9] - 2026-11-19
+
+### Complete spreadsheet extraction
+
+- Read CSV records and XLSX worksheet rows beyond the previous 1000-row extraction limit.
+- Return UTF-8 CSV repair and re-upload guidance when CSV decoding or record reading fails.
+
 ## [0.126.8] - 2026-11-19
 
 ### Standalone image extraction
