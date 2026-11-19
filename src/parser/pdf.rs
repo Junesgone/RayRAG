@@ -103,7 +103,33 @@ impl PdfParser {
     /// the fallback for streams the interpreter cannot follow.
     async fn extract_text(&self, data: &[u8]) -> Result<String> {
         let doc = lopdf::Document::load_mem(data)?;
-        let tagged = pdf_text::tagged_content(&pdf_text::try_extract_positioned_lines(&doc)?);
+        let lines = pdf_text::try_extract_positioned_lines(&doc)?;
+        let text_pages: std::collections::HashSet<usize> =
+            lines.iter().map(|line| line.page).collect();
+        for (number, page_id) in doc.get_pages() {
+            if text_pages.contains(&(number as usize)) {
+                continue;
+            }
+            let bytes = super::pdf_stream::page_content_limited(
+                &doc,
+                page_id,
+                super::pdf_stream::stream_limit_bytes(),
+                &format!("PDF page {number} content"),
+            )?;
+            let content = lopdf::content::Content::decode(&bytes)
+                .map_err(|error| anyhow::anyhow!("PDF page {number}: {error}"))?;
+            if content_to_text(&content).trim().is_empty()
+                && content
+                    .operations
+                    .iter()
+                    .any(|operation| matches!(operation.operator.as_str(), "Do" | "BI" | "ID"))
+            {
+                anyhow::bail!(
+                    "No text extracted from PDF page {number} containing image or Form content. The built-in parser cannot render this page for OCR. Select an OCR document layout backend in the dataset parser settings (layout_recognize), configure its API URL, credentials and model, then reparse the whole document. A generic image OCR client does not provide PDF rendering. PDF 第 {number} 页含图像或 Form 内容但未提取到文字，请选择支持 PDF 的 OCR 文档解析后端并配置服务地址、凭据和模型后重新解析全文。"
+                );
+            }
+        }
+        let tagged = pdf_text::tagged_content(&lines);
         if !tagged.trim().is_empty() {
             return Ok(tagged);
         }

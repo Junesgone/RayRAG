@@ -2,6 +2,14 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.126.12] - 2026-11-19
+
+### Mixed PDF page failure reporting
+
+- Detect pages with drawn image or Form content and no extracted text before returning text from other pages.
+- Report the page number and PDF-capable OCR layout configuration steps before chunking and indexing.
+- Continue accepting blank pages with unused image resources.
+
 ## [0.126.11] - 2026-11-19
 
 ### PDF font failure reporting
