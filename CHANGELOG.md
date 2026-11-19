@@ -2,6 +2,14 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.126.18] - 2026-11-19
+
+### Local model connection timeouts
+
+- Remove the fixed connection timeout for local and LAN OpenAI-compatible model clients.
+- Keep the existing connection and request budgets for remote model providers.
+- Synchronize the environment template and first-run setup text with the local timeout policy.
+
 ## [0.126.17] - 2026-11-19
 
 ### Snapshot recovery diagnostics

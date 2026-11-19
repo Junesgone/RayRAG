@@ -477,7 +477,7 @@ fn field_specs() -> Vec<(
             "resources",
             FieldKind::Number,
             "Embedding, vision and OCR calls give up after this many seconds; local OpenAI-compatible endpoints are exempt",
-            "嵌入、视觉与 OCR 调用超过该秒数即放弃；本机/局域网 OpenAI-API-Compatible 端点不设总超时",
+            "嵌入、视觉与 OCR 调用超过该秒数即放弃；本机/局域网 OpenAI-API-Compatible 端点不设连接和总请求超时",
             false,
             Vec::new(),
         ),

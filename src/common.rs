@@ -1649,13 +1649,14 @@ pub mod cmd_timeout {
     }
 
     /// Model client for one endpoint. Local OpenAI-compatible services get no
-    /// total timeout (the connect timeout still bounds an unreachable host);
-    /// remote providers keep the shared RAYRAG_MODEL_TIMEOUT budget.
+    /// connection or total request timeout. Remote providers use a 10-second
+    /// connection timeout and the shared RAYRAG_MODEL_TIMEOUT request budget.
     pub fn model_client_for(base_url: &str) -> reqwest::Client {
-        let mut builder =
-            reqwest::Client::builder().connect_timeout(std::time::Duration::from_secs(10));
+        let mut builder = reqwest::Client::builder();
         if let Some(timeout) = model_timeout_for(base_url) {
-            builder = builder.timeout(timeout);
+            builder = builder
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .timeout(timeout);
         }
         builder.build().unwrap_or_else(|_| reqwest::Client::new())
     }
