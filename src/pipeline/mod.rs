@@ -290,7 +290,7 @@ impl Pipeline {
 
         // 1. Detect MIME type and parse
         let mime = parser::mime_from_extension(name)
-            .ok_or_else(|| anyhow::anyhow!("Unsupported file type: {name}. Convert legacy Word .doc to .docx or Excel .xls to .xlsx; upload a supported document format. 旧版 Word/Excel 请先另存为 DOCX/XLSX。"))?;
+            .ok_or_else(|| anyhow::anyhow!("Unsupported file type: {name}. Convert legacy Word .doc to .docx; upload a supported document format. 旧版 Word 请先另存为 DOCX。"))?;
 
         let data = std::fs::read(file_path)?;
         let parse_started = std::time::Instant::now();
@@ -300,6 +300,7 @@ impl Pipeline {
                     "Cannot parse {name}: {error}. Open the PDF to check for damage or password protection, export an unencrypted PDF and upload it again. If an OCR layout is selected, check its client URL, credentials and model configuration. PDF 解析失败，请检查文件是否损坏或加密，重新导出后上传；使用 OCR 时请检查解析客户端地址、密钥和模型配置。"
                 ),
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                | "application/vnd.ms-excel"
                 | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 | "application/vnd.openxmlformats-officedocument.presentationml.presentation" => anyhow::anyhow!(
                     "Cannot parse {name}: {error}. Open the document in Office or LibreOffice, repair it if necessary, save an unencrypted DOCX/XLSX/PPTX file and upload it again. Office 文档解析失败，请修复文件并另存为未加密的 DOCX/XLSX/PPTX 后重新上传。"

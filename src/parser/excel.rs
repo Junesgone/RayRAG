@@ -6,6 +6,7 @@
 
 use crate::parser::{Parse, new_document};
 use crate::{Document, Result};
+use calamine::{Data as CalamineData, Reader as CalamineReader, open_workbook_auto_from_rs};
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 use serde_json::Value;
@@ -89,18 +90,28 @@ impl ExcelParser {
     /// Parse XLSX data by reading shared strings and sheet XML directly.
     fn parse_xlsx(&self, data: &[u8]) -> Result<String> {
         let sheets = read_xlsx_sheets(data, usize::MAX)?;
-        let mut text = String::new();
-        for sheet in &sheets {
-            text.push_str(&format!("## {}\n\n", sheet.name));
-            text.push_str("<!--TABLE_START-->\n");
-            for cells in &sheet.rows {
-                text.push_str(&format!("| {} |\n", cells.join(" | ")));
-            }
-            text.push_str("<!--TABLE_END-->\n");
-        }
-
-        Ok(text)
+        Ok(sheets_markdown(&sheets))
     }
+
+    /// Parse legacy BIFF/OLE2 .xls workbooks through calamine, mirroring
+    /// RAGFlow's pandas read_excel(engine="calamine") fallback.
+    fn parse_xls(&self, data: &[u8]) -> Result<String> {
+        let sheets = read_xls_sheets(data, usize::MAX)?;
+        Ok(sheets_markdown(&sheets))
+    }
+}
+
+fn sheets_markdown(sheets: &[SpreadsheetSheet]) -> String {
+    let mut text = String::new();
+    for sheet in sheets {
+        text.push_str(&format!("## {}\n\n", sheet.name));
+        text.push_str("<!--TABLE_START-->\n");
+        for cells in &sheet.rows {
+            text.push_str(&format!("| {} |\n", cells.join(" | ")));
+        }
+        text.push_str("<!--TABLE_END-->\n");
+    }
+    text
 }
 
 pub(crate) fn read_xlsx_sheets(
@@ -148,7 +159,101 @@ pub(crate) fn read_xlsx_sheets(
     Ok(sheets)
 }
 
-/// Resolve `(sheet name, worksheet path)` pairs for a workbook in document
+fn is_zip_workbook(data: &[u8]) -> bool {
+    data.starts_with(b"PK\x03\x04")
+}
+
+fn is_ole_workbook(data: &[u8]) -> bool {
+    data.starts_with(&[0xD0, 0xCF, 0x11, 0xE0])
+}
+
+/// Read a legacy BIFF/OLE2 workbook through calamine. RAGFlow reaches this
+/// format through pandas read_excel(engine="calamine") after openpyxl rejects
+/// the OLE container, then rebuilds an openpyxl workbook from the DataFrames.
+pub(crate) fn read_xls_sheets(
+    data: &[u8],
+    max_rows_per_sheet: usize,
+) -> Result<Vec<SpreadsheetSheet>> {
+    let mut workbook = open_workbook_auto_from_rs(Cursor::new(data)).map_err(|error| {
+        anyhow::anyhow!(
+            "Legacy XLS workbook could not be opened: {error}. 请修复或另存为 XLSX 后重新上传 / Repair the workbook or save it as XLSX, then upload again."
+        )
+    })?;
+    let names = workbook.sheet_names();
+    let mut sheets = Vec::with_capacity(names.len());
+    for name in names {
+        let range = workbook.worksheet_range(&name).map_err(|error| {
+            anyhow::anyhow!(
+                "Legacy XLS worksheet {name:?} could not be read: {error}. 请修复或另存为 XLSX 后重新上传 / Repair the workbook or save it as XLSX, then upload again."
+            )
+        })?;
+        let mut rows = Vec::new();
+        let mut truncated = false;
+        for row in range.rows() {
+            let mut values: Vec<String> = row.iter().map(calamine_cell_text).collect();
+            let Some(end) = values.iter().rposition(|value| !value.is_empty()) else {
+                continue;
+            };
+            values.truncate(end + 1);
+            if rows.len() == max_rows_per_sheet {
+                truncated = true;
+                break;
+            }
+            rows.push(values);
+        }
+        sheets.push(SpreadsheetSheet {
+            name,
+            rows,
+            truncated,
+            merged_ranges: Vec::new(),
+        });
+    }
+    Ok(sheets)
+}
+
+fn calamine_cell_text(value: &CalamineData) -> String {
+    match value {
+        CalamineData::Empty => String::new(),
+        CalamineData::String(value) => value.clone(),
+        CalamineData::Int(value) => value.to_string(),
+        CalamineData::Float(value) => calamine_number_text(*value),
+        CalamineData::Bool(value) => {
+            if *value {
+                "True".to_string()
+            } else {
+                "False".to_string()
+            }
+        }
+        CalamineData::DateTime(value) => calamine_datetime_text(value),
+        CalamineData::DateTimeIso(value) | CalamineData::DurationIso(value) => {
+            value.replace('T', " ").trim_end_matches('Z').to_string()
+        }
+        CalamineData::Error(error) => format!("{error:?}"),
+    }
+}
+
+fn calamine_number_text(value: f64) -> String {
+    if value.is_finite() && value.fract() == 0.0 && value.abs() < 9_007_199_254_740_992.0 {
+        return (value as i64).to_string();
+    }
+    value.to_string()
+}
+
+fn calamine_datetime_text(value: &calamine::ExcelDateTime) -> String {
+    let (year, month, day, hour, minute, second, milli) = value.to_ymd_hms_milli();
+    let mut clock = format!("{hour:02}:{minute:02}:{second:02}");
+    if milli != 0 {
+        clock.push_str(&format!(".{milli:03}000"));
+    }
+    let serial = value.as_f64();
+    if (0.0..1.0).contains(&serial) {
+        clock
+    } else {
+        format!("{year:04}-{month:02}-{day:02} {clock}")
+    }
+}
+
+/// Resolve (sheet name, worksheet path) pairs for a workbook in document
 /// order. Falls back to alphabetical `xl/worksheets/sheetN.xml` paths when
 /// workbook.xml / rels are missing or unparsable (mirrors the openpyxl
 /// fallback of RAGFlow `_load_excel_to_workbook`).
@@ -790,8 +895,8 @@ fn parse_sheet_rows(
                         })?
                     }
                     "b" => match cell_value.as_str() {
-                        "1" => "true".into(),
-                        "0" => "false".into(),
+                        "1" => "True".into(),
+                        "0" => "False".into(),
                         _ => cell_value.clone(),
                     },
                     _ => cell_value.clone(),
@@ -904,22 +1009,27 @@ fn column_index(reference: &str) -> Option<usize> {
 
 impl Parse for ExcelParser {
     fn parse(&self, name: &str, data: &[u8]) -> Result<Document> {
-        let content = if name.to_lowercase().ends_with(".csv") {
+        let lower = name.to_lowercase();
+        // Mirrors RAGFlow _load_excel_to_workbook: a PK zip is XLSX, the OLE2
+        // signature is a legacy XLS, and anything else is converted from CSV.
+        let content = if lower.ends_with(".csv") {
             self.parse_csv(data)?
-        } else {
+        } else if is_zip_workbook(data) {
             self.parse_xlsx(data)?
+        } else if is_ole_workbook(data) {
+            self.parse_xls(data)?
+        } else {
+            self.parse_csv(data)?
+        };
+        let media_type = if lower.ends_with(".csv") {
+            "text/csv"
+        } else if lower.ends_with(".xls") {
+            "application/vnd.ms-excel"
+        } else {
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         };
 
-        Ok(new_document(
-            name,
-            content,
-            if name.to_lowercase().ends_with(".csv") {
-                "text/csv"
-            } else {
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            },
-            data.len(),
-        ))
+        Ok(new_document(name, content, media_type, data.len()))
     }
 }
 
@@ -1117,8 +1227,8 @@ pub(crate) fn actual_row_count_from_xml(xml: &str, shared_strings: &[String]) ->
                         .cloned()
                         .unwrap_or_default(),
                     "b" => match cell_value.as_str() {
-                        "1" => "true".into(),
-                        "0" => "false".into(),
+                        "1" => "True".into(),
+                        "0" => "False".into(),
                         _ => cell_value.clone(),
                     },
                     _ => cell_value.clone(),
@@ -1194,7 +1304,13 @@ pub(crate) fn row_number(name: &str, data: &[u8]) -> Result<usize> {
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_lowercase();
-    if ext.contains("xls") {
+    if ext.contains("xls") && is_ole_workbook(data) {
+        return Ok(read_xls_sheets(data, usize::MAX)?
+            .iter()
+            .map(|sheet| sheet.rows.len())
+            .sum());
+    }
+    if ext.contains("xls") && is_zip_workbook(data) {
         let mut archive = zip::ZipArchive::new(Cursor::new(data))?;
         let shared_strings = read_zip_text(&mut archive, "xl/sharedStrings.xml")?
             .map(|xml| parse_shared_strings(&xml))
@@ -1209,7 +1325,7 @@ pub(crate) fn row_number(name: &str, data: &[u8]) -> Result<usize> {
         }
         return Ok(total);
     }
-    if ext == "csv" || ext == "txt" {
+    if ext == "csv" || ext == "txt" || ext.contains("xls") {
         let text = crate::parser::txt::decode_text(data)?;
         return Ok(text.split('\n').count());
     }

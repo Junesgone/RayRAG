@@ -1872,20 +1872,28 @@ fn validate_upload_path(name: &str, path: &FsPath) -> anyhow::Result<()> {
     let valid = match extension.as_str() {
         "pdf" => starts_with(b"%PDF-"),
         "docx" | "xlsx" | "pptx" | "epub" => is_zip && validate_zip_container(&extension, path),
+        "xls" => starts_with(&[0xD0, 0xCF, 0x11, 0xE0]),
         "png" => starts_with(b"\x89PNG\r\n\x1a\n"),
         "jpg" | "jpeg" => starts_with(b"\xff\xd8\xff"),
         "gif" => starts_with(b"GIF87a") || starts_with(b"GIF89a"),
         "wav" => head.len() >= 12 && starts_with(b"RIFF") && &head[8..12] == b"WAVE",
-        "mp3" => starts_with(b"ID3")
-            || (head.len() >= 2 && head[0] == 0xff && head[1] & 0xe6 == 0xe2),
+        "mp3" => {
+            starts_with(b"ID3") || (head.len() >= 2 && head[0] == 0xff && head[1] & 0xe6 == 0xe2)
+        }
         "ogg" | "opus" => starts_with(b"OggS"),
         "flac" => starts_with(b"fLaC"),
-        "m4a" => head.len() >= 12 && &head[4..8] == b"ftyp"
-            && matches!(&head[8..12], b"M4A " | b"M4B " | b"isom" | b"iso2" | b"mp41" | b"mp42"),
+        "m4a" => {
+            head.len() >= 12
+                && &head[4..8] == b"ftyp"
+                && matches!(
+                    &head[8..12],
+                    b"M4A " | b"M4B " | b"isom" | b"iso2" | b"mp41" | b"mp42"
+                )
+        }
         "aac" => head.len() >= 2 && head[0] == 0xff && head[1] & 0xf6 == 0xf0,
         "wma" => starts_with(&[
-            0x30, 0x26, 0xb2, 0x75, 0x8e, 0x66, 0xcf, 0x11,
-            0xa6, 0xd9, 0x00, 0xaa, 0x00, 0x62, 0xce, 0x6c,
+            0x30, 0x26, 0xb2, 0x75, 0x8e, 0x66, 0xcf, 0x11, 0xa6, 0xd9, 0x00, 0xaa, 0x00, 0x62,
+            0xce, 0x6c,
         ]),
         "webm" => starts_with(b"\x1a\x45\xdf\xa3"),
         "webp" => head.len() >= 12 && &head[..4] == b"RIFF" && &head[8..12] == b"WEBP",
@@ -7785,7 +7793,8 @@ pub async fn run(
         std::env::var("EMBED_API_BASE").ok(),
         std::env::var("EMBED_MODEL").ok(),
     ) {
-        (Some(api_base), Some(model)) if !api_base.trim().is_empty() && !model.trim().is_empty() =>
+        (Some(api_base), Some(model))
+            if !api_base.trim().is_empty() && !model.trim().is_empty() =>
         {
             let api_key = std::env::var("EMBED_API_KEY").unwrap_or_default();
             tracing::info!(

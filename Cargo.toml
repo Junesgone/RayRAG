@@ -1,6 +1,6 @@
 [package]
 name = "rayrag"
-version = "0.127.2"
+version = "0.127.3"
 edition = "2024"
 description = "RayRAG: RAGFlow parsing pipeline rewritten in Rust, powered by zvec"
 authors = ["Boss"]
@@ -41,6 +41,7 @@ indexmap = "2"           # named destinations (mirror lopdf's own dep)
 docx-rs = "0.4"          # DOCX parsing  
 pulp = "0.20"            # HTML/Markdown parsing
 csv = "1.3"              # CSV parsing
+calamine = "0.38"        # Legacy .xls (BIFF/OLE2) workbooks — RAGFlow's pandas/calamine fallback
 zip = "2.2"              # XLSX zip container
 quick-xml = "0.36"       # Structured OOXML/SVG parsing
 scraper = "=0.20.0"      # Pure-Rust Google Scholar HTML DOM parsing

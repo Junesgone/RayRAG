@@ -14,4 +14,4 @@ service_port          = 9395
 checkport             = true
 ctl_stop              = true
 os_min_version        = 1.1.3100
-changelog             = v0.127.2: XLSX 日期单元格按 RAGFlow/openpyxl 规则输出日期时间，CSV/TXT 支持 UTF-8/16/32 BOM 解码；沿用 PDF 内联图像修复。
+changelog             = v0.127.3: 新增旧版 XLS 工作簿原生解析，按魔数识别 XLS/XLSX/CSV，日期时间/布尔值对齐 RAGFlow；沿用日期、BOM 与 PDF 内联图像修复。

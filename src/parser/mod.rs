@@ -101,7 +101,8 @@ pub fn get_parser(mime_type: &str) -> Option<Box<dyn Parse>> {
         "text/markdown" => Some(Box::new(markdown::MarkdownParser::new())),
         "text/html" => Some(Box::new(html::HtmlParser::new())),
         "text/csv" => Some(Box::new(excel::ExcelParser::new())),
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" => {
+        "application/vnd.ms-excel"
+        | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" => {
             Some(Box::new(excel::ExcelParser::new()))
         }
         "application/epub+zip" => Some(Box::new(epub::EpubParser::new())),
@@ -134,6 +135,7 @@ pub fn mime_from_extension(name: &str) -> Option<&'static str> {
         "md" | "markdown" => Some("text/markdown"),
         "html" | "htm" => Some("text/html"),
         "csv" => Some("text/csv"),
+        "xls" => Some("application/vnd.ms-excel"),
         "xlsx" => Some("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
         "epub" => Some("application/epub+zip"),
         "json" => Some("application/json"),

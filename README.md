@@ -18,11 +18,11 @@
 - Nested PDF Form text is extracted with its local fonts and coordinates. Broken or cyclic Form references report the page and resource name with repair or OCR setup steps. Full page rendering and text inside scanned images still require a PDF-capable OCR backend.
 - PDF single-quote and double-quote text operations retain their text, line spacing and character/word spacing during extraction.
 - If a PDF page or ToUnicode font mapping stream cannot be decoded, parsing fails with the page number and recovery guidance. Font mapping failures include the font name. Repair and export the PDF with embedded fonts, or select a configured OCR document parser and retry.
-- Convert legacy DOC/XLS to DOCX/XLSX. CLI `parse` loads environment clients, not the web tenant's vision model.
-- CSV and XLSX extraction includes rows beyond 1000 and all XLSX worksheets. CSV read failures include UTF-8 repair and re-upload guidance.
+- Convert legacy DOC to DOCX; legacy XLS workbooks are read natively through calamine. CLI `parse` loads environment clients, not the web tenant's vision model.
+- CSV, XLS and XLSX extraction includes rows beyond 1000 and all worksheets. Dates become readable datetime strings, booleans become True/False, and CSV read failures include UTF-8 repair and re-upload guidance.
 - Damaged or encrypted Office/PDF files report the file name, underlying error and repair steps. Repair and export an unencrypted DOCX/XLSX/PPTX/PDF, then upload it again. PDF errors also direct users to check the selected OCR client's URL, credentials and model settings.
 - Audio ingestion requires `RAYRAG_ASR_API_BASE` and `RAYRAG_ASR_MODEL`, plus `RAYRAG_ASR_API_KEY` when authentication is required. The endpoint must support `/audio/transcriptions`. Missing clients, request errors and empty transcriptions fail with configuration guidance instead of indexing audio metadata.
-- YAML/YML, TOML and EML are accepted as text documents and indexed through the normal parsing pipeline. Office documents use DOCX/XLSX/PPTX; legacy DOC/XLS must be converted first.
+- YAML/YML, TOML and EML are accepted as text documents and indexed through the normal parsing pipeline. Office documents use DOCX/XLSX/XLS/PPTX; legacy DOC must be converted first.
 
 **In one sentence: throw your documents (PDF / Word / Excel / PPT / images / web pages) at it, then ask questions in plain language and get answers grounded in those documents.**
 

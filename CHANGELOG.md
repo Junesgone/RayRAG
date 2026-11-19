@@ -2,6 +2,18 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.3] - 2026-11-20
+
+### Legacy XLS workbooks and magic-byte detection
+
+- Read legacy BIFF/OLE2 `.xls` workbooks with calamine 0.38: dates/times use the
+  same openpyxl-shaped strings as XLSX, booleans render `True`/`False`, and integral
+  floats keep their integer form.
+- Detect workbook type by magic bytes like RAGFlow: a PK zip is XLSX, the OLE2 signature
+  is XLS, and anything else is converted from CSV.
+- Route `application/vnd.ms-excel` through ingestion, parser dispatch and row counting;
+  undecodable binaries keep the repair/re-upload guidance.
+
 ## [0.127.2] - 2026-11-20
 
 ### Spreadsheet dates and BOM-aware text decoding
