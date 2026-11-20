@@ -2,6 +2,21 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.23] - 2026-11-20
+
+### Skip downloading unchanged data-source files
+
+- Each connector file now carries a version token: the connector fingerprint (ETag/commit id)
+  when available, otherwise size + last-modified time. Synced documents store that token as
+  `source_version`.
+- On a re-sync, files whose listing token still matches the stored token are counted as
+  `unchanged` and **not downloaded**, using the new `fetch_all_with_known` path. Changed
+  files are fetched and replaced exactly as before; connectors that expose no token keep
+  downloading so content is never assumed unchanged.
+- The sync result's `count`/log total now includes pre-skipped unchanged files; prune
+  protection still sees every considered source key.
+- Added a test that a second batch with known versions skips all downloads.
+
 ## [0.127.22] - 2026-11-20
 
 ### Data-source sync logs say what triggered each run

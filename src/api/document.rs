@@ -69,6 +69,11 @@ pub struct DocRecord {
     /// documents that belong to one data source without touching other rows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_uri: Option<String>,
+    /// Remote version token recorded at sync time (ETag or size+last-modified).
+    /// A re-sync can skip downloading the file when the listing still reports
+    /// the same token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_version: Option<String>,
 }
 
 /// Default document status: enabled (upstream stores `"1"`).

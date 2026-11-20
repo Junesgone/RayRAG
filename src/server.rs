@@ -2589,6 +2589,7 @@ async fn upload_document(
             parser_config.clone(),
             parent_path.clone(),
             None,
+            None,
         ) {
             Ok(data) => {
                 if return_raw_files {
@@ -2658,7 +2659,7 @@ pub(crate) fn register_document_upload(
     upload: PersistedUpload,
 ) -> anyhow::Result<serde_json::Value> {
     register_document_upload_with_options(
-        state, owner_id, dataset_id, doc_id, upload, None, None, None,
+        state, owner_id, dataset_id, doc_id, upload, None, None, None, None,
     )
 }
 
@@ -2671,6 +2672,7 @@ pub(crate) fn register_document_upload_with_options(
     parser_config: Option<serde_json::Value>,
     parent_path: Option<String>,
     source_uri: Option<String>,
+    source_version: Option<String>,
 ) -> anyhow::Result<serde_json::Value> {
     let path = upload.path.clone();
 
@@ -2693,6 +2695,7 @@ pub(crate) fn register_document_upload_with_options(
         parser_config,
         parent_path,
         source_uri,
+        source_version,
         ..Default::default()
     };
     let doc = state.docs.insert_unique(doc)?;

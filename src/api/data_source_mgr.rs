@@ -990,6 +990,24 @@ pub(crate) async fn perform_sync(
         tracing::warn!(%error, %id, "Failed to persist the running sync status");
     }
     let options = record.to_options();
+    let source_prefix = format!("{}:", record.id);
+    let known_versions: HashMap<String, String> = kb_id
+        .filter(|kb| !kb.is_empty())
+        .map(|kb| {
+            state
+                .docs
+                .list(kb)
+                .into_iter()
+                .filter(|doc| doc.run != "FAILED")
+                .filter_map(|doc| {
+                    let source_uri = doc.source_uri.as_deref()?;
+                    let key = source_uri.strip_prefix(&source_prefix)?;
+                    let version = doc.source_version.clone()?;
+                    Some((key.to_string(), version))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     let connector_result: std::result::Result<crate::connectors::SyncBatch, (StatusCode, String)> =
         match record.kind.as_str() {
             // Legacy path: GitLab connector lives in src/data_source/.
@@ -1008,6 +1026,7 @@ pub(crate) async fn perform_sync(
                     // The legacy GitLab connector does not expose a complete
                     // listing contract, so never prune from it.
                     truncated: true,
+                    unchanged_source_keys: Vec::new(),
                 })
             }
             // Connector registry dispatch (RAGFlow data-source type → Connector).
@@ -1017,7 +1036,11 @@ pub(crate) async fn perform_sync(
                 let timeout_seconds = record.timeout_secs.unwrap_or(1_740).clamp(1, 7_200);
                 match tokio::time::timeout(
                     std::time::Duration::from_secs(timeout_seconds),
-                    connector.fetch_all(record.max_items),
+                    connector.fetch_all_with_known(
+                        record.max_items,
+                        crate::connectors::connector_batch_limit_bytes(),
+                        &known_versions,
+                    ),
                 )
                 .await
                 {
@@ -1058,14 +1081,16 @@ pub(crate) async fn perform_sync(
     };
     let source_keys = batch.source_keys;
     let truncated_listing = batch.truncated;
+    let skipped_unchanged = batch.unchanged_source_keys.len();
     let docs = batch.docs;
+    let total_docs = docs.len() + skipped_unchanged;
     let mut connector_failures = batch.failures;
 
     // Optional ingestion into a knowledge base: ?kb_id=<dataset id>.
     // Each connector doc is written as a text file and routed through the
     // standard upload pipeline (parse -> chunk -> embed -> index).
     let mut ingested = 0_usize;
-    let mut unchanged = 0_usize;
+    let mut unchanged = skipped_unchanged;
     let mut skipped = Vec::new();
     if let Some(kb_id) = kb_id.filter(|value| !value.is_empty()) {
         if !crate::server::kb_manageable(state, kb_id, auth) {
@@ -1150,6 +1175,7 @@ pub(crate) async fn perform_sync(
                 None,
                 source_parent,
                 Some(source_uri),
+                doc.metadata.get("source_version").cloned(),
             ) {
                 Ok(_) => ingested += 1,
                 Err(error) => {
@@ -1228,11 +1254,11 @@ pub(crate) async fn perform_sync(
         "sync",
         &format!(
             "Synced {} docs (ingested {ingested}, unchanged {unchanged}, skipped {}, removed {removed})",
-            docs.len(),
+            total_docs,
             skipped.len()
         ),
         Some(ingested as u64),
-        Some(docs.len() as u64),
+        Some(total_docs as u64),
         Some(removed as u64),
         Some(connector_failures.len() as u64),
         None,
@@ -1243,7 +1269,7 @@ pub(crate) async fn perform_sync(
     let _ = store.set_status(id, "schedule");
     Ok(serde_json::json!({
         "code": 0,
-        "data": { "count": docs.len(), "ingested": ingested, "unchanged": unchanged, "removed": removed, "skipped": skipped, "failures": connector_failures, "preview": preview }
+        "data": { "count": total_docs, "ingested": ingested, "unchanged": unchanged, "removed": removed, "skipped": skipped, "failures": connector_failures, "preview": preview }
     }))
 }
 

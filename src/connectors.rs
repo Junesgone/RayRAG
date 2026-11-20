@@ -66,6 +66,9 @@ pub struct SyncBatch {
     /// True when `max_items` or the batch byte budget stopped the listing
     /// before every file was considered; pruning must then be skipped.
     pub truncated: bool,
+    /// Files skipped before download because their remote version still
+    /// matches the version stored on the existing document.
+    pub unchanged_source_keys: Vec<String>,
 }
 
 /// Default ceiling for one connector batch. The per-file download limit is
@@ -73,12 +76,26 @@ pub struct SyncBatch {
 /// documents so a recursive source cannot fill host memory.
 const DEFAULT_CONNECTOR_BATCH_LIMIT_BYTES: u64 = 512 * 1024 * 1024;
 
-fn connector_batch_limit_bytes() -> u64 {
+pub(crate) fn connector_batch_limit_bytes() -> u64 {
     std::env::var("RAYRAG_CONNECTOR_BATCH_LIMIT_BYTES")
         .ok()
         .and_then(|value| value.trim().parse::<u64>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(DEFAULT_CONNECTOR_BATCH_LIMIT_BYTES)
+}
+
+/// Version token used to decide whether a remote file can be skipped. The
+/// connector fingerprint (ETag/commit id) is preferred; otherwise size plus
+/// last-modified time is used when the connector reports one. No token means
+/// the file must always be fetched.
+fn remote_file_version(file: &RemoteFile) -> Option<String> {
+    if !file.fingerprint.is_empty() {
+        return Some(format!("fp:{}", file.fingerprint));
+    }
+    if !file.updated_at.is_empty() {
+        return Some(format!("v:{}:{}", file.size_bytes, file.updated_at));
+    }
+    None
 }
 
 // ── Connector trait ──────────────────────────────────────────────────────────
@@ -123,6 +140,20 @@ pub trait Connector: Send + Sync {
     /// that would push the batch past `max_bytes` and records a failure the
     /// operator can act on (raise the limit or sync a narrower target).
     async fn fetch_all_with_limits(&self, max_items: usize, max_bytes: u64) -> Result<SyncBatch> {
+        let known = HashMap::new();
+        self.fetch_all_with_known(max_items, max_bytes, &known)
+            .await
+    }
+
+    /// Batch runner that can skip downloads for files whose remote version did
+    /// not change. This mirrors RAGFlow FingerprintConnector semantics: the
+    /// listing carries a cheap version token and only changed files are fetched.
+    async fn fetch_all_with_known(
+        &self,
+        max_items: usize,
+        max_bytes: u64,
+        known_versions: &HashMap<String, String>,
+    ) -> Result<SyncBatch> {
         let files = self.list_files().await?;
         let total_files = files.len();
         let limit = max_items.max(1);
@@ -133,6 +164,13 @@ pub trait Connector: Send + Sync {
             // fetch/normalize failure still protects its existing document
             // from sync_deleted_files pruning.
             batch.source_keys.push(file.id.clone());
+            let version = remote_file_version(&file);
+            if let (Some(current), Some(known)) = (version.as_deref(), known_versions.get(&file.id))
+                && known == current
+            {
+                batch.unchanged_source_keys.push(file.id.clone());
+                continue;
+            }
             match self.fetch_file(&file).await {
                 Ok(raw) => {
                     let next = total_bytes.saturating_add(raw.len() as u64);
@@ -146,7 +184,12 @@ pub trait Connector: Send + Sync {
                     }
                     total_bytes = next;
                     match self.normalize(&file, raw) {
-                        Ok(doc) => batch.docs.push(doc),
+                        Ok(mut doc) => {
+                            if let Some(version) = version {
+                                doc.metadata.insert("source_version".into(), version);
+                            }
+                            batch.docs.push(doc);
+                        }
                         Err(error) => batch.failures.push(format!("{}: {error:#}", file.name)),
                     }
                 }
