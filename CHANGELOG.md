@@ -2,6 +2,20 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.16] - 2026-11-20
+
+### Changed source files replace their previous document
+
+- Data-source documents are now registered with the remote folder as `parent_path`.
+  A re-sync finds the previous document by name + remote folder: unchanged content is
+  counted as `unchanged`, while changed content deletes the old document (chunks, index,
+  blob and metadata) and ingests the new bytes. This prevents `(1)` copies when a WebDAV,
+  S3 or local file is edited.
+- Legacy documents without a folder keep the old name + content-hash check, so they are
+  not duplicated by a re-sync; delete their old rows once to migrate to location-aware
+  replacement.
+- Added a folder-identity test for the source parent helper.
+
 ## [0.127.15] - 2026-11-20
 
 ### Data-source extension robustness

@@ -1037,7 +1037,7 @@ pub(crate) async fn perform_sync(
         }
     };
     let docs = batch.docs;
-    let connector_failures = batch.failures;
+    let mut connector_failures = batch.failures;
 
     // Optional ingestion into a knowledge base: ?kb_id=<dataset id>.
     // Each connector doc is written as a text file and routed through the
@@ -1062,17 +1062,44 @@ pub(crate) async fn perform_sync(
             // the lossy UTF-8 blob is only a preview/legacy text channel.
             let bytes = doc.bytes();
             let content_hash = crate::server::server_xxh3_hash(bytes);
-            // Re-running a sync must not create a second copy of an unchanged
-            // remote file. Failed documents are not skipped, so a resync can
-            // retry a parse that previously failed.
-            let already_present = state.docs.list(kb_id).iter().any(|existing| {
+            let source_parent = connector_source_parent(doc);
+            let existing_docs = state.docs.list(kb_id);
+            let same_location = existing_docs.iter().find(|existing| {
                 existing.name == doc.semantic_identifier
-                    && existing.content_hash == content_hash
-                    && existing.run != "FAILED"
+                    && existing.parent_path.as_deref() == source_parent.as_deref()
             });
-            if already_present {
-                unchanged += 1;
-                continue;
+            if let Some(existing) = same_location {
+                if existing.content_hash == content_hash && existing.run != "FAILED" {
+                    unchanged += 1;
+                    continue;
+                }
+                // Content changed (or the old parse failed): replace the old
+                // document so the knowledge base does not accumulate (1) copies.
+                if let Err(error) = crate::server::delete_document_data(state, existing) {
+                    tracing::warn!(
+                        "data source: could not replace {}: {error:#}",
+                        doc.semantic_identifier
+                    );
+                    connector_failures.push(format!(
+                        "{}: could not replace changed document: {error:#}",
+                        doc.semantic_identifier
+                    ));
+                    skipped.push(doc.semantic_identifier.clone());
+                    continue;
+                }
+            } else {
+                // Legacy rows have no parent_path; keep the old name+hash check
+                // so a re-sync does not duplicate them.
+                let legacy_unchanged = existing_docs.iter().any(|existing| {
+                    existing.parent_path.is_none()
+                        && existing.name == doc.semantic_identifier
+                        && existing.content_hash == content_hash
+                        && existing.run != "FAILED"
+                });
+                if legacy_unchanged {
+                    unchanged += 1;
+                    continue;
+                }
             }
             if std::fs::write(&path, bytes).is_err() {
                 skipped.push(doc.semantic_identifier.clone());
@@ -1086,12 +1113,14 @@ pub(crate) async fn perform_sync(
                 content_hash,
                 cleanup_on_drop: false,
             };
-            match crate::server::register_document_upload(
+            match crate::server::register_document_upload_with_options(
                 state.clone(),
                 &auth.user_id,
                 kb_id,
                 doc_id,
                 upload,
+                None,
+                source_parent,
             ) {
                 Ok(_) => ingested += 1,
                 Err(error) => {
@@ -1378,6 +1407,22 @@ fn connector_doc_extension(doc: &crate::data_source::ConnectorDoc) -> String {
         return ".webp".into();
     }
     ".md".into()
+}
+
+/// Source folder used for document identity and UI location. Connector docs
+/// carry a path/key/blob in metadata; using its parent folder lets a changed
+/// file replace the previous document without deleting a same-named file from
+/// another remote folder.
+fn connector_source_parent(doc: &crate::data_source::ConnectorDoc) -> Option<String> {
+    let raw = doc
+        .metadata
+        .get("path")
+        .or_else(|| doc.metadata.get("key"))
+        .or_else(|| doc.metadata.get("blob"))?
+        .trim()
+        .trim_matches('/');
+    let (parent, _) = raw.rsplit_once('/')?;
+    (!parent.is_empty()).then(|| parent.to_string())
 }
 
 // ---- tests ----
