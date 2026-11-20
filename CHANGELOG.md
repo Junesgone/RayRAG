@@ -2,6 +2,18 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.13] - 2026-11-20
+
+### PDF streams: tolerate raw DEFLATE and leading whitespace
+
+- `inflate_limited` now trims leading ASCII whitespace before the zlib header and, when
+  the data does not start with a valid zlib header, retries as raw DEFLATE. Some PDF
+  writers emit unwrapped DEFLATE under `/FlateDecode`; those page streams previously
+  failed with "could not be inflated: corrupt deflate stream".
+- A stream that *does* start with a valid zlib header is never retried as raw DEFLATE, so
+  genuinely corrupt compressed streams still fail loudly instead of decoding garbage.
+- Added tests for raw-DEFLATE content, leading whitespace, and corrupt-header rejection.
+
 ## [0.127.12] - 2026-11-20
 
 ### Idempotent data-source re-sync

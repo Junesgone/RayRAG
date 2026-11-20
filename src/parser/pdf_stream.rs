@@ -249,17 +249,51 @@ fn decode_run_length(input: &[u8], limit: u64, what: &str) -> Result<Vec<u8>> {
 
 /// Inflate with a hard output ceiling: the decoder stops as soon as it produced more
 /// than `limit`, so a zip-bomb style stream never becomes an allocation.
+///
+/// Some PDF writers emit raw DEFLATE bytes under /FlateDecode instead of a zlib
+/// wrapper. When the data does not start with a valid zlib header, retry as raw
+/// DEFLATE; a corrupt stream that does start with a zlib header stays an error.
 fn inflate_limited(input: &[u8], limit: u64, what: &str) -> Result<Vec<u8>> {
-    let mut decoder = flate2::read::ZlibDecoder::new(input).take(limit + 1);
+    let start = input
+        .iter()
+        .position(|byte| !byte.is_ascii_whitespace())
+        .unwrap_or(input.len());
+    let candidate = &input[start..];
+    let zlib_header = candidate.len() >= 2
+        && (candidate[0] & 0x0f) == 0x08
+        && ((u16::from(candidate[0]) << 8 | u16::from(candidate[1])) % 31) == 0;
+    let zlib = inflate_reader(flate2::read::ZlibDecoder::new(candidate), limit, what);
+    match zlib {
+        Ok(output) => Ok(output),
+        Err(zlib_error) if !zlib_header => {
+            let raw = inflate_reader(flate2::read::DeflateDecoder::new(candidate), limit, what);
+            match raw {
+                Ok(output) if !output.is_empty() => Ok(output),
+                Ok(_) => anyhow::bail!(
+                    "{what} could not be inflated: zlib: {zlib_error}; raw deflate produced no output"
+                ),
+                Err(raw_error) => anyhow::bail!(
+                    "{what} could not be inflated: zlib: {zlib_error}; raw deflate: {raw_error}"
+                ),
+            }
+        }
+        Err(error) => anyhow::bail!("{what} could not be inflated: {error}"),
+    }
+}
+
+fn inflate_reader<R: std::io::Read>(
+    reader: R,
+    limit: u64,
+    what: &str,
+) -> std::result::Result<Vec<u8>, std::io::Error> {
+    let mut decoder = reader.take(limit + 1);
     let mut output = Vec::new();
-    decoder
-        .read_to_end(&mut output)
-        .map_err(|error| anyhow::anyhow!("{what} could not be inflated: {error}"))?;
+    decoder.read_to_end(&mut output)?;
     if output.len() as u64 > limit {
-        anyhow::bail!(
+        return Err(std::io::Error::other(format!(
             "{what} inflates past the {} MiB safety limit",
             limit / (1024 * 1024)
-        );
+        )));
     }
     Ok(output)
 }
