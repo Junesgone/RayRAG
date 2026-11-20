@@ -2,6 +2,20 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.18] - 2026-11-20
+
+### Sync deleted source files
+
+- Connector-synced documents now carry an internal `source_uri`
+  (`<data-source-id>:<connector-file-id>`). A batch records every considered connector id,
+  so a fetch/normalize failure still protects the existing document.
+- When a data source has **Sync deleted files** enabled, a sync whose listing is complete
+  deletes documents whose remote file disappeared, removes their chunks/index/blob, and
+  reports the count as `removed` (UI and sync log). Truncated listings (max items or the
+  batch byte budget) skip pruning and say so, so a capped sync cannot mass-delete documents.
+- Documents created before this release have no `source_uri`; delete them once to migrate.
+- Added batch listing/truncation tests and updated the data-source UI regression test.
+
 ## [0.127.17] - 2026-11-20
 
 ### Data-source sync result in the UI

@@ -64,6 +64,11 @@ pub struct DocRecord {
     /// implemented in this engine, so the value round-trips without changing parsing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_id: Option<String>,
+    /// Internal origin marker for connector-synced documents, e.g.
+    /// `<data-source-id>:webdav:/dir/file.pdf`. Used to replace and prune
+    /// documents that belong to one data source without touching other rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_uri: Option<String>,
 }
 
 /// Default document status: enabled (upstream stores `"1"`).

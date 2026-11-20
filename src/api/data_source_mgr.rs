@@ -986,9 +986,14 @@ pub(crate) async fn perform_sync(
                     .map_err(|error| {
                         (StatusCode::BAD_GATEWAY, format!("sync failed: {error:#}"))
                     })?;
+                let source_keys = docs.iter().map(|doc| doc.id.clone()).collect();
                 Ok(crate::connectors::SyncBatch {
                     docs,
                     failures: Vec::new(),
+                    source_keys,
+                    // The legacy GitLab connector does not expose a complete
+                    // listing contract, so never prune from it.
+                    truncated: true,
                 })
             }
             // Connector registry dispatch (RAGFlow data-source type → Connector).
@@ -1036,6 +1041,8 @@ pub(crate) async fn perform_sync(
             return Err(error);
         }
     };
+    let source_keys = batch.source_keys;
+    let truncated_listing = batch.truncated;
     let docs = batch.docs;
     let mut connector_failures = batch.failures;
 
@@ -1063,12 +1070,17 @@ pub(crate) async fn perform_sync(
             let bytes = doc.bytes();
             let content_hash = crate::server::server_xxh3_hash(bytes);
             let source_parent = connector_source_parent(doc);
+            let source_uri = format!("{}:{}", record.id, doc.id);
             let existing_docs = state.docs.list(kb_id);
+            let same_source = existing_docs
+                .iter()
+                .find(|existing| existing.source_uri.as_deref() == Some(source_uri.as_str()));
             let same_location = existing_docs.iter().find(|existing| {
-                existing.name == doc.semantic_identifier
+                existing.source_uri.is_none()
+                    && existing.name == doc.semantic_identifier
                     && existing.parent_path.as_deref() == source_parent.as_deref()
             });
-            if let Some(existing) = same_location {
+            if let Some(existing) = same_source.or(same_location) {
                 if existing.content_hash == content_hash && existing.run != "FAILED" {
                     unchanged += 1;
                     continue;
@@ -1088,10 +1100,11 @@ pub(crate) async fn perform_sync(
                     continue;
                 }
             } else {
-                // Legacy rows have no parent_path; keep the old name+hash check
-                // so a re-sync does not duplicate them.
+                // Legacy rows have no parent_path/source_uri; keep the old
+                // name+hash check so a re-sync does not duplicate them.
                 let legacy_unchanged = existing_docs.iter().any(|existing| {
                     existing.parent_path.is_none()
+                        && existing.source_uri.is_none()
                         && existing.name == doc.semantic_identifier
                         && existing.content_hash == content_hash
                         && existing.run != "FAILED"
@@ -1121,6 +1134,7 @@ pub(crate) async fn perform_sync(
                 upload,
                 None,
                 source_parent,
+                Some(source_uri),
             ) {
                 Ok(_) => ingested += 1,
                 Err(error) => {
@@ -1129,6 +1143,50 @@ pub(crate) async fn perform_sync(
                         doc.semantic_identifier
                     );
                     skipped.push(doc.semantic_identifier.clone());
+                }
+            }
+        }
+    }
+
+    // Remove documents whose remote files disappeared from a complete listing.
+    let mut removed = 0_usize;
+    if record.sync_deleted_files {
+        if let Some(kb_id) = kb_id.filter(|value| !value.is_empty()) {
+            if truncated_listing {
+                connector_failures.push(
+                    "sync deleted files skipped: the connector listing was truncated by max_items or the batch byte limit".into(),
+                );
+            } else {
+                let prefix = format!("{}:", record.id);
+                let seen: std::collections::HashSet<String> = source_keys
+                    .iter()
+                    .map(|key| format!("{prefix}{key}"))
+                    .collect();
+                let stale: Vec<_> = state
+                    .docs
+                    .list(kb_id)
+                    .into_iter()
+                    .filter(|existing| {
+                        existing
+                            .source_uri
+                            .as_deref()
+                            .is_some_and(|uri| uri.starts_with(&prefix) && !seen.contains(uri))
+                    })
+                    .collect();
+                for existing in stale {
+                    match crate::server::delete_document_data(state, &existing) {
+                        Ok(()) => removed += 1,
+                        Err(error) => {
+                            tracing::warn!(
+                                "data source: could not prune {}: {error:#}",
+                                existing.name
+                            );
+                            connector_failures.push(format!(
+                                "{}: could not prune deleted source file: {error:#}",
+                                existing.name
+                            ));
+                        }
+                    }
                 }
             }
         }
@@ -1154,13 +1212,13 @@ pub(crate) async fn perform_sync(
         "DONE",
         "sync",
         &format!(
-            "Synced {} docs (ingested {ingested}, unchanged {unchanged}, skipped {})",
+            "Synced {} docs (ingested {ingested}, unchanged {unchanged}, skipped {}, removed {removed})",
             docs.len(),
             skipped.len()
         ),
         Some(ingested as u64),
         Some(docs.len() as u64),
-        None,
+        Some(removed as u64),
         Some(connector_failures.len() as u64),
         None,
         kb_id,
@@ -1169,7 +1227,7 @@ pub(crate) async fn perform_sync(
     let _ = store.set_status(id, "schedule");
     Ok(serde_json::json!({
         "code": 0,
-        "data": { "count": docs.len(), "ingested": ingested, "unchanged": unchanged, "skipped": skipped, "failures": connector_failures, "preview": preview }
+        "data": { "count": docs.len(), "ingested": ingested, "unchanged": unchanged, "removed": removed, "skipped": skipped, "failures": connector_failures, "preview": preview }
     }))
 }
 

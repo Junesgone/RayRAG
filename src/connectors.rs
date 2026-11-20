@@ -60,6 +60,12 @@ pub struct SyncBatch {
     pub docs: Vec<ConnectorDoc>,
     /// Per-file failure messages (document id / name + reason).
     pub failures: Vec<String>,
+    /// Connector ids of every file considered in this batch, including files
+    /// whose fetch/normalize failed. Used for `sync_deleted_files` pruning.
+    pub source_keys: Vec<String>,
+    /// True when `max_items` or the batch byte budget stopped the listing
+    /// before every file was considered; pruning must then be skipped.
+    pub truncated: bool,
 }
 
 /// Default ceiling for one connector batch. The per-file download limit is
@@ -118,13 +124,20 @@ pub trait Connector: Send + Sync {
     /// operator can act on (raise the limit or sync a narrower target).
     async fn fetch_all_with_limits(&self, max_items: usize, max_bytes: u64) -> Result<SyncBatch> {
         let files = self.list_files().await?;
+        let total_files = files.len();
+        let limit = max_items.max(1);
         let mut batch = SyncBatch::default();
         let mut total_bytes = 0_u64;
-        for file in files.into_iter().take(max_items.max(1)) {
+        for file in files.into_iter().take(limit) {
+            // Record every considered file before touching its bytes, so a
+            // fetch/normalize failure still protects its existing document
+            // from sync_deleted_files pruning.
+            batch.source_keys.push(file.id.clone());
             match self.fetch_file(&file).await {
                 Ok(raw) => {
                     let next = total_bytes.saturating_add(raw.len() as u64);
                     if next > max_bytes {
+                        batch.truncated = true;
                         batch.failures.push(format!(
                             "{}: skipped because the sync batch byte limit ({} bytes) was reached; raise RAYRAG_CONNECTOR_BATCH_LIMIT_BYTES or sync in smaller batches",
                             file.name, max_bytes
@@ -139,6 +152,9 @@ pub trait Connector: Send + Sync {
                 }
                 Err(error) => batch.failures.push(format!("{}: {error:#}", file.name)),
             }
+        }
+        if total_files > limit {
+            batch.truncated = true;
         }
         Ok(batch)
     }
