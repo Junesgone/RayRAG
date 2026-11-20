@@ -2,6 +2,17 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.27] - 2026-11-20
+
+### Configuration auto-save covers every control; chunk view reports parsing
+
+- Dataset configuration auto-save also listens for clicks inside the configuration
+  panel, so custom select/model pickers and segmented controls that never emit
+  `input`/`change` events still save after the operator edits them.
+- The document original/chunks view now knows the document run state: a document
+  still RUNNING/UNSTARTED shows "document is still being parsed; refresh when it
+  finishes" instead of the misleading "No chunks parsed".
+
 ## [0.127.26] - 2026-11-20
 
 ### KB document-list checkboxes actually enlarged
