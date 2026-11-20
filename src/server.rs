@@ -3971,9 +3971,14 @@ async fn refresh_due_data_sources(state: &Arc<AppState>) {
                 is_admin: false,
                 token: String::new(),
             };
-            if let Err((status, message)) =
-                crate::api::data_source_mgr::perform_sync(state, &auth, &source.id, Some(&kb.id))
-                    .await
+            if let Err((status, message)) = crate::api::data_source_mgr::perform_sync(
+                state,
+                &auth,
+                &source.id,
+                Some(&kb.id),
+                "schedule",
+            )
+            .await
             {
                 tracing::warn!(
                     source_id = %source.id,

@@ -24,6 +24,9 @@ pub struct DataSourceSyncLog {
     pub update_date: String,
     /// RAGFlow `task_type` — "sync" or "prune".
     pub task_type: String,
+    /// Who initiated the run: manual / link / schedule / reschedule / connect.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<String>,
     /// RAGFlow `kb_id` / `kb_name` — the knowledge base a sync wrote into.
     pub kb_id: String,
     pub kb_name: String,
@@ -481,6 +484,7 @@ impl DataSourceStore {
         error_msg: Option<String>,
         kb_id: Option<&str>,
         kb_name: Option<&str>,
+        trigger: Option<&str>,
     ) -> Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         let kb_id = kb_id
@@ -497,6 +501,7 @@ impl DataSourceStore {
                 created_at: now.clone(),
                 update_date: now.clone(),
                 task_type: task_type.to_string(),
+                trigger: trigger.map(str::to_string),
                 kb_id,
                 kb_name,
                 new_docs_indexed: new_docs,
@@ -860,15 +865,14 @@ pub async fn update_data_source(
         .insert(record.clone())
         .map_err(|error| data_source_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
 
-    // RayRAG has no background connector scheduler: a reschedule/schedule
-    // request runs the first sync eagerly and leaves the status `schedule` on
-    // success (or `fail` on error) — a documented deviation from upstream's
-    // async task queue.
+    // A reschedule/schedule request runs the first sync eagerly and leaves the
+    // status `schedule` on success (or `fail` on error); the background
+    // scheduler introduced later performs subsequent refreshes.
     if should_resume {
         // The response carries the record read back below, so a failed sync must leave a
         // trace here: without it the API answers 200 with a source that is stuck in
         // `running` and no sync-log row explains why.
-        if let Err((status, message)) = perform_sync(&state, &auth, &id, None).await {
+        if let Err((status, message)) = perform_sync(&state, &auth, &id, None, "reschedule").await {
             tracing::error!(%status, %message, %id, "Rescheduled data-source sync failed");
         }
         let updated = store
@@ -961,7 +965,7 @@ pub async fn sync_data_source(
     axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let kb_id = query.get("kb_id").cloned();
-    let result = perform_sync(&state, &auth, &id, kb_id.as_deref()).await?;
+    let result = perform_sync(&state, &auth, &id, kb_id.as_deref(), "manual").await?;
     Ok(Json(result))
 }
 
@@ -973,6 +977,7 @@ pub(crate) async fn perform_sync(
     auth: &crate::server::AuthContext,
     id: &str,
     kb_id: Option<&str>,
+    trigger: &str,
 ) -> Result<serde_json::Value, (StatusCode, String)> {
     let store = state
         .data_sources
@@ -1046,6 +1051,7 @@ pub(crate) async fn perform_sync(
                 Some(error.1.clone()),
                 kb_id,
                 kb_name.as_deref(),
+                Some(trigger),
             );
             return Err(error);
         }
@@ -1232,6 +1238,7 @@ pub(crate) async fn perform_sync(
         None,
         kb_id,
         kb_name.as_deref(),
+        Some(trigger),
     );
     let _ = store.set_status(id, "schedule");
     Ok(serde_json::json!({
@@ -1262,7 +1269,7 @@ pub(crate) fn schedule_link_sync(
             return;
         }
         if let Err((status, message)) =
-            perform_sync(&state, &auth, &connector_id, Some(&kb_id)).await
+            perform_sync(&state, &auth, &connector_id, Some(&kb_id), "link").await
         {
             tracing::warn!(
                 %connector_id,
@@ -1308,6 +1315,7 @@ pub async fn connect_data_source(
             Some(format!("connect failed: {error:#}")),
             None,
             None,
+            Some("connect"),
         );
         return Err((
             StatusCode::BAD_GATEWAY,
@@ -1331,6 +1339,7 @@ pub async fn connect_data_source(
         None,
         None,
         None,
+        Some("connect"),
     );
     Ok(Json(
         serde_json::json!({ "code": 0, "data": record.redacted() }),

@@ -2,6 +2,15 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.22] - 2026-11-20
+
+### Data-source sync logs say what triggered each run
+
+- Each sync-log row now carries an optional `trigger` value: `manual`, `link`,
+  `schedule`, `reschedule` or `connect`. Scheduled refreshes are visible as
+  `sync (auto)` and link-triggered runs as `sync (linked)` in the detail page's log table.
+- The stale comment claiming RayRAG has no background connector scheduler was corrected.
+
 ## [0.127.21] - 2026-11-20
 
 ### Auto-refresh schedule shown on the data-source detail page
