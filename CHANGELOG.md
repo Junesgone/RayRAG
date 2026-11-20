@@ -2,6 +2,16 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.26] - 2026-11-20
+
+### KB document-list checkboxes actually enlarged
+
+- The KB Files table uses custom `button.file-check` controls, not native checkboxes, so
+  the v0.127.25 rule on `input[type=checkbox]` did not reach it. This release styles the
+  real `.doc-table .file-check` controls (row select and select-all) at 18px with a
+  visible focus ring and a wider select column.
+- Browser verification found the gap: 17 controls measured 0px before the fix.
+
 ## [0.127.25] - 2026-11-20
 
 ### Data-source batch memory budget follows the host
