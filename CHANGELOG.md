@@ -2,6 +2,18 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.29] - 2026-11-20
+
+### Long local-model ingestion is observable, not silent
+
+- Local model endpoints keep their design contract: no total request timeout and no
+  connect timeout, so a slow local TLS handshake/generation on the LAN is never cut
+  off (the existing slow-TLS regression test stays green).
+- Document processing now runs a 60-second heartbeat while parsing/chunking/embedding.
+  Each beat is logged at WARN and refreshes the document progress message with elapsed
+  seconds, so an embedding server that accepts and then stalls is visible in logs and
+  the document row instead of looking like a silent RUNNING task.
+
 ## [0.127.28] - 2026-11-20
 
 ### The file "view result" action opens original + chunks

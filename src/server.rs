@@ -3011,6 +3011,40 @@ async fn process_document(
         tracing::error!(doc_id = %doc.id, %error, "Failed to persist document status");
     }
 
+    // Local model endpoints intentionally have no total request timeout, so a
+    // stuck-but-reachable embedding server can keep this task running for a long
+    // time. Log every minute and refresh progress message so operators can see the
+    // task is alive and where the delay is, instead of a silent RUNNING row.
+    let heartbeat_state = state.clone();
+    let heartbeat_doc_id = doc.id.clone();
+    let heartbeat_started = std::time::Instant::now();
+    let heartbeat = tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            let elapsed = heartbeat_started.elapsed().as_secs();
+            let still_running = heartbeat_state
+                .docs
+                .get(&heartbeat_doc_id)
+                .is_some_and(|current| current.run == "RUNNING");
+            if !still_running {
+                break;
+            }
+            tracing::warn!(
+                doc_id = %heartbeat_doc_id,
+                elapsed_secs = elapsed,
+                "Document processing is still running; local model requests have no total timeout"
+            );
+            let _ = heartbeat_state.docs.update_status(
+                &heartbeat_doc_id,
+                "RUNNING",
+                0.05,
+                &format!(
+                    "Processing {}s (parse/chunk/embed; local models have no timeout)",
+                    elapsed
+                ),
+            );
+        }
+    });
     let processing = async {
         let kb = state
             .kbs
@@ -3049,6 +3083,7 @@ async fn process_document(
             let (chunks, report) = pipeline.process_with_report(path_str).await?;
             Ok::<_, anyhow::Error>((config, chunks, report))
         }.await;
+        heartbeat.abort();
         let (config, chunks, report) = match parsed {
             Ok(result) => result,
             Err(error) => {
