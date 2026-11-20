@@ -2,6 +2,16 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.28] - 2026-11-20
+
+### The file "view result" action opens original + chunks
+
+- The KB Files row's result icon previously opened the dataflow log view. It now opens the
+  document split view directly: original stored file on the left, parsed chunks on the
+  right (the same page already reachable from the file name or chunk count).
+- The dataflow helper remains in the page for the Logs tab; no dataflow behavior removed.
+- Updated the UI regression expectation for the result action.
+
 ## [0.127.27] - 2026-11-20
 
 ### Configuration auto-save covers every control; chunk view reports parsing
