@@ -387,12 +387,13 @@ impl Default for LlmConfig {
 }
 
 /// Provider protocol used by the chat client. Most providers are
-/// OpenAI-compatible; Anthropic's Messages API has a different endpoint,
-/// authentication header, request body and SSE event shape.
+/// OpenAI-compatible; Anthropic's Messages API and the OpenAI Responses API
+/// have different endpoints, request bodies and streaming event shapes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ChatProtocol {
     OpenAi,
     Anthropic,
+    Responses,
 }
 
 fn is_anthropic_endpoint(api_base: &str) -> bool {
@@ -404,6 +405,22 @@ fn is_anthropic_endpoint(api_base: &str) -> bool {
         // https://api.deepseek.com/anthropic (its SDK appends /v1/messages).
         || base.ends_with("/anthropic")
         || base.contains("api.deepseek.com/anthropic")
+}
+
+fn is_responses_endpoint(api_base: &str) -> bool {
+    api_base
+        .trim_end_matches('/')
+        .to_ascii_lowercase()
+        .ends_with("/responses")
+}
+
+fn responses_endpoint(api_base: &str) -> String {
+    let base = api_base.trim_end_matches('/');
+    if base.ends_with("/responses") {
+        base.to_string()
+    } else {
+        format!("{base}/responses")
+    }
 }
 
 fn anthropic_endpoint(api_base: &str) -> String {
@@ -478,6 +495,148 @@ fn build_anthropic_request_body(
     body
 }
 
+/// Split system messages into the Responses API top-level instructions field
+/// and the remaining conversation into input message items.
+fn responses_input(messages: &[ChatMessage]) -> (Option<String>, Vec<serde_json::Value>) {
+    let mut instructions: Vec<String> = Vec::new();
+    let mut input: Vec<serde_json::Value> = Vec::new();
+    for message in messages {
+        let role = message.role.trim().to_ascii_lowercase();
+        let content = message.content.trim();
+        if content.is_empty() {
+            continue;
+        }
+        if role == "system" || role == "developer" {
+            instructions.push(content.to_string());
+            continue;
+        }
+        let role = if role == "assistant" {
+            "assistant"
+        } else {
+            "user"
+        };
+        input.push(serde_json::json!({"role": role, "content": content}));
+    }
+    let instructions = (!instructions.is_empty()).then(|| instructions.join("\n\n"));
+    (instructions, input)
+}
+
+fn build_responses_request_body(
+    config: &LlmConfig,
+    messages: &[ChatMessage],
+    generation: GenerationParams,
+    stream: bool,
+) -> serde_json::Value {
+    let (instructions, input) = responses_input(messages);
+    let mut body = serde_json::json!({
+        "model": config.model,
+        "input": input,
+        "max_output_tokens": generation.max_tokens,
+        "temperature": generation.temperature,
+        "top_p": generation.top_p,
+    });
+    if let Some(instructions) = instructions {
+        body["instructions"] = serde_json::Value::String(instructions);
+    }
+    // DeepSeek's server tools are declared by type only in the Responses API.
+    if is_deepseek_endpoint(&config.api_base) {
+        let mut tools = Vec::new();
+        if config.deepseek.web_search {
+            tools.push(serde_json::json!({"type": "deepseek_web_search"}));
+        }
+        if config.deepseek.read_url {
+            tools.push(serde_json::json!({"type": "deepseek_read_url"}));
+        }
+        if !tools.is_empty() {
+            body["tools"] = serde_json::Value::Array(tools);
+        }
+    }
+    if stream {
+        body["stream"] = serde_json::Value::Bool(true);
+    }
+    body
+}
+
+fn parse_responses_chat_completion(json: &serde_json::Value) -> Result<ChatCompletion> {
+    let mut content = String::new();
+    if let Some(output) = json.get("output").and_then(serde_json::Value::as_array) {
+        for item in output {
+            if item.get("type").and_then(serde_json::Value::as_str) != Some("message") {
+                continue;
+            }
+            let Some(parts) = item.get("content").and_then(serde_json::Value::as_array) else {
+                continue;
+            };
+            for part in parts {
+                if matches!(
+                    part.get("type").and_then(serde_json::Value::as_str),
+                    Some("output_text" | "text")
+                ) && let Some(text) = part.get("text").and_then(serde_json::Value::as_str)
+                {
+                    content.push_str(text);
+                }
+            }
+        }
+    }
+    if content.is_empty()
+        && let Some(text) = json.get("output_text").and_then(serde_json::Value::as_str)
+    {
+        content = text.to_string();
+    }
+    let content = if content.is_empty() {
+        "(empty response)".to_string()
+    } else {
+        content
+    };
+    let usage = json.get("usage").and_then(|usage| {
+        TokenUsage {
+            prompt_tokens: usage
+                .get("input_tokens")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or_default(),
+            completion_tokens: usage
+                .get("output_tokens")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or_default(),
+            total_tokens: usage
+                .get("total_tokens")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or_default(),
+        }
+        .normalized()
+    });
+    Ok(ChatCompletion { content, usage })
+}
+
+fn parse_responses_stream_text(json: &serde_json::Value) -> Option<&str> {
+    if json.get("type").and_then(serde_json::Value::as_str) == Some("response.output_text.delta") {
+        return json.get("delta").and_then(serde_json::Value::as_str);
+    }
+    None
+}
+
+fn response_failure_message(json: &serde_json::Value) -> Option<String> {
+    let kind = json.get("type").and_then(serde_json::Value::as_str)?;
+    if kind == "error" {
+        return Some(
+            json.pointer("/error/message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("Responses API error")
+                .to_string(),
+        );
+    }
+    if kind == "response.failed" {
+        return Some(
+            json.pointer("/response/error/message")
+                .and_then(serde_json::Value::as_str)
+                .or_else(|| json.get("message").and_then(serde_json::Value::as_str))
+                .unwrap_or("Responses API failed")
+                .to_string(),
+        );
+    }
+    None
+}
+
 fn parse_anthropic_chat_completion(json: &serde_json::Value) -> Result<ChatCompletion> {
     let content = json["content"]
         .as_array()
@@ -539,7 +698,9 @@ impl LlmClient {
     }
 
     fn chat_protocol(&self) -> ChatProtocol {
-        if is_anthropic_endpoint(&self.config.api_base) {
+        if is_responses_endpoint(&self.config.api_base) {
+            ChatProtocol::Responses
+        } else if is_anthropic_endpoint(&self.config.api_base) {
             ChatProtocol::Anthropic
         } else {
             ChatProtocol::OpenAi
@@ -653,6 +814,119 @@ impl LlmClient {
         Ok(full)
     }
 
+    fn responses_request(&self, body: &serde_json::Value) -> reqwest::RequestBuilder {
+        let mut request = self
+            .client
+            .post(responses_endpoint(&self.config.api_base))
+            .json(body);
+        if !self.config.api_key.is_empty() {
+            request = request.bearer_auth(&self.config.api_key);
+        }
+        request
+    }
+
+    async fn responses_chat_completion(
+        &self,
+        messages: &[ChatMessage],
+        generation: GenerationParams,
+    ) -> Result<ChatCompletion> {
+        let body = build_responses_request_body(&self.config, messages, generation, false);
+        let response = self
+            .responses_request(&body)
+            .send()
+            .await
+            .map_err(|error| {
+                anyhow::anyhow!("Responses API request failed: {}", error.without_url())
+            })?;
+        let status = response.status();
+        let json: serde_json::Value = crate::common::cmd_timeout::read_json_limited(
+            response,
+            crate::common::cmd_timeout::body_limit_bytes(),
+            "Responses API",
+        )
+        .await
+        .map_err(|error| {
+            anyhow::anyhow!("Responses API response failed (HTTP {status}): {error}")
+        })?;
+        if !status.is_success() {
+            let message = json
+                .pointer("/error/message")
+                .and_then(serde_json::Value::as_str)
+                .or_else(|| json.get("message").and_then(serde_json::Value::as_str))
+                .unwrap_or("Unknown error");
+            anyhow::bail!("Responses API error ({status}): {message}");
+        }
+        parse_responses_chat_completion(&json)
+    }
+
+    async fn responses_chat_stream<F: FnMut(&str) + ?Sized>(
+        &self,
+        messages: &[ChatMessage],
+        generation: GenerationParams,
+        on_chunk: &mut F,
+    ) -> Result<String> {
+        use futures_util::StreamExt;
+        let body = build_responses_request_body(&self.config, messages, generation, true);
+        let response = self
+            .responses_request(&body)
+            .send()
+            .await
+            .map_err(|error| {
+                anyhow::anyhow!("Responses stream request failed: {}", error.without_url())
+            })?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            anyhow::bail!("Responses stream error ({status}): {text}");
+        }
+        let mut full = String::new();
+        let mut buffer = String::new();
+        let mut completed: Option<serde_json::Value> = None;
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            buffer.push_str(&String::from_utf8_lossy(&chunk));
+            while let Some(newline) = buffer.find('\n') {
+                let line: String = buffer.drain(..=newline).collect();
+                let line = line.trim();
+                let Some(data) = line.strip_prefix("data:") else {
+                    continue;
+                };
+                let data = data.trim();
+                if data.is_empty() || data == "[DONE]" {
+                    continue;
+                }
+                let Ok(value) = serde_json::from_str::<serde_json::Value>(data) else {
+                    continue;
+                };
+                if let Some(message) = response_failure_message(&value) {
+                    anyhow::bail!("Responses API error: {message}");
+                }
+                if let Some(delta) = parse_responses_stream_text(&value) {
+                    full.push_str(delta);
+                    on_chunk(delta);
+                }
+                if value.get("type").and_then(serde_json::Value::as_str)
+                    == Some("response.completed")
+                {
+                    completed = value.get("response").cloned();
+                }
+            }
+        }
+        if full.is_empty()
+            && let Some(completed) = completed
+            && let Ok(parsed) = parse_responses_chat_completion(&completed)
+            && parsed.content != "(empty response)"
+        {
+            full = parsed.content;
+            on_chunk(&full);
+        }
+        if full.is_empty() {
+            anyhow::bail!("Responses stream returned no text");
+        }
+        Ok(full)
+    }
+
     /// Simple chat completion (single turn), preserving provider usage when present.
     pub async fn chat_completion(&self, messages: &[ChatMessage]) -> Result<ChatCompletion> {
         self.chat_completion_with_generation(messages, GenerationParamsPatch::default())
@@ -665,8 +939,14 @@ impl LlmClient {
         patch: GenerationParamsPatch,
     ) -> Result<ChatCompletion> {
         let generation = self.config.generation.merged(patch);
-        if self.chat_protocol() == ChatProtocol::Anthropic {
-            return self.anthropic_chat_completion(messages, generation).await;
+        match self.chat_protocol() {
+            ChatProtocol::Anthropic => {
+                return self.anthropic_chat_completion(messages, generation).await;
+            }
+            ChatProtocol::Responses => {
+                return self.responses_chat_completion(messages, generation).await;
+            }
+            ChatProtocol::OpenAi => {}
         }
         let public_messages: Vec<_> = messages
             .iter()
@@ -711,10 +991,18 @@ impl LlmClient {
         on_chunk: &mut F,
     ) -> Result<String> {
         let generation = self.config.generation.merged(patch);
-        if self.chat_protocol() == ChatProtocol::Anthropic {
-            return self
-                .anthropic_chat_stream(messages, generation, on_chunk)
-                .await;
+        match self.chat_protocol() {
+            ChatProtocol::Anthropic => {
+                return self
+                    .anthropic_chat_stream(messages, generation, on_chunk)
+                    .await;
+            }
+            ChatProtocol::Responses => {
+                return self
+                    .responses_chat_stream(messages, generation, on_chunk)
+                    .await;
+            }
+            ChatProtocol::OpenAi => {}
         }
         let public_messages = messages
             .iter()
@@ -822,8 +1110,9 @@ impl LlmClient {
     ) -> Result<ToolChatCompletion> {
         let generation = self.config.generation.merged(patch);
         anyhow::ensure!(
-            self.chat_protocol() != ChatProtocol::Anthropic,
-            "Native Anthropic tool calling is not supported by this build yet; configure an OpenAI-compatible gateway for tool-using agents, or use Claude for plain chat"
+            matches!(self.chat_protocol(), ChatProtocol::OpenAi),
+            "Native {:?} tool calling is not supported by this build yet; configure an OpenAI-compatible gateway for tool-using agents",
+            self.chat_protocol()
         );
         let public_messages = messages
             .iter()
@@ -881,9 +1170,10 @@ impl LlmClient {
     /// Raw OpenAI-compatible chat request — used by vision (cv) models that
     /// need structured `content` parts (text + image_url).
     pub async fn chat_raw(&self, body: serde_json::Value) -> Result<serde_json::Value> {
-        if self.chat_protocol() == ChatProtocol::Anthropic {
+        if self.chat_protocol() != ChatProtocol::OpenAi {
             anyhow::bail!(
-                "Native Anthropic chat_raw requests are not supported; use the typed chat API or an OpenAI-compatible gateway"
+                "Native {:?} chat_raw requests are not supported; use the typed chat API or an OpenAI-compatible gateway",
+                self.chat_protocol()
             );
         }
         self.send_chat_request(&body).await

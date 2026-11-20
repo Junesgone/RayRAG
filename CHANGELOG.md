@@ -2,6 +2,23 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.9] - 2026-11-20
+
+### Native OpenAI Responses API
+
+- `LlmClient` now detects a base URL ending in `/responses` (for example
+  `https://api.deepseek.com/responses` or `https://api.openai.com/v1/responses`) and speaks
+  the native Responses API instead of sending OpenAI `/chat/completions` requests.
+- Request mapping: system messages become top-level `instructions`, conversation messages
+  become `input` items, `max_tokens` maps to `max_output_tokens`, and DeepSeek's server
+  tools are declared as `{"type": "deepseek_web_search"}` / `{"type": "deepseek_read_url"}`.
+- Non-streaming answers parse `output[].content[type=output_text]` and
+  `usage.input_tokens/output_tokens/total_tokens`; streaming consumes
+  `response.output_text.delta` and turns `response.failed`/`error` events into actionable
+  errors. Native tool calling and `chat_raw` answer an explicit unsupported error.
+- Added mocked request/response/SSE tests plus an ignored live DeepSeek Responses test; the
+  live check passes through RayRAG's own client.
+
 ## [0.127.8] - 2026-11-20
 
 ### DeepSeek Anthropic-compatible endpoint and live API verification
