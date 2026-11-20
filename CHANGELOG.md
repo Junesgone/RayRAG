@@ -2,6 +2,16 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.17] - 2026-11-20
+
+### Data-source sync result in the UI
+
+- The data-source **Sync** preview now shows `count / ingested / unchanged / skipped`
+  from the backend result, plus the per-file failure list below the preview table instead
+  of only a failure count. Operators can see that a re-sync skipped unchanged files and
+  why individual files were rejected.
+- Added markers to the data-source UI regression test.
+
 ## [0.127.16] - 2026-11-20
 
 ### Changed source files replace their previous document
