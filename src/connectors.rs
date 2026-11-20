@@ -62,6 +62,19 @@ pub struct SyncBatch {
     pub failures: Vec<String>,
 }
 
+/// Default ceiling for one connector batch. The per-file download limit is
+/// `RAYRAG_CONNECTOR_BODY_LIMIT_BYTES`; this bounds the sum of all fetched
+/// documents so a recursive source cannot fill host memory.
+const DEFAULT_CONNECTOR_BATCH_LIMIT_BYTES: u64 = 512 * 1024 * 1024;
+
+fn connector_batch_limit_bytes() -> u64 {
+    std::env::var("RAYRAG_CONNECTOR_BATCH_LIMIT_BYTES")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_CONNECTOR_BATCH_LIMIT_BYTES)
+}
+
 // ── Connector trait ──────────────────────────────────────────────────────────
 
 /// Connector contract: 授权 → 拉取 → 规范化存储.
@@ -92,16 +105,38 @@ pub trait Connector: Send + Sync {
 
     /// Batch runner — RAGFlow `ConnectorRunner.run()` equivalent: list →
     /// fetch → normalize with per-file failure tolerance. Applies
-    /// `max_items` as the safety bound (RAGFlow `_ITERATION_LIMIT`).
+    /// `max_items` as the safety bound (RAGFlow `_ITERATION_LIMIT`) and the
+    /// process-wide batch byte budget so a recursive source cannot pull an
+    /// unbounded amount of file content into memory at once.
     async fn fetch_all(&self, max_items: usize) -> Result<SyncBatch> {
+        self.fetch_all_with_limits(max_items, connector_batch_limit_bytes())
+            .await
+    }
+
+    /// Batch runner with an explicit byte budget. Stops before adding a file
+    /// that would push the batch past `max_bytes` and records a failure the
+    /// operator can act on (raise the limit or sync a narrower target).
+    async fn fetch_all_with_limits(&self, max_items: usize, max_bytes: u64) -> Result<SyncBatch> {
         let files = self.list_files().await?;
         let mut batch = SyncBatch::default();
+        let mut total_bytes = 0_u64;
         for file in files.into_iter().take(max_items.max(1)) {
             match self.fetch_file(&file).await {
-                Ok(raw) => match self.normalize(&file, raw) {
-                    Ok(doc) => batch.docs.push(doc),
-                    Err(error) => batch.failures.push(format!("{}: {error:#}", file.name)),
-                },
+                Ok(raw) => {
+                    let next = total_bytes.saturating_add(raw.len() as u64);
+                    if next > max_bytes {
+                        batch.failures.push(format!(
+                            "{}: skipped because the sync batch byte limit ({} bytes) was reached; raise RAYRAG_CONNECTOR_BATCH_LIMIT_BYTES or sync in smaller batches",
+                            file.name, max_bytes
+                        ));
+                        break;
+                    }
+                    total_bytes = next;
+                    match self.normalize(&file, raw) {
+                        Ok(doc) => batch.docs.push(doc),
+                        Err(error) => batch.failures.push(format!("{}: {error:#}", file.name)),
+                    }
+                }
                 Err(error) => batch.failures.push(format!("{}: {error:#}", file.name)),
             }
         }
@@ -6976,6 +7011,8 @@ impl Connector for RdbmsConnector {
         })
     }
 }
+
+
 
 
 

@@ -2,6 +2,18 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.14] - 2026-11-20
+
+### Data-source sync memory and timeout bounds
+
+- One sync batch now has a cumulative byte budget (`RAYRAG_CONNECTOR_BATCH_LIMIT_BYTES`,
+  default 512 MiB) in addition to the per-file body limit. A recursive WebDAV/S3/local
+  source stops before the batch exceeds it and records a clear failure telling the operator
+  to raise the limit or narrow the target, instead of accumulating every file in memory.
+- The data source `timeout_secs` field is now enforced around the whole connector run
+  (default 1740s, capped at 2h); a timed-out sync fails with an actionable message and is
+  written to the sync log.
+
 ## [0.127.13] - 2026-11-20
 
 ### PDF streams: tolerate raw DEFLATE and leading whitespace

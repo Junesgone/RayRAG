@@ -995,10 +995,23 @@ pub(crate) async fn perform_sync(
             kind => {
                 let connector = crate::connectors::ConnectorRegistry::create(kind, options)
                     .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
-                connector
-                    .fetch_all(record.max_items)
-                    .await
-                    .map_err(|error| (StatusCode::BAD_GATEWAY, format!("sync failed: {error:#}")))
+                let timeout_seconds = record.timeout_secs.unwrap_or(1_740).clamp(1, 7_200);
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(timeout_seconds),
+                    connector.fetch_all(record.max_items),
+                )
+                .await
+                {
+                    Ok(result) => result.map_err(|error| {
+                        (StatusCode::BAD_GATEWAY, format!("sync failed: {error:#}"))
+                    }),
+                    Err(_) => Err((
+                        StatusCode::GATEWAY_TIMEOUT,
+                        format!(
+                            "sync timed out after {timeout_seconds}s; raise the data source timeout, lower max_items, or narrow the target"
+                        ),
+                    )),
+                }
             }
         };
     let batch = match connector_result {

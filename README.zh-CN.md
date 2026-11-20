@@ -376,6 +376,7 @@ WebDAV 数据源通过 HTTPS 连接本地局域网主机（私网 IP、单标签
 RAYRAG_WEBDAV_ALLOW_INSECURE_TLS=1 可对其他主机也允许自签名证书。
 WebDAV 同步会递归遍历目标目录下的所有子文件夹，并保留文件原始字节；单批文件数量受数据源文件上限约束。
 重复同步是幂等的：名称和内容哈希都未变化的文件会计入 unchanged，不会重复生成文档。
+单次同步批次受 RAYRAG_CONNECTOR_BATCH_LIMIT_BYTES 限制（默认 512 MiB），数据源的 timeout 设置约束整次连接器运行。
 
 ## 9. 更多文档
 
