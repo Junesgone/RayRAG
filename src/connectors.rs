@@ -1536,6 +1536,7 @@ fn parse_propfind(xml: &str) -> Result<PropfindEntries> {
                             .unwrap_or(0);
                         let ext = Path::new(&name)
                             .extension()
+                            .or_else(|| Path::new(&raw_href).extension())
                             .map(|e| format!(".{}", e.to_string_lossy()))
                             .unwrap_or_default();
                         let mut metadata = HashMap::new();

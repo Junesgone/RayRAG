@@ -1055,11 +1055,7 @@ pub(crate) async fn perform_sync(
             .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
         for doc in &docs {
             let doc_id = uuid::Uuid::new_v4().to_string();
-            let ext = if doc.extension.is_empty() {
-                ".md"
-            } else {
-                &doc.extension
-            };
+            let ext = connector_doc_extension(doc);
             let file_name = format!("{doc_id}{ext}");
             let path = upload_dir.join(&file_name);
             // Binary sources (PDF/Office/images) must be persisted byte-for-byte;
@@ -1356,6 +1352,32 @@ fn supported_kinds() -> String {
         kinds.push(info.kind.to_string());
     }
     kinds.join("/")
+}
+
+/// Extension used for a connector document. Remote listings sometimes carry a
+/// display name without a suffix; fall back to the file magic before defaulting
+/// text documents to Markdown, otherwise a PDF would be ingested as text.
+fn connector_doc_extension(doc: &crate::data_source::ConnectorDoc) -> String {
+    if !doc.extension.is_empty() {
+        return doc.extension.clone();
+    }
+    let bytes = doc.bytes();
+    if bytes.starts_with(b"%PDF-") {
+        return ".pdf".into();
+    }
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return ".png".into();
+    }
+    if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        return ".jpg".into();
+    }
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        return ".gif".into();
+    }
+    if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return ".webp".into();
+    }
+    ".md".into()
 }
 
 // ---- tests ----

@@ -2,6 +2,17 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.15] - 2026-11-20
+
+### Data-source extension robustness
+
+- WebDAV files whose display name has no suffix now take the suffix from the href, so
+  `scanner` + `/files/scanner.pdf` is stored as `.pdf` instead of a text document.
+- When a connector document still has no extension, ingestion sniffs the raw bytes for
+  PDF/PNG/JPEG/GIF/WebP magic before defaulting to Markdown. This prevents binary files
+  renamed or listed without a suffix from being parsed as text.
+- Added tests for href suffix fallback and magic-byte extension detection.
+
 ## [0.127.14] - 2026-11-20
 
 ### Data-source sync memory and timeout bounds
