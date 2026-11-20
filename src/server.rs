@@ -6011,6 +6011,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // Upstream `Routes.Dataset = /dataset/files`: the bare detail path
         // redirects into the Files tab.
         .route("/dataset/{id}", get(crate::web::dataset_files_redirect))
+        .route(
+            "/dataset/{id}/document/{doc_id}",
+            get(crate::web::document_chunks_page),
+        )
         // Upstream `routes.tsx` composes these three paths with a literal double
         // slash (string concatenation), so the routes themselves carry `//`.
         // Registering the literal spellings keeps deep links byte-compatible with

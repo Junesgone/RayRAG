@@ -360,13 +360,27 @@ impl DataSourceStore {
         // would start empty, the page would show nothing, and the next save would persist
         // that emptiness over the real records. The loader keeps the damaged file as a
         // timestamped backup, logs the reason and starts empty.
-        let sources: HashMap<String, DataSourceRecord> =
+        let mut sources: HashMap<String, DataSourceRecord> =
             crate::persistence::load_json_or_quarantine(std::path::Path::new(&metadata_path))?;
-        Ok(Self {
+        // The old 50-file default was a hard truncation for recursive sources.
+        // Migrate records that still carry it unless the operator explicitly set
+        // a connector batch size. Persist below so the migration is one-shot.
+        let mut migrated = false;
+        for record in sources.values_mut() {
+            if record.max_items == 50 && !record.extra.contains_key("config.batch_size") {
+                record.max_items = DEFAULT_DATA_SOURCE_MAX_ITEMS;
+                migrated = true;
+            }
+        }
+        let store = Self {
             sources: RwLock::new(sources),
             metadata_path,
             save_lock: Mutex::new(()),
-        })
+        };
+        if migrated {
+            store.persist()?;
+        }
+        Ok(store)
     }
 
     fn persist(&self) -> Result<()> {
@@ -564,8 +578,14 @@ pub struct CreateDataSourceRequest {
     pub timeout_secs: Option<u64>,
 }
 
+/// Effectively unlimited file count for a data source. The old default of 50
+/// silently truncated recursive WebDAV/S3/local listings; 9999999999999999 is
+/// deliberately far above any real NAS tree while still fitting in a JSON
+/// integer and `usize` on 64-bit targets.
+pub(crate) const DEFAULT_DATA_SOURCE_MAX_ITEMS: usize = 9_999_999_999_999_999;
+
 fn default_max_items() -> usize {
-    50
+    DEFAULT_DATA_SOURCE_MAX_ITEMS
 }
 
 pub async fn list_data_sources(
@@ -1027,6 +1047,7 @@ pub(crate) async fn perform_sync(
                     // listing contract, so never prune from it.
                     truncated: true,
                     unchanged_source_keys: Vec::new(),
+                    unchanged_files: Vec::new(),
                 })
             }
             // Connector registry dispatch (RAGFlow data-source type → Connector).
@@ -1082,6 +1103,7 @@ pub(crate) async fn perform_sync(
     let source_keys = batch.source_keys;
     let truncated_listing = batch.truncated;
     let skipped_unchanged = batch.unchanged_source_keys.len();
+    let unchanged_files = batch.unchanged_files;
     let docs = batch.docs;
     let total_docs = docs.len() + skipped_unchanged;
     let mut connector_failures = batch.failures;
@@ -1245,6 +1267,20 @@ pub(crate) async fn perform_sync(
                 "type": doc.metadata.get("type"),
             })
         })
+        .chain(
+            unchanged_files
+                .iter()
+                .take(10_usize.saturating_sub(docs.len().min(10)))
+                .map(|file| {
+                    serde_json::json!({
+                        "id": file.id,
+                        "title": file.name,
+                        "extension": file.extension,
+                        "size_bytes": file.size_bytes,
+                        "type": file.metadata.get("type"),
+                    })
+                }),
+        )
         .collect();
     let kb_name = kb_id.and_then(|kb| state.kbs.get(kb).map(|kb| kb.name.clone()));
     let _ = store.append_sync_log(

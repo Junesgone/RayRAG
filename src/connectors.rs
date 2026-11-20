@@ -69,19 +69,37 @@ pub struct SyncBatch {
     /// Files skipped before download because their remote version still
     /// matches the version stored on the existing document.
     pub unchanged_source_keys: Vec<String>,
+    /// Listing metadata for those skipped files, so the sync preview can show
+    /// them without their content having been downloaded.
+    pub unchanged_files: Vec<RemoteFile>,
 }
 
-/// Default ceiling for one connector batch. The per-file download limit is
+/// One connector batch's memory ceiling. The per-file download limit is
 /// `RAYRAG_CONNECTOR_BODY_LIMIT_BYTES`; this bounds the sum of all fetched
-/// documents so a recursive source cannot fill host memory.
-const DEFAULT_CONNECTOR_BATCH_LIMIT_BYTES: u64 = 512 * 1024 * 1024;
-
+/// documents so a recursive source cannot fill host memory. When the operator
+/// does not set `RAYRAG_CONNECTOR_BATCH_LIMIT_BYTES`, quarter of the memory
+/// currently available is used (at least half the assumed cost of one parsed
+/// document); without a memory reading the CPU count supplies the estimate.
 pub(crate) fn connector_batch_limit_bytes() -> u64 {
     std::env::var("RAYRAG_CONNECTOR_BATCH_LIMIT_BYTES")
         .ok()
         .and_then(|value| value.trim().parse::<u64>().ok())
         .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_CONNECTOR_BATCH_LIMIT_BYTES)
+        .unwrap_or_else(|| {
+            detected_connector_batch_limit_bytes(&crate::host_resources::HostResources::detect())
+        })
+}
+
+pub(crate) fn detected_connector_batch_limit_bytes(
+    resources: &crate::host_resources::HostResources,
+) -> u64 {
+    let one_document = crate::host_resources::BYTES_PER_DOCUMENT_TASK;
+    match resources.available_memory_bytes {
+        Some(bytes) => (bytes / 4).max(one_document / 2),
+        None => (resources.cpus as u64)
+            .saturating_mul(one_document / 2)
+            .max(one_document / 2),
+    }
 }
 
 /// Version token used to decide whether a remote file can be skipped. The
@@ -169,6 +187,7 @@ pub trait Connector: Send + Sync {
                 && known == current
             {
                 batch.unchanged_source_keys.push(file.id.clone());
+                batch.unchanged_files.push(file.clone());
                 continue;
             }
             match self.fetch_file(&file).await {

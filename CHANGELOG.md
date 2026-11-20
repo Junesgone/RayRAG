@@ -2,6 +2,37 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.25] - 2026-11-20
+
+### Data-source batch memory budget follows the host
+
+- The data-source file cap is now effectively unlimited (`9999999999999999`) instead of
+  the old 50-file default that silently truncated recursive WebDAV/S3/local listings.
+  Existing records still carrying the old 50 default are migrated on load unless the
+  operator explicitly configured a connector `batch_size`.
+
+- `RAYRAG_CONNECTOR_BATCH_LIMIT_BYTES` no longer starts from a fixed 512 MiB. When
+  unset, RayRAG detects the host's currently available memory and uses a quarter of it
+  for one sync batch, with at least half the assumed per-document cost as the floor;
+  when no memory reading is available it derives the budget from the CPU count.
+- An explicit byte value still wins, so operators can pin their own limit. The env
+  template now shows the value empty (automatic) instead of a fixed default.
+- The sync preview now also lists files skipped by version (unchanged) using their
+  listing metadata, so a re-sync that downloads nothing still shows the source files.
+- Deleting a large knowledge base no longer looks frozen: the datasets and home pages
+  remove the card and close the dialog immediately, then the DELETE runs in the
+  background. A failed delete alerts and reloads the list to restore the card.
+- Knowledge-base document-list checkboxes (row selection and select-all) are larger
+  (18px) with a visible keyboard focus ring.
+- Dataset configuration now auto-saves: edits to fields, selects, switches and language
+  chips are debounced and saved in the background, while the explicit Save button and
+  saved/error status remain available. Its dense table was rebuilt as a card-style form
+  with grouped section headings, larger inputs and styled dropdowns, closer to RAGFlow.
+- Clicking a document name (or its chunk count) in the KB Files table opens a new
+  split view: the stored original file is rendered on the left and the parsed chunks are
+  listed on the right with token counts and keywords/questions.
+- Added tests for the memory-derived budget and unchanged-file metadata.
+
 ## [0.127.24] - 2026-11-20
 
 ### WebDAV ETag fingerprints
