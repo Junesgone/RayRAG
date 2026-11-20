@@ -33,6 +33,11 @@ if [ -z "$VERSION" ]; then
   echo "build-fpk: could not read the version from Cargo.toml" >&2
   exit 1
 fi
+MANIFEST_VERSION="$(sed -n 's/^version[[:space:]]*=[[:space:]]*//p' fpk/manifest | head -n 1 | tr -d '[:space:]')"
+if [ "$MANIFEST_VERSION" != "$VERSION" ]; then
+  echo "build-fpk: fpk/manifest version '$MANIFEST_VERSION' does not match Cargo.toml '$VERSION'; update both before packaging" >&2
+  exit 1
+fi
 
 if ! command -v fnpack >/dev/null 2>&1; then
   echo "build-fpk: fnpack is required (https://developer.fnnas.com/docs/cli/fnpack/)" >&2

@@ -485,7 +485,9 @@ hostname or a .local/.lan/.home/.internal suffix) accept a NAS self-signed certi
 public hostnames keep normal certificate verification. Set
 RAYRAG_WEBDAV_ALLOW_INSECURE_TLS=1 to allow a self-signed certificate for any other host.
 WebDAV sync recursively walks every subfolder under the configured target and keeps the
-exact file bytes; the data source file limit bounds one batch.
+exact file bytes; the data source file limit bounds one batch. Re-running a sync is
+idempotent for unchanged files: a document with the same name and content hash is counted
+as `unchanged` instead of being uploaded again.
 
 ## 9. More documentation
 

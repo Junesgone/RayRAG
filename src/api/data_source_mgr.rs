@@ -1030,6 +1030,7 @@ pub(crate) async fn perform_sync(
     // Each connector doc is written as a text file and routed through the
     // standard upload pipeline (parse -> chunk -> embed -> index).
     let mut ingested = 0_usize;
+    let mut unchanged = 0_usize;
     let mut skipped = Vec::new();
     if let Some(kb_id) = kb_id.filter(|value| !value.is_empty()) {
         if !crate::server::kb_manageable(state, kb_id, auth) {
@@ -1051,6 +1052,19 @@ pub(crate) async fn perform_sync(
             // Binary sources (PDF/Office/images) must be persisted byte-for-byte;
             // the lossy UTF-8 blob is only a preview/legacy text channel.
             let bytes = doc.bytes();
+            let content_hash = crate::server::server_xxh3_hash(bytes);
+            // Re-running a sync must not create a second copy of an unchanged
+            // remote file. Failed documents are not skipped, so a resync can
+            // retry a parse that previously failed.
+            let already_present = state.docs.list(kb_id).iter().any(|existing| {
+                existing.name == doc.semantic_identifier
+                    && existing.content_hash == content_hash
+                    && existing.run != "FAILED"
+            });
+            if already_present {
+                unchanged += 1;
+                continue;
+            }
             if std::fs::write(&path, bytes).is_err() {
                 skipped.push(doc.semantic_identifier.clone());
                 continue;
@@ -1060,7 +1074,7 @@ pub(crate) async fn perform_sync(
                 storage_name: file_name,
                 path,
                 size: bytes.len(),
-                content_hash: crate::server::server_xxh3_hash(bytes),
+                content_hash,
                 cleanup_on_drop: false,
             };
             match crate::server::register_document_upload(
@@ -1102,7 +1116,7 @@ pub(crate) async fn perform_sync(
         "DONE",
         "sync",
         &format!(
-            "Synced {} docs (ingested {ingested}, skipped {})",
+            "Synced {} docs (ingested {ingested}, unchanged {unchanged}, skipped {})",
             docs.len(),
             skipped.len()
         ),
@@ -1117,7 +1131,7 @@ pub(crate) async fn perform_sync(
     let _ = store.set_status(id, "schedule");
     Ok(serde_json::json!({
         "code": 0,
-        "data": { "count": docs.len(), "ingested": ingested, "skipped": skipped, "failures": connector_failures, "preview": preview }
+        "data": { "count": docs.len(), "ingested": ingested, "unchanged": unchanged, "skipped": skipped, "failures": connector_failures, "preview": preview }
     }))
 }
 

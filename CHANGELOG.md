@@ -2,6 +2,18 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.12] - 2026-11-20
+
+### Idempotent data-source re-sync
+
+- Re-syncing a data source no longer creates a second copy of a file whose name and
+  content hash already exist in the target knowledge base. Unchanged files are counted as
+  `unchanged` in the sync result and log; failed documents are not skipped so a re-sync can
+  retry them.
+- This keeps repeated WebDAV/S3/local syncs stable now that WebDAV recursively visits every
+  subfolder.
+- The checked-in fpk/manifest version is bumped with each release, and build-fpk.sh now refuses to package unless it matches Cargo.toml.
+
 ## [0.127.11] - 2026-11-20
 
 ### WebDAV recursive sync
