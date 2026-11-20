@@ -1302,3 +1302,14 @@ select:disabled option{color:#8a8f98}
   .doc-row .doc-actions .icon-btn{opacity:1!important}
   .file-row .icon-btn{opacity:1!important}
 }
+.doc-structured-preview{flex:1;min-height:320px;height:52vh;overflow:auto;padding:20px;background:#fff;border-radius:10px;color:#111}
+.docx-preview{font-size:14px;line-height:1.65}
+.docx-preview h1,.docx-preview h2,.docx-preview h3,.docx-preview h4{color:#111;margin:16px 0 8px}
+.docx-preview p{margin:8px 0}
+.docx-preview table{border-collapse:collapse;width:100%;margin:10px 0}
+.docx-preview td,.docx-preview th{border:1px solid #dcdcdc;padding:4px 8px;font-size:12px;vertical-align:top}
+.doc-structured-block{margin-bottom:24px}
+.doc-structured-block h4{margin:0 0 8px;font-size:14px;color:#222}
+.doc-structured-block p{margin:0 0 8px;font-size:13px;line-height:1.6;white-space:pre-wrap}
+.doc-structured-table{border-collapse:collapse;width:100%;margin:8px 0}
+.doc-structured-table td{border:1px solid #dcdcdc;padding:4px 8px;font-size:12px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

@@ -2,6 +2,18 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.30] - 2026-11-20
+
+### Word/Excel/PowerPoint originals render in the chunk view
+
+- The original side of the document original/chunks view no longer forces Office files
+  into the browser's raw iframe. For .docx/.doc it renders the server-produced Word HTML;
+  for .xlsx/.xls it renders the workbook grid; for .pptx/.ppt it renders per-slide text.
+- PDFs, images and text keep the existing inline iframe path.
+- Content is capped by the existing preview endpoints (5000 Word blocks, 500 spreadsheet
+  rows, 64 columns) and failed previews show a visible error in the pane.
+- Added a UI regression test for the Office structured-preview branch.
+
 ## [0.127.29] - 2026-11-20
 
 ### Long local-model ingestion is observable, not silent
