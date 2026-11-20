@@ -36,7 +36,7 @@ keep the administrator-managed database credential.
 New database clusters use SCRAM password authentication for local and TCP connections.
 
 > Requirements: fnOS 1.1.3100 or newer, x86_64 device. The package bundles
-> PostgreSQL 18.4, zvec and all runtime libraries it needs; it does not install a
+> PostgreSQL 18.7, zvec and all runtime libraries it needs; it does not install a
 > system database and does not require Docker.
 
 ## Where the data lives
@@ -77,7 +77,7 @@ chmod +x fnpack && sudo mv fnpack /usr/local/bin/fnpack
 # 2) build the release binary once (PostgreSQL metadata + zvec backend)
 cargo build --release --locked --features postgres-backend,zvec-backend
 
-# 3) build the package; the script downloads the portable PostgreSQL 18.4
+# 3) build the package; the script downloads the portable PostgreSQL 18.7
 #    binaries from the Aliyun Maven mirror and bundles zvec automatically
 ./fpk/build-fpk.sh
 # -> dist/rayrag_<version>_x86_64.fpk

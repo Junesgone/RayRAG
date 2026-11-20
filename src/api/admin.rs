@@ -252,7 +252,7 @@ fn admin_services_payload(state: &Arc<AppState>) -> Vec<serde_json::Value> {
             "host": pg_host,
             "port": pg_port,
             "status": alive(&postgres),
-            "extra": { "required_version": std::env::var("RAYRAG_POSTGRES_REQUIRED_VERSION").unwrap_or_else(|_| "18.4".into()) },
+            "extra": { "required_version": std::env::var("RAYRAG_POSTGRES_REQUIRED_VERSION").unwrap_or_else(|_| "18.7".into()) },
         }),
         serde_json::json!({
             "name": "zvec",

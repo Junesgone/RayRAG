@@ -29,7 +29,7 @@
 
 - 用 **Rust** 写，启动后只占 **几十 MB 内存**（RAGFlow 启动约 1 GB）。
 - 界面和功能对标开源项目 RAGFlow，但**不需要** MySQL、Elasticsearch、Redis、MinIO：
-  向量库用 [zvec](https://github.com/zvec-ai/zvec-rust)，元数据用 **PostgreSQL 18.4**。
+  向量库用 [zvec](https://github.com/zvec-ai/zvec-rust)，元数据用 **PostgreSQL 18.7**。
 - 全程**国内网络可用**：镜像、依赖源、联网搜索都用国内可达的地址。
 - 支持 **71 家模型厂商**（DeepSeek、通义千问、智谱、月之暗面、硅基流动、豆包、百川……）
   以及本机跑的 Ollama / vLLM / LM Studio / llama.cpp。
@@ -301,7 +301,7 @@ docker compose down -v
 
 ## 6. 不用 Docker：纯 Linux 安装
 
-需要三样：**Rust 1.100+**、一个 **PostgreSQL 18.4**、**zvec 动态库**。
+需要三样：**Rust 1.100+**、一个 **PostgreSQL 18.7**、**zvec 动态库**。
 
 ```bash
 # 1) 装 Rust
@@ -334,7 +334,7 @@ export RAYRAG_POSTGRES_URL='postgresql://数据库角色:数据库密码@127.0.0
 ## 7. 飞牛 fnOS 应用（FPK）
 
 在飞牛 fnOS NAS 上，可以直接从应用中心安装 RayRAG，不用自己装 Docker。安装包里自带
-Rust 服务、PostgreSQL 18.4、zvec 和全部运行库，安装后桌面会出现 RayRAG 图标。
+Rust 服务、PostgreSQL 18.7、zvec 和全部运行库，安装后桌面会出现 RayRAG 图标。
 
 1. 到 [Releases](https://github.com/Junesgone/RayRAG/releases) 下载 \`rayrag_<版本>_x86_64.fpk\`；
 2. 打开飞牛「应用中心 → 手动安装」，选择该 .fpk 并确认；
@@ -363,7 +363,7 @@ Rust 服务、PostgreSQL 18.4、zvec 和全部运行库，安装后桌面会出�
 | `System` / `Admin` | 运行状态、用户与团队、权限、监控 |
 | `API` | OpenAI 兼容接口：`/api/v1/chat/completions`、`/embeddings`、`/rerank`，可直接接 LangChain、OpenWebUI、Dify |
 
-**技术栈**：Rust（Axum + Tokio）· zvec 向量库 · PostgreSQL 18.4 · 单二进制部署。
+**技术栈**：Rust（Axum + Tokio）· zvec 向量库 · PostgreSQL 18.7 · 单二进制部署。
 
 **与 RAGFlow 的关系**：界面层级、按钮、交互对齐 RAGFlow v0.26.4；
 解析管线用 Rust 重写；把 MySQL / Elasticsearch / Redis / MinIO 换成了
@@ -374,6 +374,7 @@ PostgreSQL + zvec，部署更轻。
 WebDAV 数据源通过 HTTPS 连接本地局域网主机（私网 IP、单标签主机名或 .local/.lan/.home/.internal
 后缀）时，会自动接受 NAS 常见的自签名证书；公网主机仍进行完整证书校验。设置
 RAYRAG_WEBDAV_ALLOW_INSECURE_TLS=1 可对其他主机也允许自签名证书。
+WebDAV 同步会递归遍历目标目录下的所有子文件夹，并保留文件原始字节；单批文件数量受数据源文件上限约束。
 
 ## 9. 更多文档
 

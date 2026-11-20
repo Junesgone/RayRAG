@@ -3661,7 +3661,7 @@ dependencies = [
 
 [[package]]
 name = "rayrag"
-version = "0.127.10"
+version = "0.127.11"
 dependencies = [
  "aes 0.8.4",
  "anyhow",
@@ -5746,13 +5746,13 @@ dependencies = [
 
 [[package]]
 name = "zvec-rust"
-version = "0.8.0"
-source = "git+https://github.com/zvec-ai/zvec-rust?tag=v0.8.0#16836107cd08bb42ec4e5a4052919735346f7783"
+version = "0.8.1"
+source = "git+https://github.com/zvec-ai/zvec-rust?tag=v0.8.1#668f8270d3023bda0f3ed2ba650a508dca78d648"
 dependencies = [
  "zvec-rust-sys",
 ]
 
 [[package]]
 name = "zvec-rust-sys"
-version = "0.8.0"
-source = "git+https://github.com/zvec-ai/zvec-rust?tag=v0.8.0#16836107cd08bb42ec4e5a4052919735346f7783"
+version = "0.8.1"
+source = "git+https://github.com/zvec-ai/zvec-rust?tag=v0.8.1#668f8270d3023bda0f3ed2ba650a508dca78d648"

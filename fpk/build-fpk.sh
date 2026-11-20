@@ -9,10 +9,10 @@
 #   RAYRAG_FPK_CACHE        cache directory (default: build/fpk-cache)
 #   RAYRAG_FPK_BINARY       prebuilt rayrag binary (default: target/release/rayrag)
 #   RAYRAG_ZVEC_LIB         libzvec_c_api.so path
-#                           (default: $HOME/.local/lib/zvec/0.8.0/libzvec_c_api.so)
+#                           (default: $HOME/.local/lib/zvec/0.8.1/libzvec_c_api.so)
 #   RAYRAG_FPK_PG_ARCHIVE   pre-downloaded portable PostgreSQL archive (.txz)
 #   RAYRAG_FPK_PG_URL       portable PostgreSQL archive URL
-#   RAYRAG_FPK_PG_VERSION   portable PostgreSQL version (default: 18.4.0)
+#   RAYRAG_FPK_PG_VERSION   portable PostgreSQL version (default: 18.7.0)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -21,8 +21,8 @@ OUT_DIR="${RAYRAG_FPK_OUT:-$ROOT/dist}"
 STAGE_DIR="${RAYRAG_FPK_STAGE:-$ROOT/build/fpk-stage}"
 CACHE_DIR="${RAYRAG_FPK_CACHE:-$ROOT/build/fpk-cache}"
 BINARY="${RAYRAG_FPK_BINARY:-$ROOT/target/release/rayrag}"
-ZVEC_LIB="${RAYRAG_ZVEC_LIB:-$HOME/.local/lib/zvec/0.8.0/libzvec_c_api.so}"
-PG_VERSION="${RAYRAG_FPK_PG_VERSION:-18.4.0}"
+ZVEC_LIB="${RAYRAG_ZVEC_LIB:-$HOME/.local/lib/zvec/0.8.1/libzvec_c_api.so}"
+PG_VERSION="${RAYRAG_FPK_PG_VERSION:-18.7.0}"
 PG_URL="${RAYRAG_FPK_PG_URL:-https://maven.aliyun.com/repository/public/io/zonky/test/postgres/embedded-postgres-binaries-linux-amd64/$PG_VERSION/embedded-postgres-binaries-linux-amd64-$PG_VERSION.jar}"
 PG_ARCHIVE="${RAYRAG_FPK_PG_ARCHIVE:-$CACHE_DIR/postgres-linux-x86_64.txz}"
 PG_DIR="$CACHE_DIR/pgsql"

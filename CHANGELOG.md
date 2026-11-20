@@ -2,6 +2,28 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.11] - 2026-11-20
+
+### WebDAV recursive sync
+
+- WebDAV data sources now walk **all nested folders** under the configured target
+  (depth-first, cycle-protected, depth/size bounded) instead of listing only the top
+  directory. Unreadable subfolders are logged and skipped so one bad folder does not abort
+  the whole sync; the file cap follows the data source's max-items setting.
+- Every normal page container now uses the full window width with responsive
+  `clamp(16px, 2.5vw, 40px)` side padding instead of a fixed 1200px column, so card grids,
+  tables and settings pages expand on wide screens and stay padded on phones.
+
+### Toolchain and database refresh
+
+- **zvec-rust 0.8.0 → 0.8.1** (upstream 2026-11-13, grouped search and IVF PQ):
+  vendored crates, Cargo git tag, Docker `ZVEC_RUST_VERSION` and the prebuilt
+  `libzvec_c_api.so` are updated together.
+- **PostgreSQL 18.4 → 18.7** (latest minor): Docker image, FPK portable PostgreSQL,
+  compose `RAYRAG_POSTGRES_REQUIRED_VERSION`, Helm values and docs are updated.
+- Rust stable channel moved from 1.97.0 to **1.100.0** via `rustup update stable`
+  (the release/toolchain already pinned 1.100.0; this removes the stale stable channel).
+
 ## [0.127.10] - 2026-11-20
 
 ### WebDAV and file connectors preserve binary documents

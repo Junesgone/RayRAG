@@ -26,7 +26,7 @@ pub const DEFAULT_MATCH_SPARSE_TOPN: usize = 10;
 pub const ATTEMPT_TIME: usize = 2;
 /// Seconds to wait between connection attempts (es_conn_pool).
 pub const CONNECT_RETRY_SLEEP_SECS: u64 = 5;
-/// Minimum PostgreSQL major version (RayRAG deployment baseline is 18.4).
+/// Minimum PostgreSQL major version (RayRAG deployment baseline is 18.7).
 pub const POSTGRES_MIN_MAJOR_VERSION: i32 = 14;
 
 /// A document row: an arbitrary JSON object (a chunk document).

@@ -223,6 +223,10 @@ pub enum QuantizeType {
     Int4 = 3,
     /// RaBitQ quantization.
     Rabitq = 4,
+    /// Product quantization (PQ), optionally with learned OPQ rotation.
+    ///
+    /// Configure it with [`crate::schema::IndexParams::set_quantizer_pq`].
+    Pq = 8,
 }
 
 impl From<u32> for QuantizeType {
@@ -232,6 +236,7 @@ impl From<u32> for QuantizeType {
             2 => QuantizeType::Int8,
             3 => QuantizeType::Int4,
             4 => QuantizeType::Rabitq,
+            8 => QuantizeType::Pq,
             _ => QuantizeType::Undefined,
         }
     }

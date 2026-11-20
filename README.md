@@ -29,7 +29,7 @@
 - Written in **Rust**. It idles at **a few tens of MB of RAM** (RAGFlow needs ~1 GB to start).
 - The UI and feature set follow the open-source project RAGFlow, but RayRAG needs **no** MySQL,
   Elasticsearch, Redis or MinIO: vectors live in [zvec](https://github.com/zvec-ai/zvec-rust)
-  and metadata lives in **PostgreSQL 18.4**.
+  and metadata lives in **PostgreSQL 18.7**.
 - **Works on networks in mainland China**: container images, package mirrors and web search all
   use endpoints reachable from there.
 - Ships with **71 model providers** (DeepSeek, Qwen, Zhipu, Moonshot, SiliconFlow, VolcEngine,
@@ -394,7 +394,7 @@ Upgrading within the `0.x` line keeps the existing data volume and configuration
 
 ## 6. No Docker: pure Linux install
 
-You need three things: **Rust 1.100+**, a **PostgreSQL 18.4** and the **zvec shared library**.
+You need three things: **Rust 1.100+**, a **PostgreSQL 18.7** and the **zvec shared library**.
 
 ```bash
 # 1) Rust
@@ -403,7 +403,7 @@ source "$HOME/.cargo/env"
 
 # 2) build (PostgreSQL metadata + the native zvec vector backend — both default)
 #    ZVEC_LIB_DIR points at the folder holding libzvec_c_api.so and TARGET
-export ZVEC_LIB_DIR="$HOME/.local/lib/zvec/0.8.0"   # any version present under ~/.local/lib/zvec
+export ZVEC_LIB_DIR="$HOME/.local/lib/zvec/0.8.1"   # any version present under ~/.local/lib/zvec
 cargo build --release --locked
 
 # 3) configure
@@ -441,7 +441,7 @@ environment without the native library, `cargo build --release --locked --no-def
 ## 7. fnOS NAS app (FPK)
 
 On a 飞牛 fnOS NAS you can install RayRAG as a normal App Center application instead of
-running Docker yourself. The package bundles the Rust server, PostgreSQL 18.4, zvec and
+running Docker yourself. The package bundles the Rust server, PostgreSQL 18.7, zvec and
 every runtime library it needs, and registers a desktop icon.
 
 1. Download \`rayrag_<version>_x86_64.fpk\` from the [Releases](https://github.com/Junesgone/RayRAG/releases) page.
@@ -472,7 +472,7 @@ Aliyun Maven mirror, reachable in mainland China.
 | `System` / `Admin` | health, users and teams, permissions, monitoring |
 | `API` | OpenAI-compatible `/api/v1/chat/completions`, `/embeddings`, `/rerank` — drop-in for LangChain, OpenWebUI, Dify |
 
-**Stack**: Rust (Axum + Tokio) · zvec vector store · PostgreSQL 18.4 · single binary.
+**Stack**: Rust (Axum + Tokio) · zvec vector store · PostgreSQL 18.7 · single binary.
 
 **Relationship to RAGFlow**: page hierarchy, buttons and interactions track RAGFlow v0.27.2;
 the parsing pipeline is rewritten in Rust; MySQL / Elasticsearch / Redis / MinIO are replaced by
@@ -484,6 +484,8 @@ WebDAV data sources served over HTTPS from a local-network host (private IP, sin
 hostname or a .local/.lan/.home/.internal suffix) accept a NAS self-signed certificate;
 public hostnames keep normal certificate verification. Set
 RAYRAG_WEBDAV_ALLOW_INSECURE_TLS=1 to allow a self-signed certificate for any other host.
+WebDAV sync recursively walks every subfolder under the configured target and keeps the
+exact file bytes; the data source file limit bounds one batch.
 
 ## 9. More documentation
 

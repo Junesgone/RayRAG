@@ -1,6 +1,6 @@
 [package]
 name = "rayrag"
-version = "0.127.10"
+version = "0.127.11"
 edition = "2024"
 rust-version = "1.100"
 description = "RayRAG: RAGFlow parsing pipeline rewritten in Rust, powered by zvec"
@@ -26,11 +26,11 @@ weezl = "0.2.1"         # Bounded, fallible PDF LZW decoding
 # build never downloads or links a native library. Set ZVEC_LIB_DIR when
 # building with --features zvec-backend.
 #
-# v0.8.0 is tracked by its release tag; it is the current upstream release and
+# v0.8.1 is tracked by its release tag; it is the current upstream release and
 # carries the safer read-modify-write contract documented in the crate. The
 # vendored copy under vendor/zvec-rust, Cargo.lock and Dockerfile ARG
 # ZVEC_RUST_VERSION keep the same version so the Docker [patch] actually applies.
-zvec-rust = { git = "https://github.com/zvec-ai/zvec-rust", tag = "v0.8.0", optional = true }
+zvec-rust = { git = "https://github.com/zvec-ai/zvec-rust", tag = "v0.8.1", optional = true }
 
 # Optional synchronous PostgreSQL mirror used by the existing synchronous
 # atomic persistence boundary. PostgreSQL 18.4 is the deployment baseline.

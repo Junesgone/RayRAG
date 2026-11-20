@@ -604,7 +604,7 @@ impl ConnectorRegistry {
             | "imap" | "seafile" | "rest_api" | "bigquery" => {
                 bail!("connector not implemented yet: {kind} (registered, coming soon)")
             }
-            // RayRAG 技术栈不含 MySQL（用户决策：统一 postgres:18.4）——
+            // RayRAG 技术栈不含 MySQL（用户决策：统一 postgres:18.7）——
             // mysql 源明确不支持，读 MySQL 请走 postgresql 迁移。
             "mysql" => {
                 bail!(
@@ -1034,6 +1034,7 @@ pub struct WebDavConnector {
     remote_path: String,
     username: String,
     password: String,
+    max_items: usize,
 }
 
 impl WebDavConnector {
@@ -1080,6 +1081,13 @@ impl WebDavConnector {
             remote_path,
             username,
             password,
+            // SourceOptions::default leaves max_items at 0; the sync API normally
+            // supplies its own bound, so use a sane recursive-listing default.
+            max_items: if options.max_items == 0 {
+                1_000
+            } else {
+                options.max_items
+            },
         }
     }
 
@@ -1189,7 +1197,7 @@ impl WebDavConnector {
         Ok(response)
     }
 
-    async fn list_files_at(&self, path: &str) -> Result<Vec<RemoteFile>> {
+    async fn list_entries_at(&self, path: &str) -> Result<PropfindEntries> {
         let url = self.url_for(path);
         let response = self
             .client
@@ -1213,7 +1221,66 @@ impl WebDavConnector {
                 body.chars().take(200).collect::<String>()
             );
         }
-        parse_propfind(&body, &self.base_url)
+        parse_propfind(&body)
+    }
+
+    /// Walk every collection under one configured target. WebDAV listings are
+    /// Depth:1, so subfolders must be discovered and queried recursively.
+    async fn collect_recursive(&self, root: &str) -> Result<Vec<RemoteFile>> {
+        const MAX_DEPTH: usize = 64;
+        const MAX_DIRECTORIES: usize = 10_000;
+        let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut stack = vec![(root.to_string(), 0_usize)];
+        let mut files = Vec::new();
+        while let Some((directory, depth)) = stack.pop() {
+            if depth > MAX_DEPTH {
+                tracing::warn!(
+                    folder = %directory,
+                    max_depth = MAX_DEPTH,
+                    "webdav: folder nesting exceeds the recursion limit; skipping deeper folders"
+                );
+                continue;
+            }
+            let normalized = directory.trim_end_matches('/').to_string();
+            if normalized.is_empty() || !visited.insert(normalized.clone()) {
+                continue;
+            }
+            if visited.len() > MAX_DIRECTORIES {
+                anyhow::bail!(
+                    "webdav: more than {MAX_DIRECTORIES} folders under {}; narrow the configured target or sync in smaller batches",
+                    self.remote_path
+                );
+            }
+            let entries = match self.list_entries_at(&directory).await {
+                Ok(entries) => entries,
+                Err(error) if depth > 0 => {
+                    tracing::warn!(
+                        folder = %directory,
+                        %error,
+                        "webdav: cannot list subfolder; continuing with the remaining folders"
+                    );
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            for file in entries.files {
+                files.push(file);
+                if files.len() >= self.max_items {
+                    tracing::warn!(
+                        limit = self.max_items,
+                        "webdav: file limit reached; stopping the recursive listing. Raise the data source file limit to sync more."
+                    );
+                    return Ok(files);
+                }
+            }
+            for subfolder in entries.directories {
+                let subfolder = subfolder.trim_end_matches('/').to_string();
+                if !subfolder.is_empty() && subfolder != normalized {
+                    stack.push((format!("{subfolder}/"), depth + 1));
+                }
+            }
+        }
+        Ok(files)
     }
 }
 
@@ -1285,7 +1352,7 @@ impl Connector for WebDavConnector {
         let candidates = self.candidate_paths();
         let mut last_error = None;
         for path in &candidates {
-            match self.list_files_at(path).await {
+            match self.collect_recursive(path).await {
                 Ok(files) => {
                     if path != &self.remote_path {
                         tracing::info!(
@@ -1294,6 +1361,11 @@ impl Connector for WebDavConnector {
                             "webdav: mapped NAS filesystem path to WebDAV-visible path"
                         );
                     }
+                    tracing::info!(
+                        root = %path,
+                        files = files.len(),
+                        "webdav: recursive listing complete"
+                    );
                     return Ok(files);
                 }
                 Err(error) => {
@@ -1340,17 +1412,22 @@ impl Connector for WebDavConnector {
     }
 }
 
-/// Parse a WebDAV `multistatus` PROPFIND response into file entries.
-/// Non-collection (file) resources only, mirroring RAGFlow's WebDAV client
-/// `ls` behaviour.
-fn parse_propfind(xml: &str, _base_url: &str) -> Result<Vec<RemoteFile>> {
+#[derive(Debug, Default)]
+struct PropfindEntries {
+    files: Vec<RemoteFile>,
+    directories: Vec<String>,
+}
+
+/// Parse a WebDAV `multistatus` PROPFIND response into file and folder entries.
+/// Folder hrefs drive the recursive listing added for depth-1 PROPFIND servers.
+fn parse_propfind(xml: &str) -> Result<PropfindEntries> {
     use quick_xml::Reader;
     use quick_xml::events::Event;
 
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
 
-    let mut files = Vec::new();
+    let mut entries = PropfindEntries::default();
     let mut current: Option<HashMap<String, String>> = None;
     let mut text = String::new();
     let mut in_collection = false;
@@ -1399,43 +1476,46 @@ fn parse_propfind(xml: &str, _base_url: &str) -> Result<Vec<RemoteFile>> {
                 }
                 if name == "response"
                     && let Some(map) = current.take()
-                    && !in_collection
                     && let Some(href) = map.get("href")
-                    && !href.ends_with('/')
+                    && !href.is_empty()
                 {
-                    let raw_href = href.clone();
-                    let name = map
-                        .get("displayname")
-                        .filter(|n| !n.is_empty())
-                        .cloned()
-                        .or_else(|| {
-                            raw_href
-                                .trim_end_matches('/')
-                                .rsplit('/')
-                                .next()
-                                .map(|s| s.to_string())
-                        })
-                        .unwrap_or_else(|| raw_href.clone());
-                    let size = map
-                        .get("size")
-                        .and_then(|s| s.parse::<u64>().ok())
-                        .unwrap_or(0);
-                    let ext = Path::new(&name)
-                        .extension()
-                        .map(|e| format!(".{}", e.to_string_lossy()))
-                        .unwrap_or_default();
-                    let mut metadata = HashMap::new();
-                    metadata.insert("source".into(), "webdav".into());
-                    files.push(RemoteFile {
-                        id: format!("webdav:{raw_href}"),
-                        name,
-                        path: raw_href,
-                        extension: ext,
-                        size_bytes: size,
-                        updated_at: map.get("modified").cloned().unwrap_or_default(),
-                        fingerprint: String::new(),
-                        metadata,
-                    });
+                    if in_collection {
+                        entries.directories.push(href.clone());
+                    } else if !href.ends_with('/') {
+                        let raw_href = href.clone();
+                        let name = map
+                            .get("displayname")
+                            .filter(|n| !n.is_empty())
+                            .cloned()
+                            .or_else(|| {
+                                raw_href
+                                    .trim_end_matches('/')
+                                    .rsplit('/')
+                                    .next()
+                                    .map(|s| s.to_string())
+                            })
+                            .unwrap_or_else(|| raw_href.clone());
+                        let size = map
+                            .get("size")
+                            .and_then(|s| s.parse::<u64>().ok())
+                            .unwrap_or(0);
+                        let ext = Path::new(&name)
+                            .extension()
+                            .map(|e| format!(".{}", e.to_string_lossy()))
+                            .unwrap_or_default();
+                        let mut metadata = HashMap::new();
+                        metadata.insert("source".into(), "webdav".into());
+                        entries.files.push(RemoteFile {
+                            id: format!("webdav:{raw_href}"),
+                            name,
+                            path: raw_href,
+                            extension: ext,
+                            size_bytes: size,
+                            updated_at: map.get("modified").cloned().unwrap_or_default(),
+                            fingerprint: String::new(),
+                            metadata,
+                        });
+                    }
                 }
                 text.clear();
             }
@@ -1444,7 +1524,7 @@ fn parse_propfind(xml: &str, _base_url: &str) -> Result<Vec<RemoteFile>> {
             _ => {}
         }
     }
-    Ok(files)
+    Ok(entries)
 }
 
 // ── Base connector: Azure Blob (adapter) ─────────────────────────────────────

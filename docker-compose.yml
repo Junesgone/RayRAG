@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: ${POSTGRES_IMAGE:-docker.m.daocloud.io/library/postgres:18.4}
+    image: ${POSTGRES_IMAGE:-docker.m.daocloud.io/library/postgres:18.7}
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${RAYRAG_POSTGRES_DATABASE:-rayrag}
@@ -60,7 +60,7 @@ services:
       # TIMEZONE. Date filters and log timestamps use it.
       TZ: ${RAYRAG_TIMEZONE:-Asia/Shanghai}
       RAYRAG_POSTGRES_URL: postgresql://${RAYRAG_POSTGRES_USER:-admin}:${RAYRAG_POSTGRES_PASSWORD:-admin}@postgres:5432/${RAYRAG_POSTGRES_DATABASE:-rayrag}
-      RAYRAG_POSTGRES_REQUIRED_VERSION: "18.4"
+      RAYRAG_POSTGRES_REQUIRED_VERSION: "18.7"
       RAYRAG_POSTGRES_NAMESPACE: ${RAYRAG_POSTGRES_NAMESPACE:-default}
       RAYRAG_VECTOR_BACKEND: ${RAYRAG_VECTOR_BACKEND:-zvec}
       RAYRAG_ZVEC_DIR: /var/lib/rayrag/zvec

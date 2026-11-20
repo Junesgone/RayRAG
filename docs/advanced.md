@@ -16,7 +16,7 @@ RAGFlow 解析管线 Rust 重写 + zvec 向量数据库。
   六类收敛队列，以及 UI 残留与上游变更复核队列）；`cargo run --locked --bin ragflow-coverage -- --check <ref-tree>`
   可复核（`--write` 刷新 Summary，`--migrate` 迁移基线）。
 - 运行形态：纯 Linux（直接运行 `target/release/rayrag`）与纯 Docker
-  （`docker compose up -d`）均为一等支持；向量后端 zvec，元数据 PostgreSQL 18.4，
+  （`docker compose up -d`）均为一等支持；向量后端 zvec，元数据 PostgreSQL 18.7，
   不使用 MySQL。
 
 ## 许可证
@@ -529,7 +529,7 @@ item 的局部 Canvas 状态；每次恢复只消费当前稳定 item 地址，�
 - ✅ SoMarkAI/OXR 同步 `/parse/sync` Markdown 解析（免费 API/自建服务可选）
 - ✅ MinerU v0.26.4 同步 ZIP/content-list、Go 异步任务协议与 PDF 管线接线
 - ✅ SoMark v0.26.4 SaaS/private submit/retry/poll、结构化 block 与 PDF 管线接线
-- ✅ PostgreSQL 18.4 状态快照镜像（构建 `--features postgres-backend`）
+- ✅ PostgreSQL 18.7 状态快照镜像（构建 `--features postgres-backend`）
 - 🚧 完整 OCR/版面坐标、裁剪、tenant provider 与视觉增强
 - ✅ RAPTOR/GraphRAG 持久化轻量实现 + **LLM 摘要闭环**（ClusterSummarizer
   trait 镜像 RAGFlow _summarize_texts 协议：{cluster_content} prompt 模板、
@@ -752,7 +752,7 @@ cargo run --bin rayrag --features zvec-backend -- parse document.pdf \
 避免不同 embedding 模型共享向量空间；服务启动时以 JSON 为真源执行全量对账，清理
 中断提交遗留的陈旧主键。JSON 仍负责 BM25、metadata filter 和 rank feature。
 
-## PostgreSQL 18.4 状态镜像
+## PostgreSQL 18.7 状态镜像
 
 PostgreSQL 保存 RayRAG JSON 状态快照，zvec 仍负责向量索引。该模式保持本地原子文件
 为运行真源，同时提供数据库恢复副本：
@@ -765,7 +765,7 @@ cargo run --bin rayrag --features postgres-backend,zvec-backend -- serve
 ```
 
 服务启动会执行 `SELECT VERSION()`；设置
-`RAYRAG_POSTGRES_REQUIRED_VERSION=18.4` 后，版本不匹配会直接拒绝启动。快照写入使用
+`RAYRAG_POSTGRES_REQUIRED_VERSION=18.7` 后，版本不匹配会直接拒绝启动。快照写入使用
 PostgreSQL `ON CONFLICT` 原子 upsert，并按快照键获取事务级 advisory lock；校验和不一致时
 拒绝恢复损坏数据。
 
@@ -794,7 +794,7 @@ cp .env.example .env
 docker compose --env-file .env up -d --build
 ```
 
-Compose 默认从 DaoCloud 国内加速地址拉取 `postgres:18.4`、
+Compose 默认从 DaoCloud 国内加速地址拉取 `postgres:18.7`、
 `rust:1.100.0-bookworm` 和 `debian:bookworm-slim`，镜像名可分别通过
 `POSTGRES_IMAGE`、`RUST_IMAGE`、`RUNTIME_IMAGE` 覆盖。Dockerfile 直接构建时仍以这
 三个官方镜像标签为默认值。应用镜像和 Compose 都配置了
