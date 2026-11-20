@@ -1565,6 +1565,9 @@ fn parse_propfind(xml: &str) -> Result<PropfindEntries> {
                         "getlastmodified" => {
                             map.insert("modified".into(), text.trim().to_string());
                         }
+                        "getetag" => {
+                            map.insert("etag".into(), text.trim().trim_matches('"').to_string());
+                        }
                         _ => {}
                     }
                 }
@@ -1607,7 +1610,7 @@ fn parse_propfind(xml: &str) -> Result<PropfindEntries> {
                             extension: ext,
                             size_bytes: size,
                             updated_at: map.get("modified").cloned().unwrap_or_default(),
-                            fingerprint: String::new(),
+                            fingerprint: map.get("etag").cloned().unwrap_or_default(),
                             metadata,
                         });
                     }

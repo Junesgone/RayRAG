@@ -2,6 +2,16 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.24] - 2026-11-20
+
+### WebDAV ETag fingerprints
+
+- WebDAV PROPFIND `getetag` is now parsed into `RemoteFile.fingerprint` (quotes stripped).
+  Version-aware re-sync therefore skips unchanged WebDAV files by ETag, which is more
+  reliable than last-modified (coarse timestamps, servers that omit `getlastmodified`).
+  Missing ETags still fall back to size + last-modified, and missing both still downloads.
+- Added a PROPFIND ETag parsing test.
+
 ## [0.127.23] - 2026-11-20
 
 ### Skip downloading unchanged data-source files
