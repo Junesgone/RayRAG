@@ -2,6 +2,18 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.20] - 2026-11-20
+
+### Data-source detail "Sync now" performs a real sync
+
+- The data-source detail page's **Sync now** button called the listing endpoint and reported
+  "Synced ✓ N files at the source", so it never ingested anything. It now posts to
+  `/api/v1/data_sources/{id}/sync?kb_id=…` using the knowledge base from the latest sync
+  log, and shows `count / ingested / unchanged / removed / failures` from the real result.
+- When the source has no linked-knowledge-base sync log yet, it explains that the source
+  must be linked in dataset configuration instead of pretending a sync succeeded.
+- Added UI regression markers for the real sync path.
+
 ## [0.127.19] - 2026-11-20
 
 ### Automatic data-source refresh
