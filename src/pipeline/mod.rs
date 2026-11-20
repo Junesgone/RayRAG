@@ -479,7 +479,9 @@ impl Pipeline {
                 )
             })?;
             client.check_installation().await.map_err(|error| {
-                anyhow::anyhow!("Mistral OCR availability check failed for {name}: {error}. {guidance}")
+                anyhow::anyhow!(
+                    "Mistral OCR availability check failed for {name}: {error}. {guidance}"
+                )
             })?;
             let output = client
                 .parse_pdf(
@@ -544,12 +546,13 @@ impl Pipeline {
             client.check_installation().await.map_err(|error| {
                 anyhow::anyhow!("MinerU availability check failed for {name}: {error}. {guidance}")
             })?;
-            let options = crate::parser::mineru::MinerURequestOptions::from_parser_config(&self.config)
-                .map_err(|error| {
-                    anyhow::anyhow!(
-                        "MinerU parser settings are invalid for {name}: {error}. {guidance}"
-                    )
-                })?;
+            let options =
+                crate::parser::mineru::MinerURequestOptions::from_parser_config(&self.config)
+                    .map_err(|error| {
+                        anyhow::anyhow!(
+                            "MinerU parser settings are invalid for {name}: {error}. {guidance}"
+                        )
+                    })?;
             let output = client
                 .parse_pdf(name, data, &options)
                 .await
@@ -613,12 +616,13 @@ impl Pipeline {
         {
             let guidance = "Configure OXR_BASE_URL and OXR_API_KEY (if required), verify the OXR parsing service is reachable and its model is loaded, then reparse. 请配置 OXR 客户端地址和密钥，检查解析服务连接与模型加载状态后重新解析。";
             let client = self.oxr.as_ref().ok_or_else(|| {
-                anyhow::anyhow!("OXR layout requested but OXR_BASE_URL is not configured. {guidance}")
+                anyhow::anyhow!(
+                    "OXR layout requested but OXR_BASE_URL is not configured. {guidance}"
+                )
             })?;
-            let output = client
-                .parse_file(name, data)
-                .await
-                .map_err(|error| anyhow::anyhow!("OXR parsing failed for {name}: {error}. {guidance}"))?;
+            let output = client.parse_file(name, data).await.map_err(|error| {
+                anyhow::anyhow!("OXR parsing failed for {name}: {error}. {guidance}")
+            })?;
             let mut document = parser::new_document(name, output.content, mime, data.len());
             document.metadata.insert(
                 crate::chunk::RAGFLOW_POSITION_TAGS_METADATA.to_string(),
@@ -636,14 +640,11 @@ impl Pipeline {
                     "PaddleOCR layout requested but RAYRAG_OCR_PROVIDER=paddleocr is not configured. {guidance}"
                 )
             })?;
-            let text = ocr
-                .ocr_file(name, data)
-                .await
-                .map_err(|error| anyhow::anyhow!("PaddleOCR parsing failed for {name}: {error}. {guidance}"))?;
+            let text = ocr.ocr_file(name, data).await.map_err(|error| {
+                anyhow::anyhow!("PaddleOCR parsing failed for {name}: {error}. {guidance}")
+            })?;
             if text.trim().is_empty() {
-                anyhow::bail!(
-                    "PaddleOCR returned no text for {name}. {guidance}"
-                );
+                anyhow::bail!("PaddleOCR returned no text for {name}. {guidance}");
             }
             let content = if crate::ocr::supports_ocr(mime) {
                 format!(

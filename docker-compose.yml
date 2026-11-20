@@ -27,7 +27,7 @@ services:
     build:
       context: .
       args:
-        RUST_IMAGE: ${RUST_IMAGE:-docker.m.daocloud.io/library/rust:1.97.1-bookworm}
+        RUST_IMAGE: ${RUST_IMAGE:-docker.m.daocloud.io/library/rust:1.100.0-bookworm}
         RUNTIME_IMAGE: ${RUNTIME_IMAGE:-docker.m.daocloud.io/library/debian:bookworm-slim}
         RAYRAG_FEATURES: ${RAYRAG_FEATURES:-postgres-backend,zvec-backend}
         # auto probes a domestic mirror and falls back to upstream; force with

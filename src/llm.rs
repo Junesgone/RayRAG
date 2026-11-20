@@ -386,6 +386,128 @@ impl Default for LlmConfig {
     }
 }
 
+/// Provider protocol used by the chat client. Most providers are
+/// OpenAI-compatible; Anthropic's Messages API has a different endpoint,
+/// authentication header, request body and SSE event shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChatProtocol {
+    OpenAi,
+    Anthropic,
+}
+
+fn is_anthropic_endpoint(api_base: &str) -> bool {
+    let base = api_base.to_ascii_lowercase();
+    base.contains("api.anthropic.com")
+        || base.ends_with("/v1/messages")
+        || base.ends_with("/messages")
+}
+
+fn anthropic_endpoint(api_base: &str) -> String {
+    let base = api_base.trim_end_matches('/');
+    if base.ends_with("/v1/messages") || base.ends_with("/messages") {
+        return base.to_string();
+    }
+    if base.ends_with("/v1") {
+        return format!("{base}/messages");
+    }
+    format!("{base}/v1/messages")
+}
+
+/// Split system messages out and coalesce consecutive same-role messages;
+/// Anthropic requires the system prompt in its own top-level field and rejects
+/// some adjacent role patterns.
+fn anthropic_messages(messages: &[ChatMessage]) -> (Option<String>, Vec<serde_json::Value>) {
+    let mut system_parts: Vec<String> = Vec::new();
+    let mut output: Vec<(String, String)> = Vec::new();
+    for message in messages {
+        let role = message.role.trim().to_ascii_lowercase();
+        let content = message.content.trim();
+        if content.is_empty() {
+            continue;
+        }
+        if role == "system" || role == "developer" {
+            system_parts.push(content.to_string());
+            continue;
+        }
+        let role = if role == "assistant" {
+            "assistant"
+        } else {
+            "user"
+        };
+        if let Some((last_role, last_content)) = output.last_mut()
+            && last_role == role
+        {
+            last_content.push_str("\n\n");
+            last_content.push_str(content);
+            continue;
+        }
+        output.push((role.to_string(), content.to_string()));
+    }
+    let messages = output
+        .into_iter()
+        .map(|(role, content)| serde_json::json!({"role": role, "content": content}))
+        .collect();
+    let system = (!system_parts.is_empty()).then(|| system_parts.join("\n\n"));
+    (system, messages)
+}
+
+fn build_anthropic_request_body(
+    config: &LlmConfig,
+    messages: &[ChatMessage],
+    generation: GenerationParams,
+    stream: bool,
+) -> serde_json::Value {
+    let (system, messages) = anthropic_messages(messages);
+    let mut body = serde_json::json!({
+        "model": config.model,
+        "max_tokens": generation.max_tokens,
+        "messages": messages,
+        "temperature": generation.temperature,
+        "top_p": generation.top_p,
+    });
+    if let Some(system) = system {
+        body["system"] = serde_json::Value::String(system);
+    }
+    if stream {
+        body["stream"] = serde_json::Value::Bool(true);
+    }
+    body
+}
+
+fn parse_anthropic_chat_completion(json: &serde_json::Value) -> Result<ChatCompletion> {
+    let content = json["content"]
+        .as_array()
+        .map(|blocks| {
+            blocks
+                .iter()
+                .filter(|block| block["type"].as_str() == Some("text"))
+                .filter_map(|block| block["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("")
+        })
+        .unwrap_or_default();
+    let content = if content.is_empty() {
+        "(empty response)".to_string()
+    } else {
+        content
+    };
+    let usage = json.get("usage").and_then(|usage| {
+        TokenUsage {
+            prompt_tokens: usage
+                .get("input_tokens")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or_default(),
+            completion_tokens: usage
+                .get("output_tokens")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or_default(),
+            total_tokens: 0,
+        }
+        .normalized()
+    });
+    Ok(ChatCompletion { content, usage })
+}
+
 /// LLM client for OpenAI-compatible APIs.
 #[derive(Clone)]
 pub struct LlmClient {
@@ -412,6 +534,121 @@ impl LlmClient {
         Self { config, client }
     }
 
+    fn chat_protocol(&self) -> ChatProtocol {
+        if is_anthropic_endpoint(&self.config.api_base) {
+            ChatProtocol::Anthropic
+        } else {
+            ChatProtocol::OpenAi
+        }
+    }
+
+    fn anthropic_request(&self, body: &serde_json::Value) -> reqwest::RequestBuilder {
+        let mut request = self
+            .client
+            .post(anthropic_endpoint(&self.config.api_base))
+            .header("anthropic-version", "2023-06-01")
+            .json(body);
+        if !self.config.api_key.is_empty() {
+            request = request.header("x-api-key", &self.config.api_key);
+        }
+        request
+    }
+
+    async fn anthropic_chat_completion(
+        &self,
+        messages: &[ChatMessage],
+        generation: GenerationParams,
+    ) -> Result<ChatCompletion> {
+        let body = build_anthropic_request_body(&self.config, messages, generation, false);
+        let response = self
+            .anthropic_request(&body)
+            .send()
+            .await
+            .map_err(|error| {
+                anyhow::anyhow!("Anthropic API request failed: {}", error.without_url())
+            })?;
+        let status = response.status();
+        let json: serde_json::Value = crate::common::cmd_timeout::read_json_limited(
+            response,
+            crate::common::cmd_timeout::body_limit_bytes(),
+            "Anthropic API",
+        )
+        .await
+        .map_err(|error| {
+            anyhow::anyhow!("Anthropic API response failed (HTTP {status}): {error}")
+        })?;
+        if !status.is_success() {
+            let message = json
+                .pointer("/error/message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("Unknown error");
+            anyhow::bail!("Anthropic API error ({status}): {message}");
+        }
+        parse_anthropic_chat_completion(&json)
+    }
+
+    async fn anthropic_chat_stream<F: FnMut(&str) + ?Sized>(
+        &self,
+        messages: &[ChatMessage],
+        generation: GenerationParams,
+        on_chunk: &mut F,
+    ) -> Result<String> {
+        use futures_util::StreamExt;
+        let body = build_anthropic_request_body(&self.config, messages, generation, true);
+        let response = self
+            .anthropic_request(&body)
+            .send()
+            .await
+            .map_err(|error| {
+                anyhow::anyhow!("Anthropic stream request failed: {}", error.without_url())
+            })?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            anyhow::bail!("Anthropic stream error ({status}): {text}");
+        }
+        let mut full = String::new();
+        let mut buffer = String::new();
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            buffer.push_str(&String::from_utf8_lossy(&chunk));
+            while let Some(newline) = buffer.find('\n') {
+                let line: String = buffer.drain(..=newline).collect();
+                let line = line.trim();
+                let Some(data) = line.strip_prefix("data:") else {
+                    continue;
+                };
+                let data = data.trim();
+                if data.is_empty() {
+                    continue;
+                }
+                let Ok(value) = serde_json::from_str::<serde_json::Value>(data) else {
+                    continue;
+                };
+                if value["type"].as_str() == Some("error") {
+                    let message = value
+                        .pointer("/error/message")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("stream error");
+                    anyhow::bail!("Anthropic stream error: {message}");
+                }
+                if value["type"].as_str() == Some("content_block_delta")
+                    && let Some(delta) = value
+                        .pointer("/delta/text")
+                        .and_then(serde_json::Value::as_str)
+                {
+                    full.push_str(delta);
+                    on_chunk(delta);
+                }
+            }
+        }
+        if full.is_empty() {
+            anyhow::bail!("Anthropic stream returned no text");
+        }
+        Ok(full)
+    }
+
     /// Simple chat completion (single turn), preserving provider usage when present.
     pub async fn chat_completion(&self, messages: &[ChatMessage]) -> Result<ChatCompletion> {
         self.chat_completion_with_generation(messages, GenerationParamsPatch::default())
@@ -424,6 +661,9 @@ impl LlmClient {
         patch: GenerationParamsPatch,
     ) -> Result<ChatCompletion> {
         let generation = self.config.generation.merged(patch);
+        if self.chat_protocol() == ChatProtocol::Anthropic {
+            return self.anthropic_chat_completion(messages, generation).await;
+        }
         let public_messages: Vec<_> = messages
             .iter()
             .map(|message| {
@@ -467,6 +707,11 @@ impl LlmClient {
         on_chunk: &mut F,
     ) -> Result<String> {
         let generation = self.config.generation.merged(patch);
+        if self.chat_protocol() == ChatProtocol::Anthropic {
+            return self
+                .anthropic_chat_stream(messages, generation, on_chunk)
+                .await;
+        }
         let public_messages = messages
             .iter()
             .map(|m| serde_json::json!({"role": m.role, "content": m.content}))
@@ -572,6 +817,10 @@ impl LlmClient {
         patch: GenerationParamsPatch,
     ) -> Result<ToolChatCompletion> {
         let generation = self.config.generation.merged(patch);
+        anyhow::ensure!(
+            self.chat_protocol() != ChatProtocol::Anthropic,
+            "Native Anthropic tool calling is not supported by this build yet; configure an OpenAI-compatible gateway for tool-using agents, or use Claude for plain chat"
+        );
         let public_messages = messages
             .iter()
             .map(serde_json::to_value)
@@ -628,6 +877,11 @@ impl LlmClient {
     /// Raw OpenAI-compatible chat request — used by vision (cv) models that
     /// need structured `content` parts (text + image_url).
     pub async fn chat_raw(&self, body: serde_json::Value) -> Result<serde_json::Value> {
+        if self.chat_protocol() == ChatProtocol::Anthropic {
+            anyhow::bail!(
+                "Native Anthropic chat_raw requests are not supported; use the typed chat API or an OpenAI-compatible gateway"
+            );
+        }
         self.send_chat_request(&body).await
     }
 

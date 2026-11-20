@@ -301,7 +301,7 @@ docker compose down -v
 
 ## 6. 不用 Docker：纯 Linux 安装
 
-需要三样：**Rust 1.97+**、一个 **PostgreSQL 18.4**、**zvec 动态库**。
+需要三样：**Rust 1.100+**、一个 **PostgreSQL 18.4**、**zvec 动态库**。
 
 ```bash
 # 1) 装 Rust

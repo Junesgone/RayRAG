@@ -394,7 +394,7 @@ Upgrading within the `0.x` line keeps the existing data volume and configuration
 
 ## 6. No Docker: pure Linux install
 
-You need three things: **Rust 1.97+**, a **PostgreSQL 18.4** and the **zvec shared library**.
+You need three things: **Rust 1.100+**, a **PostgreSQL 18.4** and the **zvec shared library**.
 
 ```bash
 # 1) Rust

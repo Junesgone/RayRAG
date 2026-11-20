@@ -11,7 +11,7 @@
 # the image build links the prebuilt native library from a release mirror and
 # never clones the upstream repository/submodules.
 
-ARG RUST_IMAGE=rust:1.97.1-bookworm
+ARG RUST_IMAGE=rust:1.100.0-bookworm
 ARG RUNTIME_IMAGE=debian:bookworm-slim
 FROM ${RUST_IMAGE} AS builder
 

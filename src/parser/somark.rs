@@ -642,7 +642,9 @@ impl SoMarkClient {
                     .get("message")
                     .and_then(Value::as_str)
                     .unwrap_or_default();
-                anyhow::bail!("SoMark submit business error (HTTP {status}) code={code:?} message={message}");
+                anyhow::bail!(
+                    "SoMark submit business error (HTTP {status}) code={code:?} message={message}"
+                );
             }
 
             let multiplier = 2_f64.powi(attempt.min(30) as i32);

@@ -795,7 +795,7 @@ docker compose --env-file .env up -d --build
 ```
 
 Compose 默认从 DaoCloud 国内加速地址拉取 `postgres:18.4`、
-`rust:1.97.1-bookworm` 和 `debian:bookworm-slim`，镜像名可分别通过
+`rust:1.100.0-bookworm` 和 `debian:bookworm-slim`，镜像名可分别通过
 `POSTGRES_IMAGE`、`RUST_IMAGE`、`RUNTIME_IMAGE` 覆盖。Dockerfile 直接构建时仍以这
 三个官方镜像标签为默认值。应用镜像和 Compose 都配置了
 `GET /api/v1/system/healthz` 健康检查；该探针会实际访问 PostgreSQL snapshot worker

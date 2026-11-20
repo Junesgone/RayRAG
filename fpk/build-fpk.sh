@@ -38,6 +38,23 @@ if ! command -v fnpack >/dev/null 2>&1; then
   echo "build-fpk: fnpack is required (https://developer.fnnas.com/docs/cli/fnpack/)" >&2
   exit 1
 fi
+FNPACK_VERSION="$(fnpack --help 2>&1 | sed -n 's/^Version \([0-9][0-9.]*\).*/\1/p' | head -n 1)"
+if [ -z "$FNPACK_VERSION" ] || [ "$(printf '1.3.3\n%s\n' "$FNPACK_VERSION" | sort -V | head -n 1)" != "1.3.3" ]; then
+  echo "build-fpk: fnpack 1.3.3+ is required (found: $FNPACK_VERSION)" >&2
+  echo "download: https://developer.fnnas.com/docs/cli/fnpack/" >&2
+  exit 1
+fi
+# fnpack 1.3.3 makes package signing explicit. Use --nosign by default for
+# local sideload/GitHub releases; set RAYRAG_FNPACK_KEY and RAYRAG_FNPACK_CERT
+# to sign with a developer certificate instead.
+FNPACK_BUILD_ARGS=(--nosign)
+if [ -n "${RAYRAG_FNPACK_KEY:-}" ] || [ -n "${RAYRAG_FNPACK_CERT:-}" ]; then
+  if [ -z "${RAYRAG_FNPACK_KEY:-}" ] || [ -z "${RAYRAG_FNPACK_CERT:-}" ]; then
+    echo "build-fpk: set both RAYRAG_FNPACK_KEY and RAYRAG_FNPACK_CERT, or neither" >&2
+    exit 1
+  fi
+  FNPACK_BUILD_ARGS=(--key "$RAYRAG_FNPACK_KEY" --cert "$RAYRAG_FNPACK_CERT")
+fi
 
 echo "== RayRAG fnOS package $VERSION"
 
@@ -104,7 +121,7 @@ LD_LIBRARY_PATH="$STAGE/app/runtime/lib:$STAGE/app/runtime/pgsql/lib" "$STAGE/ap
 rm -rf "$PGTEST"
 
 echo "== fnpack build"
-(cd "$STAGE" && fnpack build)
+(cd "$STAGE" && fnpack build "${FNPACK_BUILD_ARGS[@]}")
 mkdir -p "$OUT_DIR"
 OUT="$OUT_DIR/rayrag_${VERSION}_x86_64.fpk"
 mv "$STAGE/rayrag.fpk" "$OUT"

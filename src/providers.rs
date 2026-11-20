@@ -579,7 +579,7 @@ pub static PROVIDER_PRESETS: &[ProviderPreset] = &[
         domestic: false,
         kinds: &[ProviderKind::Chat, ProviderKind::ImageToText],
         models: &["claude-sonnet-4", "claude-3-5-haiku"],
-        note: "Anthropic Claude; 经 RayRAG OpenAI 兼容适配层转发",
+        note: "Anthropic Claude; 原生 Messages API 文本聊天（流式/非流式）",
     },
     ProviderPreset {
         id: "Gemini",

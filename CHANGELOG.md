@@ -2,6 +2,28 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.7] - 2026-11-20
+
+### Native Anthropic Claude chat
+
+- `LlmClient` now detects Anthropic endpoints (`api.anthropic.com`, or a base URL ending
+  in `/v1/messages`/`/messages`) and speaks the native Messages API instead of sending
+  OpenAI `/chat/completions` requests that Claude rejects.
+- Request mapping: top-level `system`, coalesced user/assistant messages, `max_tokens`,
+  temperature/top-p, `x-api-key` and `anthropic-version: 2023-06-01`.
+- Both non-streaming responses and streaming `content_block_delta` text deltas are parsed;
+  Anthropic `input_tokens`/`output_tokens` are mapped to RayRAG usage, and provider error
+  messages are surfaced instead of a bare HTTP failure.
+- OpenAI-compatible providers are unchanged. Native Anthropic tool calling and `chat_raw`
+  answer an explicit unsupported error; use an OpenAI-compatible gateway for tool agents.
+### Toolchain
+
+- Built with **Rust 1.100.0** (released 2026-11-12): the host toolchain, `rust-version = "1.100"`,
+  the Docker builder (`rust:1.100.0-bookworm`) and the docs are updated together; the full
+  suite passes on the new compiler.
+- FPK packages are produced with **fnpack 1.3.3** (the 2026-11-19 release, which adds FPK
+  signing support); unsigned local sideload remains supported.
+
 ## [0.127.6] - 2026-11-20
 
 ### No preset administrator account
