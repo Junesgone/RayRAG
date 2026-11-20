@@ -216,7 +216,7 @@ catalogue is unreachable (you then simply see the last copy it had).
 
 | Provider | Pick in RayRAG | Base-Url (usually prefilled) | Notes |
 |---|---|---|---|
-| DeepSeek | `DeepSeek` | `https://api.deepseek.com/v1` | `deepseek-flash` (V4.1) with built-in web search, URL reading and safety; legacy `deepseek-chat`/`deepseek-reasoner` still work |
+| DeepSeek | `DeepSeek` | `https://api.deepseek.com/v1` | `deepseek-flash` (V4.1) with built-in web search, URL reading and safety; legacy `deepseek-chat`/`deepseek-reasoner` still work. For the native Anthropic Messages API set the base to `https://api.deepseek.com/anthropic` with model `deepseek-flash` or `deepseek-v4-pro` |
 | Alibaba Qwen | `Tongyi-Qianwen` | DashScope compatible endpoint | chat + embedding |
 | SiliconFlow | `SILICONFLOW` | `https://api.siliconflow.cn/v1` | chat + embedding + rerank in one |
 | Zhipu AI | `ZHIPU-AI` | `https://open.bigmodel.cn/api/paas/v4` | free tier available |

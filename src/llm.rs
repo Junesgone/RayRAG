@@ -396,10 +396,14 @@ enum ChatProtocol {
 }
 
 fn is_anthropic_endpoint(api_base: &str) -> bool {
-    let base = api_base.to_ascii_lowercase();
+    let base = api_base.trim_end_matches('/').to_ascii_lowercase();
     base.contains("api.anthropic.com")
         || base.ends_with("/v1/messages")
         || base.ends_with("/messages")
+        // DeepSeek exposes an Anthropic-compatible base at
+        // https://api.deepseek.com/anthropic (its SDK appends /v1/messages).
+        || base.ends_with("/anthropic")
+        || base.contains("api.deepseek.com/anthropic")
 }
 
 fn anthropic_endpoint(api_base: &str) -> String {

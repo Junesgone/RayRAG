@@ -2,6 +2,21 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.8] - 2026-11-20
+
+### DeepSeek Anthropic-compatible endpoint and live API verification
+
+- `is_anthropic_endpoint` now recognizes a base URL ending in `/anthropic`, including
+  DeepSeek's `https://api.deepseek.com/anthropic`; RayRAG then uses the native Messages
+  API (system/lift, streaming `content_block_delta`, usage mapping) instead of an
+  OpenAI `/chat/completions` call to that path.
+- Added ignored live tests for DeepSeek Search, Fetch, OCR (PDF), TTS→ASR round-trip and
+  Anthropic messages (streaming + non-streaming). They run only when `DEEPSEEK_API_KEY`
+  is present and make real network calls; normal CI keeps them skipped.
+- Verified the real DeepSeek key through RayRAG's own clients: all five live checks pass.
+  The key is read from the process environment only and is never written to the repo,
+  FPK or logs.
+
 ## [0.127.7] - 2026-11-20
 
 ### Native Anthropic Claude chat
