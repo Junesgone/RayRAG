@@ -2,6 +2,18 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.21] - 2026-11-20
+
+### Auto-refresh schedule shown on the data-source detail page
+
+- The detail page now shows **Next auto refresh in …** next to Refresh Freq, computed from
+  `refresh_freq` and the latest sync log. A zero frequency shows "Auto refresh disabled",
+  and the hint updates every second, after a sync, and while editing the field.
+- Browser verification of the real **Sync now** path: a linked WebDAV source clicked in
+  Chrome returned `Synced ✓ count 3 · ingested 0 · unchanged 3`, added one sync-log row,
+  produced no page exception and had no horizontal overflow at 765px.
+- Added UI regression markers for the hint.
+
 ## [0.127.20] - 2026-11-20
 
 ### Data-source detail "Sync now" performs a real sync

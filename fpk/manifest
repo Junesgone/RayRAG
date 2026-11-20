@@ -1,5 +1,5 @@
 appname               = rayrag
-version               = 0.127.20
+version               = 0.127.21
 display_name          = RayRAG
 desc                  = RayRAG 是 Rust 编写的 RAGFlow 兼容知识库与智能体服务：内置 PostgreSQL 与 zvec，支持 PDF/Office/图片等文档解析、向量检索、知识库问答、聊天、搜索、智能体、MCP、文件与记忆管理；首次注册账户即管理员，开箱即用。
 source                = thirdparty
@@ -14,4 +14,4 @@ service_port          = 9395
 checkport             = true
 ctl_stop              = true
 os_min_version        = 1.1.3100
-changelog             = v0.127.20: 数据源详情“立即同步”按钮改为真正同步到关联知识库并显示 ingested/unchanged/removed/failures。
+changelog             = v0.127.21: 数据源详情显示下次自动刷新倒计时/已关闭状态；沿用真实立即同步与调度刷新。
