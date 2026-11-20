@@ -381,6 +381,15 @@ impl DataSourceStore {
         )
     }
 
+    /// Full records for the background refresh scheduler. Unlike `list`,
+    /// this includes the stored token and sync logs.
+    pub(crate) fn records(&self) -> Vec<DataSourceRecord> {
+        self.sources
+            .read()
+            .map(|sources| sources.values().cloned().collect())
+            .unwrap_or_default()
+    }
+
     pub fn list(&self) -> Vec<serde_json::Value> {
         let sources = self.sources.read().unwrap_or_else(|_| {
             // Poisoned lock: fall back to an empty snapshot rather than panic.
@@ -1421,6 +1430,28 @@ fn deferred_validation_fields(kind: &str) -> &'static [&'static str] {
         "azure_blob" | "webdav" | "feishu" => &["url", "token"],
         "confluence" => &["url", "target", "token"],
         _ => &[],
+    }
+}
+
+/// Whether the background scheduler should refresh this source now. A source
+/// with no sync log falls back to its creation time; disabled (0/None) or
+/// unparseable timestamps never trigger an automatic sync.
+pub(crate) fn refresh_due(record: &DataSourceRecord, now: chrono::DateTime<chrono::Utc>) -> bool {
+    let Some(frequency) = record.refresh_freq.filter(|value| *value > 0) else {
+        return false;
+    };
+    let last = record
+        .sync_logs
+        .first()
+        .and_then(|log| log.time_started.as_deref())
+        .and_then(|started| chrono::DateTime::parse_from_rfc3339(started).ok())
+        .or_else(|| chrono::DateTime::parse_from_rfc3339(&record.created_at).ok())
+        .map(|time| time.with_timezone(&chrono::Utc));
+    match last {
+        Some(time) => {
+            now.signed_duration_since(time) >= chrono::Duration::minutes(frequency as i64)
+        }
+        None => false,
     }
 }
 

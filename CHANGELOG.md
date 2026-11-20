@@ -2,6 +2,19 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.19] - 2026-11-20
+
+### Automatic data-source refresh
+
+- A background scheduler now runs every 60 seconds (first pass 20s after boot) and
+  refreshes connected data sources whose `refresh_freq` has elapsed. A source with no
+  previous sync uses its creation time; a disabled/zero frequency never triggers.
+- Each due source is synced into **every knowledge base that links it**, using that KB
+  owner as the acting identity, so the same permission checks as a user-triggered sync
+  apply. Failures are logged with source/KB ids and are recorded in the normal sync log.
+- A source already marked `running` is skipped, so a slow sync is never overlapped.
+- Added unit tests for the due/interval/disabled rules and recent-log deferral.
+
 ## [0.127.18] - 2026-11-20
 
 ### Sync deleted source files

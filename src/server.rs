@@ -3917,6 +3917,76 @@ fn dispatch_pending_document_tasks(state: Arc<AppState>, task_slots: Arc<tokio::
     }
 }
 
+/// How often the data-source refresh scheduler wakes up. Refresh frequency is
+/// stored in minutes on each connector; this only controls how promptly a due
+/// source is noticed.
+const DATA_SOURCE_REFRESH_INTERVAL_MS: u64 = 60_000;
+const DATA_SOURCE_REFRESH_INITIAL_DELAY_MS: u64 = 20_000;
+
+/// Refresh linked connectors whose \`refresh_freq\` elapsed. Each due source is
+/// synced into every knowledge base that links it, using that KB's owner as the
+/// acting identity, so the same permission checks as a user-triggered sync run.
+fn start_data_source_refresh(state: Arc<AppState>) {
+    if state.data_sources.is_none() {
+        return;
+    }
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(
+            DATA_SOURCE_REFRESH_INITIAL_DELAY_MS,
+        ))
+        .await;
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(
+            DATA_SOURCE_REFRESH_INTERVAL_MS,
+        ));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            interval.tick().await;
+            refresh_due_data_sources(&state).await;
+        }
+    });
+}
+
+async fn refresh_due_data_sources(state: &Arc<AppState>) {
+    let Some(store) = state.data_sources.as_ref() else {
+        return;
+    };
+    let now = chrono::Utc::now();
+    let kbs = state.kbs.list();
+    for source in store.records() {
+        if source.status == "running" || !source.connected {
+            continue;
+        }
+        if !crate::api::data_source_mgr::refresh_due(&source, now) {
+            continue;
+        }
+        for kb in kbs
+            .iter()
+            .filter(|kb| kb.connectors.iter().any(|link| link.id == source.id))
+        {
+            if kb.owner_id.is_empty() {
+                continue;
+            }
+            let auth = crate::server::AuthContext {
+                user_id: kb.owner_id.clone(),
+                is_admin: false,
+                token: String::new(),
+            };
+            if let Err((status, message)) =
+                crate::api::data_source_mgr::perform_sync(state, &auth, &source.id, Some(&kb.id))
+                    .await
+            {
+                tracing::warn!(
+                    source_id = %source.id,
+                    kb_id = %kb.id,
+                    %status,
+                    %message,
+                    "Scheduled data-source refresh failed"
+                );
+            }
+        }
+    }
+}
+
 /// How often the background mirror repair wakes up, and how long it waits before
 /// its first pass (startup stays quiet; the first repair happens after the server
 /// is already serving).
@@ -7935,6 +8005,7 @@ pub async fn run(
     });
 
     start_document_task_dispatcher(state.clone());
+    start_data_source_refresh(state.clone());
     start_mirror_repair(state.clone());
     // Start the async task executor (RAGFlow task_executor port): it drains the
     // same TaskQueue entries submitted by queue_document_processing. The
