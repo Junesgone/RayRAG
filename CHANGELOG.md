@@ -2,6 +2,19 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.10] - 2026-11-20
+
+### WebDAV and file connectors preserve binary documents
+
+- `ConnectorDoc` now carries an optional exact-bytes channel. WebDAV, S3, local and
+  Azure Blob connectors store the bytes they fetched instead of routing them through
+  `String::from_utf8_lossy`; ingestion writes the exact bytes and hashes/sizes them.
+- This fixes PDFs (and Office/images) synced from WebDAV whose Flate streams had every
+  non-ASCII byte replaced by U+FFFD, which surfaced as
+  "PDF page content could not be inflated: corrupt deflate stream".
+- Added unit and mock-WebDAV end-to-end tests that assert a PDF survives
+  fetch → normalize → `ConnectorDoc::bytes()` byte-for-byte.
+
 ## [0.127.9] - 2026-11-20
 
 ### Native OpenAI Responses API

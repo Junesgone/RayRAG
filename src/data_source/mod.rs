@@ -91,7 +91,12 @@ impl DocumentSource {
 #[derive(Debug, Clone)]
 pub struct ConnectorDoc {
     pub id: String,
+    /// Lossy UTF-8 preview/legacy text channel.
     pub blob: String,
+    /// Exact upstream bytes for binary documents (PDF, Office, images).
+    /// Ingestion writes this when present; connectors that only carry text
+    /// leave it as None and the blob is written instead.
+    pub raw_bytes: Option<Vec<u8>>,
     pub source: DocumentSource,
     pub semantic_identifier: String,
     pub extension: String,
@@ -101,6 +106,14 @@ pub struct ConnectorDoc {
 }
 
 impl ConnectorDoc {
+    /// Bytes to persist: exact upstream bytes for binary files, otherwise the
+    /// lossy text channel used by API/document connectors.
+    pub fn bytes(&self) -> &[u8] {
+        self.raw_bytes
+            .as_deref()
+            .unwrap_or_else(|| self.blob.as_bytes())
+    }
+
     /// Render a RAGFlow-style text blob (used for preview / ingestion).
     pub fn to_markdown(&self) -> String {
         format!("# {}\n\n{}", self.semantic_identifier, self.blob)

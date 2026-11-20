@@ -159,6 +159,7 @@ impl BlobConnector {
                             doc_updated_at: String::new(),
                             size_bytes: bytes.len(),
                             metadata,
+                            raw_bytes: Some(bytes),
                         });
                     }
                     Err(error) => {

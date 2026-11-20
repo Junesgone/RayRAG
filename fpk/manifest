@@ -14,4 +14,4 @@ service_port          = 9395
 checkport             = true
 ctl_stop              = true
 os_min_version        = 1.1.3100
-changelog             = v0.127.9: 原生 OpenAI Responses API（instructions/input/max_output_tokens、output_text.delta 流式、usage），DeepSeek Responses 真 key 通过。
+changelog             = v0.127.10: 修复 WebDAV 等文件源将 PDF/Office 二进制按 UTF-8 有损转换导致解析失败的问题，入库保留原始字节。

@@ -370,6 +370,7 @@ impl Connector for S3Connector {
             doc_updated_at: file.updated_at.clone(),
             size_bytes: raw.len(),
             metadata,
+            raw_bytes: Some(raw),
         })
     }
 }
@@ -911,6 +912,7 @@ impl Connector for LocalConnector {
             doc_updated_at: file.updated_at.clone(),
             size_bytes: raw.len(),
             metadata,
+            raw_bytes: Some(raw),
         })
     }
 }
@@ -1333,6 +1335,7 @@ impl Connector for WebDavConnector {
             doc_updated_at: file.updated_at.clone(),
             size_bytes: raw.len(),
             metadata,
+            raw_bytes: Some(raw),
         })
     }
 }
@@ -1633,6 +1636,7 @@ impl Connector for BlobAdapter {
             doc_updated_at: file.updated_at.clone(),
             size_bytes: raw.len(),
             metadata,
+            raw_bytes: None,
         })
     }
 }
@@ -1975,6 +1979,7 @@ impl Connector for FeishuConnector {
             doc_updated_at: file.updated_at.clone(),
             size_bytes: raw.len(),
             metadata,
+            raw_bytes: None,
         })
     }
 }
@@ -2213,6 +2218,7 @@ impl Connector for ConfluenceConnector {
             doc_updated_at: file.updated_at.clone(),
             size_bytes: raw.len(),
             metadata,
+            raw_bytes: None,
         })
     }
 }
@@ -2418,6 +2424,7 @@ impl Connector for YuqueConnector {
             doc_updated_at: file.updated_at.clone(),
             size_bytes: raw.len(),
             metadata,
+            raw_bytes: None,
         })
     }
 }
@@ -2813,6 +2820,7 @@ impl Connector for DingTalkConnector {
             doc_updated_at: file.updated_at.clone(),
             size_bytes: raw.len(),
             metadata,
+            raw_bytes: None,
         })
     }
 }
@@ -3255,6 +3263,7 @@ impl Connector for DingTalkAiTableConnector {
             doc_updated_at: file.updated_at.clone(),
             size_bytes: raw.len(),
             metadata,
+            raw_bytes: None,
         })
     }
 }
@@ -3738,6 +3747,7 @@ impl Connector for BoxConnector {
             doc_updated_at: file.updated_at.clone(),
             size_bytes: raw.len(),
             metadata,
+            raw_bytes: None,
         })
     }
 }
@@ -4435,6 +4445,7 @@ impl Connector for SitemapConnector {
             doc_updated_at: file.updated_at.clone(),
             size_bytes: raw.len(),
             metadata,
+            raw_bytes: None,
         })
     }
 }
@@ -4872,6 +4883,7 @@ impl Connector for XquikConnector {
             doc_updated_at: file.updated_at.clone(),
             size_bytes: raw.len(),
             metadata,
+            raw_bytes: None,
         })
     }
 }
@@ -5729,6 +5741,7 @@ impl Connector for AzureDevOpsConnector {
             doc_updated_at: file.updated_at.clone(),
             size_bytes: raw.len(),
             metadata,
+            raw_bytes: None,
         })
     }
 
@@ -5893,6 +5906,7 @@ impl Connector for RssConnector {
             doc_updated_at: file.updated_at.clone(),
             size_bytes: raw.len(),
             metadata,
+            raw_bytes: None,
         })
     }
 }
@@ -6547,6 +6561,7 @@ impl Connector for AirtableConnector {
             doc_updated_at: file.updated_at.clone(),
             size_bytes: raw.len(),
             metadata,
+            raw_bytes: None,
         })
     }
 }
@@ -6877,9 +6892,12 @@ impl Connector for RdbmsConnector {
             doc_updated_at: file.updated_at.clone(),
             size_bytes: raw.len(),
             metadata,
+            raw_bytes: None,
         })
     }
 }
+
+
 
 
 

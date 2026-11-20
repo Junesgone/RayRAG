@@ -237,6 +237,7 @@ impl GitLabConnector {
                         doc_updated_at: String::new(),
                         size_bytes: bytes.len(),
                         metadata,
+                        raw_bytes: None,
                     });
                 }
                 Err(error) => {
@@ -294,6 +295,7 @@ impl GitLabConnector {
                     doc_updated_at: updated_at,
                     size_bytes: description_for_doc.len(),
                     metadata,
+                    raw_bytes: None,
                 });
             }
         }
@@ -347,6 +349,7 @@ impl GitLabConnector {
                     doc_updated_at: updated_at,
                     size_bytes: description_for_doc.len(),
                     metadata,
+                    raw_bytes: None,
                 });
             }
         }

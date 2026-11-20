@@ -1048,7 +1048,10 @@ pub(crate) async fn perform_sync(
             };
             let file_name = format!("{doc_id}{ext}");
             let path = upload_dir.join(&file_name);
-            if std::fs::write(&path, doc.blob.as_bytes()).is_err() {
+            // Binary sources (PDF/Office/images) must be persisted byte-for-byte;
+            // the lossy UTF-8 blob is only a preview/legacy text channel.
+            let bytes = doc.bytes();
+            if std::fs::write(&path, bytes).is_err() {
                 skipped.push(doc.semantic_identifier.clone());
                 continue;
             }
@@ -1056,8 +1059,8 @@ pub(crate) async fn perform_sync(
                 name: doc.semantic_identifier.clone(),
                 storage_name: file_name,
                 path,
-                size: doc.blob.len(),
-                content_hash: crate::server::server_xxh3_hash(doc.blob.as_bytes()),
+                size: bytes.len(),
+                content_hash: crate::server::server_xxh3_hash(bytes),
                 cleanup_on_drop: false,
             };
             match crate::server::register_document_upload(
