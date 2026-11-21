@@ -985,6 +985,40 @@ pub async fn sync_data_source(
     axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let kb_id = query.get("kb_id").cloned();
+    let background = query
+        .get("async")
+        .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
+    if background {
+        // Large WebDAV/S3 trees can take minutes. The UI can start the sync and
+        // poll the source status/logs instead of holding one HTTP request open.
+        if state
+            .data_sources
+            .as_ref()
+            .ok_or_else(|| (StatusCode::NOT_IMPLEMENTED, "data sources disabled".into()))?
+            .get(&id)
+            .is_none()
+        {
+            return Err((StatusCode::NOT_FOUND, "data source not found".into()));
+        }
+        let state = state.clone();
+        let auth = auth.clone();
+        let id = id.clone();
+        let kb_id = kb_id.clone();
+        tokio::spawn(async move {
+            if let Err((_, message)) =
+                perform_sync(&state, &auth, &id, kb_id.as_deref(), "manual").await
+            {
+                tracing::warn!(source = %id, %message, "background data-source sync failed");
+                if let Some(store) = state.data_sources.as_ref() {
+                    let _ = store.set_status(&id, "fail");
+                }
+            }
+        });
+        return Ok(Json(serde_json::json!({
+            "code": 0,
+            "data": { "async": true, "status": "running" },
+        })));
+    }
     let result = perform_sync(&state, &auth, &id, kb_id.as_deref(), "manual").await?;
     Ok(Json(result))
 }

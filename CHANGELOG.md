@@ -2,6 +2,20 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.32] - 2026-11-20
+
+### Large data-source syncs no longer block the page
+
+- POST /api/v1/data_sources/{id}/sync accepts `async=1`: after validating the source it
+  starts the sync in a background task and returns immediately with
+  `{async:true,status:"running"}`. Errors from the background task are logged and the
+  source status is set to fail.
+- The data-source list "Sync" button and the detail page "Sync now" use the async form.
+  The list shows that the sync started and polls the source status; the detail page
+  immediately shows the running logs (its existing 15s poll continues) instead of an
+  HTTP request that can hang for minutes on a large WebDAV/S3 tree.
+- The existing synchronous form remains the API default for scripts and tests.
+
 ## [0.127.31] - 2026-11-20
 
 ### Parse-result page links to the chunk editor
