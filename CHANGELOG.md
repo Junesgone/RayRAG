@@ -2,6 +2,18 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.36] - 2026-11-20
+
+### Parse-result page refreshes its chunks automatically
+
+- When the document is still RUNNING/UNSTARTED, the original/chunks page now polls
+  the chunks endpoint every 5 seconds and reloads the list as soon as parsing finishes.
+  The empty-state message says the page refreshes automatically instead of asking the
+  operator to refresh manually.
+- The watcher stops after the document reaches a terminal state; it does not poll
+  forever and it is not started for documents that are already DONE.
+- Added UI regression markers for the watcher and the automatic-refresh message.
+
 ## [0.127.35] - 2026-11-20
 
 ### Edit-chunks link carries the knowledge-base id
