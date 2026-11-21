@@ -2,33 +2,37 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [Unreleased] - data-source UI batch (not released yet)
+## [Unreleased] - next batch (7/50)
 
-### Data-source UI batch (37 fixes so far)
+### Data-source grouped list hardening
 
-- The data-source list state column now shows a "Syncing…" badge while a background sync
-  runs and refreshes the list shortly after the async start (0.127.32/0.127.33 made the
-  sync asynchronous; the list now reflects it).
-- The list's headers, connected/disconnected/syncing labels, Connect/Disconnect/List/Sync/
-  Details/Del actions, and preview status messages are localized for the Chinese UI
-  instead of always rendering English.
-- The detail page's Save/Stop/Resume primary labels, test/stop/save/resume/sync/disconnect
-  status messages, log status badges (Pending/Running/Success/Failed/Schedule/Cancel),
-  log summaries, task-trigger suffixes, pager labels and empty-log text are localized.
-- The Add data source modal, its dynamic title, validation messages and flat URL/Target/
-  Token labels are localized; the page's Sources/Loading/+Add labels and the connect/
-  disconnect/list preview messages also follow the active language.
-- Manual sync now refuses to start a second run while the source status is already
-  running (HTTP 409), preventing duplicate background syncs from repeated clicks.
-- The data-source detail page polls source status and logs every 5 seconds while a
-  sync runs (was 15 seconds), so completion is visible sooner.
-- The real grouped data-source list (Available-source cards + Added-source cards) now
-  localizes its + Add action, empty/loading/error states, connected badges, gear/trash
-  tooltips and delete dialog (title, description, Cancel/Confirm, failures).
-- The grouped list shows a visible loading state and a visible load failure instead of a
-  silent empty table, and a failed delete still reports its reason.
-- These are UI parity fixes accumulated for the next batch release; no version tag,
-  GitHub release, FPK or Docker image is produced by this batch yet.
+- The grouped source list shows a Syncing… badge while a source is running (not just
+  connected/disconnected).
+- Available-source cards expose role=button, an Add aria-label, and Enter/Space keyboard
+  activation in addition to click.
+- The delete confirmation disables its Confirm button while the DELETE request is in
+  flight (no duplicate requests), re-enables it in finally, and localizes its network
+  failure text.
+- The delete dialog focuses Confirm on open and closes on Escape.
+- Full test suite: 2585 passed / 0 failed / 34 ignored.
+
+## [0.127.38] - 2026-11-20
+
+### Data-source UI batch (51 fixes)
+
+- Data-source list/detail UI localized end to end: headers, state labels, connect/list/sync
+  actions and messages, primary Save/Stop/Resume, log status badges, log summaries,
+  task-trigger labels, pager/empty text, and the schema-driven Add modal (static labels,
+  dynamic title, validation messages, URL/Target/Token labels).
+- Box and Google OAuth dialogs localized (titles, Client ID/Secret, Redirect URI, Cancel,
+  Submit & Authorize, Authorize with Google); add-source modal focuses the name field and
+  closes on Escape (also closes the OAuth dialogs).
+- The real grouped data-source list localizes + Add, empty/loading/error states, connected
+  badges, gear/trash tooltips, delete dialog title/description/actions/failures.
+- Data-source sync polish: a running source now shows Syncing…, manual sync refuses a
+  second run with HTTP 409, and the detail page polls status/logs every 5 seconds.
+- Inline-script test failures now print the complete Node error, and the data-source page
+  scripts are checked by the JS delimiter regression test.
 
 ## [0.127.37] - 2026-11-20
 
