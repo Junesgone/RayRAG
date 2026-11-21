@@ -4,7 +4,7 @@ All notable changes to RayRAG are documented in this file.
 
 ## [Unreleased] - data-source UI batch (not released yet)
 
-### Data-source UI batch (26 fixes so far)
+### Data-source UI batch (37 fixes so far)
 
 - The data-source list state column now shows a "Syncing…" badge while a background sync
   runs and refreshes the list shortly after the async start (0.127.32/0.127.33 made the
@@ -22,6 +22,11 @@ All notable changes to RayRAG are documented in this file.
   running (HTTP 409), preventing duplicate background syncs from repeated clicks.
 - The data-source detail page polls source status and logs every 5 seconds while a
   sync runs (was 15 seconds), so completion is visible sooner.
+- The real grouped data-source list (Available-source cards + Added-source cards) now
+  localizes its + Add action, empty/loading/error states, connected badges, gear/trash
+  tooltips and delete dialog (title, description, Cancel/Confirm, failures).
+- The grouped list shows a visible loading state and a visible load failure instead of a
+  silent empty table, and a failed delete still reports its reason.
 - These are UI parity fixes accumulated for the next batch release; no version tag,
   GitHub release, FPK or Docker image is produced by this batch yet.
 
