@@ -985,6 +985,17 @@ pub async fn sync_data_source(
     axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let kb_id = query.get("kb_id").cloned();
+    if state
+        .data_sources
+        .as_ref()
+        .and_then(|store| store.get(&id))
+        .is_some_and(|record| record.status == "running")
+    {
+        return Err((
+            StatusCode::CONFLICT,
+            "data source is already syncing".into(),
+        ));
+    }
     let background = query
         .get("async")
         .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));

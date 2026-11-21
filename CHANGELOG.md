@@ -2,6 +2,24 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.38] - 2026-11-20
+
+### Data-source UI batch (51 fixes)
+
+- Data-source list/detail UI localized end to end: headers, state labels, connect/list/sync
+  actions and messages, primary Save/Stop/Resume, log status badges, log summaries,
+  task-trigger labels, pager/empty text, and the schema-driven Add modal (static labels,
+  dynamic title, validation messages, URL/Target/Token labels).
+- Box and Google OAuth dialogs localized (titles, Client ID/Secret, Redirect URI, Cancel,
+  Submit & Authorize, Authorize with Google); add-source modal focuses the name field and
+  closes on Escape (also closes the OAuth dialogs).
+- The real grouped data-source list localizes + Add, empty/loading/error states, connected
+  badges, gear/trash tooltips, delete dialog title/description/actions/failures.
+- Data-source sync polish: a running source now shows Syncing…, manual sync refuses a
+  second run with HTTP 409, and the detail page polls status/logs every 5 seconds.
+- Inline-script test failures now print the complete Node error, and the data-source page
+  scripts are checked by the JS delimiter regression test.
+
 ## [0.127.37] - 2026-11-20
 
 ### Empty dataset pages keep their title and Create button
