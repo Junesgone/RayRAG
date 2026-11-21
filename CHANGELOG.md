@@ -2,6 +2,17 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.37] - 2026-11-20
+
+### Empty dataset pages keep their title and Create button
+
+- Browser traversal of the authenticated /datasets page found the empty state applied
+  `ds-page-blank`, whose CSS hid the whole filter bar (title, search and Create dataset
+  button). The only visible action was the empty card's plus, and mobile showed no page
+  title at all.
+- The empty state now keeps the filter bar visible and centers only the empty card in the
+  remaining space, matching the normal page structure on desktop and mobile.
+
 ## [0.127.36] - 2026-11-20
 
 ### Parse-result page refreshes its chunks automatically
