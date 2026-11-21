@@ -4,7 +4,7 @@ All notable changes to RayRAG are documented in this file.
 
 ## [Unreleased] - data-source UI batch (not released yet)
 
-### Data-source list and detail UI batch
+### Data-source UI batch (26 fixes so far)
 
 - The data-source list state column now shows a "Syncing…" badge while a background sync
   runs and refreshes the list shortly after the async start (0.127.32/0.127.33 made the
@@ -15,6 +15,13 @@ All notable changes to RayRAG are documented in this file.
 - The detail page's Save/Stop/Resume primary labels, test/stop/save/resume/sync/disconnect
   status messages, log status badges (Pending/Running/Success/Failed/Schedule/Cancel),
   log summaries, task-trigger suffixes, pager labels and empty-log text are localized.
+- The Add data source modal, its dynamic title, validation messages and flat URL/Target/
+  Token labels are localized; the page's Sources/Loading/+Add labels and the connect/
+  disconnect/list preview messages also follow the active language.
+- Manual sync now refuses to start a second run while the source status is already
+  running (HTTP 409), preventing duplicate background syncs from repeated clicks.
+- The data-source detail page polls source status and logs every 5 seconds while a
+  sync runs (was 15 seconds), so completion is visible sooner.
 - These are UI parity fixes accumulated for the next batch release; no version tag,
   GitHub release, FPK or Docker image is produced by this batch yet.
 
