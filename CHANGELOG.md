@@ -14,6 +14,10 @@ All notable changes to RayRAG are documented in this file.
   flight (no duplicate requests), re-enables it in finally, and localizes its network
   failure text.
 - The delete dialog focuses Confirm on open and closes on Escape.
+- Data-source detail log load failures are now shown in the log table instead of being
+  silently swallowed.
+- Files dialogs disable their submit button while creating a folder, renaming, deleting,
+  moving or linking, and re-enable it in finally; the delete dialog focuses Confirm.
 - Full test suite: 2585 passed / 0 failed / 34 ignored.
 
 ## [0.127.38] - 2026-11-20
