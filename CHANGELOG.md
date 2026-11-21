@@ -18,6 +18,10 @@ All notable changes to RayRAG are documented in this file.
   silently swallowed.
 - Files dialogs disable their submit button while creating a folder, renaming, deleting,
   moving or linking, and re-enable it in finally; the delete dialog focuses Confirm.
+- Chat/Search/Agent/Memory generic list pages: form and delete submit buttons are busy
+  guarded, forms/delete dialogs focus the right field, Escape closes them, Enter submits
+  the name field, the create menu closes on outside click, and delete failures show in
+  the dialog instead of a bare alert.
 - Full test suite: 2585 passed / 0 failed / 34 ignored.
 
 ## [0.127.38] - 2026-11-20
