@@ -2,6 +2,20 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.31] - 2026-11-20
+
+### Parse-result page links to the chunk editor
+
+- The original/chunks page now has an "Edit chunks" primary action beside "Open
+  original". It opens the existing /chunk/chunk/{doc_id} workbench, where chunks can be
+  inspected, copied, toggled active and saved.
+- This closes the round-trip from KB Files -> parse result -> chunk editing without
+  returning to the Files tab.
+- Updated the chunk-view regression test to require the edit link.
+- Hardened the data-source batch-limit test: it now compares the auto-detected limit
+  within 1% instead of requiring byte-identical readings of live host memory, which
+  removed a flaky failure when available memory moved between two detections.
+
 ## [0.127.30] - 2026-11-20
 
 ### Word/Excel/PowerPoint originals render in the chunk view

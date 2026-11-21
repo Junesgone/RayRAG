@@ -12462,6 +12462,11 @@ pub async fn document_chunks_page(
     } else {
         "Open original"
     });
+    b.push_str("</a><a class='btn btn-p btn-sm' href='/chunk/chunk/");
+    b.push_str(&doc_id);
+    b.push_str("'>");
+    b.push_str(if zh { "编辑 Chunks" } else { "Edit chunks" });
+    b.push_str("</a>");
     let doc_extension = doc
         .name
         .rsplit('.')
@@ -12472,7 +12477,7 @@ pub async fn document_chunks_page(
         doc_extension.as_str(),
         "docx" | "doc" | "xlsx" | "xls" | "pptx" | "ppt"
     );
-    b.push_str("</a></div><div class='doc-view' data-testid='document-chunk-view'><section class='doc-view-pane doc-original'><div class='doc-view-head'><span>");
+    b.push_str("</div><div class='doc-view' data-testid='document-chunk-view'><section class='doc-view-pane doc-original'><div class='doc-view-head'><span>");
     b.push_str(if zh { "原始文件" } else { "Original file" });
     b.push_str("</span><span class='doc-view-badge'>");
     b.push_str(&html_escape(&doc.name));
