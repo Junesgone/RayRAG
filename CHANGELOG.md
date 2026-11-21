@@ -2,6 +2,16 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.34] - 2026-11-20
+
+### Legacy Office formats keep the raw-file viewer
+
+- The original/chunks page now routes only the formats its structured readers really
+  support: .docx (HTML), .xlsx (grid), .pptx (slide text). Legacy binary
+  .doc/.xls/.ppt fall back to the raw-file iframe in the browser instead of calling a
+  preview endpoint that would return a parse error for the old container format.
+- Added a regression test for the legacy fallback.
+
 ## [0.127.33] - 2026-11-20
 
 ### Dataset configuration source rebuild runs in the background
