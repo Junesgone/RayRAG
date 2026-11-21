@@ -2,6 +2,18 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.33] - 2026-11-20
+
+### Dataset configuration source rebuild runs in the background
+
+- The Configuration panel's linked-source rebuild action now uses the async sync form
+  (`async=1`). It immediately shows that the sync started, then polls the source status
+  and reads the latest sync log to display indexed/error counts when it finishes.
+- This removes the last synchronous WebDAV/S3 tree sync from the normal UI (list and
+  detail pages were already converted in 0.127.32), so a large linked source cannot
+  hold the Configuration page request open for minutes.
+- Updated the config-page regression marker for the async URL.
+
 ## [0.127.32] - 2026-11-20
 
 ### Large data-source syncs no longer block the page
