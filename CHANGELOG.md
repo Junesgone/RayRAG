@@ -2,6 +2,22 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [Unreleased] - data-source UI batch (not released yet)
+
+### Data-source list and detail UI batch
+
+- The data-source list state column now shows a "Syncing…" badge while a background sync
+  runs and refreshes the list shortly after the async start (0.127.32/0.127.33 made the
+  sync asynchronous; the list now reflects it).
+- The list's headers, connected/disconnected/syncing labels, Connect/Disconnect/List/Sync/
+  Details/Del actions, and preview status messages are localized for the Chinese UI
+  instead of always rendering English.
+- The detail page's Save/Stop/Resume primary labels, test/stop/save/resume/sync/disconnect
+  status messages, log status badges (Pending/Running/Success/Failed/Schedule/Cancel),
+  log summaries, task-trigger suffixes, pager labels and empty-log text are localized.
+- These are UI parity fixes accumulated for the next batch release; no version tag,
+  GitHub release, FPK or Docker image is produced by this batch yet.
+
 ## [0.127.37] - 2026-11-20
 
 ### Empty dataset pages keep their title and Create button
