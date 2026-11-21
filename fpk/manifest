@@ -1,5 +1,5 @@
 appname               = rayrag
-version               = 0.127.34
+version               = 0.127.35
 display_name          = RayRAG
 desc                  = RayRAG 是 Rust 编写的 RAGFlow 兼容知识库与智能体服务：内置 PostgreSQL 与 zvec，支持 PDF/Office/图片等文档解析、向量检索、知识库问答、聊天、搜索、智能体、MCP、文件与记忆管理；首次注册账户即管理员，开箱即用。
 source                = thirdparty
@@ -14,4 +14,4 @@ service_port          = 9395
 checkport             = true
 ctl_stop              = true
 os_min_version        = 1.1.3100
-changelog             = v0.127.34: 原文/结构化预览仅用于 docx/xlsx/pptx；旧版 doc/xls/ppt 回退原始文件 iframe，避免调用不支持的结构化预览接口。
+changelog             = v0.127.35: 修复“编辑 Chunks”入口缺少 knowledgeId 导致工作台提示缺参数；链接现携带数据集 id。

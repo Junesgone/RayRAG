@@ -12464,6 +12464,8 @@ pub async fn document_chunks_page(
     });
     b.push_str("</a><a class='btn btn-p btn-sm' href='/chunk/chunk/");
     b.push_str(&doc_id);
+    b.push_str("?knowledgeId=");
+    b.push_str(&kb_id);
     b.push_str("'>");
     b.push_str(if zh { "编辑 Chunks" } else { "Edit chunks" });
     b.push_str("</a>");

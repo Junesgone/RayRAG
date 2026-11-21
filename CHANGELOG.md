@@ -2,6 +2,17 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.35] - 2026-11-20
+
+### Edit-chunks link carries the knowledge-base id
+
+- Browser verification of v0.127.34 found the new "Edit chunks" action opened
+  /chunk/chunk/{doc_id} without `knowledgeId`, so the workbench reported
+  "Missing knowledgeId: open this view from a knowledge base" and loaded no chunks.
+- The link now includes `?knowledgeId={kb_id}`; the workbench resolves the dataset and
+  renders its chunks normally.
+- Updated the chunk-view regression marker for the full edit URL.
+
 ## [0.127.34] - 2026-11-20
 
 ### Legacy Office formats keep the raw-file viewer
