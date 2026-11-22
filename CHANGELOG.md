@@ -22,6 +22,9 @@ All notable changes to RayRAG are documented in this file.
   guarded, forms/delete dialogs focus the right field, Escape closes them, Enter submits
   the name field, the create menu closes on outside click, and delete failures show in
   the dialog instead of a bare alert.
+- Agent "Edit tags" is now functional: a localized tag dialog opens, saves through
+  PUT /api/v1/agents/{id}/tags, shows save errors inline, disables its button while
+  saving and closes on Escape.
 - Full test suite: 2585 passed / 0 failed / 34 ignored.
 
 ## [0.127.38] - 2026-11-20
