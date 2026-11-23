@@ -1587,8 +1587,15 @@ fn delete_dataset_data(state: &Arc<AppState>, dataset_id: &str) -> crate::Result
         .into_iter()
         .map(|doc| doc.id)
         .collect();
+    let mut cleanup_errors = 0usize;
     for doc in state.docs.list(dataset_id) {
-        delete_document_data(state, &doc)?;
+        // Cleanup is best-effort: one damaged document must not keep the dataset
+        // itself alive (the UI already removed it optimistically, and a later
+        // reload would otherwise resurrect it).
+        if let Err(error) = delete_document_data(state, &doc) {
+            cleanup_errors += 1;
+            tracing::warn!(dataset_id, doc_id = %doc.id, %error, "dataset document cleanup failed");
+        }
     }
     // The metadata schema and its per-document overrides go with the dataset; leaving them behind
     // would resurrect a schema if a new dataset were ever given the same id.
@@ -1607,7 +1614,15 @@ fn delete_dataset_data(state: &Arc<AppState>, dataset_id: &str) -> crate::Result
     if let Err(error) = state.graphs.replace_snapshot(snapshot) {
         tracing::warn!(%error, "Failed to persist graph cleanup");
     }
-    state.kbs.delete(dataset_id)
+    let removed = state.kbs.delete(dataset_id)?;
+    if cleanup_errors > 0 {
+        tracing::warn!(
+            dataset_id,
+            cleanup_errors,
+            "dataset deleted with document cleanup errors"
+        );
+    }
+    Ok(removed)
 }
 
 async fn delete_dataset(
