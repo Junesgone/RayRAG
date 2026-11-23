@@ -2,7 +2,7 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [Unreleased] - UI polish batch (20/50)
+## [0.127.43] - 2026-11-23
 
 - Datasets page shows the localized 知识库 title instead of the English Dataset.
 - Search app create label is 创建搜索 (was 创建查询).
@@ -11,6 +11,9 @@ All notable changes to RayRAG are documented in this file.
 - Dataset create dialog: embedding label is 嵌入模型, placeholder 选择嵌入模型,
   Pipeline radio is 流水线, and all parser/chunk methods are localized (通用/问答/简历/
   手动/表格/论文/书籍/法律/演示文稿/图片/单条/音频/邮件/标签/知识图谱).
+- Knowledge-base document table: select/name/upload date/enabled/chunks/metadata/parse/
+  action/total/page-size, reparse/rename/details/download/delete, metadata and parser
+  dialogs, status titles and all error texts are localized.
 - Full test suite: 2586 passed / 0 failed / 34 ignored.
 
 ## [0.127.42] - 2026-11-23
