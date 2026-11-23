@@ -2,6 +2,14 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [Unreleased] - UI polish batch (3/50)
+
+- Datasets page shows the localized 知识库 title instead of the English Dataset.
+- Search app create label is 创建搜索 (was 创建查询).
+- MCP toolbar localization targets the correct buttons, removing the duplicate/English
+  Add MCP label.
+- Full test suite: 2586 passed / 0 failed / 34 ignored.
+
 ## [0.127.42] - 2026-11-23
 
 ### Full Chinese UI coverage (50 fixes)
