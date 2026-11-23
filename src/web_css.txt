@@ -1313,3 +1313,12 @@ select:disabled option{color:#8a8f98}
 .doc-structured-block p{margin:0 0 8px;font-size:13px;line-height:1.6;white-space:pre-wrap}
 .doc-structured-table{border-collapse:collapse;width:100%;margin:8px 0}
 .doc-structured-table td{border:1px solid #dcdcdc;padding:4px 8px;font-size:12px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chunk-card-content[contenteditable='true']{cursor:text;outline:0}
+.chunk-card-content[contenteditable='true']:focus{outline:2px solid var(--p);outline-offset:2px;background:var(--bg);border-radius:6px}
+.chunk-card-content[contenteditable='true']:empty:before{content:attr(data-placeholder);color:var(--tm)}
+.chunk-card.is-dirty{border-color:var(--p)!important;box-shadow:0 0 0 1px color-mix(in srgb,var(--p) 35%,transparent)}
+.chunk-card-content{white-space:pre-wrap}
+.chunk-card.has-error{border-color:var(--d)!important;box-shadow:0 0 0 1px color-mix(in srgb,var(--d) 35%,transparent)}
+.chunk-search{min-width:180px;height:32px;padding:6px 10px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--t);font:inherit;font-size:13px}
+.chunk-search:focus{outline:none;border-color:var(--p);box-shadow:0 0 0 3px color-mix(in srgb,var(--p) 18%,transparent)}
+.chunk-card-meta{color:var(--tm);font-size:11px;margin-left:10px}

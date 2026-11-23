@@ -2,6 +2,31 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.40] - 2026-11-23
+
+### Chunk editor: inline editing, add/delete, search and shortcuts (50 fixes)
+
+- Chunk-editor cards are contenteditable with aria textbox/multiline/name,
+  placeholder text and a focus ring; typing marks the chunk dirty and shows the
+  unsaved status.
+- Save sends the edited content with the existing available flag, rejects empty
+  content with a localized error, and keeps the backend re-embedding path.
+- Chunk editor: Save is disabled when nothing is dirty, dirty cards get a visible
+  outline, dirty edits preserve line breaks (innerText + pre-wrap), Ctrl/Cmd+S saves,
+  and Reload asks before discarding unsaved changes.
+- Chunk editor: per-card Copy and Revert actions, a visible save-error state, and a
+  beforeunload warning when unsaved edits remain. Revert restores the original content
+  captured at load time.
+- Chunk editor: Add chunk action opens a localized dialog, requires content, POSTs
+  `/chunks`, disables Save while running, shows inline errors and closes on Escape.
+- Chunk editor search/filter box (Ctrl/Cmd+F focuses, Escape clears), token/character
+  metadata, keyword/question summaries, localized add-chunk placeholder, and a dirty
+  count in the status line.
+- Chunk editor: custom delete confirmation dialog (preview, focus, Escape, busy,
+  inline error), no-match search status, 20000-character limit with localized error,
+  Ctrl/Cmd+Enter in dialogs, close buttons, and searchbox ARIA wiring.
+- Full test suite: 2585 passed / 0 failed / 34 ignored.
+
 ## [0.127.39] - 2026-11-23
 
 ### App list and data-source hardening (50+ fixes accumulated)
