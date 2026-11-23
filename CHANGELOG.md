@@ -2,6 +2,24 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.41] - 2026-11-23
+
+### Language and chat-channel fixes
+
+- Chinese is the default again: unrelated cookies (auth token, theme) no longer flip
+  the UI to English; only an explicit `lang=en` does. Added a regression test.
+- Chat channels page no longer throws `DS_ZH is not defined`; its headings, empty
+  state, add/edit/delete labels, dialog title/placeholder and Cancel/Save/Delete text
+  are localized under zh-CN.
+- Files dataset section title and folder file-count/empty text are localized.
+- Data-source Available cards: localized + Add button and Chinese descriptions for 15
+  common connectors (local, Feishu, DingTalk, Tencent Docs, Yuque, WeChat Docs,
+  GitLab, GitHub, WebDAV, S3, RSS, Moodle, Notion, Google Drive, Gmail).
+- Files dataset section empty state is localized.
+- MCP settings page: static headings/labels/buttons and dynamic selected/tool counts,
+  dialog titles, test/save/import/delete status and action ARIA labels are localized.
+- Full test suite: 2586 passed / 0 failed / 34 ignored.
+
 ## [0.127.40] - 2026-11-23
 
 ### Chunk editor: inline editing, add/delete, search and shortcuts (50 fixes)
