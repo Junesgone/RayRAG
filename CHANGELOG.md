@@ -2,34 +2,34 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [Unreleased] - next batch (7/50)
+## [Unreleased] - chunk editing batch (6/50)
 
-### Data-source grouped list hardening
+### Inline chunk content editing
 
-- The grouped source list shows a Syncing… badge while a source is running (not just
-  connected/disconnected).
-- Available-source cards expose role=button, an Add aria-label, and Enter/Space keyboard
-  activation in addition to click.
-- The delete confirmation disables its Confirm button while the DELETE request is in
-  flight (no duplicate requests), re-enables it in finally, and localizes its network
-  failure text.
-- The delete dialog focuses Confirm on open and closes on Escape.
-- Data-source detail log load failures are now shown in the log table instead of being
-  silently swallowed.
-- Files dialogs disable their submit button while creating a folder, renaming, deleting,
-  moving or linking, and re-enable it in finally; the delete dialog focuses Confirm.
-- Chat/Search/Agent/Memory generic list pages: form and delete submit buttons are busy
-  guarded, forms/delete dialogs focus the right field, Escape closes them, Enter submits
-  the name field, the create menu closes on outside click, and delete failures show in
-  the dialog instead of a bare alert.
-- Agent "Edit tags" is now functional: a localized tag dialog opens, saves through
-  PUT /api/v1/agents/{id}/tags, shows save errors inline, disables its button while
-  saving and closes on Escape.
-- App list cards and empty cards support Enter/Space activation; card-more menus and
-  the empty card are keyboard-reachable on chats/searches/agents/memories.
-- Import JSON, import failure, generic delete and tag-save fallback messages are localized.
-- Publish snapshot now excludes `.dsh-automation` (local DSH schedule/session
-  bookkeeping). The leaked copies are removed from the public main/dev branches.
+- Chunk-editor cards are contenteditable with aria textbox/multiline/name,
+  placeholder text and a focus ring; typing marks the chunk dirty and shows the
+  unsaved status.
+- Save sends the edited content with the existing available flag, rejects empty
+  content with a localized error, and keeps the backend re-embedding path.
+- Full test suite: 2585 passed / 0 failed / 34 ignored.
+
+## [0.127.39] - 2026-11-23
+
+### App list and data-source hardening (50+ fixes accumulated)
+
+- Grouped source list: Syncing… badge, Available-card keyboard/ARIA activation, delete
+  busy guard and localized failure, focus/Escape, visible log-load errors.
+- Files dialogs: busy guards for create/rename/delete/move/link, focus/ARIA live errors,
+  Escape closes new-folder/rename/delete/move/link, New folder focuses its name field.
+- Chat/Search/Agent/Memory list pages: form/delete busy guards, focus/Escape/Enter,
+  outside-click create-menu close, visible delete errors, keyboard card activation,
+  localized import/delete/save fallbacks.
+- Agent "Edit tags" now works: localized dialog, PUT tags, inline save error, busy guard
+  and Escape close.
+- Data-source detail: Test/Sync/Disconnect disable while in flight; log load failures are
+  visible; log/list status live regions; 5-second running poll.
+- Publish snapshot excludes `.dsh-automation`; leaked copies removed from public
+  main/dev and the clean v0.127.38 tag/release was recreated.
 - Full test suite: 2585 passed / 0 failed / 34 ignored.
 
 ## [0.127.38] - 2026-11-20
