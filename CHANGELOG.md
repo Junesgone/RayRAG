@@ -2,7 +2,7 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [Unreleased] - chunk editing batch (25/50)
+## [Unreleased] - chunk editing batch (37/50)
 
 ### Inline chunk content editing
 
@@ -19,6 +19,9 @@ All notable changes to RayRAG are documented in this file.
   captured at load time.
 - Chunk editor: Add chunk action opens a localized dialog, requires content, POSTs
   `/chunks`, disables Save while running, shows inline errors and closes on Escape.
+- Chunk editor search/filter box (Ctrl/Cmd+F focuses, Escape clears), token/character
+  metadata, keyword/question summaries, localized add-chunk placeholder, and a dirty
+  count in the status line.
 - Full test suite: 2585 passed / 0 failed / 34 ignored.
 
 ## [0.127.39] - 2026-11-23
