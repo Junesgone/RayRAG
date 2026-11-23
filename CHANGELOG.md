@@ -2,7 +2,7 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [Unreleased] - chunk editing batch (18/50)
+## [Unreleased] - chunk editing batch (25/50)
 
 ### Inline chunk content editing
 
@@ -17,6 +17,8 @@ All notable changes to RayRAG are documented in this file.
 - Chunk editor: per-card Copy and Revert actions, a visible save-error state, and a
   beforeunload warning when unsaved edits remain. Revert restores the original content
   captured at load time.
+- Chunk editor: Add chunk action opens a localized dialog, requires content, POSTs
+  `/chunks`, disables Save while running, shows inline errors and closes on Escape.
 - Full test suite: 2585 passed / 0 failed / 34 ignored.
 
 ## [0.127.39] - 2026-11-23
