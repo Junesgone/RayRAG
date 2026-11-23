@@ -2,7 +2,7 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [Unreleased] - chunk editing batch (12/50)
+## [Unreleased] - chunk editing batch (18/50)
 
 ### Inline chunk content editing
 
@@ -14,6 +14,9 @@ All notable changes to RayRAG are documented in this file.
 - Chunk editor: Save is disabled when nothing is dirty, dirty cards get a visible
   outline, dirty edits preserve line breaks (innerText + pre-wrap), Ctrl/Cmd+S saves,
   and Reload asks before discarding unsaved changes.
+- Chunk editor: per-card Copy and Revert actions, a visible save-error state, and a
+  beforeunload warning when unsaved edits remain. Revert restores the original content
+  captured at load time.
 - Full test suite: 2585 passed / 0 failed / 34 ignored.
 
 ## [0.127.39] - 2026-11-23

@@ -1318,3 +1318,4 @@ select:disabled option{color:#8a8f98}
 .chunk-card-content[contenteditable='true']:empty:before{content:attr(data-placeholder);color:var(--tm)}
 .chunk-card.is-dirty{border-color:var(--p)!important;box-shadow:0 0 0 1px color-mix(in srgb,var(--p) 35%,transparent)}
 .chunk-card-content{white-space:pre-wrap}
+.chunk-card.has-error{border-color:var(--d)!important;box-shadow:0 0 0 1px color-mix(in srgb,var(--d) 35%,transparent)}
