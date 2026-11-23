@@ -2,6 +2,25 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.39] - 2026-11-23
+
+### App list and data-source hardening (50+ fixes accumulated)
+
+- Grouped source list: Syncing… badge, Available-card keyboard/ARIA activation, delete
+  busy guard and localized failure, focus/Escape, visible log-load errors.
+- Files dialogs: busy guards for create/rename/delete/move/link, focus/ARIA live errors,
+  Escape closes new-folder/rename/delete/move/link, New folder focuses its name field.
+- Chat/Search/Agent/Memory list pages: form/delete busy guards, focus/Escape/Enter,
+  outside-click create-menu close, visible delete errors, keyboard card activation,
+  localized import/delete/save fallbacks.
+- Agent "Edit tags" now works: localized dialog, PUT tags, inline save error, busy guard
+  and Escape close.
+- Data-source detail: Test/Sync/Disconnect disable while in flight; log load failures are
+  visible; log/list status live regions; 5-second running poll.
+- Publish snapshot excludes `.dsh-automation`; leaked copies removed from public
+  main/dev and the clean v0.127.38 tag/release was recreated.
+- Full test suite: 2585 passed / 0 failed / 34 ignored.
+
 ## [0.127.38] - 2026-11-20
 
 ### Data-source UI batch (51 fixes)
