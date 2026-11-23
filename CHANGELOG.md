@@ -2,7 +2,7 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [Unreleased] - chunk editing batch (6/50)
+## [Unreleased] - chunk editing batch (12/50)
 
 ### Inline chunk content editing
 
@@ -11,6 +11,9 @@ All notable changes to RayRAG are documented in this file.
   unsaved status.
 - Save sends the edited content with the existing available flag, rejects empty
   content with a localized error, and keeps the backend re-embedding path.
+- Chunk editor: Save is disabled when nothing is dirty, dirty cards get a visible
+  outline, dirty edits preserve line breaks (innerText + pre-wrap), Ctrl/Cmd+S saves,
+  and Reload asks before discarding unsaved changes.
 - Full test suite: 2585 passed / 0 failed / 34 ignored.
 
 ## [0.127.39] - 2026-11-23
