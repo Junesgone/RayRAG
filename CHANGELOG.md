@@ -2,9 +2,9 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [Unreleased] - chunk editing batch (37/50)
+## [0.127.40] - 2026-11-23
 
-### Inline chunk content editing
+### Chunk editor: inline editing, add/delete, search and shortcuts (50 fixes)
 
 - Chunk-editor cards are contenteditable with aria textbox/multiline/name,
   placeholder text and a focus ring; typing marks the chunk dirty and shows the
@@ -22,6 +22,9 @@ All notable changes to RayRAG are documented in this file.
 - Chunk editor search/filter box (Ctrl/Cmd+F focuses, Escape clears), token/character
   metadata, keyword/question summaries, localized add-chunk placeholder, and a dirty
   count in the status line.
+- Chunk editor: custom delete confirmation dialog (preview, focus, Escape, busy,
+  inline error), no-match search status, 20000-character limit with localized error,
+  Ctrl/Cmd+Enter in dialogs, close buttons, and searchbox ARIA wiring.
 - Full test suite: 2585 passed / 0 failed / 34 ignored.
 
 ## [0.127.39] - 2026-11-23
