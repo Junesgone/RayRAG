@@ -25,6 +25,11 @@ All notable changes to RayRAG are documented in this file.
 - Agent "Edit tags" is now functional: a localized tag dialog opens, saves through
   PUT /api/v1/agents/{id}/tags, shows save errors inline, disables its button while
   saving and closes on Escape.
+- App list cards and empty cards support Enter/Space activation; card-more menus and
+  the empty card are keyboard-reachable on chats/searches/agents/memories.
+- Import JSON, import failure, generic delete and tag-save fallback messages are localized.
+- Publish snapshot now excludes `.dsh-automation` (local DSH schedule/session
+  bookkeeping). The leaked copies are removed from the public main/dev branches.
 - Full test suite: 2585 passed / 0 failed / 34 ignored.
 
 ## [0.127.38] - 2026-11-20
