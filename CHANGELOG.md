@@ -2,7 +2,7 @@
 
 All notable changes to RayRAG are documented in this file.
 
-## [Unreleased] - UI language batch (25/50)
+## [0.127.41] - 2026-11-23
 
 ### Language and chat-channel fixes
 
@@ -16,6 +16,8 @@ All notable changes to RayRAG are documented in this file.
   common connectors (local, Feishu, DingTalk, Tencent Docs, Yuque, WeChat Docs,
   GitLab, GitHub, WebDAV, S3, RSS, Moodle, Notion, Google Drive, Gmail).
 - Files dataset section empty state is localized.
+- MCP settings page: static headings/labels/buttons and dynamic selected/tool counts,
+  dialog titles, test/save/import/delete status and action ARIA labels are localized.
 - Full test suite: 2586 passed / 0 failed / 34 ignored.
 
 ## [0.127.40] - 2026-11-23
