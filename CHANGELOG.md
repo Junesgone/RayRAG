@@ -2,6 +2,23 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.44] - 2026-11-23
+
+### Hotfix: WebDAV rebuild, dataset deletion, configuration copy
+
+- Dataset Configuration -> WebDAV -> Rebuild no longer throws
+  `SyntaxError: Unexpected token 'd', "data sourc"... is not valid JSON`: the sync,
+  logs and list endpoints now answer JSON errors, and the browser fetch checks the
+  HTTP status/body before parsing and shows the real message.
+- Deleting a large knowledge base is now robust: per-document cleanup failures are
+  logged and no longer abort the dataset record deletion, so a reload/home/navigation
+  cannot resurrect an optimistically deleted KB.
+- Configuration page labels/description localized (语言/权限/页面排名/标签集 and the
+  Basic settings description).
+- FPK manifest description now welcomes feedback at
+  https://github.com/Junesgone/RayRAG or user@example.com
+- Full test suite: 2586 passed / 0 failed / 34 ignored.
+
 ## [0.127.43] - 2026-11-23
 
 - Datasets page shows the localized 知识库 title instead of the English Dataset.

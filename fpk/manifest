@@ -1,7 +1,7 @@
 appname               = rayrag
-version               = 0.127.43
+version               = 0.127.44
 display_name          = RayRAG
-desc                  = RayRAG 是 Rust 编写的 RAGFlow 兼容知识库与智能体服务：内置 PostgreSQL 与 zvec，支持 PDF/Office/图片等文档解析、向量检索、知识库问答、聊天、搜索、智能体、MCP、文件与记忆管理；首次注册账户即管理员，开箱即用。
+desc                  = RayRAG 是 Rust 编写的 RAGFlow 兼容知识库与智能体服务：内置 PostgreSQL 与 zvec，支持 PDF/Office/图片等文档解析、向量检索、知识库问答、聊天、搜索、智能体、MCP、文件与记忆管理；首次注册账户即管理员，开箱即用。欢迎各位在 https://github.com/Junesgone/RayRAG 或 邮箱junesgone@foxmail.com 提出改进和问题。
 source                = thirdparty
 platform              = x86
 maintainer            = Junesgone
@@ -14,4 +14,4 @@ service_port          = 9395
 checkport             = true
 ctl_stop              = true
 os_min_version        = 1.1.3100
-changelog             = v0.127.43: 知识库创建与文档表格 50 处中文化：嵌入模型、切片方法、文档表头、元数据/解析弹窗。
+changelog             = v0.127.44: 修复数据源重建 JSON 解析错误、知识库删除后重新出现、配置页中文；Manifest 增加反馈渠道。

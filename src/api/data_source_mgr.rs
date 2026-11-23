@@ -590,11 +590,11 @@ fn default_max_items() -> usize {
 
 pub async fn list_data_sources(
     State(state): State<std::sync::Arc<crate::server::AppState>>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+) -> Result<Json<serde_json::Value>, DataSourceError> {
     let store = state
         .data_sources
         .as_ref()
-        .ok_or_else(|| (StatusCode::NOT_IMPLEMENTED, "data sources disabled".into()))?;
+        .ok_or_else(|| data_source_error(StatusCode::NOT_IMPLEMENTED, "data sources disabled"))?;
     Ok(Json(serde_json::json!({ "code": 0, "data": store.list() })))
 }
 
@@ -917,14 +917,14 @@ pub async fn get_data_source_logs(
     State(state): State<std::sync::Arc<crate::server::AppState>>,
     axum::extract::Path(id): axum::extract::Path<String>,
     axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+) -> Result<Json<serde_json::Value>, DataSourceError> {
     let store = state
         .data_sources
         .as_ref()
-        .ok_or_else(|| (StatusCode::NOT_IMPLEMENTED, "data sources disabled".into()))?;
+        .ok_or_else(|| data_source_error(StatusCode::NOT_IMPLEMENTED, "data sources disabled"))?;
     let record = store
         .get(&id)
-        .ok_or_else(|| (StatusCode::NOT_FOUND, "data source not found".into()))?;
+        .ok_or_else(|| data_source_error(StatusCode::NOT_FOUND, "data source not found"))?;
     let page: u64 = query
         .get("page")
         .and_then(|v| v.parse().ok())
@@ -937,9 +937,9 @@ pub async fn get_data_source_logs(
     {
         size if size == 0 => 15,
         size if size > 100 => {
-            return Err((
+            return Err(data_source_error(
                 StatusCode::BAD_REQUEST,
-                "page_size must be less than or equal to 100".into(),
+                "page_size must be less than or equal to 100",
             ));
         }
         size => size,
@@ -965,14 +965,14 @@ pub async fn get_data_source_logs(
 pub async fn delete_data_source(
     State(state): State<std::sync::Arc<crate::server::AppState>>,
     axum::extract::Path(id): axum::extract::Path<String>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+) -> Result<Json<serde_json::Value>, DataSourceError> {
     let store = state
         .data_sources
         .as_ref()
-        .ok_or_else(|| (StatusCode::NOT_IMPLEMENTED, "data sources disabled".into()))?;
+        .ok_or_else(|| data_source_error(StatusCode::NOT_IMPLEMENTED, "data sources disabled"))?;
     let removed = store
         .remove(&id)
-        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+        .map_err(|error| data_source_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
     Ok(Json(
         serde_json::json!({ "code": 0, "data": { "removed": removed } }),
     ))
@@ -983,7 +983,7 @@ pub async fn sync_data_source(
     Extension(auth): Extension<crate::server::AuthContext>,
     axum::extract::Path(id): axum::extract::Path<String>,
     axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+) -> Result<Json<serde_json::Value>, DataSourceError> {
     let kb_id = query.get("kb_id").cloned();
     if state
         .data_sources
@@ -991,9 +991,9 @@ pub async fn sync_data_source(
         .and_then(|store| store.get(&id))
         .is_some_and(|record| record.status == "running")
     {
-        return Err((
+        return Err(data_source_error(
             StatusCode::CONFLICT,
-            "data source is already syncing".into(),
+            "data source is already syncing",
         ));
     }
     let background = query
@@ -1005,11 +1005,14 @@ pub async fn sync_data_source(
         if state
             .data_sources
             .as_ref()
-            .ok_or_else(|| (StatusCode::NOT_IMPLEMENTED, "data sources disabled".into()))?
+            .ok_or_else(|| data_source_error(StatusCode::NOT_IMPLEMENTED, "data sources disabled"))?
             .get(&id)
             .is_none()
         {
-            return Err((StatusCode::NOT_FOUND, "data source not found".into()));
+            return Err(data_source_error(
+                StatusCode::NOT_FOUND,
+                "data source not found",
+            ));
         }
         let state = state.clone();
         let auth = auth.clone();
@@ -1030,7 +1033,9 @@ pub async fn sync_data_source(
             "data": { "async": true, "status": "running" },
         })));
     }
-    let result = perform_sync(&state, &auth, &id, kb_id.as_deref(), "manual").await?;
+    let result = perform_sync(&state, &auth, &id, kb_id.as_deref(), "manual")
+        .await
+        .map_err(|(status, message)| data_source_error(status, message))?;
     Ok(Json(result))
 }
 
