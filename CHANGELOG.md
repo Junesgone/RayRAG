@@ -2,6 +2,20 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.127.42] - 2026-11-23
+
+### Full Chinese UI coverage (50 fixes)
+
+- Remaining 26 data-source connector descriptions localized (Airtable, Asana, Azure
+  Blob, BigQuery, Bitbucket, Box, Confluence, DingTalk AI Table, Discord, Dropbox,
+  GCS, IMAP, Jira, MySQL, Oracle Storage, OneDrive, Outlook, PostgreSQL, R2, REST API,
+  Salesforce, SeaFile, SharePoint, Slack, Teams, Zendesk).
+- Team page localized: headings, workspace label, search/placeholders, member and joined
+  team tables, invite/confirm dialogs, role badges, empty state and dynamic status text.
+- MCP dynamic delete/export errors, tool counts, import label and confirmation text
+  localized.
+- Full test suite: 2586 passed / 0 failed / 34 ignored.
+
 ## [0.127.41] - 2026-11-23
 
 ### Language and chat-channel fixes
