@@ -16,8 +16,9 @@ All notable changes to RayRAG are documented in this file.
   of hard-coded values; optional community reports are generated once and
   persisted in `graphrag.json`.
 - `POST /graphrag/query` supports `method` overrides, global report ranking and
-  grounded answers, local KgSearch retrieval plus a grounded local answer, and
-  reports its GraphRAG version and community-report count. The Knowledge Graph
+  grounded answers, local KgSearch retrieval plus a grounded local answer,
+  DRIFT hybrid (community + local expansion + grounded answer), and reports its
+  GraphRAG version and community-report count. The Knowledge Graph
   tab now exposes a method selector, question box and answer panel; nested
   GraphRAG settings reload correctly from dataset Configuration.
 

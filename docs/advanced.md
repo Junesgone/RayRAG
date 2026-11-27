@@ -656,7 +656,7 @@ Louvain/Leiden 目标做确定性的两层社区聚合（当前为 Rust Louvain 
 hierarchical Leiden 的逐层 refinement），并按知识库持久化到 `graphrag.json`。因此
 `POST /api/v1/datasets/{id}/graphrag/query` 的 Global 模式直接做报告排序与 grounded 回答，
 不会每次查询重复跑昂贵的社区摘要。Local 模式复用 KgSearch 的实体/关系/社区上下文，并
-再次调用 LLM 生成 grounded 回答。响应包含 `graphrag_version: "3.3.0"`、`method` 和
+再次调用 LLM 生成 grounded 回答；DRIFT 模式把社区报告与局部实体扩展合并后生成回答。响应包含 `graphrag_version: "3.3.0"`、`method` 和
 `community_reports` 数量。
 
 ## OXR document parser

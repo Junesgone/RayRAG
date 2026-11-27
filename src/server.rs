@@ -4425,6 +4425,35 @@ async fn query_graphrag(
                     }
                 }
             }
+            "drift" => {
+                // DRIFT is a hybrid: community-report context plus local
+                // entity/relationship expansion, then one grounded answer.
+                let selected = crate::graphrag::rank_community_reports(&reports, question, 6);
+                context = selected
+                    .iter()
+                    .map(|(title, report)| format!("# {title}\n{report}"))
+                    .collect();
+                if let Some(llm) = state.llm.as_ref() {
+                    if let Ok(local) = crate::graphrag::KgSearch::retrieval(
+                        &graph, llm, &reports, question, 8, 8, 3, 0.2,
+                    )
+                    .await
+                    {
+                        context.push(local);
+                    }
+                    if !context.is_empty() {
+                        let joined = context.join("\n\n");
+                        match crate::graphrag::answer_from_context(llm, question, &joined, "drift")
+                            .await
+                        {
+                            Ok(value) => answer = Some(value),
+                            Err(error) => {
+                                tracing::warn!(%error, dataset_id, "GraphRAG DRIFT answer failed");
+                            }
+                        }
+                    }
+                }
+            }
             _ => {
                 context = state
                     .graphs
