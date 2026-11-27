@@ -24,15 +24,17 @@ use std::collections::{BTreeMap, HashMap};
 /// algorithm; keep the constant visible in graph metadata and API responses.
 pub const MICROSOFT_GRAPHRAG_VERSION: &str = "3.3.0";
 
-/// Microsoft GraphRAG query modes. `light`/`general` are RAGFlow aliases;
-/// `local`, `global` and `drift` follow the Microsoft GraphRAG v3 contract.
+/// Microsoft GraphRAG query modes. `light`/`general`/`ner` are RAGFlow
+/// build aliases; when such a value reaches the query path it maps to local
+/// entity search. `basic` is Microsoft's vector/text-unit search and shares the
+/// local retrieval path here. `local`, `global` and `drift` follow the
+/// Microsoft GraphRAG v3 contract.
 pub fn normalize_query_method(method: &str) -> &'static str {
     match method.trim().to_ascii_lowercase().as_str() {
         "global" | "community" => "global",
-        "local" | "entity" => "local",
+        "local" | "entity" | "basic" | "light" | "general" | "ner" => "local",
         "drift" => "drift",
-        "basic" => "basic",
-        _ => "light",
+        _ => "local",
     }
 }
 

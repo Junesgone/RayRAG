@@ -2,6 +2,27 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.130.1] - 2026-11-28
+
+### GraphRAG query empty-state guidance
+
+- The knowledge-graph Ask action now tells the user to click Build Graph when
+  no graph exists, instead of silently showing "No answer." The Ask button also
+  carries a stable `graphAsk` id/test id for UI automation.
+
+### GraphRAG query method fallback
+
+- The query selector now offers Global, Local, DRIFT and Basic instead of the
+  build-only Light mode. Build aliases (`light`, `general`, `ner`) and `basic`
+  normalize to local entity retrieval, so a knowledge base left on the default
+  Light build method no longer returns an empty GraphRAG answer.
+
+### UI noise and artifact probe
+
+- `HEAD /api/v1/datasets/{id}/artifacts` now answers 204 No Content when no
+  wiki pages exist, preserving the boolean probe semantics while removing the
+  expected 404 resource error from the browser console.
+
 ## [0.130.0] - 2026-11-28
 
 ### Exact Leiden, GraphRAG vectors, FPK upgrade and PostgreSQL credentials
