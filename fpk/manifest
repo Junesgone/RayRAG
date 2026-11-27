@@ -1,5 +1,5 @@
 appname               = rayrag
-version               = 0.130.1
+version               = 0.130.2
 display_name          = RayRAG
 desc                  = RayRAG 是 Rust 编写的 RAGFlow 兼容知识库与智能体服务：内置 PostgreSQL 与 zvec，支持 PDF/Office/图片等文档解析、向量检索、知识库问答、聊天、搜索、智能体、MCP、文件与记忆管理；首次注册账户即管理员，开箱即用。欢迎各位在 https://github.com/Junesgone/RayRAG 或 邮箱junesgone@foxmail.com 提出改进和问题。
 source                = thirdparty
@@ -14,4 +14,4 @@ service_port          = 9395
 checkport             = true
 ctl_stop              = true
 os_min_version        = 1.1.3100
-changelog             = v0.130.1: 修复 GraphRAG 默认 Light/Basic 查询空答案与未建图谱提示；HEAD artifacts 改 204 消除控制台 404；继续保留精确 Leiden 与报告/实体/关系向量检索。
+changelog             = v0.130.2: GraphRAG 查询默认 Local（适配 Light 构建）；清理未使用的 pulp 直接依赖；包含 v0.130.1 的查询回退、空状态提示与 HEAD 204 修复。

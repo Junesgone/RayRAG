@@ -2,6 +2,14 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.130.2] - 2026-11-28
+
+### GraphRAG query default
+
+- The Knowledge Graph query selector defaults to Local, which works for a
+  graph built with the default Light method; Global remains available when
+  community reports were generated.
+
 ## [0.130.1] - 2026-11-28
 
 ### GraphRAG query empty-state guidance
