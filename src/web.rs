@@ -4185,7 +4185,7 @@ loadLogs();
     b.push_str(t("Build", zh));
     b.push(' ');
     b.push_str(t("Graph", zh));
-    b.push_str("</button> <select id='graphQueryMethod' style='max-width:130px'><option value='global'>Global</option><option value='local'>Local</option><option value='light'>Light</option><option value='drift'>DRIFT</option></select> <input id='graphQuestion' style='min-width:280px' placeholder='");
+    b.push_str("</button> <select id='graphQueryMethod' style='max-width:130px'><option value='global'>Global</option><option value='local'>Local</option><option value='drift'>DRIFT</option><option value='basic'>Basic</option></select> <input id='graphQuestion' style='min-width:280px' placeholder='");
     b.push_str(t("Ask a question about this graph", zh));
     b.push_str("'> <button class='btn btn-o' onclick='queryGraph()'>");
     b.push_str(t("Ask", zh));

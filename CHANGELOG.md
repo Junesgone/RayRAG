@@ -4,6 +4,13 @@ All notable changes to RayRAG are documented in this file.
 
 ## [Unreleased]
 
+### GraphRAG query method fallback
+
+- The query selector now offers Global, Local, DRIFT and Basic instead of the
+  build-only Light mode. Build aliases (`light`, `general`, `ner`) and `basic`
+  normalize to local entity retrieval, so a knowledge base left on the default
+  Light build method no longer returns an empty GraphRAG answer.
+
 ### UI noise and artifact probe
 
 - `HEAD /api/v1/datasets/{id}/artifacts` now answers 204 No Content when no
