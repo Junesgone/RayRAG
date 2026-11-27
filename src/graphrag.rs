@@ -409,19 +409,70 @@ pub fn partition_communities(graph: &EntityGraph) -> BTreeMap<usize, HashMap<Str
     }
     let degree: Vec<f64> = adjacency.iter().map(|row| row.values().sum()).collect();
     let total = degree.iter().sum::<f64>();
-    let mut community: Vec<usize> = (0..names.len()).collect();
     if total <= 0.0 {
-        return one_level(&names, &community);
+        return one_level(&names, &(0..names.len()).collect::<Vec<_>>());
     }
-    // Louvain local-moving passes. Deterministic node order + a bounded pass
-    // count means the same graph always produces the same report IDs.
+    let level0 = louvain_labels(&adjacency, &degree, total);
+    let mut levels = BTreeMap::new();
+    levels.insert(0, communities_at_level(&names, &level0));
+    let mut labels = level0;
+    // Aggregate the graph and refine it for two parent levels. This mirrors
+    // hierarchical Leiden's coarse-to-fine levels while staying deterministic.
+    for level in 1..=2 {
+        let mut compact: HashMap<usize, usize> = HashMap::new();
+        for &label in &labels {
+            let next = compact.len();
+            compact.entry(label).or_insert(next);
+        }
+        if compact.len() <= 1 {
+            break;
+        }
+        let count = compact.len();
+        let mut aggregate: Vec<HashMap<usize, f64>> = vec![HashMap::new(); count];
+        for (node, row) in adjacency.iter().enumerate() {
+            let a = compact[&labels[node]];
+            for (&neighbor, &weight) in row {
+                let b = compact[&labels[neighbor]];
+                if a != b {
+                    *aggregate[a].entry(b).or_default() += weight;
+                }
+            }
+        }
+        let aggregate_degree: Vec<f64> = aggregate.iter().map(|row| row.values().sum()).collect();
+        let aggregate_total: f64 = aggregate_degree.iter().sum();
+        if aggregate_total <= 0.0 {
+            break;
+        }
+        let refined = louvain_labels(&aggregate, &aggregate_degree, aggregate_total);
+        let previous = compact.len();
+        for label in labels.iter_mut() {
+            *label = refined[compact[label]];
+        }
+        if labels
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            >= previous
+        {
+            break;
+        }
+        levels.insert(level, communities_at_level(&names, &labels));
+    }
+    levels
+}
+
+/// One Louvain local-moving run over a weighted undirected graph. Returns a
+/// community label per input node; deterministic node order keeps report IDs
+/// stable across runs.
+fn louvain_labels(adjacency: &[HashMap<usize, f64>], degree: &[f64], total: f64) -> Vec<usize> {
+    let mut community: Vec<usize> = (0..adjacency.len()).collect();
     for _ in 0..20 {
-        let mut totals = vec![0.0f64; names.len()];
+        let mut totals = vec![0.0f64; adjacency.len()];
         for (node, &comm) in community.iter().enumerate() {
             totals[comm] += degree[node];
         }
         let mut moved = false;
-        for node in 0..names.len() {
+        for node in 0..adjacency.len() {
             let current = community[node];
             let node_degree = degree[node];
             if node_degree <= 0.0 {
@@ -457,10 +508,10 @@ pub fn partition_communities(graph: &EntityGraph) -> BTreeMap<usize, HashMap<Str
             break;
         }
     }
-    one_level(&names, &community)
+    community
 }
 
-fn one_level(names: &[String], community: &[usize]) -> BTreeMap<usize, HashMap<String, Community>> {
+fn communities_at_level(names: &[String], community: &[usize]) -> HashMap<String, Community> {
     let mut groups: HashMap<usize, Vec<String>> = HashMap::new();
     for (node, &comm) in community.iter().enumerate() {
         groups.entry(comm).or_default().push(names[node].clone());
@@ -482,8 +533,12 @@ fn one_level(names: &[String], community: &[usize]) -> BTreeMap<usize, HashMap<S
             community.weight /= max_weight;
         }
     }
+    communities
+}
+
+fn one_level(names: &[String], community: &[usize]) -> BTreeMap<usize, HashMap<String, Community>> {
     let mut out = BTreeMap::new();
-    out.insert(0, communities);
+    out.insert(0, communities_at_level(names, community));
     out
 }
 

@@ -6,6 +6,10 @@ All notable changes to RayRAG are documented in this file.
 
 ### Microsoft GraphRAG v3.3.0 mode and persisted community reports
 
+- Community partitioning now runs deterministic Louvain passes at two
+  aggregated levels (closer to hierarchical Leiden) and persists each level's
+  reports.
+
 - Knowledge-base Configuration now exposes Light/Global/Local/DRIFT methods and
   labels the Microsoft GraphRAG v3.3.0 baseline.
 - Build uses the dataset's GraphRAG entity types, language and method instead
