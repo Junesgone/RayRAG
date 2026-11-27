@@ -4399,6 +4399,12 @@ async fn query_graphrag(
         };
         match method {
             "global" => {
+                if reports.is_empty() {
+                    return api_error(
+                        StatusCode::BAD_REQUEST,
+                        "GraphRAG global search requires community reports. Enable \"Community reports\" in dataset Configuration and rebuild the graph, then retry.",
+                    );
+                }
                 let selected = match query_embedding.as_deref() {
                     Some(vector) => crate::graphrag::rank_community_reports_by_embedding(
                         &reports,

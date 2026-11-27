@@ -4,8 +4,10 @@ All notable changes to RayRAG are documented in this file.
 
 ## [Unreleased]
 
-### FPK upgrade and PostgreSQL credential boundary
+### GraphRAG error guidance, FPK upgrade, PostgreSQL credentials
 
+- Global GraphRAG queries now fail with actionable guidance when no community
+  reports exist, instead of returning an empty answer.
 - FPK upgrades preserve the existing `rayrag.env`/PostgreSQL password and
   initialize the cluster only when no environment exists. Previously the
   upgrade callback rewrote the password to the wizard default, which could
