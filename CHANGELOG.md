@@ -2,6 +2,32 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.130.0] - 2026-11-28
+
+### Exact Leiden, GraphRAG vectors, FPK upgrade and PostgreSQL credentials
+
+- Global GraphRAG queries now fail with actionable guidance when no community
+  reports exist, instead of returning an empty answer.
+- FPK upgrades preserve the existing `rayrag.env`/PostgreSQL password and
+  initialize the cluster only when no environment exists. Previously the
+  upgrade callback rewrote the password to the wizard default, which could
+  disagree with the initialized cluster.
+- Changing a normal user's password no longer rotates the PostgreSQL
+  administrator role credential; only an administrator password update (or the
+  first admin registration) synchronizes PostgreSQL.
+
+### Exact hierarchical Leiden community detection + report embeddings
+
+- GraphRAG community detection now uses the `leiden-rs` 0.8.1 hierarchical
+  Leiden implementation instead of the Louvain approximation, retaining the
+  deterministic Louvain fallback if the graph is rejected.
+- When an embedding model is configured, community reports, the highest-degree
+  entities and the strongest relationships are embedded and persisted with the
+  graph. Global/DRIFT search ranks reports/entities/relationships by cosine
+  similarity, and local KgSearch adds the top entity/relationship descriptions
+  to its context. Lexical ranking remains the fallback when vectors are
+  unavailable.
+
 ## [0.129.0] - 2026-11-28
 
 ### Microsoft GraphRAG v3.3.0, dataset configuration persistence, DRIFT

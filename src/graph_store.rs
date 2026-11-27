@@ -25,6 +25,17 @@ pub struct GraphArtifacts {
     /// LLM community-report pass on every query.
     #[serde(default)]
     pub community_reports: HashMap<String, HashMap<String, String>>,
+    /// Optional embedding per community report title, used by global/DRIFT
+    /// search when an embedding model is configured.
+    #[serde(default)]
+    pub report_embeddings: HashMap<String, HashMap<String, Vec<f32>>>,
+    /// Optional embedding per entity (name -> vector), used to complement
+    /// lexical KgSearch local retrieval.
+    #[serde(default)]
+    pub entity_embeddings: HashMap<String, HashMap<String, Vec<f32>>>,
+    /// Optional embedding per undirected relationship (`left\0right`).
+    #[serde(default)]
+    pub relation_embeddings: HashMap<String, HashMap<String, Vec<f32>>>,
 }
 
 pub struct GraphStore {
@@ -123,6 +134,79 @@ impl GraphStore {
             .get(kb_id)
             .cloned()
             .unwrap_or_default()
+    }
+
+    pub fn report_embeddings_for(&self, kb_id: &str) -> HashMap<String, Vec<f32>> {
+        self.artifacts
+            .read()
+            .unwrap()
+            .report_embeddings
+            .get(kb_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn entity_embeddings_for(&self, kb_id: &str) -> HashMap<String, Vec<f32>> {
+        self.artifacts
+            .read()
+            .unwrap()
+            .entity_embeddings
+            .get(kb_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn relation_embeddings_for(&self, kb_id: &str) -> HashMap<String, Vec<f32>> {
+        self.artifacts
+            .read()
+            .unwrap()
+            .relation_embeddings
+            .get(kb_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn set_relation_embeddings(
+        &self,
+        kb_id: &str,
+        embeddings: HashMap<String, Vec<f32>>,
+    ) -> anyhow::Result<()> {
+        let mut next = self.snapshot();
+        if embeddings.is_empty() {
+            next.relation_embeddings.remove(kb_id);
+        } else {
+            next.relation_embeddings
+                .insert(kb_id.to_string(), embeddings);
+        }
+        self.replace_snapshot(next)
+    }
+
+    pub fn set_entity_embeddings(
+        &self,
+        kb_id: &str,
+        embeddings: HashMap<String, Vec<f32>>,
+    ) -> anyhow::Result<()> {
+        let mut next = self.snapshot();
+        if embeddings.is_empty() {
+            next.entity_embeddings.remove(kb_id);
+        } else {
+            next.entity_embeddings.insert(kb_id.to_string(), embeddings);
+        }
+        self.replace_snapshot(next)
+    }
+
+    pub fn set_report_embeddings(
+        &self,
+        kb_id: &str,
+        embeddings: HashMap<String, Vec<f32>>,
+    ) -> anyhow::Result<()> {
+        let mut next = self.snapshot();
+        if embeddings.is_empty() {
+            next.report_embeddings.remove(kb_id);
+        } else {
+            next.report_embeddings.insert(kb_id.to_string(), embeddings);
+        }
+        self.replace_snapshot(next)
     }
 
     pub fn set_community_reports(

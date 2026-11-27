@@ -1,6 +1,6 @@
 [package]
 name = "rayrag"
-version = "0.129.0"
+version = "0.130.0"
 edition = "2024"
 rust-version = "1.100"
 description = "RayRAG: RAGFlow parsing pipeline rewritten in Rust, powered by zvec"
@@ -41,6 +41,8 @@ zvec-rust = { git = "https://github.com/zvec-ai/zvec-rust", tag = "v0.8.1", opti
 # PyTorch; the ML layout/OCR pipeline stays an optional build feature so the
 # default binary remains self-contained and offline-friendly.
 docling = { version = "=2.89.1", default-features = false, features = ["pdf-text"] }
+# Exact hierarchical Leiden community detection for Microsoft GraphRAG.
+leiden-rs = { version = "=0.8.1", default-features = false }
 
 # Optional synchronous PostgreSQL mirror used by the existing synchronous
 # atomic persistence boundary. PostgreSQL 18.4 is the deployment baseline.

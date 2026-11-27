@@ -16,6 +16,7 @@
 use crate::Result;
 use crate::graphrag_enhanced::{EntityGraph, EntityType};
 use crate::llm::LlmClient;
+use leiden_rs::{GraphDataBuilder, Leiden, LeidenConfig};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 
@@ -77,6 +78,123 @@ pub fn rank_community_reports(
         .into_iter()
         .map(|(_, title, report)| (title, report))
         .collect()
+}
+
+/// Cosine similarity for report embeddings. Vectors are L2-normalized here so
+/// callers do not need to depend on the embedding backend's normalization.
+pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
+    if a.is_empty() || b.is_empty() || a.len() != b.len() {
+        return 0.0;
+    }
+    let dot: f64 = a.iter().zip(b).map(|(x, y)| *x as f64 * *y as f64).sum();
+    let norm_a = a.iter().map(|x| *x as f64 * *x as f64).sum::<f64>().sqrt();
+    let norm_b = b.iter().map(|x| *x as f64 * *x as f64).sum::<f64>().sqrt();
+    if norm_a <= f64::EPSILON || norm_b <= f64::EPSILON {
+        0.0
+    } else {
+        dot / (norm_a * norm_b)
+    }
+}
+
+/// Rank reports by the configured embedding model, falling back to lexical
+/// ranking when no vectors are available.
+pub fn rank_community_reports_by_embedding(
+    reports: &HashMap<String, String>,
+    embeddings: &HashMap<String, Vec<f32>>,
+    query_embedding: &[f32],
+    question: &str,
+    top_n: usize,
+) -> Vec<(String, String)> {
+    let mut scored: Vec<(f64, String, String)> = reports
+        .iter()
+        .filter_map(|(title, report)| {
+            let score = embeddings
+                .get(title)
+                .map(|embedding| cosine_similarity(query_embedding, embedding))?;
+            Some((score, title.clone(), report.clone()))
+        })
+        .collect();
+    if scored.is_empty() {
+        return rank_community_reports(reports, question, top_n);
+    }
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    scored.truncate(top_n);
+    scored
+        .into_iter()
+        .map(|(_, title, report)| (title, report))
+        .collect()
+}
+
+/// Rank graph entities by embedding similarity, returning name/description
+/// pairs for the local/DRIFT context. Falls back to the highest-degree
+/// entities when vectors are unavailable.
+pub fn rank_entities_by_embedding(
+    graph: &EntityGraph,
+    embeddings: &HashMap<String, Vec<f32>>,
+    query_embedding: &[f32],
+    top_n: usize,
+) -> Vec<(String, String)> {
+    let mut scored: Vec<(f64, String, String)> = graph
+        .node_names()
+        .into_iter()
+        .filter_map(|name| {
+            let vector = embeddings.get(&name)?;
+            let score = cosine_similarity(query_embedding, vector);
+            let description = graph.description_of(&name).unwrap_or_default().to_string();
+            Some((score, name, description))
+        })
+        .collect();
+    if scored.is_empty() {
+        let mut names = graph.node_names();
+        names.sort_by_key(|name| std::cmp::Reverse(graph.degree(name)));
+        names.truncate(top_n);
+        return names
+            .into_iter()
+            .map(|name| {
+                let description = graph.description_of(&name).unwrap_or_default().to_string();
+                (name, description)
+            })
+            .collect();
+    }
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    scored.truncate(top_n);
+    scored
+        .into_iter()
+        .map(|(_, name, description)| (name, description))
+        .collect()
+}
+
+/// Rank undirected relationships by embedding similarity and return display
+/// strings for local/DRIFT context.
+pub fn rank_relations_by_embedding(
+    graph: &EntityGraph,
+    embeddings: &HashMap<String, Vec<f32>>,
+    query_embedding: &[f32],
+    top_n: usize,
+) -> Vec<String> {
+    let mut scored: Vec<(f64, String)> = Vec::new();
+    for source in graph.node_names() {
+        for target in graph.neighbors(&source) {
+            if source >= target {
+                continue;
+            }
+            let key = format!("{source}\0{target}");
+            let Some(vector) = embeddings.get(&key) else {
+                continue;
+            };
+            let description = graph
+                .edge_description(&source, &target)
+                .unwrap_or_default()
+                .to_string();
+            scored.push((
+                cosine_similarity(query_embedding, vector),
+                format!("Relationship {source} -- {target}: {description}"),
+            ));
+        }
+    }
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    scored.truncate(top_n);
+    scored.into_iter().map(|(_, text)| text).collect()
 }
 
 /// Microsoft GraphRAG global search: select community reports, then ask the
@@ -380,6 +498,47 @@ pub struct Community {
     pub nodes: Vec<String>,
 }
 
+/// Run the real hierarchical Leiden implementation used by Microsoft
+/// GraphRAG (`graspologic.hierarchical_leiden` equivalent), returning one
+/// report level per aggregation pass. The seed makes report IDs reproducible.
+fn leiden_levels(
+    graph: &EntityGraph,
+    names: &[String],
+) -> anyhow::Result<BTreeMap<usize, HashMap<String, Community>>> {
+    let index: HashMap<&str, usize> = names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| (name.as_str(), i))
+        .collect();
+    let mut builder = GraphDataBuilder::new(names.len());
+    for (i, name) in names.iter().enumerate() {
+        for neighbor in graph.neighbors(name) {
+            let Some(&j) = index.get(neighbor.as_str()) else {
+                continue;
+            };
+            if j <= i {
+                continue;
+            }
+            let weight = graph.edge_weight(name, &neighbor).unwrap_or(1.0).max(0.0);
+            builder.add_edge(i, j, weight)?;
+        }
+    }
+    let data = builder.build()?;
+    let config = LeidenConfig {
+        seed: Some(42),
+        ..Default::default()
+    };
+    let output = Leiden::new(config).run_hierarchical(&data)?;
+    let mut levels = BTreeMap::new();
+    for (level, hierarchy) in output.levels.iter().enumerate() {
+        if hierarchy.membership.len() != names.len() {
+            continue;
+        }
+        levels.insert(level, communities_at_level(names, &hierarchy.membership));
+    }
+    Ok(levels)
+}
+
 /// Partition the graph into communities. Upstream uses graspologic
 /// `hierarchical_leiden`; this is a deterministic one-level Louvain-style
 /// modularity partition (the same objective, in Rust, without a C++/Python
@@ -389,6 +548,13 @@ pub fn partition_communities(graph: &EntityGraph) -> BTreeMap<usize, HashMap<Str
     let names = graph.node_names();
     if names.is_empty() {
         return BTreeMap::new();
+    }
+    // Prefer the real hierarchical Leiden implementation. The deterministic
+    // Louvain fallback below is kept for graphs/crates that reject the input.
+    if let Ok(levels) = leiden_levels(graph, &names)
+        && !levels.is_empty()
+    {
+        return levels;
     }
     let index: HashMap<&str, usize> = names
         .iter()
