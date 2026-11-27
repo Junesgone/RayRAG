@@ -5102,9 +5102,17 @@ pub(crate) async fn update_account_password(
     let new_password = new_password.to_owned();
     let env_path = crate::api::setup::env_file_path(state);
     let static_dir = state.static_dir.clone();
+    // The PostgreSQL role belongs to the administrator account. A normal
+    // user's password change must not rotate the database credential.
+    let is_admin = state.users.is_admin(&user_id);
     let result = tokio::task::spawn_blocking(move || {
         users.update_password_with(&user_id, current.as_deref(), &new_password, |password| {
-            if crate::persistence::sync_postgres_admin_password(password, &static_dir, &env_path)?
+            if is_admin
+                && crate::persistence::sync_postgres_admin_password(
+                    password,
+                    &static_dir,
+                    &env_path,
+                )?
                 .is_some()
             {
                 tracing::info!(

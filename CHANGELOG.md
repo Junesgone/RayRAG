@@ -4,6 +4,12 @@ All notable changes to RayRAG are documented in this file.
 
 ## [Unreleased]
 
+### PostgreSQL credential boundary
+
+- Changing a normal user's password no longer rotates the PostgreSQL
+  administrator role credential; only an administrator password update (or the
+  first admin registration) synchronizes PostgreSQL.
+
 ### Exact hierarchical Leiden community detection + report embeddings
 
 - GraphRAG community detection now uses the `leiden-rs` 0.8.1 hierarchical
