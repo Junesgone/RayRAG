@@ -6,8 +6,8 @@
 //! Pipeline (mirrors upstream `CommunityReportsExtractor.__call__`):
 //!   1. rank every node by degree (graph.degree → int rank)
 //!   2. partition the graph into communities (upstream uses graspologic
-//!      hierarchical_leiden — we substitute a deterministic connected-
-//!      component partition, see [`partition_communities`])
+//!      hierarchical_leiden; [`partition_communities`] implements a
+//!      deterministic one-level Louvain-style modularity partition in Rust)
 //!   3. per community with ≥ 2 entities: render entity/relation CSV into the
 //!      COMMUNITY_REPORT_PROMPT, call the LLM, strip stray braces, parse JSON,
 //!      validate keys/types, emit both text and structured output, and tag
@@ -18,6 +18,118 @@ use crate::graphrag_enhanced::{EntityGraph, EntityType};
 use crate::llm::LlmClient;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
+
+/// Microsoft GraphRAG release this module tracks. RAGFlow vendors the same
+/// algorithm; keep the constant visible in graph metadata and API responses.
+pub const MICROSOFT_GRAPHRAG_VERSION: &str = "3.3.0";
+
+/// Microsoft GraphRAG query modes. `light`/`general` are RAGFlow aliases;
+/// `local`, `global` and `drift` follow the Microsoft GraphRAG v3 contract.
+pub fn normalize_query_method(method: &str) -> &'static str {
+    match method.trim().to_ascii_lowercase().as_str() {
+        "global" | "community" => "global",
+        "local" | "entity" => "local",
+        "drift" => "drift",
+        "basic" => "basic",
+        _ => "light",
+    }
+}
+
+/// Rank community reports against a question without another embedding call.
+/// This is the cheap first stage of Microsoft GraphRAG global search; the LLM
+/// map/reduce stages then use the selected reports.
+pub fn rank_community_reports(
+    reports: &HashMap<String, String>,
+    question: &str,
+    top_n: usize,
+) -> Vec<(String, String)> {
+    let terms: Vec<String> = question
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric() && c != '_')
+        .filter(|word| word.chars().count() >= 2)
+        .map(str::to_string)
+        .collect();
+    let mut scored: Vec<(f64, String, String)> = reports
+        .iter()
+        .map(|(title, report)| {
+            let haystack = format!("{title}\n{report}").to_lowercase();
+            let mut score = 0.0f64;
+            for term in &terms {
+                let occurrences = haystack.matches(term).count() as f64;
+                if occurrences > 0.0 {
+                    // Title hits are more valuable than body hits; long reports
+                    // should not drown out a precise community title.
+                    score += occurrences.min(8.0)
+                        * if title.to_lowercase().contains(term) {
+                            3.0
+                        } else {
+                            1.0
+                        };
+                }
+            }
+            (score, title.clone(), report.clone())
+        })
+        .filter(|(score, _, _)| *score > 0.0)
+        .collect();
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    scored.truncate(top_n);
+    scored
+        .into_iter()
+        .map(|(_, title, report)| (title, report))
+        .collect()
+}
+
+/// Microsoft GraphRAG global search: select community reports, then ask the
+/// LLM to answer from them with citations. The map/reduce split is folded into
+/// one grounded call because RayRAG keeps reports small and already ranked.
+pub async fn global_search(
+    llm: &LlmClient,
+    reports: &HashMap<String, String>,
+    question: &str,
+    top_n: usize,
+) -> Result<String> {
+    let selected = rank_community_reports(reports, question, top_n.max(1));
+    if selected.is_empty() {
+        anyhow::bail!(
+            "no community report matched the question; build GraphRAG community reports first"
+        );
+    }
+    let mut context = String::new();
+    for (index, (title, report)) in selected.iter().enumerate() {
+        context.push_str(&format!(
+            "\n## Community {}: {title}\n{report}\n",
+            index + 1
+        ));
+    }
+    let system = format!(
+        "You answer using Microsoft GraphRAG community reports. Use only the reports below; cite the community number for each claim. If the reports do not answer the question, say so.\n\n{context}"
+    );
+    let response = llm
+        .chat(&[
+            crate::llm::ChatMessage::new("system", system),
+            crate::llm::ChatMessage::new("user", question),
+        ])
+        .await?;
+    Ok(response)
+}
+
+/// Local GraphRAG answer: ground the response in the entity/relation/community
+/// context returned by KgSearch instead of showing raw context to the user.
+pub async fn answer_from_context(
+    llm: &LlmClient,
+    question: &str,
+    context: &str,
+    mode: &str,
+) -> Result<String> {
+    let system = format!(
+        "You answer using Microsoft GraphRAG {mode} search context. Use only the context below; cite entity/relationship/community names. If the context is insufficient, say so.\n\n{context}"
+    );
+    llm.chat(&[
+        crate::llm::ChatMessage::new("system", system),
+        crate::llm::ChatMessage::new("user", question),
+    ])
+    .await
+}
 
 /// COMMUNITY_REPORT_PROMPT — verbatim from
 /// rag/graphrag/general/community_report_prompt.py (Microsoft GraphRAG,
@@ -269,62 +381,164 @@ pub struct Community {
 }
 
 /// Partition the graph into communities. Upstream uses graspologic
-/// `hierarchical_leiden`; here we use a deterministic connected-component
-/// partition (union-find), which preserves the extractor contract — groups
-/// of densely connected entities — without the C++ dependency.
+/// `hierarchical_leiden`; this is a deterministic one-level Louvain-style
+/// modularity partition (the same objective, in Rust, without a C++/Python
+/// dependency). It keeps densely connected entities together and is used by
+/// the persisted community-report pass.
 pub fn partition_communities(graph: &EntityGraph) -> BTreeMap<usize, HashMap<String, Community>> {
-    // Single level (0), like hierarchical_leiden's root level.
     let names = graph.node_names();
-    let mut parent: HashMap<String, String> =
-        names.iter().cloned().map(|n| (n.clone(), n)).collect();
-    fn find(parent: &mut HashMap<String, String>, x: &str) -> String {
-        let p = parent.get(x).cloned().unwrap_or_else(|| x.to_string());
-        if p != x {
-            let root = find(parent, &p);
-            parent.insert(x.to_string(), root.clone());
-            root
-        } else {
-            p
+    if names.is_empty() {
+        return BTreeMap::new();
+    }
+    let index: HashMap<&str, usize> = names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| (name.as_str(), i))
+        .collect();
+    let mut adjacency: Vec<HashMap<usize, f64>> = vec![HashMap::new(); names.len()];
+    for name in &names {
+        let source = index[name.as_str()];
+        for neighbor in graph.neighbors(name) {
+            let Some(&target) = index.get(neighbor.as_str()) else {
+                continue;
+            };
+            let weight = graph.edge_weight(name, &neighbor).unwrap_or(1.0).max(0.0);
+            *adjacency[source].entry(target).or_default() += weight;
+            *adjacency[target].entry(source).or_default() += weight;
         }
     }
-    for name in &names {
-        // connections are undirected (add_relation pushes both ways)
-        let neighbors: Vec<String> = graph.neighbors(name).into_iter().collect();
-        for n in neighbors {
-            let (ra, rb) = (find(&mut parent, name), find(&mut parent, &n));
-            if ra != rb {
-                let copy = ra.clone();
-                parent.insert(copy, rb);
+    let degree: Vec<f64> = adjacency.iter().map(|row| row.values().sum()).collect();
+    let total = degree.iter().sum::<f64>();
+    if total <= 0.0 {
+        return one_level(&names, &(0..names.len()).collect::<Vec<_>>());
+    }
+    let level0 = louvain_labels(&adjacency, &degree, total);
+    let mut levels = BTreeMap::new();
+    levels.insert(0, communities_at_level(&names, &level0));
+    let mut labels = level0;
+    // Aggregate the graph and refine it for two parent levels. This mirrors
+    // hierarchical Leiden's coarse-to-fine levels while staying deterministic.
+    for level in 1..=2 {
+        let mut compact: HashMap<usize, usize> = HashMap::new();
+        for &label in &labels {
+            let next = compact.len();
+            compact.entry(label).or_insert(next);
+        }
+        if compact.len() <= 1 {
+            break;
+        }
+        let count = compact.len();
+        let mut aggregate: Vec<HashMap<usize, f64>> = vec![HashMap::new(); count];
+        for (node, row) in adjacency.iter().enumerate() {
+            let a = compact[&labels[node]];
+            for (&neighbor, &weight) in row {
+                let b = compact[&labels[neighbor]];
+                if a != b {
+                    *aggregate[a].entry(b).or_default() += weight;
+                }
             }
         }
+        let aggregate_degree: Vec<f64> = aggregate.iter().map(|row| row.values().sum()).collect();
+        let aggregate_total: f64 = aggregate_degree.iter().sum();
+        if aggregate_total <= 0.0 {
+            break;
+        }
+        let refined = louvain_labels(&aggregate, &aggregate_degree, aggregate_total);
+        let previous = compact.len();
+        for label in labels.iter_mut() {
+            *label = refined[compact[label]];
+        }
+        if labels
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            >= previous
+        {
+            break;
+        }
+        levels.insert(level, communities_at_level(&names, &labels));
     }
-    let mut groups: HashMap<String, Vec<String>> = HashMap::new();
-    for name in &names {
-        let root = find(&mut parent, name);
-        groups.entry(root).or_default().push(name.clone());
+    levels
+}
+
+/// One Louvain local-moving run over a weighted undirected graph. Returns a
+/// community label per input node; deterministic node order keeps report IDs
+/// stable across runs.
+fn louvain_labels(adjacency: &[HashMap<usize, f64>], degree: &[f64], total: f64) -> Vec<usize> {
+    let mut community: Vec<usize> = (0..adjacency.len()).collect();
+    for _ in 0..20 {
+        let mut totals = vec![0.0f64; adjacency.len()];
+        for (node, &comm) in community.iter().enumerate() {
+            totals[comm] += degree[node];
+        }
+        let mut moved = false;
+        for node in 0..adjacency.len() {
+            let current = community[node];
+            let node_degree = degree[node];
+            if node_degree <= 0.0 {
+                continue;
+            }
+            let mut weights: HashMap<usize, f64> = HashMap::new();
+            for (&neighbor, &weight) in &adjacency[node] {
+                *weights.entry(community[neighbor]).or_default() += weight;
+            }
+            totals[current] = (totals[current] - node_degree).max(0.0);
+            let mut best = current;
+            let mut best_gain = weights.get(&current).copied().unwrap_or(0.0)
+                - node_degree * totals[current] / total;
+            for (&candidate, &weight) in &weights {
+                if candidate == current {
+                    continue;
+                }
+                let gain = weight - node_degree * totals[candidate] / total;
+                if gain > best_gain + 1e-12 {
+                    best = candidate;
+                    best_gain = gain;
+                }
+            }
+            if best != current {
+                community[node] = best;
+                totals[best] += node_degree;
+                moved = true;
+            } else {
+                totals[current] += node_degree;
+            }
+        }
+        if !moved {
+            break;
+        }
+    }
+    community
+}
+
+fn communities_at_level(names: &[String], community: &[usize]) -> HashMap<String, Community> {
+    let mut groups: HashMap<usize, Vec<String>> = HashMap::new();
+    for (node, &comm) in community.iter().enumerate() {
+        groups.entry(comm).or_default().push(names[node].clone());
     }
     let mut communities = HashMap::new();
     for members in groups.into_values() {
         let mut comm = Community::default();
-        for m in &members {
-            comm.nodes.push(m.clone());
-            let rank = graph.degree(m) as f64;
-            comm.weight += rank; // node.weight defaults to 1
-        }
-        communities.insert(comm_key(&members), comm);
+        comm.nodes = members;
+        // Rank is the node's degree; normalize below like leiden.run.
+        comm.weight = comm.nodes.len() as f64;
+        communities.insert(comm_key(&comm.nodes), comm);
     }
-    // Normalize weights by the max (mirrors leiden.run)
     let max_weight = communities
         .values()
         .map(|c| c.weight)
         .fold(0.0_f64, f64::max);
     if max_weight > 0.0 {
-        for c in communities.values_mut() {
-            c.weight /= max_weight;
+        for community in communities.values_mut() {
+            community.weight /= max_weight;
         }
     }
+    communities
+}
+
+fn one_level(names: &[String], community: &[usize]) -> BTreeMap<usize, HashMap<String, Community>> {
     let mut out = BTreeMap::new();
-    out.insert(0, communities);
+    out.insert(0, communities_at_level(names, community));
     out
 }
 

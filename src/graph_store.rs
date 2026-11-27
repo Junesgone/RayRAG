@@ -20,6 +20,11 @@ pub struct GraphCheckpoint {
 pub struct GraphArtifacts {
     pub checkpoints: HashMap<String, GraphCheckpoint>,
     pub kb_graphs: HashMap<String, EntityGraph>,
+    /// Community reports keyed by knowledge base then report title. Persisted
+    /// so Microsoft-GraphRAG-style global search does not re-run the expensive
+    /// LLM community-report pass on every query.
+    #[serde(default)]
+    pub community_reports: HashMap<String, HashMap<String, String>>,
 }
 
 pub struct GraphStore {
@@ -108,6 +113,30 @@ impl GraphStore {
         }
         *self.artifacts.write().unwrap() = snapshot;
         Ok(())
+    }
+
+    pub fn community_reports_for(&self, kb_id: &str) -> HashMap<String, String> {
+        self.artifacts
+            .read()
+            .unwrap()
+            .community_reports
+            .get(kb_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn set_community_reports(
+        &self,
+        kb_id: &str,
+        reports: HashMap<String, String>,
+    ) -> anyhow::Result<()> {
+        let mut next = self.snapshot();
+        if reports.is_empty() {
+            next.community_reports.remove(kb_id);
+        } else {
+            next.community_reports.insert(kb_id.to_string(), reports);
+        }
+        self.replace_snapshot(next)
     }
 
     pub fn context_for_query(&self, kb_ids: &[String], query: &str) -> Vec<String> {

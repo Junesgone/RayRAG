@@ -1608,6 +1608,7 @@ fn delete_dataset_data(state: &Arc<AppState>, dataset_id: &str) -> crate::Result
     // 清理该数据集的图谱资产
     let mut snapshot = state.graphs.snapshot();
     snapshot.kb_graphs.remove(dataset_id);
+    snapshot.community_reports.remove(dataset_id);
     snapshot
         .checkpoints
         .retain(|_, checkpoint| checkpoint.kb_id != dataset_id);
@@ -4342,6 +4343,24 @@ async fn query_graphrag(
         .get("question")
         .and_then(|value| value.as_str())
         .unwrap_or("");
+    let configured_method = state
+        .kbs
+        .get(&dataset_id)
+        .and_then(|kb| serde_json::from_str::<serde_json::Value>(&kb.parser_config).ok())
+        .and_then(|config| {
+            config
+                .get("graphrag")
+                .and_then(|graph| graph.get("method"))
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "light".to_string());
+    let requested_method = body
+        .get("method")
+        .and_then(|value| value.as_str())
+        .unwrap_or(&configured_method);
+    let method = crate::graphrag::normalize_query_method(requested_method);
+    let reports = state.graphs.community_reports_for(&dataset_id);
     let names = graph.node_names();
     let edges = names.iter().map(|name| graph.degree(name)).sum::<usize>() / 2;
     let node_list: Vec<serde_json::Value> = names
@@ -4355,13 +4374,93 @@ async fn query_graphrag(
             })
         })
         .collect();
-    let context = if question.trim().is_empty() {
-        Vec::<String>::new()
-    } else {
-        state
-            .graphs
-            .context_for_query(std::slice::from_ref(&dataset_id), question)
-    };
+    let mut answer = None;
+    let mut context = Vec::<String>::new();
+    if !question.trim().is_empty() {
+        match method {
+            "global" => {
+                let selected = crate::graphrag::rank_community_reports(&reports, question, 8);
+                context = selected
+                    .iter()
+                    .map(|(title, report)| format!("# {title}\n{report}"))
+                    .collect();
+                if let Some(llm) = state.llm.as_ref() {
+                    match crate::graphrag::global_search(llm, &reports, question, 8).await {
+                        Ok(value) => answer = Some(value),
+                        Err(error) => {
+                            return api_error(
+                                StatusCode::BAD_REQUEST,
+                                &format!("GraphRAG global search failed: {error}"),
+                            );
+                        }
+                    }
+                }
+            }
+            "local" => {
+                if let Some(llm) = state.llm.as_ref() {
+                    match crate::graphrag::KgSearch::retrieval(
+                        &graph, llm, &reports, question, 10, 10, 4, 0.2,
+                    )
+                    .await
+                    {
+                        Ok(value) => context.push(value),
+                        Err(error) => {
+                            tracing::warn!(%error, dataset_id, "GraphRAG local search failed");
+                        }
+                    }
+                }
+                if context.is_empty() {
+                    context = state
+                        .graphs
+                        .context_for_query(std::slice::from_ref(&dataset_id), question);
+                }
+                if let (Some(llm), Some(context_text)) = (state.llm.as_ref(), context.first()) {
+                    match crate::graphrag::answer_from_context(llm, question, context_text, "local")
+                        .await
+                    {
+                        Ok(value) => answer = Some(value),
+                        Err(error) => {
+                            tracing::warn!(%error, dataset_id, "GraphRAG local answer failed");
+                        }
+                    }
+                }
+            }
+            "drift" => {
+                // DRIFT is a hybrid: community-report context plus local
+                // entity/relationship expansion, then one grounded answer.
+                let selected = crate::graphrag::rank_community_reports(&reports, question, 6);
+                context = selected
+                    .iter()
+                    .map(|(title, report)| format!("# {title}\n{report}"))
+                    .collect();
+                if let Some(llm) = state.llm.as_ref() {
+                    if let Ok(local) = crate::graphrag::KgSearch::retrieval(
+                        &graph, llm, &reports, question, 8, 8, 3, 0.2,
+                    )
+                    .await
+                    {
+                        context.push(local);
+                    }
+                    if !context.is_empty() {
+                        let joined = context.join("\n\n");
+                        match crate::graphrag::answer_from_context(llm, question, &joined, "drift")
+                            .await
+                        {
+                            Ok(value) => answer = Some(value),
+                            Err(error) => {
+                                tracing::warn!(%error, dataset_id, "GraphRAG DRIFT answer failed");
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {
+                context = state
+                    .graphs
+                    .context_for_query(std::slice::from_ref(&dataset_id), question);
+            }
+        }
+    }
     Json(ApiResponse {
         code: 0,
         message: "ok".into(),
@@ -4370,6 +4469,10 @@ async fn query_graphrag(
             "edges": edges,
             "node_list": node_list,
             "context": context,
+            "answer": answer,
+            "method": method,
+            "graphrag_version": crate::graphrag::MICROSOFT_GRAPHRAG_VERSION,
+            "community_reports": reports.len(),
         })),
     })
     .into_response()
@@ -4593,10 +4696,45 @@ async fn build_graphrag(
     if chunks.is_empty() {
         return api_error(StatusCode::BAD_REQUEST, "No chunks in this knowledge base");
     }
-    let entity_types: Vec<String> = ["organization", "person", "location", "event", "concept"]
-        .iter()
-        .map(|value| value.to_string())
-        .collect();
+    let kb = state.kbs.get(&dataset_id);
+    let parser_config: serde_json::Value = kb
+        .as_ref()
+        .and_then(|kb| serde_json::from_str(&kb.parser_config).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    let graph_cfg = parser_config
+        .get("graphrag")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    let method = graph_cfg
+        .get("method")
+        .and_then(|value| value.as_str())
+        .unwrap_or("light")
+        .to_string();
+    let entity_types: Vec<String> = graph_cfg
+        .get("entity_types")
+        .and_then(|value| value.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str().map(str::to_string))
+                .filter(|value| !value.trim().is_empty())
+                .collect()
+        })
+        .filter(|values: &Vec<String>| !values.is_empty())
+        .unwrap_or_else(|| {
+            ["organization", "person", "location", "event", "concept"]
+                .iter()
+                .map(|value| value.to_string())
+                .collect()
+        });
+    let language = kb
+        .as_ref()
+        .map(|kb| kb.language.as_str())
+        .unwrap_or("Chinese");
+    let community_reports_enabled = graph_cfg
+        .get("community")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
     let mut by_doc: std::collections::BTreeMap<String, Vec<String>> = Default::default();
     for chunk in &chunks {
         let doc_id = chunk
@@ -4618,7 +4756,7 @@ async fn build_graphrag(
             doc_id,
             contents,
             &entity_types,
-            "Chinese",
+            language,
         )
         .await
         {
@@ -4635,9 +4773,44 @@ async fn build_graphrag(
     let nodes = graph.node_count();
     let names = graph.node_names();
     let edges = names.iter().map(|name| graph.degree(name)).sum::<usize>() / 2;
+    // Microsoft GraphRAG v3 community reports are built once and persisted
+    // alongside the graph, so global search is a read path rather than an
+    // expensive LLM pass on every question.
+    let mut report_map = std::collections::HashMap::new();
+    if community_reports_enabled && nodes > 0 {
+        match crate::graphrag::CommunityReportsExtractor::new()
+            .run(&graph, &llm)
+            .await
+        {
+            Ok(reports) => {
+                for (index, structured) in reports.structured_output.iter().enumerate() {
+                    let Some(title) = structured.get("title").and_then(|value| value.as_str())
+                    else {
+                        continue;
+                    };
+                    let Some(text) = reports.output.get(index) else {
+                        continue;
+                    };
+                    if !text.trim().is_empty() {
+                        report_map.insert(title.to_string(), text.clone());
+                    }
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, dataset_id, "GraphRAG community report extraction failed");
+            }
+        }
+    }
     // 持久化：合并到 GraphStore 的 kb_graphs（重启后保留）
     let mut snapshot = state.graphs.snapshot();
     snapshot.kb_graphs.insert(dataset_id.clone(), graph.clone());
+    if report_map.is_empty() {
+        snapshot.community_reports.remove(&dataset_id);
+    } else {
+        snapshot
+            .community_reports
+            .insert(dataset_id.clone(), report_map.clone());
+    }
     if let Err(error) = state.graphs.replace_snapshot(snapshot) {
         tracing::warn!(%error, "Failed to persist graphrag snapshot");
     }
@@ -4660,6 +4833,9 @@ async fn build_graphrag(
             "documents": doc_count,
             "entities": entity_count,
             "node_list": node_list,
+            "method": method,
+            "graphrag_version": crate::graphrag::MICROSOFT_GRAPHRAG_VERSION,
+            "community_reports": report_map.len(),
         }
     }))
     .into_response()

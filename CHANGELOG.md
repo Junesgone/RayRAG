@@ -2,6 +2,30 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.129.0] - 2026-11-28
+
+### Microsoft GraphRAG v3.3.0, dataset configuration persistence, DRIFT
+
+- Community partitioning now runs deterministic Louvain passes at two
+  aggregated levels (closer to hierarchical Leiden) and persists each level's
+  reports.
+
+- Knowledge-base Configuration now exposes Light/Global/Local/DRIFT methods and
+  labels the Microsoft GraphRAG v3.3.0 baseline.
+- Build uses the dataset's GraphRAG entity types, language and method instead
+  of hard-coded values; optional community reports are generated once and
+  persisted in `graphrag.json`.
+- `POST /graphrag/query` supports `method` overrides, global report ranking and
+  grounded answers, local KgSearch retrieval plus a grounded local answer,
+  DRIFT hybrid (community + local expansion + grounded answer), and reports its
+  GraphRAG version and community-report count. The Knowledge Graph
+  tab now exposes a method selector, question box and answer panel.
+- Dataset Configuration now reads the unstripped `parser_config_json` response
+  and reloads nested `parent_child`, `raptor`, `graphrag`, `html4excel`,
+  `children_delimiter`, `pdf_parser` and `page_index` values after save. GraphRAG
+  method and RAPTOR scope selects use stable lowercase values, so saved choices
+  no longer become blank after reload.
+
 ## [0.128.0] - 2026-11-27
 
 ### Embedded Rust Docling + data-source hardening (50+ fixes)
