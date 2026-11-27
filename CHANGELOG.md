@@ -37,6 +37,9 @@ All notable changes to RayRAG are documented in this file.
   deeper recursion, duplicate-name disambiguation and visible skip reasons.
 - Dataset save and data-source sync responses are checked before JSON parsing;
   long syncs poll for 30 minutes and show server text instead of a SyntaxError.
+- Dataset Configuration now reloads nested `parent_child`, `raptor`, `graphrag`,
+  `html4excel`, `children_delimiter`, `pdf_parser` and `page_index` values after
+  save instead of showing stale defaults.
 - Knowledge bases have no artificial per-file size or file-count cap: uploads
   stream to disk without the former 64 MiB/32-file limits, and data-source
   downloads have no default size ceiling either (the adaptive batch budget
