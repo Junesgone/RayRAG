@@ -9,9 +9,11 @@ All notable changes to RayRAG are documented in this file.
 - GraphRAG community detection now uses the `leiden-rs` 0.8.1 hierarchical
   Leiden implementation instead of the Louvain approximation, retaining the
   deterministic Louvain fallback if the graph is rejected.
-- When an embedding model is configured, community reports are embedded and
-  persisted with the graph; Global/DRIFT search ranks reports by cosine
-  similarity and falls back to lexical ranking when vectors are unavailable.
+- When an embedding model is configured, community reports and the
+  highest-degree entities are embedded and persisted with the graph;
+  Global/DRIFT search ranks reports/entities by cosine similarity, and local
+  KgSearch adds the top entity descriptions to its context. Lexical ranking
+  remains the fallback when vectors are unavailable.
 
 ## [0.129.0] - 2026-11-28
 

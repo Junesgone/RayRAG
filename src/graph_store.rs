@@ -29,6 +29,10 @@ pub struct GraphArtifacts {
     /// search when an embedding model is configured.
     #[serde(default)]
     pub report_embeddings: HashMap<String, HashMap<String, Vec<f32>>>,
+    /// Optional embedding per entity (name -> vector), used to complement
+    /// lexical KgSearch local retrieval.
+    #[serde(default)]
+    pub entity_embeddings: HashMap<String, HashMap<String, Vec<f32>>>,
 }
 
 pub struct GraphStore {
@@ -144,6 +148,30 @@ impl GraphStore {
             .get(kb_id)
             .cloned()
             .unwrap_or_default()
+    }
+
+    pub fn entity_embeddings_for(&self, kb_id: &str) -> HashMap<String, Vec<f32>> {
+        self.artifacts
+            .read()
+            .unwrap()
+            .entity_embeddings
+            .get(kb_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn set_entity_embeddings(
+        &self,
+        kb_id: &str,
+        embeddings: HashMap<String, Vec<f32>>,
+    ) -> anyhow::Result<()> {
+        let mut next = self.snapshot();
+        if embeddings.is_empty() {
+            next.entity_embeddings.remove(kb_id);
+        } else {
+            next.entity_embeddings.insert(kb_id.to_string(), embeddings);
+        }
+        self.replace_snapshot(next)
     }
 
     pub fn set_report_embeddings(
@@ -286,6 +314,13 @@ mod tests {
         assert_eq!(store.report_embeddings_for("kb-a"), vectors);
         store.set_report_embeddings("kb-a", HashMap::new()).unwrap();
         assert!(store.report_embeddings_for("kb-a").is_empty());
+        let entities = HashMap::from([("Battery Co".to_string(), vec![0.2, 0.8])]);
+        store
+            .set_entity_embeddings("kb-a", entities.clone())
+            .unwrap();
+        assert_eq!(store.entity_embeddings_for("kb-a"), entities);
+        store.set_entity_embeddings("kb-a", HashMap::new()).unwrap();
+        assert!(store.entity_embeddings_for("kb-a").is_empty());
         store.set_community_reports("kb-a", HashMap::new()).unwrap();
         assert!(store.community_reports_for("kb-a").is_empty());
     }

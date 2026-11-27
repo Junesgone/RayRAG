@@ -125,6 +125,45 @@ pub fn rank_community_reports_by_embedding(
         .collect()
 }
 
+/// Rank graph entities by embedding similarity, returning name/description
+/// pairs for the local/DRIFT context. Falls back to the highest-degree
+/// entities when vectors are unavailable.
+pub fn rank_entities_by_embedding(
+    graph: &EntityGraph,
+    embeddings: &HashMap<String, Vec<f32>>,
+    query_embedding: &[f32],
+    top_n: usize,
+) -> Vec<(String, String)> {
+    let mut scored: Vec<(f64, String, String)> = graph
+        .node_names()
+        .into_iter()
+        .filter_map(|name| {
+            let vector = embeddings.get(&name)?;
+            let score = cosine_similarity(query_embedding, vector);
+            let description = graph.description_of(&name).unwrap_or_default().to_string();
+            Some((score, name, description))
+        })
+        .collect();
+    if scored.is_empty() {
+        let mut names = graph.node_names();
+        names.sort_by_key(|name| std::cmp::Reverse(graph.degree(name)));
+        names.truncate(top_n);
+        return names
+            .into_iter()
+            .map(|name| {
+                let description = graph.description_of(&name).unwrap_or_default().to_string();
+                (name, description)
+            })
+            .collect();
+    }
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    scored.truncate(top_n);
+    scored
+        .into_iter()
+        .map(|(_, name, description)| (name, description))
+        .collect()
+}
+
 /// Microsoft GraphRAG global search: select community reports, then ask the
 /// LLM to answer from them with citations. The map/reduce split is folded into
 /// one grounded call because RayRAG keeps reports small and already ranked.
