@@ -31,3 +31,7 @@ Docling, Copyright (c) docling.rs contributors, licensed under the MIT License:
 
 RayRAG also links the pure-Rust PDF text-layer backend `docling-pdf` under the
 same workspace and license. No Python or PyTorch code is shipped.
+
+GraphRAG community detection uses `leiden-rs` (MIT OR Apache-2.0):
+
+    https://github.com/lileeei/leiden-rs

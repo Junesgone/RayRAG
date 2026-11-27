@@ -2795,6 +2795,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a79a3332a6609480d7d0c9eab957bca6b455b91bb84e66d19f5ff66294b85b8"
 
 [[package]]
+name = "leiden-rs"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7bbf4703fdbd25078c1842083c8f4e5551ed118a9d00342e309fee0bea46d42"
+dependencies = [
+ "rand 0.9.4",
+ "rustc-hash",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "lettre"
 version = "0.11.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4305,7 +4316,7 @@ dependencies = [
 
 [[package]]
 name = "rayrag"
-version = "0.128.0"
+version = "0.129.0"
 dependencies = [
  "aes 0.8.4",
  "anyhow",
@@ -4331,6 +4342,7 @@ dependencies = [
  "http-body-util",
  "image",
  "indexmap",
+ "leiden-rs",
  "lettre",
  "lopdf 0.47.0",
  "md-5",

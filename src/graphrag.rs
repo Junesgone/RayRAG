@@ -16,6 +16,7 @@
 use crate::Result;
 use crate::graphrag_enhanced::{EntityGraph, EntityType};
 use crate::llm::LlmClient;
+use leiden_rs::{GraphDataBuilder, Leiden, LeidenConfig};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 
@@ -380,6 +381,47 @@ pub struct Community {
     pub nodes: Vec<String>,
 }
 
+/// Run the real hierarchical Leiden implementation used by Microsoft
+/// GraphRAG (`graspologic.hierarchical_leiden` equivalent), returning one
+/// report level per aggregation pass. The seed makes report IDs reproducible.
+fn leiden_levels(
+    graph: &EntityGraph,
+    names: &[String],
+) -> anyhow::Result<BTreeMap<usize, HashMap<String, Community>>> {
+    let index: HashMap<&str, usize> = names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| (name.as_str(), i))
+        .collect();
+    let mut builder = GraphDataBuilder::new(names.len());
+    for (i, name) in names.iter().enumerate() {
+        for neighbor in graph.neighbors(name) {
+            let Some(&j) = index.get(neighbor.as_str()) else {
+                continue;
+            };
+            if j <= i {
+                continue;
+            }
+            let weight = graph.edge_weight(name, &neighbor).unwrap_or(1.0).max(0.0);
+            builder.add_edge(i, j, weight)?;
+        }
+    }
+    let data = builder.build()?;
+    let config = LeidenConfig {
+        seed: Some(42),
+        ..Default::default()
+    };
+    let output = Leiden::new(config).run_hierarchical(&data)?;
+    let mut levels = BTreeMap::new();
+    for (level, hierarchy) in output.levels.iter().enumerate() {
+        if hierarchy.membership.len() != names.len() {
+            continue;
+        }
+        levels.insert(level, communities_at_level(names, &hierarchy.membership));
+    }
+    Ok(levels)
+}
+
 /// Partition the graph into communities. Upstream uses graspologic
 /// `hierarchical_leiden`; this is a deterministic one-level Louvain-style
 /// modularity partition (the same objective, in Rust, without a C++/Python
@@ -389,6 +431,13 @@ pub fn partition_communities(graph: &EntityGraph) -> BTreeMap<usize, HashMap<Str
     let names = graph.node_names();
     if names.is_empty() {
         return BTreeMap::new();
+    }
+    // Prefer the real hierarchical Leiden implementation. The deterministic
+    // Louvain fallback below is kept for graphs/crates that reject the input.
+    if let Ok(levels) = leiden_levels(graph, &names)
+        && !levels.is_empty()
+    {
+        return levels;
     }
     let index: HashMap<&str, usize> = names
         .iter()

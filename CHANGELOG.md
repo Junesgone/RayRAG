@@ -4,7 +4,15 @@ All notable changes to RayRAG are documented in this file.
 
 ## [Unreleased]
 
-### Microsoft GraphRAG v3.3.0 mode and persisted community reports
+### Exact hierarchical Leiden community detection
+
+- GraphRAG community detection now uses the `leiden-rs` 0.8.1 hierarchical
+  Leiden implementation instead of the Louvain approximation, retaining the
+  deterministic Louvain fallback if the graph is rejected.
+
+## [0.129.0] - 2026-11-28
+
+### Microsoft GraphRAG v3.3.0, dataset configuration persistence, DRIFT
 
 - Community partitioning now runs deterministic Louvain passes at two
   aggregated levels (closer to hierarchical Leiden) and persists each level's
@@ -19,8 +27,12 @@ All notable changes to RayRAG are documented in this file.
   grounded answers, local KgSearch retrieval plus a grounded local answer,
   DRIFT hybrid (community + local expansion + grounded answer), and reports its
   GraphRAG version and community-report count. The Knowledge Graph
-  tab now exposes a method selector, question box and answer panel; nested
-  GraphRAG settings reload correctly from dataset Configuration.
+  tab now exposes a method selector, question box and answer panel.
+- Dataset Configuration now reads the unstripped `parser_config_json` response
+  and reloads nested `parent_child`, `raptor`, `graphrag`, `html4excel`,
+  `children_delimiter`, `pdf_parser` and `page_index` values after save. GraphRAG
+  method and RAPTOR scope selects use stable lowercase values, so saved choices
+  no longer become blank after reload.
 
 ## [0.128.0] - 2026-11-27
 
@@ -38,11 +50,6 @@ All notable changes to RayRAG are documented in this file.
   deeper recursion, duplicate-name disambiguation and visible skip reasons.
 - Dataset save and data-source sync responses are checked before JSON parsing;
   long syncs poll for 30 minutes and show server text instead of a SyntaxError.
-- Dataset Configuration now reads the unstripped `parser_config_json` response
-  and reloads nested `parent_child`, `raptor`, `graphrag`, `html4excel`,
-  `children_delimiter`, `pdf_parser` and `page_index` values after save. GraphRAG
-  method and RAPTOR scope selects use stable lowercase values, so saved choices
-  no longer become blank after reload.
 - Knowledge bases have no artificial per-file size or file-count cap: uploads
   stream to disk without the former 64 MiB/32-file limits, and data-source
   downloads have no default size ceiling either (the adaptive batch budget
