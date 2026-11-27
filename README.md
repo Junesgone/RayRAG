@@ -30,6 +30,9 @@
 - The UI and feature set follow the open-source project RAGFlow, but RayRAG needs **no** MySQL,
   Elasticsearch, Redis or MinIO: vectors live in [zvec](https://github.com/zvec-ai/zvec-rust)
   and metadata lives in **PostgreSQL 18.7**.
+- **Optional Microsoft GraphRAG v3.3.0**: Light/Global/Local/DRIFT modes per knowledge base,
+  exact hierarchical Leiden communities, persisted community-report/entity/relationship
+  embeddings, and grounded graph answers.
 - **Works on networks in mainland China**: container images, package mirrors and web search all
   use endpoints reachable from there.
 - Ships with **71 model providers** (DeepSeek, Qwen, Zhipu, Moonshot, SiliconFlow, VolcEngine,

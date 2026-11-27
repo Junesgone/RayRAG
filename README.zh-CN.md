@@ -31,6 +31,8 @@
 - 界面和功能对标开源项目 RAGFlow，但**不需要** MySQL、Elasticsearch、Redis、MinIO：
   向量库用 [zvec](https://github.com/zvec-ai/zvec-rust)，元数据用 **PostgreSQL 18.7**。
 - 全程**国内网络可用**：镜像、依赖源、联网搜索都用国内可达的地址。
+- **可选 Microsoft GraphRAG v3.3.0**：每个知识库可选 Light/Global/Local/DRIFT，
+  精确 hierarchical Leiden 社区、持久化社区报告/实体/关系向量，并提供有依据的图谱问答。
 - 支持 **71 家模型厂商**（DeepSeek、通义千问、智谱、月之暗面、硅基流动、豆包、百川……）
   以及本机跑的 Ollama / vLLM / LM Studio / llama.cpp。
 - 不想用 Docker 也行：直接跑一个二进制文件（纯 Linux 模式）。
