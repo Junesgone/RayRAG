@@ -656,7 +656,7 @@ DRIFT 或 RAGFlow General 模式。实体与关系由 LLM 抽取后合并到知�
 并按知识库持久化到 `graphrag.json`；输入被算法拒绝时回退确定性的 Rust Louvain 实现。因此
 `POST /api/v1/datasets/{id}/graphrag/query` 的 Global 模式直接做报告排序与 grounded 回答，
 不会每次查询重复跑昂贵的社区摘要；配置了 embedding 模型时还会持久化报告向量，Global/DRIFT
-用余弦相似度排序；实体描述也按向量补充到 Local/DRIFT 上下文，未向量化时回退词法排序。Local 模式复用 KgSearch 的实体/关系/社区上下文，并
+用余弦相似度排序；实体描述与最强关系也按向量补充到 Local/DRIFT 上下文，未向量化时回退词法排序。Local 模式复用 KgSearch 的实体/关系/社区上下文，并
 再次调用 LLM 生成 grounded 回答；DRIFT 模式把社区报告与局部实体扩展合并后生成回答。响应包含 `graphrag_version: "3.3.0"`、`method` 和
 `community_reports` 数量。
 

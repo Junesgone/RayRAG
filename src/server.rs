@@ -1611,6 +1611,7 @@ fn delete_dataset_data(state: &Arc<AppState>, dataset_id: &str) -> crate::Result
     snapshot.community_reports.remove(dataset_id);
     snapshot.report_embeddings.remove(dataset_id);
     snapshot.entity_embeddings.remove(dataset_id);
+    snapshot.relation_embeddings.remove(dataset_id);
     snapshot
         .checkpoints
         .retain(|_, checkpoint| checkpoint.kb_id != dataset_id);
@@ -4381,7 +4382,10 @@ async fn query_graphrag(
     if !question.trim().is_empty() {
         let report_embeddings = state.graphs.report_embeddings_for(&dataset_id);
         let entity_embeddings = state.graphs.entity_embeddings_for(&dataset_id);
-        let has_any_embeddings = !report_embeddings.is_empty() || !entity_embeddings.is_empty();
+        let relation_embeddings = state.graphs.relation_embeddings_for(&dataset_id);
+        let has_any_embeddings = !report_embeddings.is_empty()
+            || !entity_embeddings.is_empty()
+            || !relation_embeddings.is_empty();
         let query_embedding = match (state.embedder.as_ref(), has_any_embeddings) {
             (Some(embedder), false) => match embedder.embed(&[question]).await {
                 Ok(mut vectors) if !vectors.is_empty() => vectors.pop(),
@@ -4455,6 +4459,14 @@ async fn query_graphrag(
                             context.push(format!("Entity {name}: {description}"));
                         }
                     }
+                    for relation in crate::graphrag::rank_relations_by_embedding(
+                        &graph,
+                        &relation_embeddings,
+                        vector,
+                        12,
+                    ) {
+                        context.push(relation);
+                    }
                 }
                 if context.is_empty() {
                     context = state
@@ -4509,6 +4521,14 @@ async fn query_graphrag(
                                 context.push(format!("Entity {name}: {description}"));
                             }
                         }
+                        for relation in crate::graphrag::rank_relations_by_embedding(
+                            &graph,
+                            &relation_embeddings,
+                            vector,
+                            12,
+                        ) {
+                            context.push(relation);
+                        }
                     }
                     if !context.is_empty() {
                         let joined = context.join("\n\n");
@@ -4544,6 +4564,7 @@ async fn query_graphrag(
             "community_reports": reports.len(),
             "report_embeddings": state.graphs.report_embeddings_for(&dataset_id).len(),
             "entity_embeddings": state.graphs.entity_embeddings_for(&dataset_id).len(),
+            "relation_embeddings": state.graphs.relation_embeddings_for(&dataset_id).len(),
         })),
     })
     .into_response()
@@ -4934,6 +4955,49 @@ async fn build_graphrag(
             }
         }
     }
+    // Relationship embeddings are capped at the 2048 strongest edges.
+    let mut relation_embeddings = std::collections::HashMap::new();
+    if let Some(embedder) = state.embedder.as_ref()
+        && nodes > 0
+    {
+        let mut edges: Vec<(String, String, f64)> = Vec::new();
+        for name in graph.node_names() {
+            for neighbor in graph.neighbors(&name) {
+                if name >= neighbor {
+                    continue;
+                }
+                let key = format!("{name}\0{neighbor}");
+                let description = graph
+                    .edge_description(&name, &neighbor)
+                    .unwrap_or_default()
+                    .to_string();
+                let weight = graph.edge_weight(&name, &neighbor).unwrap_or(1.0);
+                edges.push((key, format!("{name} -- {neighbor}: {description}"), weight));
+            }
+        }
+        edges.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+        edges.truncate(2048);
+        let keys: Vec<String> = edges.iter().map(|(key, _, _)| key.clone()).collect();
+        let texts: Vec<&str> = edges.iter().map(|(_, text, _)| text.as_str()).collect();
+        match embedder.embed(&texts).await {
+            Ok(vectors) if vectors.len() == keys.len() => {
+                for (key, vector) in keys.into_iter().zip(vectors) {
+                    relation_embeddings.insert(key, vector);
+                }
+            }
+            Ok(vectors) => {
+                tracing::warn!(
+                    dataset_id,
+                    expected = keys.len(),
+                    got = vectors.len(),
+                    "GraphRAG relation embeddings returned a mismatched count"
+                );
+            }
+            Err(error) => {
+                tracing::warn!(%error, dataset_id, "GraphRAG relation embedding failed");
+            }
+        }
+    }
     // 持久化：合并到 GraphStore 的 kb_graphs（重启后保留）
     let mut snapshot = state.graphs.snapshot();
     snapshot.kb_graphs.insert(dataset_id.clone(), graph.clone());
@@ -4958,6 +5022,13 @@ async fn build_graphrag(
         snapshot
             .entity_embeddings
             .insert(dataset_id.clone(), entity_embeddings.clone());
+    }
+    if relation_embeddings.is_empty() {
+        snapshot.relation_embeddings.remove(&dataset_id);
+    } else {
+        snapshot
+            .relation_embeddings
+            .insert(dataset_id.clone(), relation_embeddings.clone());
     }
     if let Err(error) = state.graphs.replace_snapshot(snapshot) {
         tracing::warn!(%error, "Failed to persist graphrag snapshot");
@@ -4986,6 +5057,7 @@ async fn build_graphrag(
             "community_reports": report_map.len(),
             "report_embeddings": report_embeddings.len(),
             "entity_embeddings": entity_embeddings.len(),
+            "relation_embeddings": relation_embeddings.len(),
         }
     }))
     .into_response()

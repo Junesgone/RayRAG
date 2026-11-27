@@ -164,6 +164,39 @@ pub fn rank_entities_by_embedding(
         .collect()
 }
 
+/// Rank undirected relationships by embedding similarity and return display
+/// strings for local/DRIFT context.
+pub fn rank_relations_by_embedding(
+    graph: &EntityGraph,
+    embeddings: &HashMap<String, Vec<f32>>,
+    query_embedding: &[f32],
+    top_n: usize,
+) -> Vec<String> {
+    let mut scored: Vec<(f64, String)> = Vec::new();
+    for source in graph.node_names() {
+        for target in graph.neighbors(&source) {
+            if source >= target {
+                continue;
+            }
+            let key = format!("{source}\0{target}");
+            let Some(vector) = embeddings.get(&key) else {
+                continue;
+            };
+            let description = graph
+                .edge_description(&source, &target)
+                .unwrap_or_default()
+                .to_string();
+            scored.push((
+                cosine_similarity(query_embedding, vector),
+                format!("Relationship {source} -- {target}: {description}"),
+            ));
+        }
+    }
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    scored.truncate(top_n);
+    scored.into_iter().map(|(_, text)| text).collect()
+}
+
 /// Microsoft GraphRAG global search: select community reports, then ask the
 /// LLM to answer from them with citations. The map/reduce split is folded into
 /// one grounded call because RayRAG keeps reports small and already ranked.
