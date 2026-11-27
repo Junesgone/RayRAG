@@ -2,7 +2,15 @@
 DIR=$(cd "$(dirname "$0")" && pwd)
 . "$DIR/rayrag-fpk-common"
 
-write_env_file "${wizard_db_password:-admin}" || { fail_msg "could not write $FPK_ENV"; exit 1; }
+# An upgrade must preserve the existing PostgreSQL password and data. The
+# install wizard's password is only a first-install value; rewriting it here
+# would make the saved DSN disagree with the already-initialized cluster.
+if [ -f "$FPK_ENV" ]; then
+  sync_static || log_msg "warning: static files sync skipped"
+  log_msg "upgrade_callback: keeping the existing environment and PostgreSQL cluster"
+else
+  write_env_file "${wizard_db_password:-admin}" || { fail_msg "could not write $FPK_ENV"; exit 1; }
+fi
 start_all || exit 1
 log_msg "upgrade_callback: RayRAG upgraded and restarted"
 exit 0

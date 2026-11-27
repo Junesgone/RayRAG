@@ -4,8 +4,12 @@ All notable changes to RayRAG are documented in this file.
 
 ## [Unreleased]
 
-### PostgreSQL credential boundary
+### FPK upgrade and PostgreSQL credential boundary
 
+- FPK upgrades preserve the existing `rayrag.env`/PostgreSQL password and
+  initialize the cluster only when no environment exists. Previously the
+  upgrade callback rewrote the password to the wizard default, which could
+  disagree with the initialized cluster.
 - Changing a normal user's password no longer rotates the PostgreSQL
   administrator role credential; only an administrator password update (or the
   first admin registration) synchronizes PostgreSQL.
