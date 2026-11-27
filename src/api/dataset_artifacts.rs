@@ -119,7 +119,9 @@ pub async fn has_any_wiki(
     .await
     {
         Ok(true) => StatusCode::OK.into_response(),
-        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        // HEAD is a boolean probe. 204 No Content means "no wiki pages" and
+        // keeps the browser console free of expected 404 resource errors.
+        Ok(false) => StatusCode::NO_CONTENT.into_response(),
         Err(response) => response,
     }
 }

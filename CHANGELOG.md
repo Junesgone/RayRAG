@@ -4,7 +4,15 @@ All notable changes to RayRAG are documented in this file.
 
 ## [Unreleased]
 
-### GraphRAG error guidance, FPK upgrade, PostgreSQL credentials
+### UI noise and artifact probe
+
+- `HEAD /api/v1/datasets/{id}/artifacts` now answers 204 No Content when no
+  wiki pages exist, preserving the boolean probe semantics while removing the
+  expected 404 resource error from the browser console.
+
+## [0.130.0] - 2026-11-28
+
+### Exact Leiden, GraphRAG vectors, FPK upgrade and PostgreSQL credentials
 
 - Global GraphRAG queries now fail with actionable guidance when no community
   reports exist, instead of returning an empty answer.

@@ -25604,7 +25604,7 @@ mod tests {
             "",
         )
         .await;
-        assert_eq!(probe_after.status(), StatusCode::NOT_FOUND);
+        assert_eq!(probe_after.status(), StatusCode::NO_CONTENT);
     }
 
     /// Chat-app sessions must be scoped to their app: a session created under one chat is
