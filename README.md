@@ -312,8 +312,11 @@ Entirely in Docker volumes: `rayrag-state` (files and business data), `rayrag-zv
 (vector index), `rayrag-postgres-data` (database). Nothing is sent to a third party.
 
 **Q8 — can it handle images and scanned PDFs?**
-Yes, with an OCR / vision model configured (`OCR` tab, or a `VLM` default model). Mainland-China
-options include the embedded Rust Docling converter (default), PaddleOCR, MinerU, SoMark, OpenDataLoader, a remote Docling service and OXR, or a local vision model.
+The embedded Rust Docling converter is the default parser for PDF/DOCX/PPTX/XLSX/HTML/Markdown;
+it needs no Python and no model download for text-layer PDFs. Scanned PDFs and images additionally
+need an OCR / vision model configured (`OCR` tab, or a `VLM` default model). Mainland-China OCR
+options include PaddleOCR, MinerU, SoMark, OpenDataLoader, a remote Docling service and OXR, or a
+local vision model.
 
 **Q9 — why is my reranker unavailable?**
 If the GPU is fully occupied by the chat model, the reranker cannot load. Move it to another
