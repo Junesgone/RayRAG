@@ -4,6 +4,12 @@ All notable changes to RayRAG are documented in this file.
 
 ## [Unreleased]
 
+### GraphRAG query empty-state guidance
+
+- The knowledge-graph Ask action now tells the user to click Build Graph when
+  no graph exists, instead of silently showing "No answer." The Ask button also
+  carries a stable `graphAsk` id/test id for UI automation.
+
 ### GraphRAG query method fallback
 
 - The query selector now offers Global, Local, DRIFT and Basic instead of the
