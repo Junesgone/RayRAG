@@ -25,6 +25,10 @@ pub struct GraphArtifacts {
     /// LLM community-report pass on every query.
     #[serde(default)]
     pub community_reports: HashMap<String, HashMap<String, String>>,
+    /// Optional embedding per community report title, used by global/DRIFT
+    /// search when an embedding model is configured.
+    #[serde(default)]
+    pub report_embeddings: HashMap<String, HashMap<String, Vec<f32>>>,
 }
 
 pub struct GraphStore {
@@ -130,6 +134,30 @@ impl GraphStore {
             .get(kb_id)
             .cloned()
             .unwrap_or_default()
+    }
+
+    pub fn report_embeddings_for(&self, kb_id: &str) -> HashMap<String, Vec<f32>> {
+        self.artifacts
+            .read()
+            .unwrap()
+            .report_embeddings
+            .get(kb_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn set_report_embeddings(
+        &self,
+        kb_id: &str,
+        embeddings: HashMap<String, Vec<f32>>,
+    ) -> anyhow::Result<()> {
+        let mut next = self.snapshot();
+        if embeddings.is_empty() {
+            next.report_embeddings.remove(kb_id);
+        } else {
+            next.report_embeddings.insert(kb_id.to_string(), embeddings);
+        }
+        self.replace_snapshot(next)
     }
 
     pub fn set_community_reports(
@@ -251,6 +279,13 @@ mod tests {
             .set_community_reports("kb-a", reports.clone())
             .unwrap();
         assert_eq!(store.community_reports_for("kb-a"), reports);
+        let vectors = HashMap::from([("Battery recycling network".to_string(), vec![0.1, 0.9])]);
+        store
+            .set_report_embeddings("kb-a", vectors.clone())
+            .unwrap();
+        assert_eq!(store.report_embeddings_for("kb-a"), vectors);
+        store.set_report_embeddings("kb-a", HashMap::new()).unwrap();
+        assert!(store.report_embeddings_for("kb-a").is_empty());
         store.set_community_reports("kb-a", HashMap::new()).unwrap();
         assert!(store.community_reports_for("kb-a").is_empty());
     }

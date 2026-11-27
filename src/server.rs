@@ -1609,6 +1609,7 @@ fn delete_dataset_data(state: &Arc<AppState>, dataset_id: &str) -> crate::Result
     let mut snapshot = state.graphs.snapshot();
     snapshot.kb_graphs.remove(dataset_id);
     snapshot.community_reports.remove(dataset_id);
+    snapshot.report_embeddings.remove(dataset_id);
     snapshot
         .checkpoints
         .retain(|_, checkpoint| checkpoint.kb_id != dataset_id);
@@ -4377,15 +4378,45 @@ async fn query_graphrag(
     let mut answer = None;
     let mut context = Vec::<String>::new();
     if !question.trim().is_empty() {
+        let report_embeddings = state.graphs.report_embeddings_for(&dataset_id);
+        let query_embedding = match (state.embedder.as_ref(), report_embeddings.is_empty()) {
+            (Some(embedder), false) => match embedder.embed(&[question]).await {
+                Ok(mut vectors) if !vectors.is_empty() => vectors.pop(),
+                Ok(_) => None,
+                Err(error) => {
+                    tracing::warn!(%error, dataset_id, "GraphRAG query embedding failed");
+                    None
+                }
+            },
+            _ => None,
+        };
         match method {
             "global" => {
-                let selected = crate::graphrag::rank_community_reports(&reports, question, 8);
+                let selected = match query_embedding.as_deref() {
+                    Some(vector) => crate::graphrag::rank_community_reports_by_embedding(
+                        &reports,
+                        &report_embeddings,
+                        vector,
+                        question,
+                        8,
+                    ),
+                    None => crate::graphrag::rank_community_reports(&reports, question, 8),
+                };
                 context = selected
                     .iter()
                     .map(|(title, report)| format!("# {title}\n{report}"))
                     .collect();
-                if let Some(llm) = state.llm.as_ref() {
-                    match crate::graphrag::global_search(llm, &reports, question, 8).await {
+                if let Some(llm) = state.llm.as_ref()
+                    && !context.is_empty()
+                {
+                    match crate::graphrag::answer_from_context(
+                        llm,
+                        question,
+                        &context.join("\n\n"),
+                        "global",
+                    )
+                    .await
+                    {
                         Ok(value) => answer = Some(value),
                         Err(error) => {
                             return api_error(
@@ -4428,7 +4459,16 @@ async fn query_graphrag(
             "drift" => {
                 // DRIFT is a hybrid: community-report context plus local
                 // entity/relationship expansion, then one grounded answer.
-                let selected = crate::graphrag::rank_community_reports(&reports, question, 6);
+                let selected = match query_embedding.as_deref() {
+                    Some(vector) => crate::graphrag::rank_community_reports_by_embedding(
+                        &reports,
+                        &report_embeddings,
+                        vector,
+                        question,
+                        6,
+                    ),
+                    None => crate::graphrag::rank_community_reports(&reports, question, 6),
+                };
                 context = selected
                     .iter()
                     .map(|(title, report)| format!("# {title}\n{report}"))
@@ -4801,15 +4841,51 @@ async fn build_graphrag(
             }
         }
     }
+    // Embed the persisted reports when an embedding model is available. Global
+    // and DRIFT queries then rank community reports by cosine similarity; without
+    // an embedding model they keep the lexical ranking fallback.
+    let mut report_embeddings = std::collections::HashMap::new();
+    if let Some(embedder) = state.embedder.as_ref()
+        && !report_map.is_empty()
+    {
+        let entries: Vec<(&String, &String)> = report_map.iter().collect();
+        let texts: Vec<&str> = entries.iter().map(|(_, text)| text.as_str()).collect();
+        match embedder.embed(&texts).await {
+            Ok(vectors) if vectors.len() == entries.len() => {
+                for ((title, _), vector) in entries.into_iter().zip(vectors) {
+                    report_embeddings.insert(title.clone(), vector);
+                }
+            }
+            Ok(vectors) => {
+                tracing::warn!(
+                    dataset_id,
+                    expected = entries.len(),
+                    got = vectors.len(),
+                    "GraphRAG report embeddings returned a mismatched count"
+                );
+            }
+            Err(error) => {
+                tracing::warn!(%error, dataset_id, "GraphRAG report embedding failed");
+            }
+        }
+    }
     // 持久化：合并到 GraphStore 的 kb_graphs（重启后保留）
     let mut snapshot = state.graphs.snapshot();
     snapshot.kb_graphs.insert(dataset_id.clone(), graph.clone());
     if report_map.is_empty() {
         snapshot.community_reports.remove(&dataset_id);
+        snapshot.report_embeddings.remove(&dataset_id);
     } else {
         snapshot
             .community_reports
             .insert(dataset_id.clone(), report_map.clone());
+        if report_embeddings.is_empty() {
+            snapshot.report_embeddings.remove(&dataset_id);
+        } else {
+            snapshot
+                .report_embeddings
+                .insert(dataset_id.clone(), report_embeddings.clone());
+        }
     }
     if let Err(error) = state.graphs.replace_snapshot(snapshot) {
         tracing::warn!(%error, "Failed to persist graphrag snapshot");
@@ -4836,6 +4912,7 @@ async fn build_graphrag(
             "method": method,
             "graphrag_version": crate::graphrag::MICROSOFT_GRAPHRAG_VERSION,
             "community_reports": report_map.len(),
+            "report_embeddings": report_embeddings.len(),
         }
     }))
     .into_response()

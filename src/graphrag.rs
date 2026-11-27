@@ -80,6 +80,51 @@ pub fn rank_community_reports(
         .collect()
 }
 
+/// Cosine similarity for report embeddings. Vectors are L2-normalized here so
+/// callers do not need to depend on the embedding backend's normalization.
+pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
+    if a.is_empty() || b.is_empty() || a.len() != b.len() {
+        return 0.0;
+    }
+    let dot: f64 = a.iter().zip(b).map(|(x, y)| *x as f64 * *y as f64).sum();
+    let norm_a = a.iter().map(|x| *x as f64 * *x as f64).sum::<f64>().sqrt();
+    let norm_b = b.iter().map(|x| *x as f64 * *x as f64).sum::<f64>().sqrt();
+    if norm_a <= f64::EPSILON || norm_b <= f64::EPSILON {
+        0.0
+    } else {
+        dot / (norm_a * norm_b)
+    }
+}
+
+/// Rank reports by the configured embedding model, falling back to lexical
+/// ranking when no vectors are available.
+pub fn rank_community_reports_by_embedding(
+    reports: &HashMap<String, String>,
+    embeddings: &HashMap<String, Vec<f32>>,
+    query_embedding: &[f32],
+    question: &str,
+    top_n: usize,
+) -> Vec<(String, String)> {
+    let mut scored: Vec<(f64, String, String)> = reports
+        .iter()
+        .filter_map(|(title, report)| {
+            let score = embeddings
+                .get(title)
+                .map(|embedding| cosine_similarity(query_embedding, embedding))?;
+            Some((score, title.clone(), report.clone()))
+        })
+        .collect();
+    if scored.is_empty() {
+        return rank_community_reports(reports, question, top_n);
+    }
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    scored.truncate(top_n);
+    scored
+        .into_iter()
+        .map(|(_, title, report)| (title, report))
+        .collect()
+}
+
 /// Microsoft GraphRAG global search: select community reports, then ask the
 /// LLM to answer from them with citations. The map/reduce split is folded into
 /// one grounded call because RayRAG keeps reports small and already ranked.
@@ -2190,6 +2235,27 @@ mod tests {
             "A community about music and art.".into(),
         );
         let ranked = rank_community_reports(&reports, "battery recycling", 1);
+        assert_eq!(ranked.len(), 1);
+        assert_eq!(ranked[0].0, "Battery recycling network");
+    }
+
+    #[test]
+    fn report_embedding_ranking_prefers_cosine_match() {
+        assert!((cosine_similarity(&[1.0, 0.0], &[2.0, 0.0]) - 1.0).abs() < 1e-6);
+        assert_eq!(cosine_similarity(&[1.0], &[1.0, 0.0]), 0.0);
+        let reports = HashMap::from([
+            (
+                "Battery recycling network".to_string(),
+                "battery".to_string(),
+            ),
+            ("Music community".to_string(), "music".to_string()),
+        ]);
+        let embeddings = HashMap::from([
+            ("Battery recycling network".to_string(), vec![1.0, 0.0]),
+            ("Music community".to_string(), vec![0.0, 1.0]),
+        ]);
+        let ranked =
+            rank_community_reports_by_embedding(&reports, &embeddings, &[0.9, 0.1], "anything", 1);
         assert_eq!(ranked.len(), 1);
         assert_eq!(ranked[0].0, "Battery recycling network");
     }
