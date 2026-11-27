@@ -20173,6 +20173,10 @@ connection: close
             html.contains("id='graphQueryMethod'"),
             "GraphRAG method selector missing"
         );
+        assert!(
+            html.contains("id='graphAsk'"),
+            "GraphRAG Ask button missing"
+        );
         // API 调用
         assert!(html.contains("/api/v1/retrieval"), "retrieval API missing");
         // The embedding-model field is a default-model popover trigger driven by
