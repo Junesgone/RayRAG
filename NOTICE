@@ -23,3 +23,11 @@ specific language governing permissions and limitations under the License.
 Third-party assets bundled with this repository (web fonts, icons, the PDF.js
 viewer, and the vendored zvec client crate) remain under their own licenses as
 noted in their respective directories.
+
+RayRAG embeds the Rust crate `docling` (docling.rs), a Rust port of IBM
+Docling, Copyright (c) docling.rs contributors, licensed under the MIT License:
+
+    https://github.com/docling-project/docling.rs
+
+RayRAG also links the pure-Rust PDF text-layer backend `docling-pdf` under the
+same workspace and license. No Python or PyTorch code is shipped.

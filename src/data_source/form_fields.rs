@@ -171,6 +171,10 @@ impl FormValidation {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FormFieldSpec {
     pub label: String,
+    /// Chinese label for the schema-driven detail form; omitted when the
+    /// upstream field has no localized label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_zh: Option<String>,
     /// Dot-path into the connector `config` object, e.g.
     /// `config.credentials.client_id`.
     pub name: String,

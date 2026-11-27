@@ -1258,7 +1258,7 @@ fn default_parser_config(chunk_method: &str) -> serde_json::Value {
     let object = config.as_object_mut().unwrap();
     match chunk_method {
         "naive" => {
-            object.insert("layout_recognize".into(), serde_json::json!("DeepDOC"));
+            object.insert("layout_recognize".into(), serde_json::json!("Docling"));
             object.insert("chunk_token_num".into(), serde_json::json!(512));
             object.insert("delimiter".into(), serde_json::json!("\n"));
             object.insert("auto_keywords".into(), serde_json::json!(0));

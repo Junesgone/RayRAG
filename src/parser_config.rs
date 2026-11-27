@@ -81,7 +81,9 @@ pub fn layout_recognizer_name(layout_recognizer: Option<String>) -> String {
         Some("true") | Some("True") => "DeepDOC".to_string(),
         Some("false") | Some("False") => "Plain Text".to_string(),
         Some(other) => other.trim().to_lowercase(),
-        None => "deepdoc".to_string(),
+        // RayRAG defaults to Docling for new knowledge bases; an explicit
+        // `true`/`false` still follows RAGFlow's boolean compatibility.
+        None => "docling".to_string(),
     }
 }
 

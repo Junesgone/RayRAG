@@ -1235,7 +1235,7 @@ async fn create_dataset(
         json!({
             "table_context_size": 0,
             "image_context_size": 0,
-            "layout_recognize": "DeepDOC",
+            "layout_recognize": "Docling",
             "chunk_token_num": 512,
             "delimiter": "\n",
             "auto_keywords": 0,
@@ -1788,8 +1788,11 @@ async fn delete_datasets(
 }
 // ── Upload and document processing ─────────────────────────────
 
-const DEFAULT_MAX_UPLOAD_BYTES: usize = 64 * 1024 * 1024;
-const MAX_DOCUMENTS_PER_UPLOAD: usize = 32;
+// Knowledge bases have no artificial per-file or per-upload count cap. The
+// upload path streams each part to disk, so the remaining bound is the host's
+// filesystem capacity; operators can still set RAYRAG_MAX_UPLOAD_BYTES.
+const DEFAULT_MAX_UPLOAD_BYTES: usize = usize::MAX;
+const MAX_DOCUMENTS_PER_UPLOAD: usize = usize::MAX;
 const MULTIPART_OVERHEAD_BYTES: usize = 1024 * 1024;
 const TASK_LEASE_DURATION_MS: u64 = 30_000;
 const TASK_LEASE_RENEW_INTERVAL_MS: u64 = 10_000;
@@ -1798,11 +1801,15 @@ const TASK_COMMIT_LEASE_DURATION_MS: u64 = 120_000;
 const DEFAULT_MAX_CONCURRENT_DOCUMENT_TASKS: usize = 4;
 
 fn max_upload_bytes() -> usize {
-    std::env::var("RAYRAG_MAX_UPLOAD_BYTES")
+    match std::env::var("RAYRAG_MAX_UPLOAD_BYTES")
         .ok()
-        .and_then(|value| value.parse().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_MAX_UPLOAD_BYTES)
+        .and_then(|value| value.trim().parse::<usize>().ok())
+    {
+        // 0 is the documented "no limit" value.
+        Some(0) => usize::MAX,
+        Some(value) => value,
+        None => DEFAULT_MAX_UPLOAD_BYTES,
+    }
 }
 
 fn validate_zip_container(extension: &str, path: &FsPath) -> bool {
@@ -3095,7 +3102,17 @@ async fn process_document(
             let path_str = path
                 .to_str()
                 .ok_or_else(|| anyhow::anyhow!("Invalid upload path"))?;
-            let (chunks, report) = pipeline.process_with_report(path_str).await?;
+            let (chunks, report) = pipeline.process_with_report(path_str).await.map_err(|error| {
+                // Storage names are UUIDs; lead with the document's display
+                // name so a parse failure is identifiable in the task log.
+                let text = format!("{error:#}");
+                let prefix = format!("{}:", doc.name);
+                if text.starts_with(&prefix) || text.contains(&prefix) {
+                    anyhow::anyhow!("{text}")
+                } else {
+                    anyhow::anyhow!("{}: {text}", doc.name)
+                }
+            })?;
             Ok::<_, anyhow::Error>((config, chunks, report))
         }.await;
         heartbeat.abort();

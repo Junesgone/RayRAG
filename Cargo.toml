@@ -1,6 +1,6 @@
 [package]
 name = "rayrag"
-version = "0.127.44"
+version = "0.128.0"
 edition = "2024"
 rust-version = "1.100"
 description = "RayRAG: RAGFlow parsing pipeline rewritten in Rust, powered by zvec"
@@ -18,6 +18,10 @@ build = "build.rs"
 default = ["postgres-backend", "zvec-backend"]
 zvec-backend = ["dep:zvec-rust"]
 postgres-backend = ["dep:postgres"]
+# Opt-in full Docling ML pipeline (layout/table/OCR via ONNX). The default
+# build embeds the pure-Rust converter and PDF text layer; enabling this also
+# requires the Docling model files at runtime.
+docling-ml = ["docling/pdf"]
 
 [dependencies]
 flate2 = "1"
@@ -31,6 +35,12 @@ weezl = "0.2.1"         # Bounded, fallible PDF LZW decoding
 # vendored copy under vendor/zvec-rust, Cargo.lock and Dockerfile ARG
 # ZVEC_RUST_VERSION keep the same version so the Docker [patch] actually applies.
 zvec-rust = { git = "https://github.com/zvec-ai/zvec-rust", tag = "v0.8.1", optional = true }
+
+# Embedded Rust port of Docling (docling.rs). The pure-Rust converter handles
+# DOCX/XLSX/PPTX/HTML/Markdown/email and the PDF text layer without Python or
+# PyTorch; the ML layout/OCR pipeline stays an optional build feature so the
+# default binary remains self-contained and offline-friendly.
+docling = { version = "=2.89.1", default-features = false, features = ["pdf-text"] }
 
 # Optional synchronous PostgreSQL mirror used by the existing synchronous
 # atomic persistence boundary. PostgreSQL 18.4 is the deployment baseline.

@@ -132,9 +132,12 @@ pub fn mime_from_extension(name: &str) -> Option<&'static str> {
         "pdf" => Some("application/pdf"),
         "docx" => Some("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
         "txt" => Some("text/plain"),
-        "md" | "markdown" => Some("text/markdown"),
+        "md" | "markdown" | "mdx" => Some("text/markdown"),
         "html" | "htm" => Some("text/html"),
         "csv" => Some("text/csv"),
+        // RAGFlow's data-source text allowlist includes these; treating them as
+        // plain text keeps a synced `.sql`/`.conf`/`.log`/`.tsv` parseable.
+        "conf" | "log" | "sql" | "tsv" => Some("text/plain"),
         "xls" => Some("application/vnd.ms-excel"),
         "xlsx" => Some("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
         "epub" => Some("application/epub+zip"),
@@ -164,5 +167,7 @@ pub fn mime_from_extension(name: &str) -> Option<&'static str> {
         _ => None,
     }
 }
+
+
 
 

@@ -60,6 +60,10 @@ pub struct SyncBatch {
     pub docs: Vec<ConnectorDoc>,
     /// Per-file failure messages (document id / name + reason).
     pub failures: Vec<String>,
+    /// Files deliberately not downloaded (unsupported extension, oversized,
+    /// image disabled). These are not failures but must stay visible in the
+    /// sync log so a missing file is never a silent omission.
+    pub skipped: Vec<String>,
     /// Connector ids of every file considered in this batch, including files
     /// whose fetch/normalize failed. Used for `sync_deleted_files` pruning.
     pub source_keys: Vec<String>,
@@ -116,6 +120,213 @@ fn remote_file_version(file: &RemoteFile) -> Option<String> {
     None
 }
 
+/// Entries that are never useful as knowledge-base documents: version-control
+/// internals, dependency trees and parser caches. They are skipped even when the
+/// source is configured to include hidden files, because ingesting `.git/hooks`
+/// samples or `node_modules` is never what the operator meant.
+const CONNECTOR_SKIP_DIRS: &[&str] = &[
+    ".git",
+    ".svn",
+    ".hg",
+    ".bzr",
+    "node_modules",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".tox",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".cache",
+];
+
+const CONNECTOR_SKIP_FILES: &[&str] = &[".ds_store", "thumbs.db", "desktop.ini"];
+
+fn parse_flag(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+/// `config.include_hidden` (per source) wins over `RAYRAG_CONNECTOR_INCLUDE_HIDDEN`
+/// (global default). Hidden *VCS/dependency* entries stay excluded either way.
+fn connector_includes_hidden(extra: &HashMap<String, String>) -> bool {
+    extra
+        .get("config.include_hidden")
+        .or_else(|| extra.get("include_hidden"))
+        .and_then(|value| parse_flag(value))
+        .or_else(|| {
+            std::env::var("RAYRAG_CONNECTOR_INCLUDE_HIDDEN")
+                .ok()
+                .and_then(|value| parse_flag(&value))
+        })
+        .unwrap_or(false)
+}
+
+fn excluded_connector_entry(name: &str, include_hidden: bool) -> bool {
+    let lower = name.to_ascii_lowercase();
+    if CONNECTOR_SKIP_DIRS.contains(&lower.as_str()) {
+        return true;
+    }
+    !include_hidden && name.starts_with('.')
+}
+
+fn excluded_connector_file(name: &str, include_hidden: bool) -> bool {
+    let lower = name.to_ascii_lowercase();
+    CONNECTOR_SKIP_FILES.contains(&lower.as_str()) || excluded_connector_entry(name, include_hidden)
+}
+
+/// Apply the same exclusion rules to a WebDAV path. The href may be
+/// percent-encoded, so decode before looking at its segments.
+fn webdav_path_excluded(path: &str, include_hidden: bool) -> bool {
+    let decoded = percent_decode_href(path);
+    decoded
+        .split('/')
+        .filter(|segment| !segment.is_empty() && *segment != "." && *segment != "..")
+        .any(|segment| excluded_connector_file(segment, include_hidden))
+}
+
+/// RAGFlow `is_accepted_file_ext` — plain-text extensions
+/// (`common/data_source/utils.py`). Kept as a literal list so a parser gaining
+/// a new extension does not silently widen what a data source downloads.
+const CONNECTOR_TEXT_EXTENSIONS: &[&str] = &[
+    ".txt", ".md", ".mdx", ".conf", ".log", ".json", ".csv", ".tsv", ".xml", ".yml", ".yaml",
+    ".sql",
+];
+
+/// RAGFlow `is_accepted_file_ext` — document extensions.
+const CONNECTOR_DOCUMENT_EXTENSIONS: &[&str] =
+    &[".pdf", ".docx", ".pptx", ".xlsx", ".eml", ".epub", ".html"];
+
+/// RAGFlow `is_accepted_file_ext` — image extensions, accepted only when the
+/// source enables `allow_images`.
+const CONNECTOR_IMAGE_EXTENSIONS: &[&str] =
+    &[".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp"];
+
+/// RAGFlow data sources accept images only when `allow_images` is on. RayRAG
+/// keeps the same default (off) so a photo folder does not turn into a wall of
+/// OCR failures, while the per-source switch makes it opt-in.
+fn connector_allows_images(extra: &HashMap<String, String>) -> bool {
+    extra
+        .get("config.allow_images")
+        .or_else(|| extra.get("allow_images"))
+        .and_then(|value| parse_flag(value))
+        .unwrap_or(false)
+}
+
+/// Optional per-file ceiling for data-source downloads. With neither variable
+/// set there is no size limit; `BLOB_STORAGE_SIZE_THRESHOLD` is RAGFlow's own
+/// variable, `RAYRAG_CONNECTOR_MAX_FILE_BYTES` is a RayRAG-specific override,
+/// and `0` explicitly disables the ceiling.
+fn connector_max_file_bytes() -> Option<u64> {
+    for key in [
+        "RAYRAG_CONNECTOR_MAX_FILE_BYTES",
+        "BLOB_STORAGE_SIZE_THRESHOLD",
+    ] {
+        if let Ok(raw) = std::env::var(key) {
+            match raw.trim().parse::<u64>() {
+                Ok(0) => return None,
+                Ok(value) => return Some(value),
+                Err(_) => tracing::warn!(
+                    %key,
+                    %raw,
+                    "data source: invalid file size limit; using the default"
+                ),
+            }
+        }
+    }
+    // No artificial ceiling by default: a knowledge base may contain files of
+    // any size. Operators can still set BLOB_STORAGE_SIZE_THRESHOLD or the
+    // per-source max_file_size_mb when they want a guard.
+    None
+}
+
+/// Per-source override (`config.max_file_size_mb`, 0 = unlimited) on top of
+/// the process-wide `BLOB_STORAGE_SIZE_THRESHOLD`.
+fn connector_max_file_bytes_for(extra: &HashMap<String, String>) -> Option<u64> {
+    if let Some(raw) = extra
+        .get("config.max_file_size_mb")
+        .or_else(|| extra.get("max_file_size_mb"))
+        .filter(|value| !value.trim().is_empty())
+    {
+        match raw.trim().parse::<u64>() {
+            Ok(0) => return None,
+            Ok(mb) => return Some(mb.saturating_mul(1024 * 1024)),
+            Err(_) => tracing::warn!(
+                raw = %raw,
+                "data source: invalid config.max_file_size_mb; using the global limit"
+            ),
+        }
+    }
+    connector_max_file_bytes()
+}
+
+/// Shared listing filter for WebDAV/local sources: never download a file the
+/// parser cannot read, and report the reason instead of dropping it silently.
+fn connector_file_skip_reason(
+    file: &RemoteFile,
+    allow_images: bool,
+    max_file_bytes: Option<u64>,
+) -> Option<String> {
+    let extension = file.extension.trim().to_ascii_lowercase();
+    if extension.is_empty() {
+        return Some(
+            "no file extension, so the format cannot be detected; add the correct extension or exclude the file"
+                .into(),
+        );
+    }
+    if CONNECTOR_IMAGE_EXTENSIONS.contains(&extension.as_str()) {
+        if !allow_images {
+            return Some(format!(
+                "image file {extension} is disabled for this source; enable \"Allow images\" to OCR it"
+            ));
+        }
+    } else if !CONNECTOR_TEXT_EXTENSIONS.contains(&extension.as_str())
+        && !CONNECTOR_DOCUMENT_EXTENSIONS.contains(&extension.as_str())
+    {
+        return Some(format!(
+            "unsupported file type {extension}; accepted types are PDF, DOCX, XLSX, PPTX, TXT, MD/MDX, HTML, CSV/TSV, JSON, XML, YAML, SQL, CONF, LOG, EML, EPUB and images when enabled"
+        ));
+    }
+    // RAGFlow skips files whose size the server did not report when the size
+    // guard is active, because it cannot prove the download is bounded.
+    if max_file_bytes.is_some()
+        && file.metadata.get("size_known").map(String::as_str) == Some("false")
+    {
+        return Some(
+            "the WebDAV server did not report this file's size, so the download cannot be bounded; fix the server's PROPFIND getcontentlength or set the per-source limit to 0"
+                .into(),
+        );
+    }
+    if let Some(limit) = max_file_bytes
+        && file.size_bytes > limit
+    {
+        return Some(format!(
+            "file is {:.1} MiB, above the {:.1} MiB limit (BLOB_STORAGE_SIZE_THRESHOLD); raise the limit or exclude the file",
+            file.size_bytes as f64 / (1024.0 * 1024.0),
+            limit as f64 / (1024.0 * 1024.0)
+        ));
+    }
+    None
+}
+
+/// Recursion limits: unset uses the default, `0` means "no limit", and a bad
+/// value falls back to the default with a warning instead of failing the sync.
+fn webdav_recursion_limit(key: &str, default: usize) -> Option<usize> {
+    match std::env::var(key) {
+        Ok(raw) => match raw.trim().parse::<usize>() {
+            Ok(0) => None,
+            Ok(value) => Some(value),
+            Err(_) => {
+                tracing::warn!(%key, %raw, default, "webdav: invalid recursion limit; using the default");
+                Some(default)
+            }
+        },
+        Err(_) => Some(default),
+    }
+}
+
 // ── Connector trait ──────────────────────────────────────────────────────────
 
 /// Connector contract: 授权 → 拉取 → 规范化存储.
@@ -143,6 +354,14 @@ pub trait Connector: Send + Sync {
     /// 规范化存储: convert raw bytes into a `ConnectorDoc` (RAGFlow
     /// `Document`: blob + semantic_identifier + extension + metadata).
     fn normalize(&self, file: &RemoteFile, raw: Vec<u8>) -> Result<ConnectorDoc>;
+
+    /// Pre-download filter (RAGFlow `_is_supported_file` + size threshold).
+    /// Returning `Some(reason)` skips the file before its bytes are fetched;
+    /// the reason is reported in the sync log. Connectors that accept every
+    /// listed entry keep the default.
+    fn skip_reason(&self, _file: &RemoteFile) -> Option<String> {
+        None
+    }
 
     /// Batch runner — RAGFlow `ConnectorRunner.run()` equivalent: list →
     /// fetch → normalize with per-file failure tolerance. Applies
@@ -182,6 +401,10 @@ pub trait Connector: Send + Sync {
             // fetch/normalize failure still protects its existing document
             // from sync_deleted_files pruning.
             batch.source_keys.push(file.id.clone());
+            if let Some(reason) = self.skip_reason(&file) {
+                batch.skipped.push(format!("{}: {reason}", file.name));
+                continue;
+            }
             let version = remote_file_version(&file);
             if let (Some(current), Some(known)) = (version.as_deref(), known_versions.get(&file.id))
                 && known == current
@@ -191,6 +414,13 @@ pub trait Connector: Send + Sync {
                 continue;
             }
             match self.fetch_file(&file).await {
+                Ok(raw) if raw.is_empty() => {
+                    // RAGFlow warns and continues instead of creating an empty
+                    // document that would fail parsing later.
+                    batch
+                        .skipped
+                        .push(format!("{}: remote file is empty; skipped", file.name));
+                }
                 Ok(raw) => {
                     let next = total_bytes.saturating_add(raw.len() as u64);
                     if next > max_bytes {
@@ -948,6 +1178,9 @@ impl ConnectorRegistry {
 pub struct LocalConnector {
     root: PathBuf,
     subdir: String,
+    include_hidden: bool,
+    allow_images: bool,
+    max_file_bytes: Option<u64>,
 }
 
 impl LocalConnector {
@@ -963,6 +1196,9 @@ impl LocalConnector {
         Ok(Self {
             root: path,
             subdir: options.target.trim().trim_matches('/').to_string(),
+            include_hidden: connector_includes_hidden(&options.extra),
+            allow_images: connector_allows_images(&options.extra),
+            max_file_bytes: connector_max_file_bytes_for(&options.extra),
         })
     }
 
@@ -1000,7 +1236,7 @@ impl Connector for LocalConnector {
             self.root.join(&self.subdir)
         };
         let mut files = Vec::new();
-        walk_dir(&base, &base, &mut files)?;
+        walk_dir(&base, &base, self.include_hidden, &mut files)?;
         files.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(files)
     }
@@ -1028,27 +1264,40 @@ impl Connector for LocalConnector {
             raw_bytes: Some(raw),
         })
     }
+
+    fn skip_reason(&self, file: &RemoteFile) -> Option<String> {
+        connector_file_skip_reason(file, self.allow_images, self.max_file_bytes)
+    }
 }
 
-fn walk_dir(base: &Path, dir: &Path, out: &mut Vec<RemoteFile>) -> Result<()> {
+fn walk_dir(
+    base: &Path,
+    dir: &Path,
+    include_hidden: bool,
+    out: &mut Vec<RemoteFile>,
+) -> Result<()> {
     for entry in std::fs::read_dir(dir)
         .with_context(|| format!("local: read_dir failed: {}", dir.display()))?
     {
         let entry = entry?;
         let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
         let file_type = entry.file_type()?;
         if file_type.is_dir() {
-            walk_dir(base, &path, out)?;
-        } else if file_type.is_file() {
+            if !excluded_connector_entry(&name, include_hidden) {
+                walk_dir(base, &path, include_hidden, out)?;
+            }
+            continue;
+        }
+        if !file_type.is_file() || excluded_connector_file(&name, include_hidden) {
+            continue;
+        }
+        {
             let rel = path
                 .strip_prefix(base)
                 .unwrap_or(&path)
                 .to_string_lossy()
                 .to_string();
-            let name = path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| rel.clone());
             let ext = path
                 .extension()
                 .map(|e| format!(".{}", e.to_string_lossy()))
@@ -1109,7 +1358,7 @@ pub fn is_lan_webdav_host(host: &str) -> bool {
         .any(|suffix| host.ends_with(suffix))
 }
 
-const WEBDAV_PROPFIND_BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?><D:propfind xmlns:D="DAV:"><D:prop><D:displayname/><D:getcontentlength/><D:getlastmodified/><D:resourcetype/></D:prop></D:propfind>"#;
+const WEBDAV_PROPFIND_BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?><D:propfind xmlns:D="DAV:"><D:prop><D:displayname/><D:getcontentlength/><D:getlastmodified/><D:getetag/><D:getcontenttype/><D:resourcetype/></D:prop></D:propfind>"#;
 
 /// Decode %XX escapes in a WebDAV href. WebDAV servers return encoded hrefs
 /// (`/<share>/<folder>/file.txt` arrives as `/%3Cshare%3E...`); re-encoding
@@ -1148,6 +1397,9 @@ pub struct WebDavConnector {
     username: String,
     password: String,
     max_items: usize,
+    include_hidden: bool,
+    allow_images: bool,
+    max_file_bytes: Option<u64>,
 }
 
 impl WebDavConnector {
@@ -1167,7 +1419,12 @@ impl WebDavConnector {
                 .and_then(|parsed| parsed.host_str().map(str::to_string))
                 .is_some_and(|host| is_lan_webdav_host(&host));
         let insecure = forced || lan_https;
-        let mut client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(60));
+        // WebDAV listings and downloads may legitimately take longer than a
+        // minute on large or slow shares; respect the operator's command timeout
+        // instead of a hardcoded 60s ceiling.
+        let mut client = reqwest::Client::builder()
+            .timeout(crate::common::cmd_timeout::duration())
+            .connect_timeout(std::time::Duration::from_secs(30));
         if insecure {
             tracing::info!(
                 "webdav: accepting a self-signed certificate for the local-network HTTPS source"
@@ -1201,6 +1458,9 @@ impl WebDavConnector {
             } else {
                 options.max_items
             },
+            include_hidden: connector_includes_hidden(&options.extra),
+            allow_images: connector_allows_images(&options.extra),
+            max_file_bytes: connector_max_file_bytes_for(&options.extra),
         }
     }
 
@@ -1340,27 +1600,44 @@ impl WebDavConnector {
     /// Walk every collection under one configured target. WebDAV listings are
     /// Depth:1, so subfolders must be discovered and queried recursively.
     async fn collect_recursive(&self, root: &str) -> Result<Vec<RemoteFile>> {
-        const MAX_DEPTH: usize = 64;
-        const MAX_DIRECTORIES: usize = 10_000;
+        // Defaults are generous; operators can raise them (or set `0` for no
+        // limit) with RAYRAG_WEBDAV_MAX_DEPTH / RAYRAG_WEBDAV_MAX_DIRECTORIES.
+        let max_depth = webdav_recursion_limit("RAYRAG_WEBDAV_MAX_DEPTH", 512);
+        let max_directories = webdav_recursion_limit("RAYRAG_WEBDAV_MAX_DIRECTORIES", 100_000);
+        self.collect_recursive_with_limits(root, max_depth, max_directories)
+            .await
+    }
+
+    async fn collect_recursive_with_limits(
+        &self,
+        root: &str,
+        max_depth: Option<usize>,
+        max_directories: Option<usize>,
+    ) -> Result<Vec<RemoteFile>> {
         let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut stack = vec![(root.to_string(), 0_usize)];
         let mut files = Vec::new();
+        let mut skipped_entries = 0_usize;
         while let Some((directory, depth)) = stack.pop() {
-            if depth > MAX_DEPTH {
-                tracing::warn!(
-                    folder = %directory,
-                    max_depth = MAX_DEPTH,
-                    "webdav: folder nesting exceeds the recursion limit; skipping deeper folders"
+            if max_depth.is_some_and(|max| depth > max) {
+                // Failing loudly beats returning a partial listing that looks
+                // complete: pruning would otherwise delete documents that live
+                // in the unvisited folders.
+                anyhow::bail!(
+                    "webdav: folder nesting under {} exceeds the {} level limit at {}; raise RAYRAG_WEBDAV_MAX_DEPTH or sync a narrower target",
+                    self.remote_path,
+                    max_depth.unwrap_or_default(),
+                    directory
                 );
-                continue;
             }
             let normalized = directory.trim_end_matches('/').to_string();
             if normalized.is_empty() || !visited.insert(normalized.clone()) {
                 continue;
             }
-            if visited.len() > MAX_DIRECTORIES {
+            if max_directories.is_some_and(|max| visited.len() > max) {
                 anyhow::bail!(
-                    "webdav: more than {MAX_DIRECTORIES} folders under {}; narrow the configured target or sync in smaller batches",
+                    "webdav: more than {} folders under {}; narrow the configured target or sync in smaller batches",
+                    max_directories.unwrap_or_default(),
                     self.remote_path
                 );
             }
@@ -1377,10 +1654,15 @@ impl WebDavConnector {
                 Err(error) => return Err(error),
             };
             for file in entries.files {
+                if webdav_path_excluded(&file.path, self.include_hidden) {
+                    skipped_entries += 1;
+                    continue;
+                }
                 files.push(file);
                 if files.len() >= self.max_items {
                     tracing::warn!(
                         limit = self.max_items,
+                        skipped_entries,
                         "webdav: file limit reached; stopping the recursive listing. Raise the data source file limit to sync more."
                     );
                     return Ok(files);
@@ -1388,8 +1670,49 @@ impl WebDavConnector {
             }
             for subfolder in entries.directories {
                 let subfolder = subfolder.trim_end_matches('/').to_string();
-                if !subfolder.is_empty() && subfolder != normalized {
-                    stack.push((format!("{subfolder}/"), depth + 1));
+                if subfolder.is_empty() || subfolder == normalized {
+                    continue;
+                }
+                if webdav_path_excluded(&subfolder, self.include_hidden) {
+                    skipped_entries += 1;
+                    continue;
+                }
+                stack.push((format!("{subfolder}/"), depth + 1));
+            }
+        }
+        if skipped_entries > 0 {
+            tracing::info!(
+                skipped_entries,
+                include_hidden = self.include_hidden,
+                "webdav: skipped hidden/VCS/dependency entries"
+            );
+        }
+        // RAGFlow disambiguates duplicate basenames with the relative path
+        // ("folder / file.pdf") so two same-named files do not look identical
+        // in the knowledge base. Apply the same rule only when a collision
+        // actually exists; unique names stay as plain basenames.
+        let mut name_counts: HashMap<String, usize> = HashMap::new();
+        for file in &files {
+            *name_counts.entry(file.name.clone()).or_default() += 1;
+        }
+        let duplicates: std::collections::HashSet<String> = name_counts
+            .into_iter()
+            .filter(|(_, count)| *count > 1)
+            .map(|(name, _)| name)
+            .collect();
+        if !duplicates.is_empty() {
+            let decoded_root = percent_decode_href(root).trim_end_matches('/').to_string();
+            for file in &mut files {
+                if !duplicates.contains(&file.name) {
+                    continue;
+                }
+                let decoded_path = percent_decode_href(&file.path);
+                let relative = decoded_path
+                    .strip_prefix(&decoded_root)
+                    .unwrap_or(&decoded_path)
+                    .trim_start_matches('/');
+                if !relative.is_empty() {
+                    file.name = relative.replace('/', " / ");
                 }
             }
         }
@@ -1523,6 +1846,10 @@ impl Connector for WebDavConnector {
             raw_bytes: Some(raw),
         })
     }
+
+    fn skip_reason(&self, file: &RemoteFile) -> Option<String> {
+        connector_file_skip_reason(file, self.allow_images, self.max_file_bytes)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -1604,17 +1931,12 @@ fn parse_propfind(xml: &str) -> Result<PropfindEntries> {
                             .filter(|n| !n.is_empty())
                             .cloned()
                             .or_else(|| {
-                                raw_href
-                                    .trim_end_matches('/')
-                                    .rsplit('/')
-                                    .next()
-                                    .map(|s| s.to_string())
+                                let decoded = percent_decode_href(raw_href.trim_end_matches('/'));
+                                decoded.rsplit('/').next().map(|s| s.to_string())
                             })
                             .unwrap_or_else(|| raw_href.clone());
-                        let size = map
-                            .get("size")
-                            .and_then(|s| s.parse::<u64>().ok())
-                            .unwrap_or(0);
+                        let parsed_size = map.get("size").and_then(|s| s.parse::<u64>().ok());
+                        let size = parsed_size.unwrap_or(0);
                         let ext = Path::new(&name)
                             .extension()
                             .or_else(|| Path::new(&raw_href).extension())
@@ -1622,6 +1944,9 @@ fn parse_propfind(xml: &str) -> Result<PropfindEntries> {
                             .unwrap_or_default();
                         let mut metadata = HashMap::new();
                         metadata.insert("source".into(), "webdav".into());
+                        if parsed_size.is_none() {
+                            metadata.insert("size_known".into(), "false".into());
+                        }
                         entries.files.push(RemoteFile {
                             id: format!("webdav:{raw_href}"),
                             name,

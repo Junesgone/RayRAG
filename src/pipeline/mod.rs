@@ -289,8 +289,20 @@ impl Pipeline {
             .unwrap_or(file_path);
 
         // 1. Detect MIME type and parse
-        let mime = parser::mime_from_extension(name)
-            .ok_or_else(|| anyhow::anyhow!("Unsupported file type: {name}. Convert legacy Word .doc to .docx; upload a supported document format. 旧版 Word 请先另存为 DOCX。"))?;
+        let mime = parser::mime_from_extension(name).ok_or_else(|| {
+            let extension = std::path::Path::new(name)
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or("");
+            let hint = match extension.to_ascii_lowercase().as_str() {
+                "doc" => "Open the file in Word, WPS or LibreOffice and save it as DOCX (.docx), then upload it again. 旧版 Word 请另存为 DOCX 后重新上传。",
+                "xls" => "Open the file in Excel, WPS or LibreOffice and save it as XLSX (.xlsx), then upload it again. 旧版 Excel 请另存为 XLSX 后重新上传。",
+                "ppt" => "Open the file in PowerPoint, WPS or LibreOffice and save it as PPTX (.pptx), then upload it again. 旧版演示文稿请另存为 PPTX 后重新上传。",
+                "" => "The file has no extension, so its format cannot be detected. Add the correct extension (for example .pdf, .docx, .md or .txt) and upload it again. 文件没有扩展名，无法识别格式，请补全扩展名后重新上传。",
+                _ => "Convert the file to a supported format such as PDF, DOCX, XLSX, PPTX, MD or TXT, then upload it again. 请转换为支持的文档格式后重新上传。",
+            };
+            anyhow::anyhow!("Unsupported file type: {name}. {hint}")
+        })?;
 
         let data = std::fs::read(file_path)?;
         let parse_started = std::time::Instant::now();
@@ -591,7 +603,9 @@ impl Pipeline {
             return Ok(parser::new_document(name, output.content, mime, data.len()));
         }
 
-        if is_docling_layout(&self.config.layout_recognize) && mime == "application/pdf" {
+        if is_docling_layout(&self.config.layout_recognize)
+            && crate::parser::docling::is_supported_document(name)
+        {
             let guidance = "Check DOCLING_SERVER_URL and DOCLING_API_KEY (if authentication is required), verify access to /v1/convert/source and that the Docling parsing models are loaded, then reparse. 请检查 Docling 客户端地址、密钥、服务连接和模型加载状态，修复后重新解析。";
             if let Some(client) = self.docling.as_ref() {
                 if !client.check_installation().await {
@@ -599,16 +613,33 @@ impl Pipeline {
                         "Docling availability check failed. Check DOCLING_SERVER_URL, DOCLING_API_KEY (if authentication is required), and access to /health, /openapi.json, /docs or /v1/convert/source from RayRAG, then reparse. 请检查 Docling 客户端地址、密钥及服务连接，修复后重新解析。"
                     );
                 }
-                let output = client.parse_pdf(name, data).await.map_err(|error| {
+                let output = client.parse_file(name, data).await.map_err(|error| {
                     anyhow::anyhow!("Docling parsing failed for {name}: {error}. {guidance}")
                 })?;
                 return Ok(parser::new_document(name, output.content, mime, data.len()));
             }
-            tracing::warn!(
+            // No remote service: use the embedded Rust port of Docling. It
+            // handles the PDF text layer and every declarative format (DOCX,
+            // PPTX, XLSX, HTML, Markdown) without Python, ONNX or network access.
+            tracing::info!(
                 %name,
-                "Docling layout requested without DOCLING_SERVER_URL; using the native fallback"
+                %mime,
+                "Docling layout: using the embedded Rust Docling converter"
             );
-            return crate::parser::docling::DoclingParser::new().parse(name, data);
+            match crate::parser::docling::DoclingParser::new().parse(name, data) {
+                Ok(document) => return Ok(document),
+                Err(error) => {
+                    // Fall through to the normal native/OCR pipeline instead of
+                    // returning a plain PDF or DOCX parser result: a scanned PDF
+                    // with an OCR provider configured must still be OCR'd.
+                    tracing::warn!(
+                        %name,
+                        %mime,
+                        error = %error,
+                        "embedded Docling could not parse this document; continuing with the native parser/OCR pipeline"
+                    );
+                }
+            }
         }
 
         if is_oxr_layout(&self.config.layout_recognize)

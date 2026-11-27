@@ -197,7 +197,7 @@ pub fn get_parser_config(
 
     let method_defaults = match chunk_method {
         "naive" => serde_json::json!({
-            "layout_recognize": "DeepDOC",
+            "layout_recognize": "Docling",
             "chunk_token_num": 512,
             "delimiter": "\n",
             "auto_keywords": 0,

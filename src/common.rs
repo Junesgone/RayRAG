@@ -1543,7 +1543,10 @@ pub mod cmd_timeout {
     /// 响应体上限环境变量
     pub const BODY_LIMIT_ENV: &str = "RAYRAG_HTTP_BODY_LIMIT_BYTES";
     /// 连接器下载默认上限（256 MiB）
-    pub const DEFAULT_CONNECTOR_BODY_LIMIT: usize = 256 << 20;
+    // Connector downloads are a knowledge-base input, not an API response:
+    // there is no artificial ceiling by default (the adaptive batch budget may
+    // still stop a sync before it exhausts host memory).
+    pub const DEFAULT_CONNECTOR_BODY_LIMIT: usize = usize::MAX;
     /// 连接器下载上限环境变量
     pub const CONNECTOR_BODY_LIMIT_ENV: &str = "RAYRAG_CONNECTOR_BODY_LIMIT_BYTES";
     /// 容器内存上限的默认值，与 `docker-compose.yml` 的
@@ -1667,11 +1670,14 @@ pub mod cmd_timeout {
     /// 有限值 —— 远端对象无论多大（或被篡改成无限流）都不会让进程无界增长，超过上限时
     /// 明确报错而不是把主机吃光。
     pub fn connector_body_limit_bytes() -> usize {
-        std::env::var(CONNECTOR_BODY_LIMIT_ENV)
+        match std::env::var(CONNECTOR_BODY_LIMIT_ENV)
             .ok()
             .and_then(|value| value.trim().parse::<usize>().ok())
-            .filter(|value| *value >= 1024 * 1024)
-            .unwrap_or(DEFAULT_CONNECTOR_BODY_LIMIT)
+        {
+            Some(0) => usize::MAX,
+            Some(value) if value >= 1024 * 1024 => value,
+            _ => DEFAULT_CONNECTOR_BODY_LIMIT,
+        }
     }
 
     /// 单次 HTTP 响应体的硬上限：`RAYRAG_HTTP_BODY_LIMIT_BYTES`，默认 32 MiB。

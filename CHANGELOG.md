@@ -2,6 +2,29 @@
 
 All notable changes to RayRAG are documented in this file.
 
+## [0.128.0] - 2026-11-27
+
+### Embedded Rust Docling + data-source hardening (50+ fixes)
+
+- Default parser is now the embedded Rust port of Docling (`docling` 2.89.1):
+  PDF text layer, DOCX, PPTX, XLSX, HTML and Markdown are converted in-process
+  with no Python/PyTorch or model download. `layout_recognize` defaults to
+  `Docling` across the API, UI and CLI; `DOCLING_SERVER_URL` remains an optional
+  remote override.
+- If embedded Docling cannot read a document, RayRAG logs the reason and falls
+  through to the native parser/OCR pipeline instead of silently truncating OCR.
+- WebDAV/local data sources now apply the RAGFlow extension allowlist, opt-in
+  images, per-file size limits, unknown-size protection, hidden/VCS filtering,
+  deeper recursion, duplicate-name disambiguation and visible skip reasons.
+- Dataset save and data-source sync responses are checked before JSON parsing;
+  long syncs poll for 30 minutes and show server text instead of a SyntaxError.
+- Knowledge bases have no artificial per-file size or file-count cap: uploads
+  stream to disk without the former 64 MiB/32-file limits, and data-source
+  downloads have no default size ceiling either (the adaptive batch budget
+  still protects host memory). A 70 MiB text upload and a 33-file multipart
+  batch were verified against a local server.
+- Full test suite: 2597 passed / 0 failed / 34 ignored.
+
 ## [0.127.44] - 2026-11-23
 
 ### Hotfix: WebDAV rebuild, dataset deletion, configuration copy

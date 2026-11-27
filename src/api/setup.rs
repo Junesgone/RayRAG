@@ -677,7 +677,8 @@ pub fn field_defaults() -> Vec<(&'static str, String)> {
             crate::parser::pdf_stream::DEFAULT_PDF_STREAM_BYTES.to_string(),
         ),
         ("RAYRAG_ZVEC_MAX_BUFFER_BYTES", (64u64 << 20).to_string()),
-        ("RAYRAG_MAX_UPLOAD_BYTES", (64u64 << 20).to_string()),
+        // 0 means unlimited; knowledge bases must not reject a file by size.
+        ("RAYRAG_MAX_UPLOAD_BYTES", "0".to_string()),
         ("RAYRAG_OCR_PROVIDER", "none".to_string()),
         ("REGISTER_ENABLED", "1".to_string()),
         ("DISABLE_PASSWORD_LOGIN", "false".to_string()),

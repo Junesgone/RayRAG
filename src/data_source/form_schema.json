@@ -2312,7 +2312,36 @@
       "type": "Text",
       "required": false,
       "placeholder": "/",
-      "tooltip_en": "Optional: folder path visible from the WebDAV root (e.g., /Documents). NAS filesystem paths such as /vol1/1000/... are mapped automatically for common layouts. Leave empty to sync from root."
+      "tooltip_en": "Optional: folder path visible from the WebDAV root (e.g., /Documents). NAS filesystem paths such as /vol1/1000/... are mapped automatically for common layouts. Leave empty to sync from root.",
+      "tooltip_zh": "可选：WebDAV 根目录下可见的文件夹路径（例如 /Documents）。NAS 文件系统路径（如 /vol1/1000/...）会自动映射到常见布局；留空表示从根目录同步。"
+    },
+    {
+      "label": "Include hidden files",
+      "label_zh": "包含隐藏文件",
+      "name": "config.include_hidden",
+      "type": "Checkbox",
+      "required": false,
+      "tooltip_en": "Sync dotfiles as well. Version-control folders (.git/.svn), node_modules and caches are always skipped.",
+      "tooltip_zh": "同时同步以点开头的隐藏文件。.git/.svn、node_modules 和缓存目录始终跳过。"
+    },
+    {
+      "label": "Allow images",
+      "label_zh": "允许图片",
+      "name": "config.allow_images",
+      "type": "Checkbox",
+      "required": false,
+      "tooltip_en": "Download images and send them to the configured OCR/vision model. Off by default, matching RAGFlow.",
+      "tooltip_zh": "下载图片并交给已配置的 OCR/视觉模型解析。默认关闭（与 RAGFlow 一致）。"
+    },
+    {
+      "label": "Max file size (MB)",
+      "label_zh": "单文件上限（MB）",
+      "name": "config.max_file_size_mb",
+      "type": "Number",
+      "required": false,
+      "placeholder": "20",
+      "tooltip_en": "Optional per-file size ceiling in MiB. Leave empty or set 0 for no limit.",
+      "tooltip_zh": "可选的单个文件大小上限（MiB）。留空或填 0 表示不限制。"
     }
   ],
   "ZENDESK": [

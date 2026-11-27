@@ -59,7 +59,7 @@ fn parser_config_defaults() -> Map<String, Value> {
         "chunk_token_num": 512,
         "delimiter": "\n",
         "html4excel": false,
-        "layout_recognize": "DeepDOC",
+        "layout_recognize": "Docling",
         "llm_id": "",
         "parent_child": { "use_parent_child": false, "children_delimiter": "\n" },
         "enable_children": false,
@@ -89,7 +89,7 @@ fn parser_config_service_defaults() -> Map<String, Value> {
     json!({
         "table_context_size": 0,
         "image_context_size": 0,
-        "layout_recognize": "DeepDOC",
+        "layout_recognize": "Docling",
         "chunk_token_num": 512,
         "delimiter": "\n",
         "auto_keywords": 0,

@@ -224,6 +224,10 @@ impl DataSourceRecord {
 /// fields the existing connector dispatch reads (GitLab URL/target/token and
 /// the include flags), while keeping the full dot-path map in `extra`.
 fn apply_config_mapping(record: &mut DataSourceRecord, config: &serde_json::Value) {
+    // Replace the previous `config.*` snapshot instead of merging into it: a
+    // field the form omitted (or the user cleared) must not survive from an
+    // earlier edit and silently keep steering the connector.
+    record.extra.retain(|key, _| !key.starts_with("config."));
     let map = flatten_config(config, "config");
     for (key, value) in map {
         if key == "config.sync_deleted_files" {
@@ -1092,6 +1096,7 @@ pub(crate) async fn perform_sync(
                 Ok(crate::connectors::SyncBatch {
                     docs,
                     failures: Vec::new(),
+                    skipped: Vec::new(),
                     source_keys,
                     // The legacy GitLab connector does not expose a complete
                     // listing contract, so never prune from it.
@@ -1157,6 +1162,10 @@ pub(crate) async fn perform_sync(
     let docs = batch.docs;
     let total_docs = docs.len() + skipped_unchanged;
     let mut connector_failures = batch.failures;
+    // Files the connector refused before download (unsupported extension,
+    // oversized, images disabled). RAGFlow logs these as warnings; keep them
+    // in the same visible "unsupported" bucket as binary documents.
+    let mut skipped_unsupported: Vec<String> = batch.skipped;
 
     // Optional ingestion into a knowledge base: ?kb_id=<dataset id>.
     // Each connector doc is written as a text file and routed through the
@@ -1174,7 +1183,18 @@ pub(crate) async fn perform_sync(
             .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
         for doc in &docs {
             let doc_id = uuid::Uuid::new_v4().to_string();
-            let ext = connector_doc_extension(doc);
+            let Some(ext) = connector_storage_extension(doc) else {
+                let declared = if doc.extension.trim().is_empty() {
+                    "no suffix"
+                } else {
+                    doc.extension.trim()
+                };
+                skipped_unsupported.push(format!(
+                    "{} ({declared}, binary content; convert it to PDF/DOCX/TXT or exclude it)",
+                    doc.semantic_identifier
+                ));
+                continue;
+            };
             let file_name = format!("{doc_id}{ext}");
             let path = upload_dir.join(&file_name);
             // Binary sources (PDF/Office/images) must be persisted byte-for-byte;
@@ -1333,21 +1353,58 @@ pub(crate) async fn perform_sync(
         )
         .collect();
     let kb_name = kb_id.and_then(|kb| state.kbs.get(kb).map(|kb| kb.name.clone()));
+    let truncated_note = if truncated_listing {
+        "; listing truncated by max_items or the batch byte budget (deleted-file pruning skipped)"
+    } else {
+        ""
+    };
+    let unsupported_note = if skipped_unsupported.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "; skipped {} unsupported file(s): {}",
+            skipped_unsupported.len(),
+            skipped_unsupported
+                .iter()
+                .take(5)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("; ")
+        )
+    };
+    let parse_note = if ingested > 0 {
+        "; parsing continues in the background, open the dataset to see per-document results"
+    } else {
+        ""
+    };
+    let failed = skipped.len() + connector_failures.len();
+    let mut detail = String::new();
+    for failure in connector_failures.iter().take(10) {
+        detail.push_str(failure);
+        detail.push('\n');
+    }
+    for unsupported in skipped_unsupported.iter().take(10) {
+        detail.push_str("unsupported: ");
+        detail.push_str(unsupported);
+        detail.push('\n');
+    }
+    let detail = (!detail.trim().is_empty()).then(|| detail.trim().to_string());
     let _ = store.append_sync_log(
         id,
         &record,
         "DONE",
         "sync",
         &format!(
-            "Synced {} docs (ingested {ingested}, unchanged {unchanged}, skipped {}, removed {removed})",
+            "Synced {} docs (ingested {ingested}, unchanged {unchanged}, skipped {}, unsupported {}, removed {removed}){truncated_note}{unsupported_note}{parse_note}",
             total_docs,
-            skipped.len()
+            skipped.len(),
+            skipped_unsupported.len(),
         ),
         Some(ingested as u64),
         Some(total_docs as u64),
         Some(removed as u64),
-        Some(connector_failures.len() as u64),
-        None,
+        Some(failed as u64),
+        detail,
         kb_id,
         kb_name.as_deref(),
         Some(trigger),
@@ -1355,7 +1412,17 @@ pub(crate) async fn perform_sync(
     let _ = store.set_status(id, "schedule");
     Ok(serde_json::json!({
         "code": 0,
-        "data": { "count": total_docs, "ingested": ingested, "unchanged": unchanged, "removed": removed, "skipped": skipped, "failures": connector_failures, "preview": preview }
+        "data": {
+            "count": total_docs,
+            "ingested": ingested,
+            "unchanged": unchanged,
+            "removed": removed,
+            "skipped": skipped,
+            "unsupported": skipped_unsupported,
+            "failures": connector_failures,
+            "truncated": truncated_listing,
+            "preview": preview
+        }
     }))
 }
 
@@ -1418,7 +1485,7 @@ pub async fn connect_data_source(
             &id,
             &record,
             "FAIL",
-            "sync",
+            "connect",
             &format!("connect failed: {error:#}"),
             None,
             None,
@@ -1442,7 +1509,7 @@ pub async fn connect_data_source(
         &id,
         &record,
         "DONE",
-        "sync",
+        "connect",
         "Connection verified",
         None,
         None,
@@ -1600,23 +1667,102 @@ fn connector_doc_extension(doc: &crate::data_source::ConnectorDoc) -> String {
     if !doc.extension.is_empty() {
         return doc.extension.clone();
     }
-    let bytes = doc.bytes();
-    if bytes.starts_with(b"%PDF-") {
-        return ".pdf".into();
-    }
-    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
-        return ".png".into();
-    }
-    if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
-        return ".jpg".into();
-    }
-    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
-        return ".gif".into();
-    }
-    if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
-        return ".webp".into();
+    if let Some(extension) = sniff_binary_extension(doc.bytes()) {
+        return extension.into();
     }
     ".md".into()
+}
+
+/// Binary signatures we can recognise without trusting the remote suffix.
+fn sniff_binary_extension(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"%PDF-") {
+        return Some(".pdf");
+    }
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Some(".png");
+    }
+    if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        return Some(".jpg");
+    }
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        return Some(".gif");
+    }
+    if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return Some(".webp");
+    }
+    if bytes.starts_with(b"II*\0") || bytes.starts_with(b"MM\0*") {
+        return Some(".tiff");
+    }
+    if bytes.starts_with(b"BM") {
+        return Some(".bmp");
+    }
+    if bytes.starts_with(b"RIFF") && bytes.len() >= 12 && &bytes[8..12] == b"WAVE" {
+        return Some(".wav");
+    }
+    if bytes.starts_with(b"OggS") {
+        return Some(".ogg");
+    }
+    if bytes.starts_with(b"fLaC") {
+        return Some(".flac");
+    }
+    if bytes.starts_with(b"ID3") {
+        return Some(".mp3");
+    }
+    None
+}
+
+/// True when a sample looks like UTF-8 text rather than an opaque binary.
+/// NUL bytes are the strongest binary signal; a truncated multi-byte character
+/// at the sample boundary is tolerated.
+fn looks_like_text(bytes: &[u8]) -> bool {
+    if bytes.is_empty() {
+        return true;
+    }
+    // Container/executable signatures that do not necessarily contain a NUL
+    // in their first bytes. Treating an OLE `.doc`, ZIP/Office archive or
+    // executable as UTF-8 text would hand the parser a corrupted `.md`.
+    const BINARY_MAGIC: &[&[u8]] = &[
+        b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1", // OLE2 (.doc/.xls/.ppt)
+        b"PK\x03\x04",                       // ZIP (.docx/.xlsx/.pptx/.epub)
+        b"PK\x05\x06",                       // empty ZIP
+        b"\x1F\x8B",                         // gzip
+        b"7z\xBC\xAF\x27\x1C",               // 7z
+        b"Rar!\x1A\x07",                     // RAR
+        b"\x7FELF",                          // ELF executable
+        b"MZ",                               // PE executable
+        b"\xCA\xFE\xBA\xBE",                 // Mach-O / Java class
+    ];
+    if BINARY_MAGIC.iter().any(|magic| bytes.starts_with(magic)) {
+        return false;
+    }
+    let sample = &bytes[..bytes.len().min(64 * 1024)];
+    if sample.contains(&0) {
+        return false;
+    }
+    let lossy = String::from_utf8_lossy(sample);
+    let replacements = lossy.chars().filter(|ch| *ch == '\u{fffd}').count();
+    replacements * 100 <= sample.len().max(1)
+}
+
+/// Extension used when writing the connector document for the parser. A known
+/// suffix wins; otherwise magic, then text sniffing decide. `None` means the
+/// file cannot be parsed and should be reported instead of ingested as a
+/// bogus `.md` document (for example an extensionless NIfTI `.sample` file).
+fn connector_storage_extension(doc: &crate::data_source::ConnectorDoc) -> Option<String> {
+    let declared = doc.extension.trim();
+    if !declared.is_empty() {
+        let probe = format!("probe{declared}");
+        if crate::parser::mime_from_extension(&probe).is_some() {
+            return Some(declared.to_string());
+        }
+    }
+    if let Some(extension) = sniff_binary_extension(doc.bytes()) {
+        return Some(extension.to_string());
+    }
+    if looks_like_text(doc.bytes()) {
+        return Some(".md".into());
+    }
+    None
 }
 
 /// Source folder used for document identity and UI location. Connector docs

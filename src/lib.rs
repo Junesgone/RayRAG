@@ -366,7 +366,7 @@ impl Default for ParserConfig {
             table_context_size: 256,
             image_context_size: 256,
             ocr_lang: "English".to_string(),
-            layout_recognize: "DeepDOC".to_string(),
+            layout_recognize: "Docling".to_string(),
             opendataloader_hybrid: None,
             opendataloader_image_output: None,
             opendataloader_sanitize: None,

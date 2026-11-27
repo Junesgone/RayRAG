@@ -1996,7 +1996,7 @@ pub fn task_page_ranges(
         let do_layout = parser_config
             .get("layout_recognize")
             .and_then(|v| v.as_str())
-            .unwrap_or("DeepDOC");
+            .unwrap_or("Docling");
         let toc = parser_config
             .get("toc_extraction")
             .and_then(|v| v.as_bool())
