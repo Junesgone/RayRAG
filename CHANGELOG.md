@@ -4,7 +4,20 @@ All notable changes to RayRAG are documented in this file.
 
 ## [Unreleased]
 
-### Embedded Rust Docling + data-source hardening
+### Microsoft GraphRAG v3.3.0 mode and persisted community reports
+
+- Knowledge-base Configuration now exposes Light/Global/Local/DRIFT methods and
+  labels the Microsoft GraphRAG v3.3.0 baseline.
+- Build uses the dataset's GraphRAG entity types, language and method instead
+  of hard-coded values; optional community reports are generated once and
+  persisted in `graphrag.json`.
+- `POST /graphrag/query` supports `method` overrides, global report ranking and
+  grounded answers, local KgSearch retrieval, and reports its GraphRAG version
+  and community-report count.
+
+## [0.128.0] - 2026-11-27
+
+### Embedded Rust Docling + data-source hardening (50+ fixes)
 
 - Default parser is now the embedded Rust port of Docling (`docling` 2.89.1):
   PDF text layer, DOCX, PPTX, XLSX, HTML and Markdown are converted in-process

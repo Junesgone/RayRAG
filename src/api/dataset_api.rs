@@ -921,8 +921,10 @@ fn pc_validate_graphrag(issues: &mut Vec<ValidationIssue>, base: &str, raw: &Val
             issues,
             &format!("{base}.method"),
             value,
-            &["light", "general", "ner"],
-            "Input should be 'light', 'general' or 'ner'",
+            &[
+                "light", "general", "ner", "global", "local", "drift", "basic",
+            ],
+            "Input should be 'light', 'general', 'ner', 'global', 'local', 'drift' or 'basic'",
         );
     }
     if let Some(value) = object.get("community") {

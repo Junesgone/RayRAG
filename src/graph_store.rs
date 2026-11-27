@@ -20,6 +20,11 @@ pub struct GraphCheckpoint {
 pub struct GraphArtifacts {
     pub checkpoints: HashMap<String, GraphCheckpoint>,
     pub kb_graphs: HashMap<String, EntityGraph>,
+    /// Community reports keyed by knowledge base then report title. Persisted
+    /// so Microsoft-GraphRAG-style global search does not re-run the expensive
+    /// LLM community-report pass on every query.
+    #[serde(default)]
+    pub community_reports: HashMap<String, HashMap<String, String>>,
 }
 
 pub struct GraphStore {
@@ -117,6 +122,30 @@ impl GraphStore {
         Ok(())
     }
 
+    pub fn community_reports_for(&self, kb_id: &str) -> HashMap<String, String> {
+        self.artifacts
+            .read()
+            .unwrap()
+            .community_reports
+            .get(kb_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn set_community_reports(
+        &self,
+        kb_id: &str,
+        reports: HashMap<String, String>,
+    ) -> anyhow::Result<()> {
+        let mut next = self.snapshot();
+        if reports.is_empty() {
+            next.community_reports.remove(kb_id);
+        } else {
+            next.community_reports.insert(kb_id.to_string(), reports);
+        }
+        self.replace_snapshot(next)
+    }
+
     pub fn context_for_query(&self, kb_ids: &[String], query: &str) -> Vec<String> {
         let artifacts = self.artifacts.read().unwrap();
         let mut context = Vec::new();
@@ -206,6 +235,24 @@ mod tests {
                 .context_for_query(&["kb-b".into()], "Google Inc")
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn community_reports_round_trip_and_legacy_snapshots_default_empty() {
+        let legacy: GraphArtifacts = serde_json::from_str(r#"{"checkpoints":{},"kb_graphs":{}}"#)
+            .expect("older graphrag.json must still load");
+        assert!(legacy.community_reports.is_empty());
+        let store = GraphStore::in_memory();
+        let reports = HashMap::from([(
+            "Battery recycling network".to_string(),
+            "# Battery recycling network\nPartners collect batteries.".to_string(),
+        )]);
+        store
+            .set_community_reports("kb-a", reports.clone())
+            .unwrap();
+        assert_eq!(store.community_reports_for("kb-a"), reports);
+        store.set_community_reports("kb-a", HashMap::new()).unwrap();
+        assert!(store.community_reports_for("kb-a").is_empty());
     }
 
     #[test]

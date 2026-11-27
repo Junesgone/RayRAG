@@ -4106,7 +4106,9 @@ loadLogs();
     b.push_str("<tr><td>");
     b.push_str(t("Entity Types", zh));
     b.push_str("</td><td><input id='cfgEntityTypes' value='organization, person, location, event, concept' style='font-size:12px'></td></tr>");
-    b.push_str("<tr><td>Method</td><td><select id='cfgGraphMethod'><option>Light</option><option>General</option></select></td></tr>");
+    b.push_str("<tr><td>Method</td><td><select id='cfgGraphMethod'><option>Light</option><option>Global</option><option>Local</option><option>DRIFT</option><option>General</option></select> <span style='font-size:11px;color:var(--tm)'>");
+    b.push_str(t("Microsoft GraphRAG v3.3.0", zh));
+    b.push_str("</span></td></tr>");
     b.push_str("<tr><td>");
     b.push_str(t("Batch chunk token size", zh));
     b.push_str("</td><td><input id='graphBatchSize' type='number' value='8196' style='max-width:120px'></td></tr>");
@@ -19487,6 +19489,17 @@ connection: close
             1,
             "dataset language select must exist exactly once"
         );
+        for marker in [
+            "Microsoft GraphRAG v3.3.0",
+            "<option>Global</option>",
+            "<option>Local</option>",
+            "<option>DRIFT</option>",
+        ] {
+            assert!(
+                html.contains(marker),
+                "missing GraphRAG v3 control {marker}"
+            );
+        }
     }
 
     #[tokio::test]
