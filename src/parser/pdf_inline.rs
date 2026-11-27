@@ -336,4 +336,73 @@ fn skip_inline_image_data(
     content.len()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lopdf::content::Content;
 
+    #[test]
+    fn binary_inline_image_does_not_break_or_inject_text() {
+        let content =
+            b"q BI /W 1 /H 1 /BPC 8 /CS /G ID \x00(Tj) Tj EI Q BT /F1 12 Tf (After) Tj ET";
+        let (clean, found) = strip_inline_images(content, "PDF page 1 content").unwrap();
+        assert!(found);
+        let text = String::from_utf8_lossy(&clean);
+        assert!(text.contains("After"), "{text:?}");
+        assert!(!text.contains("(Tj)"), "{text:?}");
+        assert!(!text.contains('\u{0}'), "{text:?}");
+        assert!(Content::decode(&clean).is_ok());
+    }
+
+    #[test]
+    fn explicit_length_skips_fake_ei_inside_the_payload() {
+        let content = b"BI /L 11 /W 1 ID abc EI xyz! EI Q";
+        let (clean, found) = strip_inline_images(content, "PDF page 1 content").unwrap();
+        assert!(found);
+        let text = String::from_utf8_lossy(&clean);
+        assert!(text.contains("Q"), "{text:?}");
+        assert!(!text.contains("xyz"), "{text:?}");
+    }
+
+    #[test]
+    fn ascii85_payload_ends_at_tilde_marker() {
+        let content = b"BI /F /A85 ID abc~> EI Q";
+        let (clean, found) = strip_inline_images(content, "PDF page 1 content").unwrap();
+        assert!(found);
+        let text = String::from_utf8_lossy(&clean);
+        assert!(text.contains("Q"), "{text:?}");
+        assert!(!text.contains("abc"), "{text:?}");
+    }
+
+    #[test]
+    fn unterminated_payload_is_dropped_after_a_warning() {
+        let content = b"BI /W 1 /H 1 ID abc";
+        let (clean, found) = strip_inline_images(content, "PDF page 1 content").unwrap();
+        assert!(found);
+        assert!(!String::from_utf8_lossy(&clean).contains("abc"));
+    }
+
+    #[test]
+    fn missing_id_is_an_explicit_error() {
+        let error = strip_inline_images(b"BI /W 1 /H 1", "PDF page 1 content")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("no ID operator"), "{error}");
+    }
+
+    #[test]
+    fn names_that_end_with_bi_or_id_are_not_operators() {
+        let content = b"q /BI Do /ID 1 /BI2 Q";
+        let (clean, found) = strip_inline_images(content, "PDF page 1 content").unwrap();
+        assert!(!found);
+        assert_eq!(clean.as_ref(), &content[..]);
+    }
+
+    #[test]
+    fn strings_and_comments_that_mention_bi_are_not_images() {
+        let content = b"BT (BI /W 1 ID) Tj % BI /W 1 ID\n ET";
+        let (clean, found) = strip_inline_images(content, "PDF page 1 content").unwrap();
+        assert!(!found);
+        assert_eq!(clean.as_ref(), &content[..]);
+    }
+}

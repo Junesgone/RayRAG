@@ -310,4 +310,102 @@ pub fn jin10_results_to_tool_rows(results: &[Jin10Result]) -> Vec<Value> {
         .collect()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn rows_are_ragflow_shaped() {
+        let rows = jin10_results_to_tool_rows(&[Jin10Result {
+            content: "c".into(),
+        }]);
+        assert_eq!(rows[0]["title"], "金十数据");
+        assert_eq!(rows[0]["snippet"], "c");
+    }
+
+    #[test]
+    fn flash_render_extracts_data_content() {
+        let data = serde_json::json!({"data": [
+            {"data": {"content": "快讯一"}},
+            {"data": {"content": "快讯二"}},
+            {"data": {"content": ""}}
+        ]});
+        let results = Jin10Client::render_flash(&data["data"]);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].content, "快讯一");
+        assert_eq!(results[1].content, "快讯二");
+    }
+
+    #[test]
+    fn rows_render_key_value_lines() {
+        let data = serde_json::json!({"data": [
+            {"title": "标题", "time": "2026-08-01"},
+            {"title": "标题2"}
+        ]});
+        let results = Jin10Client::render_rows(&data["data"]);
+        assert_eq!(results.len(), 2);
+        assert!(results[0].content.contains("标题"));
+        assert!(results[0].content.contains("2026-08-01"));
+    }
+
+    #[test]
+    fn quotes_render_long_names() {
+        let data = serde_json::json!({"data": [
+            {"a": "100.1", "c": "BTCUSD", "p": "100.5"}
+        ]});
+        let results = Jin10Client::render_quotes(&data["data"]);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].content.contains("Selling Price: 100.1"));
+        assert!(results[0].content.contains("Commodity Code: BTCUSD"));
+        assert!(results[0].content.contains("Latest Price: 100.5"));
+        assert!(!results[0].content.contains("\na: "));
+        assert!(!results[0].content.contains("\nc: "));
+    }
+
+    #[tokio::test]
+    async fn missing_key_is_rejected() {
+        let client = Jin10Client::default();
+        let error = client
+            .search(
+                "",
+                &Jin10Request {
+                    r#type: Jin10Type::Flash,
+                    flash_type: 1,
+                    calendar_type: "cj".into(),
+                    calendar_datatype: "data".into(),
+                    symbols_type: "GOODS".into(),
+                    symbols_datatype: "symbols".into(),
+                    contain: String::new(),
+                    filter: String::new(),
+                    top_n: 5,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("secret key"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a live Jin10 secret key (JIN10_SECRET_KEY)"]
+    async fn live_jin10_flash() {
+        let key = std::env::var("JIN10_SECRET_KEY").expect("JIN10_SECRET_KEY must be set");
+        let results = Jin10Client::default()
+            .search(
+                &key,
+                &Jin10Request {
+                    r#type: Jin10Type::Flash,
+                    flash_type: 1,
+                    calendar_type: "cj".into(),
+                    calendar_datatype: "data".into(),
+                    symbols_type: "GOODS".into(),
+                    symbols_datatype: "symbols".into(),
+                    contain: String::new(),
+                    filter: String::new(),
+                    top_n: 5,
+                },
+            )
+            .await
+            .unwrap();
+        assert!(!results.is_empty());
+    }
+}

@@ -179,4 +179,71 @@ pub fn bocha_results_to_tool_rows(results: &[BochaSearchResult]) -> Vec<Value> {
         .collect()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn rows_are_ragflow_shaped() {
+        let rows = bocha_results_to_tool_rows(&[BochaSearchResult {
+            title: "t".into(),
+            link: "https://l".into(),
+            snippet: "s".into(),
+            source: "src".into(),
+            publish_date: String::new(),
+        }]);
+        assert_eq!(rows[0]["title"], "t");
+        assert_eq!(rows[0]["link"], "https://l");
+        assert_eq!(rows[0]["snippet"], "s");
+    }
+
+    #[tokio::test]
+    async fn missing_key_or_query_is_rejected() {
+        let client = BochaClient::default();
+        let error = client
+            .search(
+                "",
+                &BochaSearchRequest {
+                    query: "q".into(),
+                    channel: "web".into(),
+                    top_n: 5,
+                    freshness: None,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("API key"));
+        let error = client
+            .search(
+                "key",
+                &BochaSearchRequest {
+                    query: "".into(),
+                    channel: "web".into(),
+                    top_n: 5,
+                    freshness: None,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("query"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a live Bocha API key (BOCHA_API_KEY)"]
+    async fn live_bocha_search() {
+        let api_key = std::env::var("BOCHA_API_KEY").expect("BOCHA_API_KEY must be set");
+        let results = BochaClient::default()
+            .search(
+                &api_key,
+                &BochaSearchRequest {
+                    query: "RAGFlow".into(),
+                    channel: "web".into(),
+                    top_n: 5,
+                    freshness: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert!(!results.is_empty());
+    }
+}

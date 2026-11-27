@@ -1075,4 +1075,479 @@ pub async fn keyword_subgraph(
     ))
 }
 
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
 
+    use super::*;
+    use crate::doc_store::{HealthStatus, SearchResponse};
+
+    /// Minimal in-memory store with Infinity-style keyword conditions:
+    /// a list-valued condition matches the row when the scalar row value is
+    /// one of the listed values (and vice versa for array row values).
+    #[derive(Default)]
+    struct MiniStore {
+        rows: Mutex<Vec<DocRow>>,
+    }
+
+    impl MiniStore {
+        fn with_rows(rows: Vec<DocRow>) -> Self {
+            Self {
+                rows: Mutex::new(rows),
+            }
+        }
+    }
+
+    fn condition_allows(row: &DocRow, condition: &FilterCondition) -> bool {
+        condition.iter().all(|(key, expected)| {
+            let Some(actual) = row.get(key) else {
+                return false;
+            };
+            match expected {
+                Value::Array(items) => items.iter().any(|item| {
+                    actual == item
+                        || actual
+                            .as_array()
+                            .map(|values| values.contains(item))
+                            .unwrap_or(false)
+                }),
+                _ => {
+                    actual == expected
+                        || actual
+                            .as_array()
+                            .map(|values| values.contains(expected))
+                            .unwrap_or(false)
+                }
+            }
+        })
+    }
+
+    fn text_allows(row: &DocRow, expressions: &[MatchExpr]) -> bool {
+        for expression in expressions {
+            if let MatchExpr::Text {
+                fields,
+                matching_text,
+                ..
+            } = expression
+            {
+                let terms: Vec<String> = matching_text
+                    .to_lowercase()
+                    .split(|ch: char| !ch.is_alphanumeric())
+                    .filter(|term| !term.is_empty())
+                    .map(str::to_string)
+                    .collect();
+                if terms.is_empty() {
+                    continue;
+                }
+                let mut haystack = String::new();
+                for field in fields {
+                    let base = field.split('^').next().unwrap_or(field);
+                    for name in [field.as_str(), base] {
+                        if let Some(value) = row.get(name).and_then(Value::as_str) {
+                            haystack.push_str(&value.to_lowercase());
+                            haystack.push(' ');
+                        }
+                    }
+                }
+                if let Some(content) = row.get("content_with_weight").and_then(Value::as_str) {
+                    haystack.push_str(&content.to_lowercase());
+                }
+                if !terms.iter().any(|term| haystack.contains(term)) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    fn int_of(value: Option<&Value>) -> i64 {
+        value
+            .and_then(|value| value.as_i64().or_else(|| value.as_f64().map(|f| f as i64)))
+            .unwrap_or(0)
+    }
+
+    impl DocStore for MiniStore {
+        fn db_type(&self) -> &'static str {
+            "memory"
+        }
+
+        fn health(&self) -> crate::Result<HealthStatus> {
+            Ok(HealthStatus::green("mini"))
+        }
+
+        fn create_idx(&self, _: &str, _: &str, _: usize) -> crate::Result<()> {
+            Ok(())
+        }
+
+        fn delete_idx(&self, _: &str, _: &str) -> crate::Result<()> {
+            Ok(())
+        }
+
+        fn index_exist(&self, _: &str, _: &str) -> crate::Result<bool> {
+            Ok(true)
+        }
+
+        fn insert(&self, rows: &[DocRow], _: &str, _: &str) -> crate::Result<Vec<String>> {
+            self.rows.lock().unwrap().extend(rows.iter().cloned());
+            Ok(rows
+                .iter()
+                .filter_map(|row| row.get("id").and_then(Value::as_str).map(str::to_string))
+                .collect())
+        }
+
+        fn get(&self, _: &str, _: &str, _: &[String]) -> crate::Result<Option<DocRow>> {
+            Ok(None)
+        }
+
+        fn update(&self, _: &FilterCondition, _: &DocRow, _: &str, _: &str) -> crate::Result<bool> {
+            Ok(false)
+        }
+
+        fn delete(&self, _: &FilterCondition, _: &str, _: &str) -> crate::Result<usize> {
+            Ok(0)
+        }
+
+        fn search(&self, query: &SearchQuery) -> crate::Result<SearchResponse> {
+            let rows = self.rows.lock().unwrap().clone();
+            let mut matched: Vec<DocRow> = rows
+                .into_iter()
+                .filter(|row| condition_allows(row, &query.condition))
+                .filter(|row| text_allows(row, &query.match_expressions))
+                .collect();
+            for (field, desc) in &query.order_by.fields {
+                matched.sort_by(|left, right| {
+                    let left_value = int_of(left.get(field));
+                    let right_value = int_of(right.get(field));
+                    if *desc {
+                        right_value.cmp(&left_value)
+                    } else {
+                        left_value.cmp(&right_value)
+                    }
+                });
+            }
+            let total = matched.len();
+            let docs = matched
+                .into_iter()
+                .skip(query.offset)
+                .take(query.limit.max(1))
+                .collect();
+            Ok(SearchResponse {
+                total,
+                docs,
+                ..SearchResponse::default()
+            })
+        }
+
+        fn sql(&self, _: &str, _: usize) -> crate::Result<Vec<Value>> {
+            Ok(Vec::new())
+        }
+    }
+
+    fn entity_row(
+        name: &str,
+        entity_type: &str,
+        template: &str,
+        kind: &str,
+        mentions: i64,
+    ) -> DocRow {
+        let mut row = DocRow::new();
+        row.insert(
+            "content_with_weight".to_string(),
+            Value::String(
+                json!({"name": name, "type": entity_type, "description": format!("{name} description")})
+                    .to_string(),
+            ),
+        );
+        row.insert(
+            "knowledge_graph_kwd".to_string(),
+            Value::String("entity".to_string()),
+        );
+        row.insert("name_kwd".to_string(), Value::String(name.to_lowercase()));
+        row.insert(
+            "mention_count_int".to_string(),
+            Value::Number(serde_json::Number::from(mentions)),
+        );
+        row.insert("compilation_template_ids".to_string(), json!([template]));
+        row.insert(
+            "compilation_template_kind_kwd".to_string(),
+            Value::String(kind.to_string()),
+        );
+        row.insert("doc_id".to_string(), Value::String("doc-1".to_string()));
+        row.insert(
+            "content_ltks".to_string(),
+            Value::String(format!("{} description", name.to_lowercase())),
+        );
+        row
+    }
+
+    fn relation_row(from: &str, to: &str, template: &str, kind: &str) -> DocRow {
+        let mut row = DocRow::new();
+        row.insert(
+            "content_with_weight".to_string(),
+            Value::String(json!({"source": from, "target": to, "type": "related"}).to_string()),
+        );
+        row.insert(
+            "knowledge_graph_kwd".to_string(),
+            Value::String("relation".to_string()),
+        );
+        row.insert(
+            "from_entity_kwd".to_string(),
+            Value::String(from.to_lowercase()),
+        );
+        row.insert(
+            "to_entity_kwd".to_string(),
+            Value::String(to.to_lowercase()),
+        );
+        row.insert("compilation_template_ids".to_string(), json!([template]));
+        row.insert(
+            "compilation_template_kind_kwd".to_string(),
+            Value::String(kind.to_string()),
+        );
+        row.insert("doc_id".to_string(), Value::String("doc-1".to_string()));
+        row
+    }
+
+    fn scope_for_template(row: &DocRow) -> (Value, FilterCondition) {
+        let template = row
+            .get("compilation_template_ids")
+            .and_then(Value::as_array)
+            .and_then(|items| items.first())
+            .cloned()
+            .unwrap_or(Value::String(String::new()));
+        let kind = row
+            .get("compilation_template_kind_kwd")
+            .cloned()
+            .unwrap_or(Value::String(String::new()));
+        let meta = json!({"template_id": template, "kind": kind});
+        let mut scope = DocRow::new();
+        scope.insert(
+            "compilation_template_ids".to_string(),
+            meta.get("template_id").cloned().unwrap_or(Value::Null),
+        );
+        (meta, scope)
+    }
+
+    #[test]
+    fn dedup_endpoints_and_filters_mirror_upstream() {
+        let entities = vec![
+            json!({"name": "Alpha", "type": "Person"}),
+            json!({"name": "alpha", "type": "person"}),
+            json!({"name": "", "type": "Person"}),
+            json!({"name": "Beta", "type": "Org"}),
+        ];
+        let deduped = dedup_entities(&entities);
+        assert_eq!(deduped.len(), 2);
+        assert_eq!(deduped[0]["name"], json!("Alpha"));
+
+        let relations = vec![json!({"from": "ALPHA", "to": "beta", "type": "rel"})];
+        let normalized = normalize_relation_endpoints(&deduped, &relations);
+        assert_eq!(normalized[0]["from"], json!("Alpha"));
+        assert_eq!(normalized[0]["to"], json!("Beta"));
+
+        let filtered = filter_entities_with_relations(&deduped, &normalized);
+        assert_eq!(filtered.len(), 2);
+        let none = filter_entities_with_relations(&deduped, &[]);
+        assert!(none.is_empty());
+
+        // Ambiguous response ids drop the key instead of guessing.
+        let ambiguous = vec![
+            json!({"id": "e-1", "name": "same", "type": "A"}),
+            json!({"id": "e-2", "name": "same", "type": "B"}),
+        ];
+        let rel = vec![json!({"from": "same", "to": "x", "type": "rel"})];
+        let normalized = normalize_relation_endpoints(&ambiguous, &rel);
+        assert_eq!(normalized[0]["from"], json!("same"));
+    }
+
+    #[test]
+    fn excluded_source_filter_handles_encoded_lists() {
+        let mut row = DocRow::new();
+        row.insert("doc_ids_kwd".to_string(), json!(["d1", "d2"]));
+        let mut excluded = HashSet::new();
+        excluded.insert("d1".to_string());
+        assert!(row_has_enabled_source(&row, &excluded));
+        excluded.insert("d2".to_string());
+        assert!(!row_has_enabled_source(&row, &excluded));
+
+        let mut encoded = DocRow::new();
+        encoded.insert(
+            "source_doc_ids".to_string(),
+            Value::String("[\"d9\"]".to_string()),
+        );
+        // d9 is not excluded, so a surviving source keeps the row.
+        assert!(row_has_enabled_source(&encoded, &excluded));
+        let mut all_excluded = excluded.clone();
+        all_excluded.insert("d9".to_string());
+        assert!(!row_has_enabled_source(&encoded, &all_excluded));
+        let empty: HashSet<String> = HashSet::new();
+        assert!(row_has_enabled_source(&encoded, &empty));
+
+        let mut fallback = DocRow::new();
+        fallback.insert("doc_id".to_string(), Value::String("d3".to_string()));
+        assert!(row_has_enabled_source(&fallback, &excluded));
+    }
+
+    #[tokio::test]
+    async fn build_bucket_small_returns_full_rows() {
+        let store = MiniStore::with_rows(vec![
+            entity_row("Alpha", "Person", "t1", "set", 3),
+            entity_row("Beta", "Org", "t1", "set", 1),
+            relation_row("alpha", "beta", "t1", "set"),
+        ]);
+        let mut scope = DocRow::new();
+        scope.insert("compilation_template_ids".to_string(), json!("t1"));
+        let (entities, relations) =
+            build_bucket(&store, "index", "kb", &scope, &HashSet::new()).unwrap();
+        assert_eq!(entities.len(), 2);
+        assert_eq!(entities[0]["mention_count"], json!(3));
+        assert_eq!(relations.len(), 1);
+        assert_eq!(relations[0]["from"], json!("Alpha"));
+        assert_eq!(relations[0]["to"], json!("Beta"));
+    }
+
+    #[tokio::test]
+    async fn build_bucket_samples_large_buckets() {
+        let mut rows: Vec<DocRow> = (0..1030)
+            .map(|index| entity_row(&format!("entity-{index:04}"), "Thing", "t1", "set", index))
+            .collect();
+        // The top-mentioned entity has one outgoing relation to a target entity.
+        rows.push(relation_row("entity-1029", "hub-target", "t1", "set"));
+        rows.push(entity_row("hub-target", "Thing", "t1", "set", 0));
+        let store = MiniStore::with_rows(rows);
+        let mut scope = DocRow::new();
+        scope.insert("compilation_template_ids".to_string(), json!("t1"));
+        let (entities, relations) =
+            build_bucket(&store, "index", "kb", &scope, &HashSet::new()).unwrap();
+        assert_eq!(relations.len(), 1);
+        assert_eq!(relations[0]["from"], json!("entity-1029"));
+        assert_eq!(relations[0]["to"], json!("hub-target"));
+        // 256 sampled seeds + the relation target.
+        assert_eq!(entities.len(), GRAPH_TOP_ENTITIES + 1);
+        assert!(
+            entities
+                .iter()
+                .any(|entity| entity["name"] == json!("hub-target"))
+        );
+    }
+
+    #[tokio::test]
+    async fn keyword_subgraph_exact_name_and_neighbors() {
+        let store = MiniStore::with_rows(vec![
+            entity_row("Alpha", "Person", "t1", "set", 5),
+            entity_row("Beta", "Org", "t1", "set", 2),
+            relation_row("alpha", "beta", "t1", "set"),
+        ]);
+        let mut base = DocRow::new();
+        base.insert("knowledge_graph_kwd".to_string(), json!("entity"));
+        let (meta, entities, relations) = keyword_subgraph(
+            &store,
+            "index",
+            "kb",
+            None,
+            &base,
+            "Alpha",
+            &scope_for_template,
+            &HashSet::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(meta.as_ref().unwrap()["template_id"], json!("t1"));
+        assert_eq!(entities.len(), 2);
+        assert!(
+            entities
+                .iter()
+                .any(|entity| entity["name"] == json!("Alpha"))
+        );
+        assert!(
+            entities
+                .iter()
+                .any(|entity| entity["name"] == json!("Beta"))
+        );
+        assert_eq!(relations.len(), 1);
+        assert_eq!(relations[0]["from"], json!("Alpha"));
+    }
+
+    #[tokio::test]
+    async fn keyword_subgraph_falls_back_to_knn() {
+        let store = MiniStore::with_rows(vec![entity_row("Gamma", "Person", "t1", "set", 1)]);
+        let mut base = DocRow::new();
+        base.insert("knowledge_graph_kwd".to_string(), json!("entity"));
+        let embed_calls = Mutex::new(0);
+        let embed = |_: &str| -> Result<Vec<f32>, String> {
+            *embed_calls.lock().unwrap() += 1;
+            Ok(vec![0.1, 0.2, 0.3])
+        };
+        let (meta, entities, _) = keyword_subgraph(
+            &store,
+            "index",
+            "kb",
+            Some(&embed),
+            &base,
+            "zzz-unknown",
+            &scope_for_template,
+            &HashSet::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(*embed_calls.lock().unwrap(), 1);
+        assert!(meta.is_some());
+        assert_eq!(entities.len(), 1);
+        assert_eq!(entities[0]["name"], json!("Gamma"));
+    }
+
+    #[tokio::test]
+    async fn keyword_subgraph_walks_tree_ancestors() {
+        let store = MiniStore::with_rows(vec![
+            entity_row("Leaf", "Detail", "t1", "tree", 1),
+            entity_row("Parent", "Section", "t1", "tree", 1),
+            entity_row("Grand", "Root", "t1", "tree", 1),
+            relation_row("parent", "leaf", "t1", "tree"),
+            relation_row("grand", "parent", "t1", "tree"),
+        ]);
+        let mut base = DocRow::new();
+        base.insert("knowledge_graph_kwd".to_string(), json!("entity"));
+        let (meta, entities, relations) = keyword_subgraph(
+            &store,
+            "index",
+            "kb",
+            None,
+            &base,
+            "Leaf",
+            &scope_for_template,
+            &HashSet::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(meta.as_ref().unwrap()["kind"], json!("tree"));
+        let names: Vec<String> = entities
+            .iter()
+            .map(|entity| entity["name"].as_str().unwrap_or("").to_string())
+            .collect();
+        assert!(names.contains(&"Leaf".to_string()));
+        assert!(names.contains(&"Parent".to_string()));
+        assert!(names.contains(&"Grand".to_string()));
+        assert_eq!(relations.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn keyword_subgraph_returns_empty_without_matches() {
+        let store = MiniStore::with_rows(vec![entity_row("Alpha", "Person", "t1", "set", 1)]);
+        let mut base = DocRow::new();
+        base.insert("knowledge_graph_kwd".to_string(), json!("entity"));
+        let (meta, entities, relations) = keyword_subgraph(
+            &store,
+            "index",
+            "kb",
+            None,
+            &base,
+            "nothing-matches",
+            &scope_for_template,
+            &HashSet::new(),
+        )
+        .await
+        .unwrap();
+        assert!(meta.is_none());
+        assert!(entities.is_empty());
+        assert!(relations.is_empty());
+    }
+}

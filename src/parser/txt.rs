@@ -229,4 +229,113 @@ fn decode_utf32(data: &[u8], big_endian: bool) -> Result<String> {
     Ok(text)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn splits_on_default_delimiters_and_accumulates() {
+        // Default delimiter "\n!?;。；！？" → newline plus punctuation chars.
+        let txt = "第一句。第二句！Third? Fourth; Fifth\n第六行";
+        let chunks = parser_txt(txt, 128, "\n!?;。；！？");
+        assert_eq!(chunks.len(), 1);
+        // Capturing split keeps delimiters; add_chunk joins segments with \n.
+        // Pure-delimiter segments are skipped by the `^dels$` guard — so the
+        // punctuation itself is dropped (Python re.match alternation).
+        assert!(chunks[0].0.contains("第一句"));
+        assert!(!chunks[0].0.contains("。"));
+        assert!(chunks[0].0.contains("第二句"));
+        assert!(chunks[0].0.contains("Third"));
+        assert!(chunks[0].0.contains("第六行"));
+        assert_eq!(chunks[0].1, "");
+    }
+
+    #[test]
+    fn exceeds_token_budget_starts_new_chunk() {
+        // Tiny budget forces multiple chunks.
+        let txt = "aaaa bbbb cccc dddd";
+        let chunks = parser_txt(txt, 1, " ");
+        assert!(chunks.len() >= 2);
+        // First chunk begins with the first word.
+        assert!(chunks[0].0.starts_with("aaaa"));
+    }
+
+    #[test]
+    fn backtick_delimiters_are_skipped_as_pure_delimiter_segments() {
+        // Backtick-wrapped tokens are treated as delimiters; the token text
+        // is skipped by the `^dels$` guard (Python re.match semantics), while
+        // surrounding segments are joined with \n.
+        let txt = "left `sep` right";
+        let chunks = parser_txt(txt, 128, "`sep`");
+        assert_eq!(chunks.len(), 1);
+        assert!(chunks[0].0.contains("left"));
+        assert!(chunks[0].0.contains("right"));
+        assert!(!chunks[0].0.contains("sep"));
+    }
+
+    #[test]
+    fn unicode_escape_expand_handles_common_escapes() {
+        assert_eq!(unicode_escape_expand(r"\n"), "\n");
+        assert_eq!(unicode_escape_expand(r"\t"), "\t");
+        assert_eq!(unicode_escape_expand(r"\\"), "\\");
+        assert_eq!(unicode_escape_expand(r"\u4e2d"), "中");
+        assert_eq!(unicode_escape_expand("a\\nb"), "a\nb");
+    }
+
+    #[test]
+    fn decode_text_handles_utf8_utf16_and_utf32_boms() {
+        let mut utf8 = vec![0xEF, 0xBB, 0xBF];
+        utf8.extend_from_slice("中文".as_bytes());
+        assert_eq!(decode_text(&utf8).unwrap(), "中文");
+
+        let units: Vec<u16> = "中文".encode_utf16().collect();
+        let mut utf16_le = vec![0xFF, 0xFE];
+        for unit in &units {
+            utf16_le.extend_from_slice(&unit.to_le_bytes());
+        }
+        assert_eq!(decode_text(&utf16_le).unwrap(), "中文");
+        let mut utf16_be = vec![0xFE, 0xFF];
+        for unit in &units {
+            utf16_be.extend_from_slice(&unit.to_be_bytes());
+        }
+        assert_eq!(decode_text(&utf16_be).unwrap(), "中文");
+
+        let scalars: Vec<u32> = "中文".chars().map(u32::from).collect();
+        let mut utf32_le = vec![0xFF, 0xFE, 0x00, 0x00];
+        for scalar in &scalars {
+            utf32_le.extend_from_slice(&scalar.to_le_bytes());
+        }
+        assert_eq!(decode_text(&utf32_le).unwrap(), "中文");
+        let mut utf32_be = vec![0x00, 0x00, 0xFE, 0xFF];
+        for scalar in &scalars {
+            utf32_be.extend_from_slice(&scalar.to_be_bytes());
+        }
+        assert_eq!(decode_text(&utf32_be).unwrap(), "中文");
+    }
+
+    #[test]
+    fn decode_text_rejects_invalid_bytes_with_upload_guidance() {
+        let error = decode_text(&[0xFF, 0x00, 0x80]).unwrap_err().to_string();
+        assert!(error.contains("upload"), "{error}");
+        assert!(error.contains("BOM"), "{error}");
+    }
+
+    #[test]
+    fn decode_utf16_bom_fallback() {
+        let mut bytes = vec![0xFF, 0xFE];
+        let text = "中文内容";
+        for u in text.encode_utf16() {
+            bytes.extend_from_slice(&u.to_le_bytes());
+        }
+        let decoded = decode_text(&bytes).unwrap();
+        assert_eq!(decoded, "中文内容");
+    }
+
+    #[test]
+    fn empty_delimiter_keeps_single_chunk() {
+        let txt = "no delimiters here";
+        let chunks = parser_txt(txt, 128, "");
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].0, "no delimiters here");
+    }
+}

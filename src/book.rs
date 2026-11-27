@@ -354,4 +354,144 @@ pub fn parse_book_text(
     Ok(chunks)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn random_choices_deterministic_cycles() {
+        let arr = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        // Python: k = min(len, k) — 5 requests on a 3-element array return 3
+        let picked = random_choices(&arr, 5);
+        assert_eq!(picked.len(), 3);
+        // deterministic in-order coverage
+        let arr3 = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let picked3 = random_choices(&arr3, 3);
+        assert_eq!(picked3, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn is_english_detects_ascii_majority() {
+        let eng = vec![
+            "Hello world".to_string(),
+            "This is fine".to_string(),
+            "中文".to_string(),
+        ];
+        // 2/3 = 0.667, NOT > 0.8 -> false (Python-verified)
+        assert!(!is_english(&eng));
+    }
+
+    #[test]
+    fn is_english_threshold() {
+        // 4/5 = 0.8 is NOT > 0.8 -> false
+        let eng = vec![
+            "Hello world".to_string(),
+            "This is fine".to_string(),
+            "More text here".to_string(),
+            "Yeah sure".to_string(),
+            "中文".to_string(),
+        ];
+        assert!(!is_english(&eng));
+        // 5/6 = 0.833 > 0.8 -> true
+        let all_eng = vec![
+            "Hello world".to_string(),
+            "This is fine".to_string(),
+            "More text here".to_string(),
+            "Yeah sure".to_string(),
+            "Almost done".to_string(),
+            "中文".to_string(),
+        ];
+        assert!(is_english(&all_eng));
+    }
+
+    #[test]
+    fn is_chinese_detects_cjk_ratio() {
+        assert!(is_chinese("这是一段中文文本"));
+        assert!(!is_chinese("hello world"));
+    }
+
+    #[test]
+    fn remove_tag_strips_position_tags() {
+        assert_eq!(remove_tag("正文@@1\t1.0\t2.0##继续"), "正文继续");
+    }
+
+    #[test]
+    fn hierarchical_merge_numeric_books() {
+        // family 3 uses ROMAN numerals: Chapter I / Chapter II
+        let sections = vec![
+            ("Chapter I: Intro".to_string(), "title".to_string()),
+            ("Body one".to_string(), "text".to_string()),
+            ("Chapter II: Methods".to_string(), "title".to_string()),
+            ("Body two".to_string(), "text".to_string()),
+        ];
+        let bull = bullets_category(&[
+            "Chapter I: Intro".to_string(),
+            "Chapter II: Methods".to_string(),
+        ]);
+        assert_eq!(bull, 3);
+        let family_len = BULLET_PATTERN[3].len();
+        let groups = hierarchical_merge(bull as i64, &sections, 5, family_len);
+        let flat: Vec<String> = groups.into_iter().map(|g| g.join("\n")).collect();
+        assert!(flat.iter().any(|c| c.contains("Chapter I: Intro")));
+        assert!(flat.iter().any(|c| c.contains("Chapter II: Methods")));
+    }
+
+    #[test]
+    fn hierarchical_merge_short_sections_group_under_218() {
+        let sections = vec![
+            ("1. 概述".to_string(), "title".to_string()),
+            ("短正文".to_string(), "text".to_string()),
+            ("2. 方法".to_string(), "title".to_string()),
+            ("短正文二".to_string(), "text".to_string()),
+        ];
+        let bull = bullets_category(&["1. 概述".to_string(), "2. 方法".to_string()]);
+        assert_eq!(bull, 1);
+        let family_len = BULLET_PATTERN[1].len();
+        let groups = hierarchical_merge(bull as i64, &sections, 5, family_len);
+        let flat: Vec<String> = groups.into_iter().map(|g| g.join("\n")).collect();
+        assert!(!flat.is_empty());
+    }
+
+    #[test]
+    fn naive_merge_basic_accumulation() {
+        let sections = vec![
+            ("第一段正文内容".to_string(), String::new()),
+            ("第二段正文内容".to_string(), String::new()),
+        ];
+        let chunks = naive_merge(&sections, 128, "\n。；！？", 0);
+        // Python returns ['', joined] — the leading empty slot is faithful
+        assert_eq!(chunks.len(), 2, "{chunks:?}");
+        assert!(chunks[0].is_empty());
+        assert!(chunks[1].contains("第一段正文内容"));
+        assert!(chunks[1].contains("第二段正文内容"));
+    }
+
+    #[test]
+    fn naive_merge_custom_delimiters_split() {
+        let sections = vec![("a。b。c".to_string(), String::new())];
+        let chunks = naive_merge(&sections, 128, "\n。；！？`。`", 0);
+        // custom delimiter '。' splits: "\na", "\nb", "\nc"
+        assert_eq!(chunks.len(), 3, "{chunks:?}");
+    }
+
+    #[test]
+    fn naive_merge_overlap_carries_tail() {
+        let long = "长内容".repeat(50);
+        let sections = vec![(long.clone(), String::new()), (long.clone(), String::new())];
+        let chunks = naive_merge(&sections, 32, "\n。；！？", 10);
+        assert!(chunks.len() >= 2, "{chunks:?}");
+    }
+
+    #[test]
+    fn parse_book_text_txt_family() {
+        // needs plain body lines: pure chapter titles yield [] (Python-verified)
+        let text = "目录\n第一章 概述\n这是正文内容。\n第二章 方法\n这也是正文内容。\n";
+        let chunks = parse_book_text("book.txt", text, 128).unwrap();
+        assert!(!chunks.is_empty(), "{chunks:?}");
+        assert!(
+            chunks.iter().any(|c| c.contains("第二章 方法")),
+            "{chunks:?}"
+        );
+        assert!(parse_book_text("book.pdf", text, 128).is_err());
+    }
+}

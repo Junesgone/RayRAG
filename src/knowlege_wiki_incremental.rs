@@ -600,7 +600,197 @@ pub fn wiki_clear_refine_failure(
     }
 }
 
+#[cfg(test)]
+mod wiki_incremental_part1_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+    use crate::harness::HarnessChat;
+    use std::sync::Mutex;
 
+    struct FakeChat {
+        reply: String,
+        calls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessChat for FakeChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            let user = history
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            self.calls.lock().unwrap().push(user);
+            Ok(self.reply.clone())
+        }
+
+        fn max_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    #[test]
+    fn derive_page_id_slugifies_and_keeps_cjk() {
+        assert_eq!(
+            derive_page_id("Smartphone Industry", "concept"),
+            "concept/smartphone-industry"
+        );
+        assert_eq!(
+            derive_page_id("  Unstable  Name!! ", "entity"),
+            "entity/unstable-name"
+        );
+        assert_eq!(
+            derive_page_id("智能手机 产业", "concept"),
+            "concept/智能手机-产业"
+        );
+    }
+
+    #[test]
+    fn entity_query_text_aggregates_variants() {
+        let entity = json!({
+            "entity_name": "Alpha",
+            "aliases": ["A", "Alpha Inc", "", 7, "E1", "E2", "E3"],
+            "definition_excerpt": "def",
+            "claims": [{"statement": "s1"}, {"text": "s2"}, {"nope": 1}, {"statement": "s4"}]
+        });
+        let text = entity_to_query_text(&entity);
+        assert!(text.starts_with("Alpha A Alpha Inc 7 E1"));
+        assert!(text.contains("def"));
+        assert!(text.contains("s1 s2"));
+        assert!(!text.contains("s4"));
+        let empty = json!({});
+        assert_eq!(entity_to_query_text(&empty), "");
+    }
+
+    #[test]
+    fn strip_think_and_parse_array() {
+        assert_eq!(strip_think_prefix("</think> answer"), "answer");
+        assert_eq!(strip_think_prefix("plain"), "plain");
+        assert_eq!(strip_think_prefix("a</think>b"), "a</think>b");
+        let parsed = parse_json_array("intro [1, 2, 3] outro").expect("array");
+        assert_eq!(parsed.len(), 3);
+        assert!(parse_json_array("no array").is_none());
+        assert!(parse_json_array("[1,2").is_none());
+    }
+
+    #[tokio::test]
+    async fn chat_mdl_ask_flags_error_lines() {
+        let ok_chat = FakeChat {
+            reply: "fine answer".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        assert_eq!(
+            chat_mdl_ask(&ok_chat, "sys", "user", 0.0)
+                .await
+                .expect("ok"),
+            "fine answer"
+        );
+        let err_chat = FakeChat {
+            reply: "  **ERROR** boom".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        assert!(chat_mdl_ask(&err_chat, "sys", "user", 0.0).await.is_err());
+    }
+
+    #[test]
+    fn should_re_synthesize_conditions() {
+        let page = json!({
+            "source_doc_ids": ["d1", "d2"],
+            "claims": vec![json!({"statement": "s"}); 15],
+            "synthesis_version_int": 1
+        });
+        let mut new_sources = BTreeSet::new();
+        new_sources.insert("d3".to_string());
+        new_sources.insert("d4".to_string());
+        new_sources.insert("d5".to_string());
+        assert!(should_re_synthesize(&page, &new_sources, 4));
+        assert!(!should_re_synthesize(&page, &new_sources, 3));
+        let small = json!({
+            "source_doc_ids": [],
+            "claims": [{"statement": "s"}],
+            "synthesis_version_int": 1
+        });
+        assert!(!should_re_synthesize(&small, &new_sources, 10));
+    }
+
+    #[test]
+    fn chunk_texts_budget_and_enrichment() {
+        let store = MemoryDocStore::new();
+        let big_a = "a".repeat(5000);
+        let big_b = "b".repeat(5000);
+        let big_c = "c".repeat(5000);
+        let rows: Vec<DocRow> = vec![
+            json!({"id": "c1", "content_with_weight": big_a})
+                .as_object()
+                .cloned()
+                .unwrap(),
+            json!({"id": "c2", "content_with_weight": big_b})
+                .as_object()
+                .cloned()
+                .unwrap(),
+            json!({"id": "c3", "content_with_weight": big_c})
+                .as_object()
+                .cloned()
+                .unwrap(),
+        ];
+        store
+            .insert(
+                &rows,
+                &crate::harness::knowlege_dataset_nav::index_name("t1"),
+                "kb1",
+            )
+            .unwrap();
+        let ids = vec![
+            "c1".to_string(),
+            "c1".to_string(),
+            "c2".to_string(),
+            "c3".to_string(),
+        ];
+        let texts = wiki_load_chunk_texts(&store, "t1", "kb1", &ids);
+        assert_eq!(texts.len(), 2);
+        assert!(texts.contains_key("c1") && texts.contains_key("c2"));
+
+        let source_chunks = vec![
+            json!({"id": "c1", "text": "claim text"}),
+            json!({"id": "c1", "text": "dup"}),
+            json!({"chunk_id": "c9", "content_with_weight": "fallback"}),
+        ];
+        let enriched = wiki_enrich_source_chunks(&source_chunks, &texts);
+        assert_eq!(enriched.len(), 2);
+        assert_eq!(enriched[0]["id"], json!("c1"));
+        assert_eq!(enriched[0]["_verbatim"], json!(true));
+        assert_eq!(enriched[1]["text"], json!("fallback"));
+        assert_eq!(enriched[1]["_verbatim"], json!(false));
+    }
+
+    #[test]
+    fn refine_failure_marker_roundtrip() {
+        let store = MemoryDocStore::new();
+        assert!(!wiki_has_any_pages(&store, "t1", "kb1"));
+        wiki_record_refine_failure(
+            &store,
+            "t1",
+            "kb1",
+            "concept/alpha",
+            &["Alpha".to_string(), "  ".to_string()],
+            "boom",
+        );
+        let failures = wiki_load_refine_failures(&store, "t1", "kb1");
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures["concept/alpha"]["error"], json!("boom"));
+        assert_eq!(failures["concept/alpha"]["entity_names"], json!(["Alpha"]));
+        wiki_clear_refine_failure(&store, "t1", "kb1", "concept/alpha");
+        assert!(wiki_load_refine_failures(&store, "t1", "kb1").is_empty());
+        wiki_record_refine_failure(&store, "t1", "kb1", "", &[], "x");
+        assert!(wiki_load_refine_failures(&store, "t1", "kb1").is_empty());
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Part 2 — canonical entity index CRUD (`_load_canonical_entities` ..
@@ -973,7 +1163,142 @@ pub fn normalize_key(name: &str) -> String {
     filtered.trim().to_string()
 }
 
+#[cfg(test)]
+mod wiki_incremental_part2_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
 
+    #[test]
+    fn canonical_doc_shape() {
+        let doc = build_canonical_entity_doc(
+            "kb1",
+            "Alpha",
+            "concept",
+            &["A".to_string(), "Alpha".to_string(), "A".to_string()],
+            &["d2".to_string(), "d1".to_string(), "d1".to_string()],
+            5,
+            Some(&[1.0, 0.0]),
+            Some(&["c2".to_string(), "c1".to_string()]),
+        );
+        assert_eq!(doc["entity_kwd"], json!("Alpha"));
+        assert_eq!(doc["entity_type_kwd"], json!("concept"));
+        let aliases: Value = serde_json::from_str(doc["aliases"].as_str().unwrap()).unwrap();
+        assert_eq!(aliases, json!(["A", "Alpha"]));
+        assert_eq!(doc["source_doc_ids"], json!(["d1", "d2"]));
+        assert_eq!(doc["source_chunk_ids"], json!(["c1", "c2"]));
+        assert_eq!(doc["mention_count_int"], json!(5));
+        assert_eq!(doc["q_2_vec"], json!([1.0, 0.0]));
+        assert_eq!(doc["embedding"], json!([1.0, 0.0]));
+        assert_eq!(doc["id"].as_str().unwrap().len(), 16);
+        let no_vec = build_canonical_entity_doc("kb1", "B", "entity", &[], &[], 0, None, None);
+        assert!(no_vec.get("q_2_vec").is_none());
+        assert_eq!(no_vec["mention_count_int"], json!(0));
+    }
+
+    #[test]
+    fn canonical_crud_roundtrip() {
+        let store = MemoryDocStore::new();
+        save_canonical_entity(
+            &store,
+            "t1",
+            "kb1",
+            "Alpha",
+            "concept",
+            &["A".to_string()],
+            &["d1".to_string()],
+            3,
+            Some(&[1.0, 0.0]),
+            Some(&["c1".to_string()]),
+        );
+        let loaded = load_canonical_entities(&store, "t1", "kb1");
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded["Alpha"]["aliases"], json!(["A"]));
+        assert_eq!(loaded["Alpha"]["mention_count_int"], json!(3));
+        assert_eq!(loaded["Alpha"]["entity_type_kwd"], json!("concept"));
+        assert_eq!(loaded["Alpha"]["source_chunk_ids"], json!(["c1"]));
+
+        save_canonical_entity(
+            &store,
+            "t1",
+            "kb1",
+            "Alpha",
+            "concept",
+            &["A".to_string(), "B".to_string()],
+            &["d1".to_string(), "d2".to_string()],
+            7,
+            None,
+            None,
+        );
+        let loaded = load_canonical_entities(&store, "t1", "kb1");
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded["Alpha"]["mention_count_int"], json!(7));
+        assert_eq!(loaded["Alpha"]["source_doc_ids"], json!(["d1", "d2"]));
+
+        update_canonical_entity(
+            &store,
+            "t1",
+            "kb1",
+            "Alpha",
+            "concept",
+            &["A".to_string()],
+            &["d9".to_string()],
+            9,
+            None,
+        );
+        let loaded = load_canonical_entities(&store, "t1", "kb1");
+        assert_eq!(loaded["Alpha"]["mention_count_int"], json!(9));
+
+        delete_canonical_entity(&store, "t1", "kb1", "Alpha");
+        assert!(load_canonical_entities(&store, "t1", "kb1").is_empty());
+    }
+
+    #[test]
+    fn canonical_knn_threshold() {
+        let store = MemoryDocStore::new();
+        save_canonical_entity(
+            &store,
+            "t1",
+            "kb1",
+            "Alpha",
+            "entity",
+            &[],
+            &[],
+            1,
+            Some(&[1.0, 0.0]),
+            None,
+        );
+        save_canonical_entity(
+            &store,
+            "t1",
+            "kb1",
+            "Beta",
+            "entity",
+            &[],
+            &[],
+            1,
+            Some(&[0.0, 1.0]),
+            None,
+        );
+        let (name, score) =
+            knn_search_canonical(&store, "t1", "kb1", &[0.9, 0.1], 0.5).expect("knn");
+        assert_eq!(name, "Alpha");
+        assert!(score > 0.99);
+        let (name2, score2) =
+            knn_search_canonical(&store, "t1", "kb1", &[0.0, 1.0], 0.5).expect("knn2");
+        assert_eq!(name2, "Beta");
+        assert!((score2 - 1.0).abs() < 1e-6);
+        assert!(knn_search_canonical(&store, "t1", "kb1", &[0.0, 1.0], 1.01).is_none());
+        assert!(knn_search_canonical(&store, "t1", "kb1", &[], 0.0).is_none());
+    }
+
+    #[test]
+    fn normalize_key_shapes() {
+        assert_eq!(normalize_key("Hello, World!"), "hello world");
+        assert_eq!(normalize_key("  Mixed_Case-42  "), "mixed_case42");
+        assert_eq!(normalize_key("智能手机 产业"), "智能手机 产业");
+        assert_eq!(normalize_key("a.b/c"), "abc");
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Part 3a — lightweight raw-entity extraction (`_as_str_list` ..
@@ -1285,7 +1610,97 @@ pub fn extract_raw_entities(map_results: &[Value]) -> (Vec<Value>, Map<String, V
     (result, claim_index)
 }
 
+#[cfg(test)]
+mod wiki_incremental_part3_tests {
+    use super::*;
 
+    #[test]
+    fn as_str_list_and_as_int_shapes() {
+        assert_eq!(
+            as_str_list(Some(&json!(["a", null, 2]))),
+            vec!["a".to_string(), "2".to_string()]
+        );
+        assert_eq!(as_str_list(Some(&json!("a"))), vec!["a".to_string()]);
+        assert_eq!(
+            as_str_list(Some(&json!("[\"x\",\"y\"]"))),
+            vec!["x".to_string(), "y".to_string()]
+        );
+        assert_eq!(
+            as_str_list(Some(&json!("not json"))),
+            vec!["not json".to_string()]
+        );
+        assert!(as_str_list(None).is_empty());
+        assert_eq!(as_int(Some(&json!(5)), 0), 5);
+        assert_eq!(as_int(Some(&json!(5.9)), 0), 5);
+        assert_eq!(as_int(Some(&json!("7")), 0), 7);
+        assert_eq!(as_int(Some(&json!(true)), 0), 1);
+        assert_eq!(as_int(Some(&json!("x")), 9), 9);
+    }
+
+    #[test]
+    fn claim_chunk_ids_and_dedupe() {
+        assert_eq!(
+            wiki_claim_chunk_ids(&json!({"chunk_ids": ["c1", "c2"]})),
+            vec!["c1".to_string(), "c2".to_string()]
+        );
+        assert_eq!(
+            wiki_claim_chunk_ids(&json!({"chunk_ids": "c3"})),
+            vec!["c3".to_string()]
+        );
+        assert_eq!(
+            wiki_claim_chunk_ids(&json!({"source_chunk_id": "c9"})),
+            vec!["c9".to_string()]
+        );
+        assert!(wiki_claim_chunk_ids(&json!({"chunk_ids": [""]})).is_empty());
+        let claims = vec![
+            json!({"statement": "s", "source_doc_id": "d1", "chunk_ids": ["c2", "c1"]}),
+            json!({"statement": "s", "source_doc_id": "d1", "chunk_ids": ["c1", "c2"]}),
+            json!({"statement": "s", "source_doc_id": "d2", "chunk_ids": ["c1"]}),
+            json!({"text": "t", "chunk_ids": ["c1"]}),
+        ];
+        assert_eq!(wiki_dedupe_claims(&claims).len(), 3);
+    }
+
+    #[test]
+    fn extract_raw_entities_aggregates_metadata() {
+        let map_results = vec![
+            json!({
+                "doc_id": "d1",
+                "entities": [{"name": "Alpha", "type": "org", "aliases": ["A"], "chunk_ids": ["c1"]}],
+                "concepts": [{"term": "Beta", "chunk_ids": ["c2"]}],
+                "claims": [{"subject": "Alpha", "statement": "s1", "chunk_ids": ["c3"]}, {"subject": "Unknown", "statement": "drop"}],
+                "relations": [{"from": "Alpha", "to": "Beta", "type": "uses", "chunk_ids": ["c4"]}]
+            }),
+            json!({
+                "doc_id": "d2",
+                "entities": [{"name": "Alpha", "chunk_ids": ["c5"]}],
+                "concepts": [],
+                "claims": [{"subject": "Alpha", "statement": "s1", "chunk_ids": ["c3"]}],
+                "relations": []
+            }),
+        ];
+        let (entities, claim_index) = extract_raw_entities(&map_results);
+        assert_eq!(entities.len(), 2);
+        let alpha = entities
+            .iter()
+            .find(|e| e["name"] == json!("Alpha"))
+            .expect("alpha");
+        assert_eq!(alpha["type"], json!("org"));
+        assert_eq!(alpha["claim_count"], json!(2));
+        assert_eq!(alpha["source_doc_ids"], json!(["d1", "d2"]));
+        assert_eq!(alpha["source_chunk_ids"], json!(["c1", "c3", "c4", "c5"]));
+        assert_eq!(alpha["aliases"], json!(["A"]));
+        let beta = entities
+            .iter()
+            .find(|e| e["name"] == json!("Beta"))
+            .expect("beta");
+        assert_eq!(beta["type"], json!("concept"));
+        assert_eq!(beta["aliases"], json!(["Beta"]));
+        assert_eq!(beta["source_chunk_ids"], json!(["c2", "c4"]));
+        assert_eq!(claim_index["Alpha"].as_array().unwrap().len(), 2);
+        assert!(claim_index.get("Unknown").is_none());
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Part 3b — entity matching (`_wiki_match_entities`, `_wiki_confirm_batch`,
@@ -1929,7 +2344,206 @@ pub fn search_existing_pages(
     results
 }
 
+#[cfg(test)]
+mod wiki_incremental_part4_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+    use crate::harness::HarnessChat;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
 
+    struct FakeChat {
+        reply: String,
+        calls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessChat for FakeChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            let user = history
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            self.calls.lock().unwrap().push(user);
+            Ok(self.reply.clone())
+        }
+
+        fn max_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    struct MapEmb {
+        map: HashMap<String, Vec<f32>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Embedder for MapEmb {
+        async fn embed(&self, texts: &[&str]) -> crate::Result<Vec<Vec<f32>>> {
+            Ok(texts
+                .iter()
+                .map(|text| self.map.get(*text).cloned().unwrap_or_default())
+                .collect())
+        }
+    }
+
+    fn map_emb(pairs: &[(&str, [f32; 2])]) -> MapEmb {
+        MapEmb {
+            map: pairs
+                .iter()
+                .map(|(text, vec)| (text.to_string(), vec.to_vec()))
+                .collect(),
+        }
+    }
+
+    #[tokio::test]
+    async fn confirm_batch_parses_booleans() {
+        let chat = FakeChat {
+            reply: "Here you go: [true, false]".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let candidates = vec![
+            ("Alpha".to_string(), "A Corp".to_string()),
+            ("Beta".to_string(), "B Corp".to_string()),
+        ];
+        let confirmed = wiki_confirm_batch(&chat, &candidates).await;
+        assert_eq!(confirmed, vec![("Alpha".to_string(), "A Corp".to_string())]);
+        let bad = FakeChat {
+            reply: "no json".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        assert!(wiki_confirm_batch(&bad, &candidates).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn match_entities_exact_and_intra_merge() {
+        let store = MemoryDocStore::new();
+        let mut existing: Map<String, Value> = Map::new();
+        existing.insert(
+            "Alpha".to_string(),
+            json!({"aliases": ["A"], "entity_type_kwd": "org", "mention_count_int": 2, "source_doc_ids": ["d9"], "source_chunk_ids": ["c9"]}),
+        );
+        let raw_exact = vec![
+            json!({"name": "A", "type": "org", "aliases": [], "claim_count": 1, "source_doc_ids": ["d1"], "source_chunk_ids": ["c1"]}),
+        ];
+        let (canonical, resolution) = wiki_match_entities(
+            &store, None, None, "t1", "kb1", &raw_exact, &existing, false, None,
+        )
+        .await;
+        assert_eq!(resolution["A"], json!("Alpha"));
+        assert_eq!(canonical["Alpha"]["claim_count"], json!(3));
+
+        let empty_existing: Map<String, Value> = Map::new();
+        let raw_pair = vec![
+            json!({"name": "Alpha2", "type": "org", "aliases": [], "claim_count": 5, "source_doc_ids": ["d2"], "source_chunk_ids": ["c2"]}),
+            json!({"name": "AlphaTwo", "type": "org", "aliases": ["AT"], "claim_count": 1, "source_doc_ids": ["d3"], "source_chunk_ids": ["c3"]}),
+        ];
+        let embd = map_emb(&[("Alpha2", [1.0, 0.0]), ("AlphaTwo AT", [0.999, 0.001])]);
+        let (canonical, resolution) = wiki_match_entities(
+            &store,
+            Some(&embd),
+            None,
+            "t1",
+            "kb1",
+            &raw_pair,
+            &empty_existing,
+            false,
+            None,
+        )
+        .await;
+        assert_eq!(resolution["AlphaTwo"], json!("Alpha2"));
+        let entry = canonical.get("Alpha2").expect("alpha2");
+        // Step 3 folded 5+1 into the master; Step 4 folds the raw counts
+        // again (upstream double-count semantics preserved).
+        assert_eq!(entry["claim_count"], json!(12));
+        assert_eq!(entry["source_doc_ids"], json!(["d2", "d3"]));
+        let aliases: Vec<String> = entry["aliases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|value| value.as_str().map(str::to_string))
+            .collect();
+        assert!(aliases.contains(&"AT".to_string()));
+        assert!(aliases.contains(&"AlphaTwo".to_string()));
+        assert!(!canonical.contains_key("AlphaTwo"));
+    }
+
+    #[tokio::test]
+    async fn match_entities_knn_existing_merge() {
+        let store = MemoryDocStore::new();
+        let doc = build_canonical_entity_doc(
+            "kb1",
+            "Alpha",
+            "entity",
+            &[],
+            &[],
+            1,
+            Some(&[1.0, 0.0]),
+            None,
+        );
+        store
+            .insert(
+                &[doc.as_object().cloned().unwrap()],
+                &crate::harness::knowlege_dataset_nav::index_name("t1"),
+                "kb1",
+            )
+            .unwrap();
+        let existing = load_canonical_entities(&store, "t1", "kb1");
+        let raw = vec![
+            json!({"name": "Gamma", "type": "entity", "aliases": [], "claim_count": 1, "source_doc_ids": ["d1"], "source_chunk_ids": ["c1"]}),
+        ];
+        let embd = map_emb(&[("Gamma", [0.995, 0.005])]);
+        let (canonical, resolution) = wiki_match_entities(
+            &store,
+            Some(&embd),
+            None,
+            "t1",
+            "kb1",
+            &raw,
+            &existing,
+            true,
+            None,
+        )
+        .await;
+        assert_eq!(resolution["Gamma"], json!("Alpha"));
+        assert!(canonical.contains_key("Alpha"));
+        assert_eq!(canonical["Alpha"]["claim_count"], json!(2));
+    }
+
+    #[test]
+    fn existing_pages_keyed_by_slug() {
+        let store = MemoryDocStore::new();
+        let rows: Vec<DocRow> = vec![
+            json!({"id": "p1", "compile_kwd": "wiki_page", "slug_kwd": "entity/a"})
+                .as_object()
+                .cloned()
+                .unwrap(),
+            json!({"id": "p2", "compile_kwd": "wiki_page", "slug_kwd": "entity/b"})
+                .as_object()
+                .cloned()
+                .unwrap(),
+        ];
+        store
+            .insert(
+                &rows,
+                &crate::harness::knowlege_dataset_nav::index_name("t1"),
+                "kb1",
+            )
+            .unwrap();
+        let fields: Vec<String> = ["id", "slug_kwd"].iter().map(|f| f.to_string()).collect();
+        let pages = search_existing_pages(&store, "t1", "kb1", &fields);
+        assert_eq!(pages.len(), 2);
+        assert_eq!(pages["entity/a"]["id"], json!("p1"));
+        assert_eq!(pages["entity/b"]["slug_kwd"], json!("entity/b"));
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Part 5 — graph page loading and link machinery (`_load_map_relations` ..
@@ -2394,7 +3008,159 @@ pub fn resolve_dead_slug(
     }
 }
 
+#[cfg(test)]
+mod wiki_incremental_part5_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+    use crate::harness::knowlege_wiki::{build_resume_doc, commit_active_map_state};
 
+    #[test]
+    fn outlink_extraction_forms() {
+        let content = "See [[entity/alpha]] and [[concept/beta|Beta]] and [x](artifact/kb1/entity/gamma) and [[entity/alpha]] again";
+        let links = extract_outlinks_from_content(content, "kb1");
+        assert_eq!(
+            links,
+            vec![
+                "entity/alpha".to_string(),
+                "concept/beta".to_string(),
+                "entity/gamma".to_string()
+            ]
+        );
+        assert!(extract_outlinks_from_content("", "kb1").is_empty());
+    }
+
+    #[test]
+    fn unlinked_mention_skips_links() {
+        let content = "Intro [[entity/alpha]] then Alpha here and [[unclosed Alpha";
+        assert_eq!(find_unlinked_mention(content, "Alpha"), 28);
+        assert_eq!(find_unlinked_mention("only [[Alpha]] here", "Alpha"), -1);
+        assert_eq!(find_unlinked_mention("nothing", "Zeta"), -1);
+        assert_eq!(find_unlinked_mention("", "Zeta"), -1);
+    }
+
+    #[test]
+    fn render_links_gates_and_formats() {
+        let valid: BTreeSet<String> = ["entity/alpha".to_string()].into_iter().collect();
+        let rendered = render_links(
+            "[[entity/alpha]] [[entity/ghost]] [[entity/alpha|A]]",
+            "kb1",
+            &valid,
+        );
+        assert!(rendered.contains("[alpha](artifact/kb1/entity/alpha)"));
+        assert!(rendered.contains("entity/ghost"));
+        assert!(rendered.contains("[A](artifact/kb1/entity/alpha)"));
+    }
+
+    #[test]
+    fn dead_slug_resolution_layers() {
+        let valid: BTreeSet<String> = ["entity/smart-phone".to_string()].into_iter().collect();
+        let mut name_slug: BTreeMap<String, String> = BTreeMap::new();
+        name_slug.insert(
+            "Smartphone Industry".to_string(),
+            "concept/smartphone-industry".to_string(),
+        );
+        name_slug.insert("smart_phone".to_string(), "entity/smart-phone".to_string());
+        assert_eq!(
+            resolve_dead_slug("entity/smart-phone", &valid, &name_slug),
+            Some("entity/smart-phone".to_string())
+        );
+        assert_eq!(
+            resolve_dead_slug("entity/smart_phone", &valid, &name_slug),
+            Some("entity/smart-phone".to_string())
+        );
+        assert_eq!(
+            resolve_dead_slug("Smartphone Industry", &valid, &name_slug),
+            Some("concept/smartphone-industry".to_string())
+        );
+        assert_eq!(resolve_dead_slug("unrelated", &valid, &name_slug), None);
+    }
+
+    #[test]
+    fn pages_for_graph_content_and_relation_edges() {
+        let store = MemoryDocStore::new();
+        let index = crate::harness::knowlege_dataset_nav::index_name("t1");
+        // MAP rows with a grounded relation Alpha -> Beta.
+        let extract = json!({
+            "entities": [],
+            "concepts": [],
+            "claims": [],
+            "relations": [{"from": "Alpha", "to": "Beta", "type": "uses"}],
+            "topics": []
+        });
+        let row = build_resume_doc("c1", "d1", &extract, "h1");
+        store
+            .insert(&[row.as_object().cloned().unwrap()], &index, "kb1")
+            .unwrap();
+        let mut state = Map::new();
+        state.insert("c1".to_string(), json!({"doc_id": "d1", "hash": "h1"}));
+        commit_active_map_state(&store, "t1", "kb1", &state).unwrap();
+        // wiki_page rows: alpha has a content link, beta has none.
+        let pages: Vec<DocRow> = vec![
+            json!({"id": "p1", "compile_kwd": "wiki_page", "slug_kwd": "entity/alpha", "title_kwd": "Alpha", "page_type_kwd": "entity", "md_with_weight": "see [[concept/beta]]", "entity_names_kwd": ["Alpha"]})
+                .as_object().cloned().unwrap(),
+            json!({"id": "p2", "compile_kwd": "wiki_page", "slug_kwd": "concept/beta", "title_kwd": "Beta", "page_type_kwd": "concept", "md_with_weight": "no links here", "entity_names_kwd": ["Beta"]})
+                .as_object().cloned().unwrap(),
+        ];
+        store.insert(&pages, &index, "kb1").unwrap();
+        let graph = load_pages_for_graph(&store, "t1", "kb1", None, None);
+        assert_eq!(graph.len(), 2);
+        let alpha = graph
+            .iter()
+            .find(|p| p["slug"] == json!("entity/alpha"))
+            .unwrap();
+        assert_eq!(alpha["outlinks"], json!(["concept/beta"]));
+        assert_eq!(alpha["title"], json!("Alpha"));
+        assert_eq!(alpha["page_type"], json!("entity"));
+        // Relation fallback only adds an edge when content produced none for
+        // that page; beta already has no link -> it gains the... wait, the
+        // relation source is Alpha (has content link) so no extra edge on beta.
+        let beta = graph
+            .iter()
+            .find(|p| p["slug"] == json!("concept/beta"))
+            .unwrap();
+        assert!(beta["outlinks"].as_array().unwrap().is_empty());
+        // Excluding the relation doc removes fallback edges entirely.
+        let mut excluded: BTreeSet<String> = BTreeSet::new();
+        excluded.insert("d1".to_string());
+        let graph2 = load_pages_for_graph(&store, "t1", "kb1", Some(&excluded), None);
+        let alpha2 = graph2
+            .iter()
+            .find(|p| p["slug"] == json!("entity/alpha"))
+            .unwrap();
+        assert_eq!(alpha2["outlinks"], json!(["concept/beta"]));
+    }
+
+    #[test]
+    fn pages_for_graph_relation_fallback_adds_missing_edge() {
+        let store = MemoryDocStore::new();
+        let index = crate::harness::knowlege_dataset_nav::index_name("t1");
+        let extract = json!({
+            "entities": [], "concepts": [], "claims": [],
+            "relations": [{"from": "Beta", "to": "Alpha", "type": "used_by"}],
+            "topics": []
+        });
+        let row = build_resume_doc("c1", "d1", &extract, "h1");
+        store
+            .insert(&[row.as_object().cloned().unwrap()], &index, "kb1")
+            .unwrap();
+        let mut state = Map::new();
+        state.insert("c1".to_string(), json!({"doc_id": "d1", "hash": "h1"}));
+        commit_active_map_state(&store, "t1", "kb1", &state).unwrap();
+        let pages: Vec<DocRow> = vec![
+            json!({"id": "p1", "compile_kwd": "wiki_page", "slug_kwd": "entity/alpha", "title_kwd": "Alpha", "page_type_kwd": "entity", "md_with_weight": "", "entity_names_kwd": ["Alpha"]})
+                .as_object().cloned().unwrap(),
+            json!({"id": "p2", "compile_kwd": "wiki_page", "slug_kwd": "concept/beta", "title_kwd": "Beta", "page_type_kwd": "concept", "md_with_weight": "", "entity_names_kwd": ["Beta"]})
+                .as_object().cloned().unwrap(),
+        ];
+        store.insert(&pages, &index, "kb1").unwrap();
+        let graph = load_pages_for_graph(&store, "t1", "kb1", None, None);
+        let beta = graph
+            .iter()
+            .find(|p| p["slug"] == json!("concept/beta"))
+            .unwrap();
+        assert_eq!(beta["outlinks"], json!(["entity/alpha"]));
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Part 6 — topic aggregation and ranking (`_wiki_topics_for_docs` ..
@@ -2716,7 +3482,161 @@ pub fn wiki_decide_concept_pages(all_concepts: &[Value]) -> Vec<Value> {
     pages
 }
 
+#[cfg(test)]
+mod wiki_incremental_part6_tests {
+    use super::*;
+    use crate::embed::Embedder;
 
+    struct MapEmb {
+        map: BTreeMap<String, Vec<f32>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Embedder for MapEmb {
+        async fn embed(&self, texts: &[&str]) -> crate::Result<Vec<Vec<f32>>> {
+            Ok(texts
+                .iter()
+                .map(|text| self.map.get(*text).cloned().unwrap_or_default())
+                .collect())
+        }
+    }
+
+    #[test]
+    fn topics_for_docs_dedup_and_pool() {
+        let mut doc_topics: Map<String, Value> = Map::new();
+        doc_topics.insert(
+            "d1".to_string(),
+            json!(["Alpha", " alpha ", "General", 5, ""]),
+        );
+        doc_topics.insert("d2".to_string(), json!(["Beta", "Alpha"]));
+        let mut pool: Map<String, Value> = Map::new();
+        pool.insert("t1".to_string(), json!("Gamma"));
+        pool.insert("t2".to_string(), json!("alpha"));
+        let topics = wiki_topics_for_docs(
+            &["d1".to_string(), "d2".to_string()],
+            Some(&doc_topics),
+            Some(&pool),
+        );
+        assert_eq!(
+            topics,
+            vec!["Alpha".to_string(), "Beta".to_string(), "Gamma".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_topic_embeddings_filters_and_sorts() {
+        let mut doc_topics: Map<String, Value> = Map::new();
+        doc_topics.insert("d1".to_string(), json!(["Beta", "alpha", "General"]));
+        doc_topics.insert("d2".to_string(), json!(["Gamma", " alpha "]));
+        let embd = MapEmb {
+            map: [
+                ("alpha".to_string(), vec![1.0, 0.0]),
+                ("Beta".to_string(), vec![0.0, 1.0]),
+                ("Gamma".to_string(), vec![0.5, 0.5]),
+                ("Delta".to_string(), vec![0.2, 0.8]),
+            ]
+            .into_iter()
+            .collect(),
+        };
+        let extra = vec!["Delta".to_string()];
+        let embeddings =
+            wiki_prepare_topic_embeddings(Some(&embd), &doc_topics, Some(&extra)).await;
+        assert_eq!(embeddings.len(), 4);
+        assert_eq!(embeddings["alpha"], json!([1.0, 0.0]));
+        assert!(!embeddings.contains_key("General"));
+        let delta = embeddings["Delta"].as_array().unwrap();
+        assert!((delta[0].as_f64().unwrap() - 0.2).abs() < 1e-6);
+        assert!((delta[1].as_f64().unwrap() - 0.8).abs() < 1e-6);
+        assert!(
+            wiki_prepare_topic_embeddings(None, &doc_topics, None)
+                .await
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn topic_query_text_composition() {
+        let claims = vec![
+            json!({"statement": "s1"}),
+            json!({"text": "s2"}),
+            json!({"nope": 1}),
+        ];
+        let chunks = vec![json!({"text": "chunk text"}), json!({"nope": 1})];
+        let existing = json!({"summary_with_weight": "sum"});
+        let text = wiki_topic_query_text("Alpha", Some(&claims), Some(&chunks), Some(&existing));
+        assert_eq!(
+            text,
+            "title=Alpha; summary=sum; evidence=s1 | s2; source=chunk text"
+        );
+        assert_eq!(wiki_topic_query_text("", None, None, None), "");
+    }
+
+    #[tokio::test]
+    async fn rank_topic_candidates_orders_by_similarity() {
+        let embd = MapEmb {
+            map: [
+                ("title=Alpha".to_string(), vec![1.0, 0.0]),
+                ("alpha".to_string(), vec![1.0, 0.0]),
+                ("beta".to_string(), vec![0.0, 1.0]),
+                ("gamma".to_string(), vec![0.7, 0.7]),
+            ]
+            .into_iter()
+            .collect(),
+        };
+        let candidates = vec![
+            "beta".to_string(),
+            "alpha".to_string(),
+            "alpha".to_string(),
+            "gamma".to_string(),
+        ];
+        let mut embeddings: Map<String, Value> = Map::new();
+        embeddings.insert("alpha".to_string(), json!([1.0, 0.0]));
+        let ranked = wiki_rank_topic_candidates(
+            Some(&embd),
+            "Alpha",
+            None,
+            None,
+            None,
+            Some(&candidates),
+            Some(&mut embeddings),
+        )
+        .await;
+        assert_eq!(
+            ranked,
+            vec!["alpha".to_string(), "gamma".to_string(), "beta".to_string()]
+        );
+        assert!(embeddings.contains_key("beta"));
+        assert!(embeddings.contains_key("gamma"));
+        let single = wiki_rank_topic_candidates(
+            Some(&embd),
+            "Alpha",
+            None,
+            None,
+            None,
+            Some(&["solo".to_string()]),
+            None,
+        )
+        .await;
+        assert_eq!(single, vec!["solo".to_string()]);
+    }
+
+    #[test]
+    fn decide_concept_pages_shape() {
+        let concepts = vec![json!({
+            "term": "Smartphone Industry",
+            "claims": [
+                {"statement": "s", "source_doc_id": "d1"},
+                {"statement": "s2", "source_doc_id": "d1"},
+                {"statement": "s3", "source_doc_id": "d2"}
+            ]
+        })];
+        let pages = wiki_decide_concept_pages(&concepts);
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0]["page_id"], json!("concept/smartphone-industry"));
+        assert_eq!(pages[0]["page_title"], json!("Smartphone Industry"));
+        assert_eq!(pages[0]["source_doc_ids"], json!(["d1", "d2"]));
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Part 7 — per-entity REDUCE and doc-page-source tracking
@@ -3228,7 +4148,182 @@ pub fn wiki_delete_doc_page_source(
     }
 }
 
+#[cfg(test)]
+mod wiki_incremental_part7_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
 
+    fn claim(statement: &str, doc: &str, chunks: &[&str]) -> Value {
+        json!({"statement": statement, "source_doc_id": doc, "chunk_ids": chunks})
+    }
+
+    #[test]
+    fn reduce_entity_matrix() {
+        let empty = BTreeSet::new();
+        let noop = wiki_reduce_entity(
+            "Alpha",
+            &[],
+            None,
+            &empty,
+            None,
+            &json!("entity"),
+            None,
+            None,
+            None,
+        );
+        assert_eq!(noop["action"], json!("noop"));
+        assert_eq!(noop["has_delta"], json!(false));
+
+        let claims = vec![claim("s1", "d1", &["c1"]), claim("s2", "d2", &["c2"])];
+        let created = wiki_reduce_entity(
+            "Alpha",
+            &claims,
+            None,
+            &empty,
+            None,
+            &json!("entity"),
+            Some(&["A".to_string()]),
+            Some(&["d1".to_string()]),
+            Some(&["c1".to_string(), "c1".to_string()]),
+        );
+        assert_eq!(created["action"], json!("create"));
+        assert_eq!(created["source_chunk_ids"], json!(["c1"]));
+        assert_eq!(created["retained_source_doc_ids"], json!(["d1", "d2"]));
+
+        let existing = json!({
+            "claims": serde_json::to_string(&vec![claim("s1", "d1", &["c1"]), claim("s2", "d2", &["c2"])]).unwrap(),
+            "source_chunk_ids": ["c1", "c2"]
+        });
+        let mut deleted = BTreeSet::new();
+        deleted.insert("d1".to_string());
+        let updated = wiki_reduce_entity(
+            "Alpha",
+            &[claim("s3", "d3", &["c3"])],
+            Some(&existing),
+            &deleted,
+            None,
+            &json!("entity"),
+            None,
+            Some(&["d1".to_string()]),
+            Some(&["c1".to_string(), "c2".to_string(), "c3".to_string()]),
+        );
+        assert_eq!(updated["action"], json!("update"));
+        assert_eq!(updated["retractions"].as_array().unwrap().len(), 1);
+        assert_eq!(updated["retained_source_doc_ids"], json!(["d2", "d3"]));
+
+        let mut deleted_all = BTreeSet::new();
+        deleted_all.insert("d1".to_string());
+        deleted_all.insert("d2".to_string());
+        let deleted_result = wiki_reduce_entity(
+            "Alpha",
+            &[],
+            Some(&existing),
+            &deleted_all,
+            None,
+            &json!("entity"),
+            None,
+            None,
+            None,
+        );
+        assert_eq!(deleted_result["action"], json!("delete"));
+
+        let mut invalidated = BTreeSet::new();
+        invalidated.insert("c1".to_string());
+        invalidated.insert("c2".to_string());
+        let invalidated_result = wiki_reduce_entity(
+            "Alpha",
+            &[],
+            Some(&existing),
+            &empty,
+            Some(&invalidated),
+            &json!("entity"),
+            None,
+            None,
+            Some(&[]),
+        );
+        assert_eq!(invalidated_result["action"], json!("delete"));
+        assert_eq!(invalidated_result["source_chunk_ids"], json!([]));
+    }
+
+    #[test]
+    fn reduce_batch_uses_canonical_inputs() {
+        let mut canonical_claims: Map<String, Value> = Map::new();
+        canonical_claims.insert("Alpha".to_string(), json!([claim("s1", "d1", &["c1"])]));
+        let mut canonical_map: Map<String, Value> = Map::new();
+        canonical_map.insert(
+            "Alpha".to_string(),
+            json!({"type": "concept", "aliases": ["A"], "source_doc_ids": ["d1"], "source_chunk_ids": ["c1"]}),
+        );
+        let existing_pages: Map<String, Value> = Map::new();
+        let mut affected = BTreeSet::new();
+        affected.insert("Alpha".to_string());
+        affected.insert("Ghost".to_string());
+        let empty = BTreeSet::new();
+        let results = wiki_reduce_batch(
+            &affected,
+            &existing_pages,
+            &empty,
+            None,
+            Some(&canonical_claims),
+            Some(&canonical_map),
+            None,
+            None,
+        );
+        assert_eq!(results.len(), 1);
+        let alpha = results
+            .iter()
+            .find(|r| r["entity_name"] == json!("Alpha"))
+            .unwrap();
+        assert_eq!(alpha["action"], json!("create"));
+        assert_eq!(alpha["entity_type"], json!("concept"));
+        assert!(results.iter().all(|r| r["entity_name"] != json!("Ghost")));
+    }
+
+    #[test]
+    fn doc_page_source_roundtrip() {
+        let store = MemoryDocStore::new();
+        assert!(wiki_load_doc_page_source(&store, "t1", "kb1", "d1").is_none());
+        let mut hashes: Map<String, Value> = Map::new();
+        hashes.insert("c1".to_string(), json!("h1"));
+        wiki_update_doc_page_source(
+            &store,
+            "t1",
+            "kb1",
+            "d1",
+            &["concept/alpha".to_string()],
+            Some(&["Alpha".to_string()]),
+            Some(&hashes),
+            Some("checksum-1"),
+        );
+        let loaded = wiki_load_doc_page_source(&store, "t1", "kb1", "d1").expect("record");
+        assert_eq!(loaded["page_ids"], json!(["concept/alpha"]));
+        assert_eq!(loaded["entity_names"], json!(["Alpha"]));
+        assert_eq!(loaded["source_chunk_hashes"], json!({"c1": "h1"}));
+        assert_eq!(loaded["map_checksum"], json!("checksum-1"));
+
+        wiki_update_doc_page_source(
+            &store,
+            "t1",
+            "kb1",
+            "d1",
+            &["concept/alpha".to_string(), "concept/beta".to_string()],
+            None,
+            None,
+            None,
+        );
+        let loaded2 = wiki_load_doc_page_source(&store, "t1", "kb1", "d1").expect("record2");
+        assert_eq!(
+            loaded2["page_ids"],
+            json!(["concept/alpha", "concept/beta"])
+        );
+        assert_eq!(loaded2["entity_names"], json!(["Alpha"]));
+        assert_eq!(loaded2["source_chunk_hashes"], json!({"c1": "h1"}));
+        assert_eq!(loaded2["map_checksum"], json!("checksum-1"));
+
+        wiki_delete_doc_page_source(&store, "t1", "kb1", "d1");
+        assert!(wiki_load_doc_page_source(&store, "t1", "kb1", "d1").is_none());
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Part 8a — Mode A prompt builders (`_build_source_chunks_block` ..
@@ -3657,7 +4752,144 @@ pub fn wiki_entity_planning_text(entity: &Value, max_claims: usize) -> String {
     parts.join("; ")
 }
 
+#[cfg(test)]
+mod wiki_incremental_part8_tests {
+    use super::*;
 
+    #[test]
+    fn source_block_labels_and_budget() {
+        let chunks = vec![
+            json!({"id": "c1", "text": "plain text", "_verbatim": true}),
+            json!({"id": "c2", "content_with_weight": "condensed"}),
+            json!({"id": "", "text": "skip"}),
+            json!({"id": "c3", "text": ""}),
+        ];
+        let block = build_source_chunks_block(&chunks, WIKI_SOURCE_BUDGET_CHARS);
+        assert!(block.contains("[SOURCE c1]\nplain text"));
+        assert!(block.contains("[CHUNK c2]\ncondensed"));
+        assert!(!block.contains("skip"));
+        let tight = build_source_chunks_block(&chunks, 25);
+        assert!(tight.contains("[SOURCE c1]"));
+        assert!(!tight.contains("c2"));
+        assert!(build_source_chunks_block(&[], 100).is_empty());
+    }
+
+    #[test]
+    fn generate_prompt_sections() {
+        let claims = vec![json!({"statement": "s1"}), json!({"text": "s2"})];
+        let chunks = vec![json!({"id": "c1", "text": "body"})];
+        let pages = vec!["entity/a".to_string(), "concept/b".to_string()];
+        let topics = vec!["alpha".to_string()];
+        let prompt = build_mode_a_generate_prompt(
+            "concept/x",
+            "X",
+            Some(&claims),
+            Some(&chunks),
+            Some(&pages),
+            "HINTS",
+            Some(&topics),
+            None,
+        );
+        assert!(prompt.contains("- Page ID: concept/x"));
+        assert!(prompt.contains("## Required Page Members\n(single member page)"));
+        assert!(prompt.contains("[CHUNK c1]\nbody"));
+        assert!(prompt.contains("- s1\n- s2"));
+        assert!(prompt.contains("- alpha"));
+        assert!(prompt.contains("- entity/a\n- concept/b"));
+        assert!(prompt.ends_with("HINTS\n"));
+        let minimal = build_mode_a_generate_prompt("p", "T", None, None, None, "", None, None);
+        assert!(minimal.contains("(no claims)"));
+        assert!(minimal.contains("(no source chunks available)"));
+        assert!(minimal.contains("(none; create a short canonical topic"));
+        assert!(minimal.contains("\n(none)\n"));
+    }
+
+    #[test]
+    fn modify_prompt_modes() {
+        let existing = json!({"md_with_weight": "OLD", "topic_kwd": ["alpha"]});
+        let additions = vec![json!({"statement": "new"})];
+        let retractions = vec![json!({"statement": "old"})];
+        let incremental = build_mode_a_modify_prompt(
+            "concept/x",
+            "X",
+            Some(&existing),
+            Some(&additions),
+            Some(&retractions),
+            None,
+            None,
+            None,
+            "",
+            None,
+            false,
+            None,
+        );
+        assert!(incremental.contains("## Current Page\nOLD"));
+        assert!(incremental.contains("## Current Topic\nalpha"));
+        assert!(incremental.contains("## New Claims to Add\n- new"));
+        assert!(incremental.contains("## Claims to Retract\n- old"));
+        let full = build_mode_a_modify_prompt(
+            "concept/x",
+            "X",
+            Some(&existing),
+            None,
+            None,
+            Some(&[json!({"statement": "all"})]),
+            None,
+            None,
+            "",
+            None,
+            true,
+            None,
+        );
+        assert!(full.contains("## All Source Chunks (for full re-synthesis"));
+        assert!(full.contains("## All Claims\n- all"));
+        assert!(!full.contains("## New Claims to Add"));
+    }
+
+    #[test]
+    fn member_evidence_and_hints() {
+        let members = vec![
+            json!({"name": "Alpha", "claims": [{"statement": "s"}], "source_chunk_ids": ["c1", "c2"]}),
+            json!({"name": "", "claims": []}),
+            json!({"name": "Beta"}),
+        ];
+        let block = build_member_evidence_block(Some(&members));
+        assert!(block.contains("### Member: Alpha\nClaims:\n- s\nSource chunk IDs: c1, c2"));
+        assert!(block.contains("### Member: Beta\nClaims:\n(no extracted claims; use the member's source evidence)\nSource chunk IDs: (none)"));
+        assert!(build_member_evidence_block(None).is_empty());
+
+        let existing = json!({"related_kb_pages_kwd": "[{\"entity_name\": \"Gamma\", \"relation\": \"uses\"}]"});
+        let relations: Map<String, Value> = Map::new();
+        let hints = wiki_build_contextual_hints("concept/x", Some(&existing), &relations);
+        assert!(hints.contains("- [[Gamma]] — uses"));
+        let existing2 = json!({"entity_names_kwd": ["alpha"]});
+        let mut relations2: Map<String, Value> = Map::new();
+        relations2.insert(
+            "alpha".to_string(),
+            json!([{"entity_name": "Delta", "relation": "part_of"}]),
+        );
+        let hints2 = wiki_build_contextual_hints("concept/x", Some(&existing2), &relations2);
+        assert!(hints2.contains("- [[Delta]] — part_of"));
+        assert!(wiki_build_contextual_hints("p", None, &Map::new()).is_empty());
+    }
+
+    #[test]
+    fn entity_planning_text_composition() {
+        let entity = json!({
+            "entity_name": "Alpha",
+            "aliases": ["A", "B", "C", "D", "E", "F"],
+            "definition_excerpt": "def",
+            "claims": [{"statement": "s1"}, {"text": "s2"}, {"statement": "s3"}, {"statement": "s4"}],
+            "relations": [{"entity": "Beta", "type": "uses"}, {"nope": 1}, {"counterpart": "Gamma"}]
+        });
+        let text = wiki_entity_planning_text(&entity, 3);
+        assert_eq!(
+            text,
+            "name=Alpha; aliases=A, B, C, D, E; description=def; evidence=s1 | s2 | s3; relations=uses: Beta | related: Gamma"
+        );
+        assert_eq!(wiki_entity_planning_text(&json!({}), 3), "name=");
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Part 8b — single-page REFINE (`_wiki_refine_page`).
@@ -4266,7 +5498,240 @@ pub async fn wiki_refine_page(args: RefinePageArgs<'_>) -> Option<Value> {
     Some(page_value)
 }
 
+#[cfg(test)]
+mod wiki_incremental_part9_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+    use crate::embed::Embedder;
+    use crate::harness::HarnessChat;
+    use std::sync::Mutex;
 
+    struct FakeChat {
+        reply: String,
+        calls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessChat for FakeChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            let user = history
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            self.calls.lock().unwrap().push(user);
+            Ok(self.reply.clone())
+        }
+
+        fn max_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    struct CapturingEmb {
+        texts: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Embedder for CapturingEmb {
+        async fn embed(&self, texts: &[&str]) -> crate::Result<Vec<Vec<f32>>> {
+            for text in texts {
+                self.texts.lock().unwrap().push((*text).to_string());
+            }
+            Ok(texts.iter().map(|_| vec![1.0, 0.0]).collect())
+        }
+    }
+
+    fn base_args<'a>(
+        store: &'a dyn DocStore,
+        chat: &'a dyn HarnessChat,
+        embd: Option<&'a dyn Embedder>,
+    ) -> RefinePageArgs<'a> {
+        RefinePageArgs {
+            store,
+            mode: "generate",
+            page_id: "concept/alpha",
+            page_title: "Alpha",
+            existing_page: None,
+            page_type_kwd: "concept",
+            additions: None,
+            retractions: None,
+            source_chunks: None,
+            claims: None,
+            available_pages: None,
+            contextual_hints: "",
+            chat,
+            embd,
+            tenant_id: "t1",
+            kb_id: "kb1",
+            page_version: 0,
+            entity_names: None,
+            page_embedding: None,
+            embed_routing_context: false,
+            source_doc_ids: None,
+            topic_candidates: None,
+            topic_selection_stats: None,
+            topic_embeddings: None,
+            topic_pool: None,
+            member_evidence: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn generate_flow_parses_metadata_and_persists() {
+        let store = MemoryDocStore::new();
+        let chat = FakeChat {
+            reply: "SUMMARY: sum line\nTITLE: LLM Title\nTOPIC: alpha\n# Body\n\nGrounded text"
+                .to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let emb = CapturingEmb {
+            texts: Mutex::new(Vec::new()),
+        };
+        let names = vec!["Alpha".to_string()];
+        let mut args = base_args(&store, &chat, Some(&emb));
+        args.entity_names = Some(&names);
+        let page = wiki_refine_page(args).await.expect("page");
+        assert_eq!(page["slug_kwd"], json!("concept/alpha"));
+        assert_eq!(page["title_kwd"], json!("Alpha"));
+        assert_eq!(page["topic_kwd"], json!("alpha"));
+        assert_eq!(page["summary_with_weight"], json!("sum line"));
+        assert!(
+            page["md_with_weight"]
+                .as_str()
+                .unwrap()
+                .contains("Grounded text")
+        );
+        assert_eq!(page["claims"], json!("[]"));
+        assert_eq!(page["page_version_int"], json!(1));
+        assert_eq!(page["synthesis_version_int"], json!(1));
+        assert_eq!(page["q_2_vec"], json!([1.0, 0.0]));
+        assert!(page.get("embedding").is_some());
+        assert_eq!(page["entity_names_kwd"], json!(["Alpha"]));
+        let promp = chat.calls.lock().unwrap()[0].clone();
+        assert!(promp.contains("- Page ID: concept/alpha"));
+        assert!(promp.contains("## Extracted Claims (checklist)\n(no claims)"));
+        let persisted = search_existing_pages(&store, "t1", "kb1", &["slug_kwd".to_string()]);
+        assert_eq!(persisted.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn modify_flow_applies_claims_diff() {
+        let store = MemoryDocStore::new();
+        let chat = FakeChat {
+            reply: "TOPIC: alpha\n# Updated\n\nBody".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let existing = json!({
+            "title_kwd": "Old Title",
+            "md_with_weight": "OLD",
+            "topic_kwd": "alpha",
+            "synthesis_version_int": 2,
+            "claims": serde_json::to_string(&vec![
+                json!({"statement": "s1", "source_doc_id": "d1", "chunk_ids": ["c1"]}),
+                json!({"statement": "s2", "source_doc_id": "d1", "chunk_ids": ["c2"]})
+            ]).unwrap()
+        });
+        let retractions =
+            vec![json!({"statement": "s1", "source_doc_id": "d1", "chunk_ids": ["c1"]})];
+        let additions =
+            vec![json!({"statement": "s3", "source_doc_id": "d2", "chunk_ids": ["c3"]})];
+        let mut args = base_args(&store, &chat, None);
+        args.mode = "modify";
+        args.page_title = "Old Title";
+        args.existing_page = Some(&existing);
+        args.retractions = Some(&retractions);
+        args.additions = Some(&additions);
+        args.page_version = 3;
+        let page = wiki_refine_page(args).await.expect("page");
+        assert_eq!(page["title_kwd"], json!("Old Title"));
+        assert_eq!(page["page_version_int"], json!(4));
+        assert_eq!(page["synthesis_version_int"], json!(2));
+        let claims: Value = serde_json::from_str(page["claims"].as_str().unwrap()).unwrap();
+        let statements: Vec<&str> = claims
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|claim| claim.get("statement").and_then(Value::as_str))
+            .collect();
+        assert_eq!(statements, vec!["s2", "s3"]);
+        assert_eq!(page["source_doc_ids"], json!(["d1", "d2"]));
+        assert_eq!(page["source_chunk_ids"], json!(["c2", "c3"]));
+    }
+
+    #[tokio::test]
+    async fn delete_flow_removes_row() {
+        let store = MemoryDocStore::new();
+        let chat = FakeChat {
+            reply: "unused".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let row = json!({
+            "id": "p1",
+            "compile_kwd": "wiki_page",
+            "slug_kwd": "concept/alpha"
+        });
+        store
+            .insert(
+                &[row.as_object().cloned().unwrap()],
+                &crate::harness::knowlege_dataset_nav::index_name("t1"),
+                "kb1",
+            )
+            .unwrap();
+        let mut args = base_args(&store, &chat, None);
+        args.mode = "delete";
+        let outcome = wiki_refine_page(args).await;
+        assert!(outcome.is_none());
+        let remaining = search_existing_pages(&store, "t1", "kb1", &["slug_kwd".to_string()]);
+        assert!(remaining.is_empty());
+    }
+
+    #[tokio::test]
+    async fn empty_response_keeps_existing() {
+        let store = MemoryDocStore::new();
+        let chat = FakeChat {
+            reply: "".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let existing = json!({"title_kwd": "Keep"});
+        let mut args = base_args(&store, &chat, None);
+        args.existing_page = Some(&existing);
+        let outcome = wiki_refine_page(args).await.expect("existing");
+        assert_eq!(outcome["title_kwd"], json!("Keep"));
+    }
+
+    #[tokio::test]
+    async fn routing_context_embedding_text() {
+        let store = MemoryDocStore::new();
+        let chat = FakeChat {
+            reply: "SUMMARY: s\n# Body".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let emb = CapturingEmb {
+            texts: Mutex::new(Vec::new()),
+        };
+        let names = vec!["Alpha".to_string()];
+        let mut args = base_args(&store, &chat, Some(&emb));
+        args.entity_names = Some(&names);
+        args.embed_routing_context = true;
+        let _ = wiki_refine_page(args).await.expect("page");
+        let captured = emb.texts.lock().unwrap().clone();
+        let embed_text = captured
+            .iter()
+            .find(|text| text.contains("title=Alpha"))
+            .cloned();
+        let embed_text = embed_text.expect("routing text");
+        assert!(embed_text.contains("summary=s"));
+        assert!(embed_text.contains("members=Alpha"));
+        assert!(embed_text.contains("content="));
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Part 9a — LLM grouping, routing helpers and deterministic clustering
@@ -5096,7 +6561,208 @@ fn dot_f32(left: &[f32], right: &[f32]) -> f32 {
     left.iter().zip(right.iter()).map(|(a, b)| a * b).sum()
 }
 
+#[cfg(test)]
+mod wiki_incremental_part10_tests {
+    use super::*;
+    use crate::harness::HarnessChat;
+    use std::sync::Mutex;
 
+    struct FakeChat {
+        reply: String,
+        calls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessChat for FakeChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            let user = history
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            self.calls.lock().unwrap().push(user);
+            Ok(self.reply.clone())
+        }
+
+        fn max_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    fn entities(names: &[&str]) -> Vec<Value> {
+        names
+            .iter()
+            .map(|name| json!({"entity_name": name, "claims": [], "source_chunk_ids": []}))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn partition_validation() {
+        let chat = FakeChat {
+            reply: "[[0, 2], [1]]".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let groups = wiki_llm_partition_candidate(&chat, &entities(&["A", "B", "C"]))
+            .await
+            .expect("groups");
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].len(), 2);
+        assert_eq!(groups[0][0]["entity_name"], json!("A"));
+        assert_eq!(groups[0][1]["entity_name"], json!("C"));
+        assert_eq!(groups[1][0]["entity_name"], json!("B"));
+
+        let bad = FakeChat {
+            reply: "[[0, 9]]".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        assert!(
+            wiki_llm_partition_candidate(&bad, &entities(&["A", "B"]))
+                .await
+                .is_none()
+        );
+        let single = FakeChat {
+            reply: "unused".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let one = wiki_llm_partition_candidate(&single, &entities(&["A"]))
+            .await
+            .expect("single");
+        assert_eq!(one.len(), 1);
+        assert!(single.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn group_entities_uses_clusters_and_llm() {
+        let chat = FakeChat {
+            reply: "[[0, 2], [1]]".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let ents = entities(&["Alpha", "Beta", "Gamma"]);
+        let embeddings = vec![vec![1.0f32, 0.0], vec![0.9, 0.1], vec![0.0, 1.0]];
+        let groups = wiki_llm_group_entities(&chat, &ents, &embeddings, "kb1").await;
+        let total: usize = groups.iter().map(Vec::len).sum();
+        assert_eq!(total, 3);
+        assert_eq!(groups.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn route_batches_validates_pages() {
+        let chat = FakeChat {
+            reply: "[{\"id\": 0, \"page\": \"entity/a\"}]".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let candidates = vec![json!({"page_id": "entity/a", "title": "A", "score": 0.51})];
+        let items = vec![(json!({"entity_name": "Alpha"}), candidates.clone())];
+        let decisions = wiki_llm_route_batches(&chat, &items).await;
+        assert_eq!(decisions.get(&0).map(String::as_str), Some("entity/a"));
+
+        let invalid = FakeChat {
+            reply: "[{\"id\": 0, \"page\": \"entity/z\"}]".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let decisions2 = wiki_llm_route_batches(&invalid, &items).await;
+        assert!(decisions2.is_empty());
+    }
+
+    #[test]
+    fn expand_candidates_priorities() {
+        let mut existing: Map<String, Value> = Map::new();
+        existing.insert(
+            "p1".to_string(),
+            json!({"title_kwd": "One", "entity_names_kwd": ["X"]}),
+        );
+        existing.insert(
+            "p2".to_string(),
+            json!({"title_kwd": "Two", "entity_names_kwd": ["Alpha"]}),
+        );
+        existing.insert(
+            "p3".to_string(),
+            json!({"title_kwd": "Three", "entity_names_kwd": ["Beta"]}),
+        );
+        let mut entity_pages: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        entity_pages.insert(
+            "alpha".to_string(),
+            ["p2"].into_iter().map(str::to_string).collect(),
+        );
+        entity_pages.insert(
+            "beta".to_string(),
+            ["p3"].into_iter().map(str::to_string).collect(),
+        );
+        let mut chunk_pages: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        chunk_pages.insert(
+            "c1".to_string(),
+            ["p2", "p3"].into_iter().map(str::to_string).collect(),
+        );
+        let entity = json!({
+            "entity_name": "Alpha",
+            "relations": [{"entity": "Beta"}],
+            "source_chunk_ids": ["c1"]
+        });
+        let dense = vec![
+            json!({"page_id": "p1", "score": 0.9}),
+            json!({"page_id": "px", "score": 0.8}),
+        ];
+        let ranked = wiki_expand_route_candidates(
+            &entity,
+            &dense,
+            &existing,
+            &entity_pages,
+            &chunk_pages,
+            false,
+        );
+        assert_eq!(ranked.len(), 3);
+        assert_eq!(ranked[0]["page_id"], json!("p2"));
+        let signals: Vec<String> = ranked[0]["signals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|value| value.as_str().map(str::to_string))
+            .collect();
+        assert!(signals.contains(&"current_owner".to_string()));
+        assert!(signals.contains(&"cooccurrence".to_string()));
+        assert_eq!(ranked[0]["cooccurrence_count"], json!(1));
+        let p3 = ranked
+            .iter()
+            .find(|candidate| candidate["page_id"] == json!("p3"))
+            .unwrap();
+        let p3_signals: Vec<String> = p3["signals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|value| value.as_str().map(str::to_string))
+            .collect();
+        assert!(p3_signals.contains(&"relation".to_string()));
+        let p1 = ranked
+            .iter()
+            .find(|candidate| candidate["page_id"] == json!("p1"))
+            .unwrap();
+        assert_eq!(p1["score"], json!(0.9));
+    }
+
+    #[test]
+    fn cluster_entities_deterministic() {
+        let ents = entities(&["A", "B", "C", "D"]);
+        let embeddings = vec![
+            vec![1.0f32, 0.0],
+            vec![0.9, 0.1],
+            vec![0.0, 1.0],
+            vec![0.1, 0.9],
+        ];
+        let first = wiki_cluster_entities(&ents, &embeddings, Some(2)).expect("clusters");
+        let second = wiki_cluster_entities(&ents, &embeddings, Some(2)).expect("clusters2");
+        assert_eq!(first.len(), 2);
+        let total: usize = first.iter().map(Vec::len).sum();
+        assert_eq!(total, 4);
+        assert_eq!(first, second);
+        assert!(wiki_cluster_entities(&ents, &embeddings[..2], Some(2)).is_err());
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Part 9b — Mode B page router (`_wiki_page_router`).
@@ -5508,7 +7174,169 @@ pub async fn wiki_page_router(
     assignments
 }
 
+#[cfg(test)]
+mod wiki_incremental_part11_tests {
+    use super::*;
+    use crate::doc_store::{DocStore, MemoryDocStore};
+    use crate::embed::Embedder;
+    use crate::harness::HarnessChat;
+    use std::sync::Mutex;
 
+    struct FakeChat {
+        reply: String,
+        calls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessChat for FakeChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            let user = history
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            self.calls.lock().unwrap().push(user);
+            Ok(self.reply.clone())
+        }
+
+        fn max_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    struct MapEmb {
+        vector: Vec<f32>,
+    }
+
+    #[async_trait::async_trait]
+    impl Embedder for MapEmb {
+        async fn embed(&self, texts: &[&str]) -> crate::Result<Vec<Vec<f32>>> {
+            Ok(texts.iter().map(|_| self.vector.clone()).collect())
+        }
+    }
+
+    fn entity(name: &str) -> Value {
+        json!({"entity_name": name, "claims": [], "source_chunk_ids": [], "action": "create"})
+    }
+
+    #[tokio::test]
+    async fn first_build_clusters_all_orphans() {
+        let store = MemoryDocStore::new();
+        let chat = FakeChat {
+            reply: "[[0, 1, 2]]".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let emb = MapEmb {
+            vector: vec![1.0, 0.0],
+        };
+        let mut entities = vec![entity("Alpha"), entity("Beta"), entity("Gamma")];
+        let assignments =
+            wiki_page_router(&store, &mut entities, &chat, Some(&emb), "t1", "kb1", None).await;
+        let new_keys: Vec<&String> = assignments
+            .keys()
+            .filter(|key| key.starts_with("_new_"))
+            .collect();
+        assert_eq!(new_keys.len(), 1);
+        let group = assignments[new_keys[0]].as_array().unwrap();
+        assert_eq!(group.len(), 3);
+        assert_eq!(new_keys[0], &"_new_entity/alpha".to_string());
+        assert_eq!(entities[0]["_embedding"], json!([1.0, 0.0]));
+    }
+
+    #[tokio::test]
+    async fn routes_to_existing_page_via_llm() {
+        let store = MemoryDocStore::new();
+        let index = crate::harness::knowlege_dataset_nav::index_name("t1");
+        let row = json!({
+            "id": "p1",
+            "compile_kwd": "wiki_page",
+            "slug_kwd": "entity/alpha",
+            "title_kwd": "Alpha",
+            "summary_with_weight": "about alpha",
+            "entity_names_kwd": ["Alpha"],
+            "source_chunk_ids": ["c1"],
+            "embedding": [1.0, 0.0],
+            "q_2_vec": [1.0, 0.0]
+        });
+        store
+            .insert(&[row.as_object().cloned().unwrap()], &index, "kb1")
+            .unwrap();
+        let mut existing: Map<String, Value> = Map::new();
+        existing.insert(
+            "entity/alpha".to_string(),
+            json!({"title_kwd": "Alpha", "entity_names_kwd": ["Alpha"], "source_chunk_ids": ["c1"], "summary_with_weight": "about alpha"}),
+        );
+        let chat = FakeChat {
+            reply: "[{\"id\": 0, \"page\": \"entity/alpha\"}]".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let emb = MapEmb {
+            vector: vec![1.0, 0.0],
+        };
+        let mut entities = vec![entity("Alpha")];
+        let assignments = wiki_page_router(
+            &store,
+            &mut entities,
+            &chat,
+            Some(&emb),
+            "t1",
+            "kb1",
+            Some(&existing),
+        )
+        .await;
+        let assigned = assignments["entity/alpha"].as_array().unwrap();
+        assert_eq!(assigned.len(), 1);
+        assert!(assignments.keys().all(|key| !key.starts_with("_new_")));
+    }
+
+    #[tokio::test]
+    async fn missing_decision_falls_back_to_current_owner() {
+        let store = MemoryDocStore::new();
+        let index = crate::harness::knowlege_dataset_nav::index_name("t1");
+        let row = json!({
+            "id": "p1",
+            "compile_kwd": "wiki_page",
+            "slug_kwd": "entity/alpha",
+            "title_kwd": "Alpha",
+            "entity_names_kwd": ["Alpha"],
+            "embedding": [1.0, 0.0],
+            "q_2_vec": [1.0, 0.0]
+        });
+        store
+            .insert(&[row.as_object().cloned().unwrap()], &index, "kb1")
+            .unwrap();
+        let mut existing: Map<String, Value> = Map::new();
+        existing.insert(
+            "entity/alpha".to_string(),
+            json!({"title_kwd": "Alpha", "entity_names_kwd": ["Alpha"]}),
+        );
+        let chat = FakeChat {
+            reply: "no json here".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let emb = MapEmb {
+            vector: vec![1.0, 0.0],
+        };
+        let mut entities = vec![entity("Alpha")];
+        let assignments = wiki_page_router(
+            &store,
+            &mut entities,
+            &chat,
+            Some(&emb),
+            "t1",
+            "kb1",
+            Some(&existing),
+        )
+        .await;
+        assert_eq!(assignments["entity/alpha"].as_array().unwrap().len(), 1);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Part 10 — shared FINALIZE (`_wiki_finalize`).
@@ -5872,7 +7700,145 @@ pub async fn wiki_finalize(
     }
 }
 
+#[cfg(test)]
+mod wiki_incremental_part12_tests {
+    use super::*;
+    use crate::doc_store::{DocStore, MemoryDocStore};
+    use crate::harness::knowlege_wiki::{build_resume_doc, commit_active_map_state};
 
+    fn page_row(id: &str, slug: &str, title: &str, md: &str, entity_names: &[&str]) -> DocRow {
+        json!({
+            "id": id,
+            "compile_kwd": "wiki_page",
+            "slug_kwd": slug,
+            "title_kwd": title,
+            "md_with_weight": md,
+            "entity_names_kwd": entity_names,
+            "source_chunk_ids": [],
+            "related_kb_pages_kwd": []
+        })
+        .as_object()
+        .cloned()
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn finalize_links_dead_and_autolink() {
+        let store = MemoryDocStore::new();
+        let index = crate::harness::knowlege_dataset_nav::index_name("t1");
+        let rows = vec![
+            page_row(
+                "p1",
+                "entity/alpha",
+                "Alpha",
+                "Alpha links [[entity/beta]] and [[张伟]] and [[entity/zzz]].",
+                &["Alpha"],
+            ),
+            page_row("p2", "entity/beta", "Beta", "Beta page prose.", &["Beta"]),
+            page_row(
+                "p3",
+                "concept/gamma",
+                "Gamma",
+                "Gamma mentions Beta in prose.",
+                &["Gamma"],
+            ),
+        ];
+        store.insert(&rows, &index, "kb1").unwrap();
+        save_canonical_entity(
+            &store,
+            "t1",
+            "kb1",
+            "张伟",
+            "entity",
+            &[],
+            &[],
+            1,
+            None,
+            None,
+        );
+        let disabled: BTreeSet<String> = BTreeSet::new();
+        wiki_finalize(&store, "t1", "kb1", &disabled, None, None).await;
+
+        let full_fields: Vec<String> = [
+            "slug_kwd",
+            "md_with_weight",
+            "outlinks_kwd",
+            "outlinks_int",
+            "related_kb_pages_kwd",
+        ]
+        .iter()
+        .map(|f| f.to_string())
+        .collect();
+        let by_slug = search_existing_pages(&store, "t1", "kb1", &full_fields);
+        let find = |slug: &str| -> Value {
+            by_slug
+                .values()
+                .find(|page| page["slug_kwd"] == json!(slug))
+                .cloned()
+                .expect("page")
+        };
+        let alpha = find("entity/alpha");
+        let alpha_md = alpha["md_with_weight"].as_str().unwrap();
+        assert!(alpha_md.contains("artifact/kb1/entity/beta"));
+        assert!(!alpha_md.contains("[[entity/zzz]]"));
+        assert!(alpha_md.contains("entity/zzz"));
+        assert!(!alpha_md.contains("[[张伟]]"));
+        assert!(alpha_md.contains("张伟"));
+        let related = alpha["related_kb_pages_kwd"].as_array().unwrap();
+        assert!(related.iter().any(|value| value == &json!("beta")));
+        assert!(alpha["outlinks_int"].as_i64().unwrap() >= 1);
+
+        let gamma = find("concept/gamma");
+        let gamma_md = gamma["md_with_weight"].as_str().unwrap();
+        assert!(gamma_md.contains("artifact/kb1/entity/beta"));
+    }
+
+    #[tokio::test]
+    async fn finalize_applies_relation_edges_and_section() {
+        let store = MemoryDocStore::new();
+        let index = crate::harness::knowlege_dataset_nav::index_name("t1");
+        let rows = vec![
+            page_row("p1", "entity/alpha", "Alpha", "Alpha body.", &["Alpha"]),
+            page_row("p3", "concept/gamma", "Gamma", "Gamma body.", &["Gamma"]),
+        ];
+        store.insert(&rows, &index, "kb1").unwrap();
+        let extract = json!({
+            "entities": [], "concepts": [], "claims": [],
+            "relations": [{"from": "Alpha", "to": "Gamma", "type": "uses"}],
+            "topics": []
+        });
+        let row = build_resume_doc("c1", "d1", &extract, "h1");
+        store
+            .insert(&[row.as_object().cloned().unwrap()], &index, "kb1")
+            .unwrap();
+        let mut state = Map::new();
+        state.insert("c1".to_string(), json!({"doc_id": "d1", "hash": "h1"}));
+        commit_active_map_state(&store, "t1", "kb1", &state).unwrap();
+        let disabled: BTreeSet<String> = BTreeSet::new();
+        wiki_finalize(&store, "t1", "kb1", &disabled, None, None).await;
+        let fields: Vec<String> = ["slug_kwd", "md_with_weight", "outlinks_kwd"]
+            .iter()
+            .map(|f| f.to_string())
+            .collect();
+        let by_slug = search_existing_pages(&store, "t1", "kb1", &fields);
+        let gamma = by_slug
+            .values()
+            .find(|page| page["slug_kwd"] == json!("concept/gamma"))
+            .cloned()
+            .expect("gamma");
+        let gamma_md = gamma["md_with_weight"].as_str().unwrap();
+        assert!(gamma_md.contains("## 相关页面"));
+        assert!(gamma_md.contains("artifact/kb1/entity/alpha"));
+        let alpha = by_slug
+            .values()
+            .find(|page| page["slug_kwd"] == json!("entity/alpha"))
+            .cloned()
+            .expect("alpha");
+        let alpha_md = alpha["md_with_weight"].as_str().unwrap();
+        assert!(alpha_md.contains("## 相关页面"));
+        assert!(alpha_md.contains("artifact/kb1/concept/gamma"));
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Part 11 — Mode A run (`_wiki_mode_a_run`).
@@ -6341,7 +8307,238 @@ pub async fn wiki_mode_a_run(
     })
 }
 
+#[cfg(test)]
+mod wiki_incremental_part13_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+    use crate::embed::Embedder;
+    use crate::harness::HarnessChat;
+    use std::sync::Mutex;
 
+    struct FakeChat {
+        reply: String,
+        calls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessChat for FakeChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            let user = history
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            self.calls.lock().unwrap().push(user);
+            Ok(self.reply.clone())
+        }
+
+        fn max_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    struct TestEmb;
+
+    #[async_trait::async_trait]
+    impl Embedder for TestEmb {
+        async fn embed(&self, texts: &[&str]) -> crate::Result<Vec<Vec<f32>>> {
+            Ok(texts.iter().map(|_| vec![1.0, 0.0]).collect())
+        }
+    }
+
+    fn delta_create(name: &str, entity_type: &str) -> Value {
+        json!({
+            "action": "create",
+            "entity_name": name,
+            "entity_type": entity_type,
+            "additions": [{"statement": "s", "source_doc_id": "d1", "chunk_ids": ["c1"]}],
+            "retractions": [],
+            "claims": [],
+            "source_chunk_ids": ["c1"],
+            "retained_source_doc_ids": ["d1"]
+        })
+    }
+
+    #[tokio::test]
+    async fn mode_a_creates_pages_and_tracks_docs() {
+        let store = MemoryDocStore::new();
+        let index = crate::harness::knowlege_dataset_nav::index_name("t1");
+        let rows: Vec<DocRow> = vec![
+            json!({"id": "c1", "doc_id": "d1", "content_with_weight": "alpha source"})
+                .as_object()
+                .cloned()
+                .unwrap(),
+        ];
+        store.insert(&rows, &index, "kb1").unwrap();
+        let chat = FakeChat {
+            reply: "TOPIC: alpha\n# Body\n\nGrounded.".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let emb = TestEmb;
+        let mut stats: Map<String, Value> = Map::new();
+        stats.insert("selected".to_string(), json!(0));
+        stats.insert("new".to_string(), json!(0));
+        stats.insert("new_added".to_string(), json!(0));
+        let deltas = vec![
+            delta_create("Alpha", "entity"),
+            delta_create("Beta", "concept"),
+        ];
+        let summary = wiki_mode_a_run(
+            &store,
+            &deltas,
+            &Map::new(),
+            &chat,
+            Some(&emb),
+            "t1",
+            "kb1",
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(summary["pages_created"], json!(2));
+        assert_eq!(summary["pages_modified"], json!(0));
+        assert_eq!(summary["pages_deleted"], json!(0));
+        let pages = search_existing_pages(&store, "t1", "kb1", &["slug_kwd".to_string()]);
+        assert_eq!(pages.len(), 2);
+        assert!(pages.contains_key("entity/alpha"));
+        assert!(pages.contains_key("concept/beta"));
+        // Incremental Mode A persists wiki_page rows directly (no drafts).
+        let drafts = crate::harness::knowlege_wiki::wiki_load_refine_resume(&store, "t1", "kb1");
+        assert!(drafts.is_empty());
+        let dps = wiki_load_doc_page_source(&store, "t1", "kb1", "d1").expect("doc source");
+        let page_ids: Vec<String> = as_str_list(dps.get("page_ids"));
+        assert!(page_ids.contains(&"entity/alpha".to_string()));
+        assert!(page_ids.contains(&"concept/beta".to_string()));
+    }
+
+    #[tokio::test]
+    async fn mode_a_modifies_and_deletes_existing() {
+        let store = MemoryDocStore::new();
+        let index = crate::harness::knowlege_dataset_nav::index_name("t1");
+        let row = json!({
+            "id": "p1",
+            "compile_kwd": "wiki_page",
+            "slug_kwd": "entity/alpha",
+            "title_kwd": "Alpha",
+            "md_with_weight": "OLD BODY",
+            "entity_names_kwd": ["Alpha"],
+            "page_version_int": 3,
+            "synthesis_version_int": 1,
+            "topic_kwd": "alpha"
+        });
+        store
+            .insert(&[row.as_object().cloned().unwrap()], &index, "kb1")
+            .unwrap();
+        let mut existing: Map<String, Value> = Map::new();
+        existing.insert(
+            "entity/alpha".to_string(),
+            json!({"title_kwd": "Alpha", "entity_names_kwd": ["Alpha"], "page_version_int": 3, "synthesis_version_int": 1, "topic_kwd": "alpha", "md_with_weight": "OLD BODY", "claims": "[]"}),
+        );
+        let chat = FakeChat {
+            reply: "TOPIC: alpha\n# Updated\n\nFresh body.".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let mut delta = delta_create("Alpha", "entity");
+        delta["action"] = json!("update");
+        let summary = wiki_mode_a_run(
+            &store,
+            &[delta.clone()],
+            &existing,
+            &chat,
+            None,
+            "t1",
+            "kb1",
+            true,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(summary["pages_modified"], json!(1));
+        let pages = search_existing_pages(
+            &store,
+            "t1",
+            "kb1",
+            &["slug_kwd".to_string(), "md_with_weight".to_string()],
+        );
+        let alpha = pages.get("entity/alpha").cloned().expect("alpha");
+        assert!(
+            alpha["md_with_weight"]
+                .as_str()
+                .unwrap()
+                .contains("Fresh body")
+        );
+
+        let mut delete_delta = delta_create("Alpha", "entity");
+        delete_delta["action"] = json!("delete");
+        let summary2 = wiki_mode_a_run(
+            &store,
+            &[delete_delta],
+            &existing,
+            &chat,
+            None,
+            "t1",
+            "kb1",
+            true,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(summary2["pages_deleted"], json!(1));
+        let remaining = search_existing_pages(&store, "t1", "kb1", &["slug_kwd".to_string()]);
+        assert!(!remaining.contains_key("entity/alpha"));
+    }
+
+    #[tokio::test]
+    async fn mode_a_records_refine_failure() {
+        let store = MemoryDocStore::new();
+        let chat = FakeChat {
+            reply: "".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let summary = wiki_mode_a_run(
+            &store,
+            &[delta_create("Alpha", "entity")],
+            &Map::new(),
+            &chat,
+            None,
+            "t1",
+            "kb1",
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(summary["pages_created"], json!(0));
+        let errors = summary["errors"].as_array().unwrap();
+        assert!(errors.contains(&json!("REFINE_FAILED:entity/alpha")));
+        let failures = wiki_load_refine_failures(&store, "t1", "kb1");
+        assert_eq!(failures.len(), 1);
+        assert!(failures.contains_key("entity/alpha"));
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Part 12 — claim parsing, cohesion and unstable-page splitting plus the
@@ -6912,7 +9109,167 @@ pub fn wiki_load_plan_group_members(
     result
 }
 
+#[cfg(test)]
+mod wiki_incremental_part14_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+    use crate::embed::Embedder;
+    use crate::harness::HarnessChat;
+    use std::sync::Mutex;
 
+    struct FakeChat {
+        reply: String,
+        calls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessChat for FakeChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            let user = history
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            self.calls.lock().unwrap().push(user);
+            Ok(self.reply.clone())
+        }
+
+        fn max_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    struct TestEmb;
+
+    #[async_trait::async_trait]
+    impl Embedder for TestEmb {
+        async fn embed(&self, texts: &[&str]) -> crate::Result<Vec<Vec<f32>>> {
+            Ok(texts.iter().map(|_| vec![1.0, 0.0]).collect())
+        }
+    }
+
+    #[test]
+    fn parse_claims_and_member_filtering() {
+        assert!(wiki_parse_claims(Some(&json!("not json"))).is_empty());
+        assert!(wiki_parse_claims(None).is_empty());
+        let parsed = wiki_parse_claims(Some(&json!("[{\"statement\": \"s\"}, 5]")));
+        assert_eq!(parsed.len(), 1);
+
+        let single = json!({
+            "claims": "[{\"statement\": \"s1\", \"subject\": \"Alpha\"}]",
+            "entity_names_kwd": ["Alpha"]
+        });
+        assert_eq!(wiki_claims_for_entity(&single, "alpha").len(), 1);
+        let multi = json!({
+            "claims": "[{\"statement\": \"s1\", \"subject\": \"Alpha\"}, {\"statement\": \"s2\", \"subject\": \"Beta\"}]",
+            "entity_names_kwd": ["Alpha", "Beta"]
+        });
+        let alpha_claims = wiki_claims_for_entity(&multi, "Alpha");
+        assert_eq!(alpha_claims.len(), 1);
+        assert_eq!(alpha_claims[0]["statement"], json!("s1"));
+        assert!(wiki_claims_for_entity(&multi, "Gamma").is_empty());
+    }
+
+    #[test]
+    fn cohesion_shapes() {
+        assert_eq!(wiki_embedding_cohesion(&[]), 1.0);
+        assert_eq!(wiki_embedding_cohesion(&[vec![1.0, 0.0]]), 1.0);
+        let identical = vec![vec![1.0f32, 0.0], vec![1.0, 0.0]];
+        assert!((wiki_embedding_cohesion(&identical) - 1.0).abs() < 1e-6);
+        let opposite = vec![vec![1.0f32, 0.0], vec![-1.0, 0.0]];
+        assert_eq!(wiki_embedding_cohesion(&opposite), 0.0);
+    }
+
+    #[tokio::test]
+    async fn split_over_capacity_page() {
+        let store = MemoryDocStore::new();
+        let chat = FakeChat {
+            reply: "[[0,1,2,3,4],[5,6,7,8,9]]".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let emb = TestEmb;
+        let mut existing: Map<String, Value> = Map::new();
+        existing.insert(
+            "entity/alpha".to_string(),
+            json!({"title_kwd": "Alpha", "entity_names_kwd": ["Alpha"], "claims": "[]"}),
+        );
+        let incoming: Vec<Value> = (0..10)
+            .map(|idx| {
+                json!({
+                    "entity_name": if idx == 0 { "Alpha".to_string() } else { format!("E{idx}") },
+                    "entity_type": "entity",
+                    "action": "update",
+                    "claims": [],
+                    "retractions": [],
+                    "source_chunk_ids": [],
+                    "source_doc_ids": []
+                })
+            })
+            .collect();
+        let mut assignments: Map<String, Value> = Map::new();
+        assignments.insert("entity/alpha".to_string(), Value::Array(incoming));
+        let split = wiki_split_unstable_page_assignments(
+            &store,
+            &assignments,
+            &existing,
+            &chat,
+            Some(&emb),
+            "kb1",
+        )
+        .await;
+        assert!(split.contains_key("entity/alpha"));
+        let new_keys: Vec<&String> = split
+            .keys()
+            .filter(|key| key.starts_with("_new_"))
+            .collect();
+        assert_eq!(new_keys.len(), 1);
+        let new_cluster = split[new_keys[0]].as_array().unwrap();
+        assert_eq!(new_cluster.len(), 5);
+        assert!(
+            new_cluster
+                .iter()
+                .all(|entity| entity["action"] == json!("create"))
+        );
+        let retained = split["entity/alpha"].as_array().unwrap();
+        assert_eq!(retained.len(), 5);
+    }
+
+    #[test]
+    fn plan_group_crud() {
+        let store = MemoryDocStore::new();
+        assert!(wiki_load_plan_group_members(&store, "t1", "kb1").is_empty());
+        wiki_update_plan_group(
+            &store,
+            "t1",
+            "kb1",
+            "entity/alpha",
+            &["Alpha".to_string(), "Beta".to_string()],
+            3,
+        );
+        let members = wiki_load_plan_group_members(&store, "t1", "kb1");
+        assert_eq!(members.len(), 1);
+        assert_eq!(members["entity/alpha"], json!(["Alpha", "Beta"]));
+        wiki_update_plan_group(
+            &store,
+            "t1",
+            "kb1",
+            "entity/alpha",
+            &["Alpha".to_string()],
+            4,
+        );
+        let members2 = wiki_load_plan_group_members(&store, "t1", "kb1");
+        assert_eq!(members2.len(), 1);
+        assert_eq!(members2["entity/alpha"], json!(["Alpha"]));
+        wiki_delete_plan_group(&store, "t1", "kb1", "entity/alpha");
+        assert!(wiki_load_plan_group_members(&store, "t1", "kb1").is_empty());
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Part 13 — page-move reconciliation and Mode B run
@@ -7608,7 +9965,196 @@ pub async fn wiki_mode_b_run(
     })
 }
 
+#[cfg(test)]
+mod wiki_incremental_part15_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+    use crate::embed::Embedder;
+    use crate::harness::HarnessChat;
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
 
+    struct SequentialChat {
+        replies: Mutex<VecDeque<String>>,
+        calls: Mutex<Vec<String>>,
+    }
+
+    impl SequentialChat {
+        fn new(replies: &[&str]) -> Self {
+            Self {
+                replies: Mutex::new(replies.iter().map(|reply| (*reply).to_string()).collect()),
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessChat for SequentialChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            let user = history
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            self.calls.lock().unwrap().push(user);
+            let mut queue = self.replies.lock().unwrap();
+            Ok(queue.pop_front().unwrap_or_default())
+        }
+
+        fn max_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    struct TestEmb;
+
+    #[async_trait::async_trait]
+    impl Embedder for TestEmb {
+        async fn embed(&self, texts: &[&str]) -> crate::Result<Vec<Vec<f32>>> {
+            Ok(texts.iter().map(|_| vec![1.0, 0.0]).collect())
+        }
+    }
+
+    #[test]
+    fn reconcile_moves_routes_deletes_and_removals() {
+        let mut existing: Map<String, Value> = Map::new();
+        existing.insert(
+            "entity/old".to_string(),
+            json!({
+                "entity_names_kwd": ["Alpha", "Beta"],
+                "claims": "[{\"statement\": \"sA\", \"subject\": \"Alpha\"}]"
+            }),
+        );
+        let mut assignments: Map<String, Value> = Map::new();
+        assignments.insert(
+            "_new_entity/alpha".to_string(),
+            json!([{"entity_name": "Alpha", "entity_type": "entity", "action": "update", "claims": [], "retractions": []}]),
+        );
+        assignments.insert(
+            "entity/old".to_string(),
+            json!([{"entity_name": "Beta", "entity_type": "entity", "action": "delete", "retractions": [{"statement": "gone"}]}]),
+        );
+        let reconciled = wiki_reconcile_page_moves(&assignments, &existing);
+        assert!(reconciled.contains_key("_new_entity/alpha"));
+        let old_entries = reconciled["entity/old"].as_array().unwrap();
+        assert_eq!(old_entries.len(), 2);
+        let beta_removal = old_entries
+            .iter()
+            .find(|entry| entry["entity_name"] == json!("Beta"))
+            .unwrap();
+        assert_eq!(beta_removal["action"], json!("delete"));
+        assert_eq!(beta_removal["retractions"].as_array().unwrap().len(), 1);
+        let alpha_removal = old_entries
+            .iter()
+            .find(|entry| entry["entity_name"] == json!("Alpha"))
+            .unwrap();
+        assert_eq!(alpha_removal["action"], json!("delete"));
+        assert_eq!(alpha_removal["retractions"].as_array().unwrap().len(), 1);
+        assert_eq!(alpha_removal["retractions"][0]["statement"], json!("sA"));
+    }
+
+    #[tokio::test]
+    async fn mode_b_routes_updates_and_tracks_plan_group() {
+        let store = MemoryDocStore::new();
+        let index = crate::harness::knowlege_dataset_nav::index_name("t1");
+        let row = json!({
+            "id": "p1",
+            "compile_kwd": "wiki_page",
+            "slug_kwd": "entity/alpha",
+            "title_kwd": "Alpha",
+            "page_type_kwd": "entity",
+            "md_with_weight": "OLD",
+            "entity_names_kwd": ["Alpha"],
+            "source_chunk_ids": ["c1"],
+            "source_doc_ids": ["d0"],
+            "page_version_int": 2,
+            "synthesis_version_int": 1,
+            "topic_kwd": "alpha",
+            "claims": "[]",
+            "embedding": [1.0, 0.0],
+            "q_2_vec": [1.0, 0.0]
+        });
+        store
+            .insert(&[row.as_object().cloned().unwrap()], &index, "kb1")
+            .unwrap();
+        let mut existing: Map<String, Value> = Map::new();
+        existing.insert(
+            "entity/alpha".to_string(),
+            json!({
+                "title_kwd": "Alpha",
+                "page_type_kwd": "entity",
+                "md_with_weight": "OLD",
+                "entity_names_kwd": ["Alpha"],
+                "source_chunk_ids": ["c1"],
+                "source_doc_ids": ["d0"],
+                "page_version_int": 2,
+                "synthesis_version_int": 1,
+                "topic_kwd": "alpha",
+                "claims": "[]"
+            }),
+        );
+        let chat = SequentialChat::new(&[
+            "[{\"id\": 0, \"page\": \"entity/alpha\"}]",
+            "TOPIC: alpha\n# Updated B\n\nBody from B.",
+        ]);
+        let emb = TestEmb;
+        let delta = json!({
+            "entity_name": "Alpha",
+            "entity_type": "entity",
+            "aliases": [],
+            "additions": [{"statement": "s1", "source_doc_id": "d1", "chunk_ids": ["c1"]}],
+            "retractions": [],
+            "claims": [],
+            "source_chunk_ids": ["c1"],
+            "retained_source_doc_ids": ["d1"],
+            "action": "update"
+        });
+        let summary = wiki_mode_b_run(
+            &store,
+            &[delta],
+            &existing,
+            &chat,
+            Some(&emb),
+            "t1",
+            "kb1",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(summary["pages_modified"], json!(1));
+        assert_eq!(summary["pages_created"], json!(0));
+        let pages = search_existing_pages(
+            &store,
+            "t1",
+            "kb1",
+            &["slug_kwd".to_string(), "md_with_weight".to_string()],
+        );
+        let alpha = pages.get("entity/alpha").cloned().expect("alpha");
+        assert!(
+            alpha["md_with_weight"]
+                .as_str()
+                .unwrap()
+                .contains("Body from B")
+        );
+        let groups = wiki_load_plan_group_members(&store, "t1", "kb1");
+        assert_eq!(groups["entity/alpha"], json!(["Alpha"]));
+        let dps = wiki_load_doc_page_source(&store, "t1", "kb1", "d1").expect("doc source");
+        let page_ids: Vec<String> = as_str_list(dps.get("page_ids"));
+        assert!(page_ids.contains(&"entity/alpha".to_string()));
+        assert_eq!(chat.calls.lock().unwrap().len(), 2);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Part 14 — the public entry point (`wiki_compile_incremental`).
@@ -8328,7 +10874,151 @@ pub async fn wiki_compile_incremental(
     summary
 }
 
+#[cfg(test)]
+mod wiki_incremental_part16_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+    use crate::harness::HarnessChat;
+    use crate::harness::knowlege_wiki::{build_resume_doc, commit_active_map_state};
+    use std::sync::Mutex;
 
+    struct FakeChat {
+        reply: String,
+        calls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessChat for FakeChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            let user = history
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            self.calls.lock().unwrap().push(user);
+            Ok(self.reply.clone())
+        }
+
+        fn max_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    fn seed_map(store: &MemoryDocStore, relation: bool) -> Map<String, Value> {
+        let index = crate::harness::knowlege_dataset_nav::index_name("t1");
+        let extract = json!({
+            "entities": [{"name": "Alpha", "type": "entity", "chunk_ids": ["c1"]}],
+            "concepts": [],
+            "claims": [{"entity_name": "Alpha", "statement": "s1", "source_doc_id": "d1", "chunk_ids": ["c1"]}],
+            "relations": if relation { json!([{"from": "Alpha", "to": "Alpha", "type": "self"}]) } else { json!([]) },
+            "topics": ["t1"]
+        });
+        let row = build_resume_doc("c1", "d1", &extract, "h1");
+        store
+            .insert(&[row.as_object().cloned().unwrap()], &index, "kb1")
+            .unwrap();
+        let mut state = Map::new();
+        state.insert("c1".to_string(), json!({"doc_id": "d1", "hash": "h1"}));
+        commit_active_map_state(store, "t1", "kb1", &state).unwrap();
+        state
+    }
+
+    #[tokio::test]
+    async fn main_entry_first_build_mode_a() {
+        let store = MemoryDocStore::new();
+        let state = seed_map(&store, false);
+        let chat = FakeChat {
+            reply: "TOPIC: alpha\n# Body\n\nGrounded text.".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let chunk_delta: Map<String, Value> = Map::new();
+        let summary = wiki_compile_incremental(
+            &store,
+            &chat,
+            None,
+            "t1",
+            "kb1",
+            "entity",
+            &chunk_delta,
+            &Map::new(),
+            &state,
+            false,
+            None,
+            &BTreeSet::new(),
+            None,
+        )
+        .await;
+        assert_eq!(summary["pages_created"], json!(1));
+        assert_eq!(summary["errors"], json!([]));
+        let pages = search_existing_pages(&store, "t1", "kb1", &["slug_kwd".to_string()]);
+        assert!(pages.contains_key("entity/alpha"));
+        let canonical = load_canonical_entities(&store, "t1", "kb1");
+        assert!(canonical.contains_key("Alpha"));
+        assert_eq!(canonical["Alpha"]["mention_count_int"], json!(1));
+    }
+
+    #[tokio::test]
+    async fn main_entry_skips_when_no_map() {
+        let store = MemoryDocStore::new();
+        let chat = FakeChat {
+            reply: "unused".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let summary = wiki_compile_incremental(
+            &store,
+            &chat,
+            None,
+            "t1",
+            "kb1",
+            "entity",
+            &Map::new(),
+            &Map::new(),
+            &Map::new(),
+            false,
+            None,
+            &BTreeSet::new(),
+            None,
+        )
+        .await;
+        assert_eq!(summary["pages_created"], json!(0));
+        assert!(chat.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn main_entry_incremental_falls_back_to_full_build() {
+        let store = MemoryDocStore::new();
+        let state = seed_map(&store, false);
+        let chat = FakeChat {
+            reply: "TOPIC: alpha\n# Body\n\nGrounded.".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let summary = wiki_compile_incremental(
+            &store,
+            &chat,
+            None,
+            "t1",
+            "kb1",
+            "entity",
+            &Map::new(),
+            &Map::new(),
+            &state,
+            true,
+            None,
+            &BTreeSet::new(),
+            None,
+        )
+        .await;
+        assert_eq!(summary["pages_created"], json!(1));
+        let pages = search_existing_pages(&store, "t1", "kb1", &["slug_kwd".to_string()]);
+        assert!(pages.contains_key("entity/alpha"));
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Part 15 — document deletion cleanup (`wiki_handle_document_deleted`).
@@ -8588,4 +11278,207 @@ pub async fn wiki_handle_document_deleted(
     })
 }
 
+#[cfg(test)]
+mod wiki_incremental_part17_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+    use crate::harness::HarnessChat;
+    use std::sync::Mutex;
 
+    struct FakeChat {
+        reply: String,
+        calls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessChat for FakeChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            let user = history
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            self.calls.lock().unwrap().push(user);
+            Ok(self.reply.clone())
+        }
+
+        fn max_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    fn seed_page(store: &MemoryDocStore, source_docs: &[&str]) {
+        let index = crate::harness::knowlege_dataset_nav::index_name("t1");
+        let claims = json!([
+            {"statement": "s1", "source_doc_id": "d1", "chunk_ids": ["c1"]},
+            {"statement": "s2", "source_doc_id": "d2", "chunk_ids": ["c2"]}
+        ]);
+        let row = json!({
+            "id": "p1",
+            "compile_kwd": "wiki_page",
+            "slug_kwd": "entity/alpha",
+            "title_kwd": "Alpha",
+            "page_type_kwd": "entity",
+            "md_with_weight": "OLD BODY",
+            "entity_names_kwd": ["Alpha"],
+            "source_doc_ids": source_docs,
+            "source_chunk_ids": ["c1", "c2"],
+            "page_version_int": 2,
+            "synthesis_version_int": 1,
+            "topic_kwd": "alpha",
+            "claims": claims.to_string()
+        });
+        store
+            .insert(&[row.as_object().cloned().unwrap()], &index, "kb1")
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn no_source_record_returns_zero() {
+        let store = MemoryDocStore::new();
+        let chat = FakeChat {
+            reply: "unused".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let summary = wiki_handle_document_deleted(
+            &store,
+            "t1",
+            "kb1",
+            "d1",
+            &chat,
+            None,
+            "entity",
+            &BTreeSet::new(),
+        )
+        .await;
+        assert_eq!(summary["pages_modified"], json!(0));
+        assert_eq!(summary["pages_deleted"], json!(0));
+        assert!(chat.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn deletes_sole_source_page() {
+        let store = MemoryDocStore::new();
+        seed_page(&store, &["d1"]);
+        save_canonical_entity(
+            &store,
+            "t1",
+            "kb1",
+            "Alpha",
+            "entity",
+            &[],
+            &["d1".to_string()],
+            1,
+            None,
+            Some(&["c1".to_string()]),
+        );
+        wiki_update_doc_page_source(
+            &store,
+            "t1",
+            "kb1",
+            "d1",
+            &["entity/alpha".to_string()],
+            Some(&["Alpha".to_string()]),
+            None,
+            None,
+        );
+        let chat = FakeChat {
+            reply: "unused".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let summary = wiki_handle_document_deleted(
+            &store,
+            "t1",
+            "kb1",
+            "d1",
+            &chat,
+            None,
+            "entity",
+            &BTreeSet::new(),
+        )
+        .await;
+        assert_eq!(summary["pages_deleted"], json!(1));
+        let pages = search_existing_pages(&store, "t1", "kb1", &["slug_kwd".to_string()]);
+        assert!(pages.is_empty());
+        assert!(load_canonical_entities(&store, "t1", "kb1").is_empty());
+        assert!(wiki_load_doc_page_source(&store, "t1", "kb1", "d1").is_none());
+    }
+
+    #[tokio::test]
+    async fn modifies_shared_page_and_plan_group() {
+        let store = MemoryDocStore::new();
+        seed_page(&store, &["d1", "d2"]);
+        save_canonical_entity(
+            &store,
+            "t1",
+            "kb1",
+            "Alpha",
+            "entity",
+            &[],
+            &["d1".to_string(), "d2".to_string()],
+            2,
+            None,
+            Some(&["c1".to_string(), "c2".to_string()]),
+        );
+        wiki_update_doc_page_source(
+            &store,
+            "t1",
+            "kb1",
+            "d1",
+            &["entity/alpha".to_string()],
+            Some(&["Alpha".to_string()]),
+            None,
+            None,
+        );
+        wiki_update_plan_group(
+            &store,
+            "t1",
+            "kb1",
+            "entity/alpha",
+            &["Alpha".to_string(), "Beta".to_string()],
+            2,
+        );
+        let chat = FakeChat {
+            reply: "TOPIC: alpha\n# Updated\n\nBody after delete.".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let summary = wiki_handle_document_deleted(
+            &store,
+            "t1",
+            "kb1",
+            "d1",
+            &chat,
+            None,
+            "topic",
+            &BTreeSet::new(),
+        )
+        .await;
+        assert_eq!(summary["pages_modified"], json!(1));
+        assert_eq!(summary["pages_deleted"], json!(0));
+        let pages = search_existing_pages(
+            &store,
+            "t1",
+            "kb1",
+            &["slug_kwd".to_string(), "md_with_weight".to_string()],
+        );
+        let alpha = pages.get("entity/alpha").cloned().expect("alpha");
+        assert!(
+            alpha["md_with_weight"]
+                .as_str()
+                .unwrap()
+                .contains("Body after delete")
+        );
+        let canonical = load_canonical_entities(&store, "t1", "kb1");
+        assert_eq!(canonical["Alpha"]["source_doc_ids"], json!(["d2"]));
+        assert_eq!(canonical["Alpha"]["mention_count_int"], json!(2));
+        let groups = wiki_load_plan_group_members(&store, "t1", "kb1");
+        assert_eq!(groups["entity/alpha"], json!(["Alpha", "Beta"]));
+        assert!(wiki_load_doc_page_source(&store, "t1", "kb1", "d1").is_none());
+    }
+}

@@ -401,4 +401,177 @@ pub async fn connection_test(config: &SshConfig) -> Value {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    fn config(pairs: &[(&str, Value)]) -> SshConfig {
+        let mut map = Map::new();
+        for (key, value) in pairs {
+            map.insert((*key).to_string(), value.clone());
+        }
+        SshConfig::from_config(&map).unwrap()
+    }
+
+    #[test]
+    fn config_matches_the_upstream_field_set_and_defaults() {
+        let parsed = config(&[
+            ("host", json!("192.168.1.10")),
+            ("username", json!("ragflow")),
+            ("password", json!("secret")),
+        ]);
+        assert_eq!(parsed.port, DEFAULT_SSH_PORT);
+        assert_eq!(parsed.python_bin, DEFAULT_PYTHON_BIN);
+        assert_eq!(parsed.node_bin, DEFAULT_NODE_BIN);
+        assert_eq!(parsed.work_dir, DEFAULT_WORK_DIR);
+        assert_eq!(parsed.timeout_seconds, DEFAULT_TIMEOUT_SECONDS);
+        assert_eq!(parsed.max_output_bytes, DEFAULT_MAX_OUTPUT_BYTES);
+        assert_eq!(parsed.interpreter("python"), Some("python3"));
+        assert_eq!(parsed.interpreter("nodejs"), Some("node"));
+        assert_eq!(parsed.interpreter("ruby"), None);
+        assert_eq!(SSH_LANGUAGES, ["python", "javascript", "nodejs"]);
+    }
+
+    #[test]
+    fn config_requires_host_username_and_one_credential() {
+        let mut map = Map::new();
+        assert!(SshConfig::from_config(&map).is_err());
+        map.insert("host".into(), json!("host"));
+        assert!(
+            SshConfig::from_config(&map)
+                .unwrap_err()
+                .contains("username")
+        );
+        map.insert("username".into(), json!("user"));
+        assert!(
+            SshConfig::from_config(&map)
+                .unwrap_err()
+                .contains("password or private_key")
+        );
+        map.insert("private_key".into(), json!("-----BEGIN"));
+        assert!(SshConfig::from_config(&map).is_ok());
+    }
+
+    #[test]
+    fn config_rejects_out_of_range_port_and_timeout() {
+        let bad_port = Map::from_iter([
+            ("host".to_string(), json!("h")),
+            ("username".to_string(), json!("u")),
+            ("password".to_string(), json!("p")),
+            ("port".to_string(), json!(70000)),
+        ]);
+        assert!(
+            SshConfig::from_config(&bad_port)
+                .unwrap_err()
+                .contains("1-65535")
+        );
+        let bad_timeout = Map::from_iter([
+            ("host".to_string(), json!("h")),
+            ("username".to_string(), json!("u")),
+            ("password".to_string(), json!("p")),
+            ("timeout".to_string(), json!(9000)),
+        ]);
+        assert!(
+            SshConfig::from_config(&bad_timeout)
+                .unwrap_err()
+                .contains("1-600")
+        );
+    }
+
+    #[test]
+    fn credentials_keep_their_exact_bytes() {
+        // `ssh -i` rejects a key whose PEM trailer lost its newline ("error in
+        // libcrypto"), so secrets must not be trimmed the way host names are.
+        let pem = "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----\n";
+        let parsed = config(&[
+            ("host", json!("  host.example  ")),
+            ("username", json!(" ragflow ")),
+            ("private_key", json!(pem)),
+            ("passphrase", json!(" pass phrase \n")),
+        ]);
+        assert_eq!(parsed.host, "host.example");
+        assert_eq!(parsed.username, "ragflow");
+        assert_eq!(parsed.private_key.as_deref(), Some(pem));
+        assert_eq!(parsed.passphrase.as_deref(), Some(" pass phrase \n"));
+        assert!(parsed.password.is_none());
+    }
+
+    #[test]
+    fn ssh_arguments_carry_port_user_and_key() {
+        let parsed = config(&[
+            ("host", json!("example.com")),
+            ("username", json!("ragflow")),
+            ("port", json!(2222)),
+            ("private_key", json!("k")),
+        ]);
+        let key = PathBuf::from("/tmp/key");
+        let args = parsed.ssh_arguments(Some(&key));
+        assert_eq!(args[0], "-p");
+        assert_eq!(args[1], "2222");
+        assert_eq!(args[2], "-l");
+        assert_eq!(args[3], "ragflow");
+        assert!(args.contains(&"BatchMode=yes".to_string()));
+        assert!(args.contains(&"StrictHostKeyChecking=accept-new".to_string()));
+        assert!(args.contains(&"/tmp/key".to_string()));
+        assert_eq!(args[args.len() - 1], "example.com");
+    }
+
+    #[test]
+    fn known_hosts_pins_strict_verification() {
+        let parsed = config(&[
+            ("host", json!("h")),
+            ("username", json!("u")),
+            ("password", json!("p")),
+            ("known_hosts", json!("/etc/ragflow/ssh_known_hosts")),
+        ]);
+        let args = parsed.ssh_arguments(None);
+        assert!(args.contains(&"UserKnownHostsFile=/etc/ragflow/ssh_known_hosts".to_string()));
+        assert!(args.contains(&"StrictHostKeyChecking=yes".to_string()));
+    }
+
+    #[test]
+    fn remote_command_pipes_the_snippet_through_the_configured_binary() {
+        let parsed = config(&[
+            ("host", json!("h")),
+            ("username", json!("u")),
+            ("password", json!("p")),
+            ("work_dir", json!("/srv/work")),
+            ("python_bin", json!("/usr/bin/python3.11")),
+        ]);
+        let command = parsed.remote_command("python", "print(1)").unwrap();
+        assert!(command.contains("mkdir -p /srv/work/rayrag-ssh"));
+        assert!(command.contains("cat > main.py"));
+        assert!(command.contains("/usr/bin/python3.11 -I -B main.py"));
+        let node = parsed.remote_command("nodejs", "console.log(1)").unwrap();
+        assert!(node.contains("cat > main.js"));
+        assert!(node.contains("node -I -B main.js"));
+        assert!(parsed.remote_command("ruby", "puts 1").is_err());
+    }
+
+    #[test]
+    fn shell_quoting_survives_spaces_and_quotes() {
+        assert_eq!(shell_quote("/tmp/plain"), "/tmp/plain");
+        assert_eq!(shell_quote("/tmp/with space"), "'/tmp/with space'");
+        assert_eq!(shell_quote("it's"), r"'it'\''s'");
+    }
+
+    #[test]
+    fn output_is_capped_at_max_output_bytes() {
+        let payload = vec![b'x'; 64];
+        assert_eq!(truncate_output(&payload, 1024).len(), 64);
+        let capped = truncate_output(&payload, 16);
+        assert!(capped.starts_with(&"x".repeat(16)));
+        assert!(capped.ends_with("… output truncated …"));
+    }
+
+    #[tokio::test]
+    async fn execute_rejects_unsupported_languages_before_spawning() {
+        let parsed = config(&[
+            ("host", json!("127.0.0.1")),
+            ("username", json!("nobody")),
+            ("password", json!("nope")),
+        ]);
+        let error = execute(&parsed, "ruby", "puts 1").await.unwrap_err();
+        assert!(error.contains("Unsupported language"), "{error}");
+    }
+}

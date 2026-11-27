@@ -1052,4 +1052,259 @@ pub fn build_mcp_router(state: McpSseState) -> Router<()> {
         )
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderValue;
 
+    fn header(value: &str) -> HeaderValue {
+        value.parse().expect("valid header value")
+    }
+
+    #[test]
+    fn initialize_tools_list_and_ping_protocol_handshake() {
+        let core = McpServerCore::default();
+
+        // initialize → protocol version + capabilities + serverInfo.
+        let request = json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": { "protocolVersion": PROTOCOL_VERSION, "capabilities": {},
+                        "clientInfo": { "name": "test-client", "version": "1.0" } }
+        });
+        let response = core.handle_jsonrpc(&request).expect("initialize answered");
+        assert_eq!(response.id, Some(json!(1)));
+        let result = response.result.expect("initialize result");
+        assert_eq!(result["protocolVersion"], PROTOCOL_VERSION);
+        assert_eq!(result["serverInfo"]["name"], SERVER_NAME);
+        assert_eq!(result["capabilities"]["tools"], json!({}));
+
+        // tools/list → the registry includes ragflow_retrieval with schema.
+        let response = core
+            .handle_jsonrpc(&json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }))
+            .expect("tools/list answered");
+        let tools = response.result.unwrap()["tools"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert!(tools.len() >= 3);
+        let retrieval = tools
+            .iter()
+            .find(|tool| tool["name"] == "ragflow_retrieval")
+            .expect("ragflow_retrieval registered");
+        assert_eq!(retrieval["inputSchema"]["required"][0], "question");
+        assert!(
+            retrieval["description"]
+                .as_str()
+                .unwrap()
+                .contains("Below is the list of all available datasets")
+        );
+
+        // ping → empty result.
+        let response = core
+            .handle_jsonrpc(&json!({ "jsonrpc": "2.0", "id": 3, "method": "ping" }))
+            .unwrap();
+        assert_eq!(response.result, Some(json!({})));
+
+        // Notifications (no id) never get a response.
+        assert!(
+            core.handle_jsonrpc(
+                &json!({ "jsonrpc": "2.0", "method": "notifications/initialized" })
+            )
+            .is_none()
+        );
+
+        // Unknown method → -32601; malformed envelope → -32600.
+        let response = core
+            .handle_jsonrpc(&json!({ "jsonrpc": "2.0", "id": 4, "method": "bogus" }))
+            .unwrap();
+        assert_eq!(response.error.unwrap().code, error_code::METHOD_NOT_FOUND);
+        let response = core
+            .handle_jsonrpc(&json!({ "id": 5, "method": "ping" }))
+            .unwrap();
+        assert_eq!(response.error.unwrap().code, error_code::INVALID_REQUEST);
+    }
+
+    #[test]
+    fn call_tool_runs_retrieval_and_reports_errors() {
+        let backend = InMemoryRetrievalBackend::new(
+            vec![DatasetInfo {
+                id: "ds1".into(),
+                description: "Project docs".into(),
+            }],
+            vec![
+                RetrievedChunk {
+                    dataset_id: "ds1".into(),
+                    document_id: "doc1".into(),
+                    document_keyword: "guide".into(),
+                    content: "Rust is fast".into(),
+                    score: 0.87,
+                },
+                RetrievedChunk {
+                    dataset_id: "ds1".into(),
+                    document_id: "doc1".into(),
+                    document_keyword: "guide".into(),
+                    content: "Python is slow".into(),
+                    score: 0.45,
+                },
+            ],
+        );
+        let core = McpServerCore::with_backend(Arc::new(backend));
+
+        let response = core
+            .handle_jsonrpc(&json!({
+                "jsonrpc": "2.0", "id": 7, "method": "tools/call",
+                "params": { "name": "ragflow_retrieval",
+                            "arguments": { "question": "rust", "page_size": 10,
+                                           "similarity_threshold": 0.5 } }
+            }))
+            .expect("tools/call answered");
+        assert!(response.error.is_none());
+        let result = response.result.unwrap();
+        assert_eq!(result["isError"], false);
+        let content = result["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "text");
+        let text: Value = serde_json::from_str(content[0]["text"].as_str().unwrap()).unwrap();
+        // Only the 0.87 hit clears the 0.5 threshold.
+        assert_eq!(text["pagination"]["total_chunks"], 1);
+        assert_eq!(text["chunks"][0]["dataset_name"], "Project docs");
+        assert_eq!(text["chunks"][0]["document_name"], "guide");
+        assert_eq!(text["query_info"]["question"], "rust");
+
+        // list_datasets returns newline-delimited {"id","description"} rows.
+        let response = core
+            .handle_jsonrpc(&json!({
+                "jsonrpc": "2.0", "id": 8, "method": "tools/call",
+                "params": { "name": "list_datasets", "arguments": {} }
+            }))
+            .unwrap();
+        let content = response.result.unwrap()["content"]
+            .as_array()
+            .unwrap()
+            .clone();
+        let rows = content[0]["text"].as_str().unwrap();
+        assert!(rows.contains("\"id\":\"ds1\""));
+
+        // Unknown tool → server.py's "Tool not found" as -32602.
+        let response = core
+            .handle_jsonrpc(&json!({
+                "jsonrpc": "2.0", "id": 9, "method": "tools/call",
+                "params": { "name": "nope", "arguments": {} }
+            }))
+            .unwrap();
+        let error = response.error.unwrap();
+        assert_eq!(error.code, error_code::INVALID_PARAMS);
+        assert!(error.message.contains("Tool not found: nope"));
+
+        // Missing question → -32602.
+        let response = core
+            .handle_jsonrpc(&json!({
+                "jsonrpc": "2.0", "id": 10, "method": "tools/call",
+                "params": { "name": "ragflow_retrieval", "arguments": {} }
+            }))
+            .unwrap();
+        assert_eq!(response.error.unwrap().code, error_code::INVALID_PARAMS);
+    }
+
+    #[test]
+    fn auth_token_extraction_matches_ragflow_header_handling() {
+        let mut headers = HeaderMap::new();
+        assert!(extract_token_from_headers(&headers).is_none());
+
+        headers.insert("authorization", header("Bearer abc123"));
+        assert_eq!(
+            extract_token_from_headers(&headers).as_deref(),
+            Some("abc123")
+        );
+        // Lowercase scheme + surrounding whitespace.
+        headers.insert("authorization", header("bearer xyz  "));
+        assert_eq!(extract_token_from_headers(&headers).as_deref(), Some("xyz"));
+
+        headers.remove("authorization");
+        headers.insert("x-api-key", header("key-1"));
+        assert_eq!(
+            extract_token_from_headers(&headers).as_deref(),
+            Some("key-1")
+        );
+
+        headers.remove("x-api-key");
+        headers.insert("api_key", header("key-2"));
+        assert_eq!(
+            extract_token_from_headers(&headers).as_deref(),
+            Some("key-2")
+        );
+
+        // Host mode without a token → 401; self-host mode never needs one.
+        let config = McpServerConfig {
+            mode: LaunchMode::Host,
+            ..Default::default()
+        };
+        assert!(resolve_api_key(&config, &HeaderMap::new()).is_err());
+        let config = McpServerConfig::default();
+        assert_eq!(resolve_api_key(&config, &HeaderMap::new()).unwrap(), "");
+        let config = McpServerConfig {
+            host_api_key: "ragflow-xxx".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_api_key(&config, &HeaderMap::new()).unwrap(),
+            "ragflow-xxx"
+        );
+    }
+
+    #[test]
+    fn sse_framing_and_endpoint_events_round_trip() {
+        let endpoint = sse_endpoint_event("sse-1");
+        assert_eq!(
+            endpoint,
+            "event: endpoint\ndata: /messages/?session_id=sse-1\n\n"
+        );
+
+        let payload = r#"{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}"#;
+        let frame = sse_message_event(payload);
+        assert_eq!(frame, format!("event: message\ndata: {payload}\n\n"));
+
+        let (event, data) = parse_sse_frame(&frame).unwrap();
+        assert_eq!(event, "message");
+        assert_eq!(data, payload);
+        let (event, data) = parse_sse_frame(&endpoint).unwrap();
+        assert_eq!(event, "endpoint");
+        assert_eq!(data, "/messages/?session_id=sse-1");
+
+        // Frames without data lines are ignored.
+        assert!(parse_sse_frame("event: ping\n\n").is_none());
+    }
+
+    #[test]
+    fn retrieval_request_defaults_match_server_py_call_tool() {
+        let request = RetrievalRequest::from_arguments(&json!({
+            "question": "q", "dataset_ids": ["a"], "document_ids": []
+        }));
+        assert_eq!(request.question, "q");
+        assert_eq!(request.dataset_ids, vec!["a".to_string()]);
+        assert!(request.document_ids.is_empty());
+        assert_eq!(request.page, 1);
+        assert_eq!(request.page_size, 10);
+        assert_eq!(request.similarity_threshold, 0.2);
+        assert_eq!(request.vector_similarity_weight, 0.3);
+        assert_eq!(request.top_k, 1024);
+        assert!(!request.keyword);
+        assert!(!request.force_refresh);
+        assert!(request.rerank_id.is_none());
+
+        let request = RetrievalRequest::from_arguments(&json!({
+            "question": "q", "page": 3, "page_size": 50, "keyword": true,
+            "similarity_threshold": 0.1, "rerank_id": "bge-reranker"
+        }));
+        assert_eq!(request.page, 3);
+        assert_eq!(request.page_size, 50);
+        assert!(request.keyword);
+        assert_eq!(request.similarity_threshold, 0.1);
+        assert_eq!(request.rerank_id.as_deref(), Some("bge-reranker"));
+
+        // Config env parsing helper.
+        assert!(McpServerConfig::parse_bool_flag("true", false));
+        assert!(McpServerConfig::parse_bool_flag("YES", false));
+        assert!(!McpServerConfig::parse_bool_flag("0", true));
+        assert!(McpServerConfig::parse_bool_flag("garbage", true));
+    }
+}

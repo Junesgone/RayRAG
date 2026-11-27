@@ -508,4 +508,90 @@ impl Parse for HtmlParser {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn strips_scripts_styles_and_comments() {
+        let html = "<html><body><style>.x{color:red}</style><script>var a=1;</script>\
+                    <!-- comment --><p>Hello <b>world</b></p></body></html>";
+        let sections = RAGFlowHtmlParser::new().parser_txt(html, 512);
+        assert_eq!(sections.len(), 1);
+        assert!(sections[0].contains("Hello world"));
+        assert!(!sections[0].contains("var a=1"));
+        assert!(!sections[0].contains(".x{color"));
+        assert!(!sections[0].contains("comment"));
+    }
+
+    #[test]
+    fn title_tags_get_markdown_prefix() {
+        let html = "<html><body><h1>Big</h1><p>text</p><h2>Sub</h2></body></html>";
+        let sections = RAGFlowHtmlParser::new().parser_txt(html, 512);
+        assert_eq!(sections.len(), 1);
+        assert!(sections[0].contains("# Big"));
+        assert!(sections[0].contains("## Sub"));
+    }
+
+    #[test]
+    fn tables_are_extracted_as_separate_sections() {
+        let html = "<html><body><p>intro</p><table><tr><td>A</td><td>B</td></tr>\
+                    <tr><td>1</td><td>2</td></tr></table><p>outro</p></body></html>";
+        let sections = RAGFlowHtmlParser::new().parser_txt(html, 512);
+        // intro+outro merge into one block; table appended separately.
+        assert_eq!(sections.len(), 2);
+        assert!(sections[0].contains("intro"));
+        assert!(sections[0].contains("outro"));
+        assert!(sections[1].contains("<table>"));
+        assert!(sections[1].contains("<td>A</td>"));
+    }
+
+    #[test]
+    fn chunk_block_splits_oversized_blocks() {
+        let blocks: Vec<String> = vec!["word1 word2 word3 word4 word5".to_string()];
+        let chunks = RAGFlowHtmlParser::chunk_block(&blocks, 2);
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0], "word1 word2");
+        assert_eq!(chunks[1], "word3 word4");
+        assert_eq!(chunks[2], "word5");
+    }
+
+    #[test]
+    fn chunk_block_merges_small_blocks() {
+        let blocks: Vec<String> = vec!["aaa".to_string(), "bbb".to_string(), "ccc".to_string()];
+        let chunks = RAGFlowHtmlParser::chunk_block(&blocks, 512);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], "aaa\nbbb\nccc");
+    }
+
+    #[test]
+    fn split_table_budget_rows() {
+        let table = "<table><tr><td>1</td></tr><tr><td>2</td></tr>\
+                     <tr><td>3</td></tr><tr><td>4</td></tr></table>";
+        let tables = RAGFlowHtmlParser::split_table(table, 2);
+        // Tiny budget → multiple fragments (estimate_tokens counts chars/4-ish).
+        assert!(tables.len() >= 1);
+        for t in tables {
+            assert!(t.starts_with("<table>"));
+            assert!(t.ends_with("</table>"));
+        }
+    }
+
+    #[test]
+    fn html_unescape_handles_entities() {
+        assert_eq!(html_unescape("a&amp;b"), "a&b");
+        assert_eq!(html_unescape("&lt;tag&gt;"), "<tag>");
+        assert_eq!(html_unescape("&#65;&#x42;"), "AB");
+        assert_eq!(html_unescape("plain"), "plain");
+    }
+
+    #[test]
+    fn inline_style_attribute_is_dropped() {
+        // style attributes are stripped in the sanitize pass of parser_txt
+        // pipeline (see strip_style_attrs doc); verify the walker output for a
+        // styled element still yields its text.
+        let html = "<html><body><p style=\"color:red\">styled</p></body></html>";
+        let sections = RAGFlowHtmlParser::new().parser_txt(html, 512);
+        assert!(sections[0].contains("styled"));
+    }
+}

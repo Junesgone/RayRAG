@@ -40,4 +40,16 @@ pub fn final_answer_system(cite_rules: &str) -> String {
     FINAL_ANSWER_SYSTEM.replace("{cite_rules}", cite_rules)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn system_prompt_fills_citation_rules() {
+        let rendered = final_answer_system("Cite as [1].");
+        assert!(rendered.contains("Cite as [1]."));
+        assert!(!rendered.contains("{cite_rules}"));
+        assert!(rendered.contains("# Attribute fidelity (CRITICAL)"));
+        assert!(PARTIAL_ANSWER_PREAMBLE.starts_with("Note:"));
+    }
+}

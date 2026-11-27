@@ -828,4 +828,305 @@ fn is_pdf(file_name: &str, data: &[u8]) -> bool {
     extension == "pdf" || data.starts_with(b"%PDF-")
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        Json, Router,
+        body::Body,
+        extract::{Multipart, Path, State},
+        http::{HeaderMap, Response, StatusCode},
+        response::IntoResponse,
+        routing::{get, post},
+    };
+    use serde_json::json;
+    use std::collections::HashMap;
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
+    use std::time::Duration;
 
+    #[derive(Debug)]
+    struct Submission {
+        authorization: String,
+        client_platform: String,
+        model: String,
+        optional_payload: serde_json::Value,
+        file_name: String,
+        file: Vec<u8>,
+    }
+
+    #[derive(Default)]
+    struct MockPaddleState {
+        submission: Mutex<Option<Submission>>,
+        polls: AtomicUsize,
+    }
+
+    async fn submit_job(
+        State(state): State<Arc<MockPaddleState>>,
+        headers: HeaderMap,
+        mut multipart: Multipart,
+    ) -> impl IntoResponse {
+        let mut model = String::new();
+        let mut optional_payload = serde_json::Value::Null;
+        let mut file_name = String::new();
+        let mut file = Vec::new();
+        while let Some(field) = multipart.next_field().await.unwrap() {
+            match field.name().unwrap_or_default() {
+                "model" => model = field.text().await.unwrap(),
+                "optionalPayload" => {
+                    optional_payload = serde_json::from_str(&field.text().await.unwrap()).unwrap();
+                }
+                "file" => {
+                    file_name = field.file_name().unwrap_or_default().to_owned();
+                    file = field.bytes().await.unwrap().to_vec();
+                }
+                _ => {}
+            }
+        }
+        *state.submission.lock().unwrap() = Some(Submission {
+            authorization: headers
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_owned(),
+            client_platform: headers
+                .get("client-platform")
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_owned(),
+            model,
+            optional_payload,
+            file_name,
+            file,
+        });
+        Json(json!({"data": {"jobId": "job-1"}}))
+    }
+
+    async fn poll_job(
+        State(state): State<Arc<MockPaddleState>>,
+        Path(job_id): Path<String>,
+        headers: HeaderMap,
+    ) -> impl IntoResponse {
+        assert_eq!(job_id, "job-1");
+        assert_eq!(
+            headers
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer test-secret")
+        );
+        let poll = state.polls.fetch_add(1, Ordering::SeqCst);
+        if poll == 0 {
+            return Json(json!({"data": {"state": "running"}}));
+        }
+        let host = headers
+            .get(axum::http::header::HOST)
+            .unwrap()
+            .to_str()
+            .unwrap();
+        Json(json!({
+            "data": {
+                "state": "done",
+                "resultUrl": {"jsonUrl": format!("http://{host}/result.jsonl")}
+            }
+        }))
+    }
+
+    async fn result_jsonl() -> Response<Body> {
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(axum::http::header::CONTENT_TYPE, "application/jsonl")
+            .body(Body::from(concat!(
+                "{\"result\":{\"layoutParsingResults\":[{\"prunedResult\":{\"parsing_res_list\":[",
+                "{\"block_content\":\"Hello <img src=\\\"x\\\"/>\"},",
+                "{\"block_content\":\"  World  \"}",
+                "]}}]}}\n"
+            )))
+            .unwrap()
+    }
+
+    #[test]
+    fn paddleocr_credentials_match_nested_flat_alias_and_algorithm_contract() {
+        let nested = PaddleOcrConfig::from_ragflow_key(
+            r#"{"api_key":{"paddleocr_api_url":"http://ocr.example/root/","paddleocr_algorithm":"PP-OCRv6","paddleocr_access_token":"nested-secret"}}"#,
+            None,
+        )
+        .unwrap();
+        assert_eq!(nested.base_url(), "http://ocr.example/root");
+        assert_eq!(nested.algorithm(), "PP-OCRv6");
+        assert!(nested.has_access_token());
+        assert!(!format!("{nested:?}").contains("nested-secret"));
+
+        let flat = PaddleOcrConfig::from_ragflow_key(
+            r#"{"PADDLEOCR_BASE_URL":"http://flat.example","PADDLEOCR_ALGORITHM":"PaddleOCR-VL-1.6","PADDLEOCR_ACCESS_TOKEN":"flat-secret"}"#,
+            Some("http://ignored.example"),
+        )
+        .unwrap();
+        assert_eq!(flat.base_url(), "http://flat.example");
+        assert_eq!(flat.algorithm(), "PaddleOCR-VL-1.6");
+
+        let error = PaddleOcrConfig::from_ragflow_key(
+            r#"{"paddleocr_algorithm":"not-a-ragflow-algorithm"}"#,
+            Some("http://ocr.example"),
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("Unsupported PaddleOCR algorithm")
+        );
+    }
+
+    #[test]
+    fn paddleocr_jsonl_falls_back_to_recognized_text_and_rejects_bad_lines() {
+        let fallback = parse_paddleocr_jsonl(concat!(
+            "{\"result\":{\"ocrResults\":[{\"prunedResult\":",
+            "{\"rec_texts\":[\" First \",\"\",\"Second\"]}}]}}\n"
+        ))
+        .unwrap();
+        assert_eq!(fallback, "First\nSecond");
+
+        let error = parse_paddleocr_jsonl("{not json}\n").unwrap_err();
+        assert!(error.to_string().contains("result JSONL parse error"));
+    }
+
+    #[tokio::test]
+    async fn paddleocr_async_job_uses_ragflow_wire_contract_and_extracts_layout_text() {
+        let state = Arc::new(MockPaddleState::default());
+        let app = Router::new()
+            .route("/api/v2/ocr/jobs", post(submit_job))
+            .route("/api/v2/ocr/jobs/{job_id}", get(poll_job))
+            .route("/result.jsonl", get(result_jsonl))
+            .with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let config = PaddleOcrConfig::from_ragflow_key(
+            r#"{"api_key":{"paddleocr_algorithm":"PaddleOCR-VL","paddleocr_access_token":"test-secret"}}"#,
+            Some(&format!("http://{address}")),
+        )
+        .unwrap()
+        .with_request_timing(
+            Duration::from_secs(2),
+            Duration::from_millis(1),
+            Duration::from_millis(2),
+        );
+        let client = OcrClient::paddleocr(config).unwrap();
+        let result = client
+            .ocr_file("scan.png", b"fake-image-content")
+            .await
+            .unwrap();
+        server.abort();
+
+        assert_eq!(result, "Hello\nWorld");
+        assert_eq!(state.polls.load(Ordering::SeqCst), 2);
+        let submission = state.submission.lock().unwrap();
+        let submission = submission.as_ref().unwrap();
+        assert_eq!(submission.authorization, "Bearer test-secret");
+        assert_eq!(submission.client_platform, "ragflow");
+        assert_eq!(submission.model, "PaddleOCR-VL");
+        assert_eq!(submission.file_name, "scan.png");
+        assert_eq!(submission.file, b"fake-image-content");
+        assert_eq!(submission.optional_payload["prettifyMarkdown"], true);
+        assert_eq!(submission.optional_payload["showFormulaNumber"], true);
+        assert_eq!(submission.optional_payload["visualize"], false);
+        assert_eq!(
+            submission.optional_payload["useDocOrientationClassify"],
+            false
+        );
+        assert_eq!(submission.optional_payload["formatBlockContent"], true);
+    }
+
+    #[derive(Default)]
+    struct MockOpenDataLoaderOcrState {
+        received: Mutex<HashMap<String, String>>,
+    }
+
+    async fn odl_health(
+        State(state): State<Arc<MockOpenDataLoaderOcrState>>,
+        headers: HeaderMap,
+    ) -> StatusCode {
+        state.received.lock().unwrap().insert(
+            "health_authorization".into(),
+            headers
+                .get("authorization")
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_owned(),
+        );
+        StatusCode::OK
+    }
+
+    async fn odl_parse(
+        State(state): State<Arc<MockOpenDataLoaderOcrState>>,
+        headers: HeaderMap,
+        mut multipart: Multipart,
+    ) -> impl IntoResponse {
+        state.received.lock().unwrap().insert(
+            "parse_authorization".into(),
+            headers
+                .get("authorization")
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_owned(),
+        );
+        while let Some(field) = multipart.next_field().await.unwrap() {
+            let name = field.name().unwrap_or_default().to_owned();
+            let body = field.bytes().await.unwrap();
+            state
+                .received
+                .lock()
+                .unwrap()
+                .insert(name, String::from_utf8_lossy(&body).into_owned());
+        }
+        Json(json!({
+            "json_doc": {
+                "type": "title",
+                "content": "OpenDataLoader OCR text"
+            },
+            "md_text": "# fallback"
+        }))
+        .into_response()
+    }
+
+    #[tokio::test]
+    async fn opendataloader_ocr_adapter_parses_pdf_and_rejects_images() {
+        let state = Arc::new(MockOpenDataLoaderOcrState::default());
+        let app = Router::new()
+            .route("/health", get(odl_health))
+            .route("/file_parse", post(odl_parse))
+            .with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let config = OpenDataLoaderConfig::from_ragflow_key(
+            r#"{"opendataloader_api_key":"od-secret"}"#,
+            Some(&format!("http://{address}")),
+        )
+        .unwrap();
+        let client = OcrClient::opendataloader(config).unwrap();
+        assert!(client.health().await.unwrap());
+        let result = client.ocr_file("scan.pdf", b"%PDF-1.4").await.unwrap();
+        server.abort();
+
+        assert_eq!(result, "OpenDataLoader OCR text");
+        let received = state.received.lock().unwrap();
+        assert_eq!(
+            received.get("parse_authorization").unwrap(),
+            "Bearer od-secret"
+        );
+        assert_eq!(received.get("file").unwrap(), "%PDF-1.4");
+
+        let config =
+            OpenDataLoaderConfig::from_ragflow_key(r#"{}"#, Some("http://unused.example")).unwrap();
+        let client = OcrClient::opendataloader(config).unwrap();
+        let error = client
+            .ocr_file("scan.png", b"fake-image")
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("PDF-only"));
+    }
+}

@@ -158,7 +158,10 @@ impl GoogleScholarClient {
         })
     }
 
-    
+    #[cfg(test)]
+    pub(crate) fn new_with_endpoints(python_endpoint: &str, go_endpoint: &str) -> Result<Self> {
+        Self::new(python_endpoint, go_endpoint)
+    }
 
     async fn get_html(
         &self,
@@ -549,4 +552,232 @@ async fn read_bounded_body(response: reqwest::Response) -> Result<Vec<u8>> {
     Ok(body)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::Router;
+    use axum::extract::State;
+    use axum::http::{HeaderMap, StatusCode, Uri};
+    use axum::response::IntoResponse;
+    use axum::routing::get;
+    use std::sync::{Arc, Mutex};
 
+    const PYTHON_PAGE_ONE: &str = r#"<html><body>
+<div class="gs_r gs_or gs_scl" data-cid="one" data-rp="0"><div class="gs_ri">
+  <h3 class="gs_rt"><span class="gs_ctc">[PDF]</span><a href="https://example.com/paper1">Rust &amp; Retrieval</a></h3>
+  <div class="gs_a">Alice, Proceedings Team, Bob - Systems, Search, 2024 - example.org</div>
+  <div class="gs_rs">Abstract: A useful study…
+with entities.</div>
+</div></div>
+<a href="/scholar?start=10&amp;q=rust"><span class="gs_ico gs_ico_nav_next"></span></a>
+</body></html>"#;
+
+    const PYTHON_PAGE_TWO: &str = r#"<html><body>
+<div class="gs_r gs_or gs_scl" data-cid="two" data-rp="10"><div class="gs_ri">
+  <h3 class="gs_rt"><a href="https://example.com/paper2">Second Paper</a></h3>
+  <div class="gs_a">Carol - 2021</div>
+</div></div>
+</body></html>"#;
+
+    const GO_PAGE: &str = r#"<html><body>
+<div class="gs_ri"><h3 class="gs_rt"><a href="https://example.com/paper1">Attention is all you need</a></h3>
+<div class="gs_a">Ashish Vaswani, Noam Shazeer - NeurIPS 2017</div>
+<div class="gs_rs">The dominant sequence transduction models are recurrent.</div></div>
+<div class="gs_ri"><h3 class="gs_rt"><a href="https://example.com/paper2">BERT</a></h3>
+<div class="gs_a">Jacob Devlin - NAACL 2019</div><div class="gs_rs">Language representations.</div></div>
+</body></html>"#;
+
+    #[derive(Clone, Default)]
+    struct Recorded(Arc<Mutex<Vec<(Uri, HeaderMap)>>>);
+
+    async fn scholar_handler(
+        State(recorded): State<Recorded>,
+        uri: Uri,
+        headers: HeaderMap,
+    ) -> impl IntoResponse {
+        recorded.0.lock().unwrap().push((uri.clone(), headers));
+        if uri.query().is_some_and(|query| query.contains("start=10")) {
+            PYTHON_PAGE_TWO
+        } else if uri.query().is_some_and(|query| query.contains("num=")) {
+            GO_PAGE
+        } else {
+            PYTHON_PAGE_ONE
+        }
+    }
+
+    async fn captcha_handler() -> impl IntoResponse {
+        r#"<html><form id="captcha-form"></form></html>"#
+    }
+
+    async fn status_handler() -> impl IntoResponse {
+        (StatusCode::TOO_MANY_REQUESTS, "slow down")
+    }
+
+    async fn server() -> (GoogleScholarClient, Recorded, tokio::task::JoinHandle<()>) {
+        let recorded = Recorded::default();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/scholar", listener.local_addr().unwrap());
+        let app = Router::new()
+            .route("/scholar", get(scholar_handler))
+            .route("/captcha", get(captcha_handler))
+            .route("/status", get(status_handler))
+            .with_state(recorded.clone());
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (
+            GoogleScholarClient::new_with_endpoints(&endpoint, &endpoint).unwrap(),
+            recorded,
+            handle,
+        )
+    }
+
+    #[tokio::test]
+    async fn python_contract_filters_paginates_and_emits_core_scholarly_shape() {
+        let (client, recorded, handle) = server().await;
+        let publications = client
+            .search(&GoogleScholarSearchRequest {
+                query: "rust retrieval".into(),
+                top_n: 2,
+                sort_by: GoogleScholarSortBy::Date,
+                year_low: Some(2020),
+                year_high: Some(2025),
+                patents: false,
+            })
+            .await
+            .unwrap();
+        handle.abort();
+
+        assert_eq!(publications.len(), 2);
+        assert_eq!(publications[0].title, "Rust & Retrieval");
+        assert_eq!(publications[0].authors, ["Alice", "Bob"]);
+        assert_eq!(publications[0].venue, "Systems, Search");
+        assert_eq!(publications[0].year, "2024");
+        assert_eq!(
+            publications[0].abstract_text.as_deref(),
+            Some("A useful study with entities.")
+        );
+        assert_eq!(publications[1].year, "NA");
+        assert_eq!(publications[1].gsrank, 11);
+        let raw = publications[0].to_python_json();
+        assert_eq!(raw["source"], "PUBLICATION_SEARCH_SNIPPET");
+        assert_eq!(raw["bib"]["author"], serde_json::json!(["Alice", "Bob"]));
+
+        let requests = recorded.0.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        let first = reqwest::Url::parse(&format!("http://localhost{}", requests[0].0)).unwrap();
+        let query: std::collections::HashMap<_, _> = first.query_pairs().into_owned().collect();
+        assert_eq!(query["q"], "rust retrieval");
+        assert_eq!(query["as_ylo"], "2020");
+        assert_eq!(query["as_yhi"], "2025");
+        assert_eq!(query["as_vis"], "0");
+        assert_eq!(query["as_sdt"], "1,33");
+        assert_eq!(query["scisbd"], "1");
+        assert!(!query.contains_key("start"));
+        assert!(requests[1].0.query().unwrap().contains("start=10"));
+        assert_eq!(requests[0].1[USER_AGENT], SCHOLARLY_USER_AGENT);
+        assert_eq!(requests[0].1[ACCEPT_LANGUAGE], "en-US,en");
+    }
+
+    #[tokio::test]
+    async fn go_contract_defaults_five_clamps_request_and_parses_result_cards() {
+        let (client, recorded, handle) = server().await;
+        let envelope = client.search_go("a b", 0).await.unwrap();
+        let high = client.search_go("rust", 99).await.unwrap();
+        handle.abort();
+
+        assert_eq!(envelope.results.len(), 2);
+        assert_eq!(envelope.results[0].year, "2017");
+        assert_eq!(envelope.results[0].authors, "Ashish Vaswani, Noam Shazeer");
+        assert!(
+            envelope.results[0]
+                .snippet
+                .contains("sequence transduction")
+        );
+        assert_eq!(high.results.len(), 2);
+        let requests = recorded.0.lock().unwrap();
+        assert!(requests[0].0.query().unwrap().contains("num=5"));
+        assert!(requests[1].0.query().unwrap().contains("num=20"));
+        assert_eq!(requests[0].1[USER_AGENT], GOOGLE_SCHOLAR_GO_USER_AGENT);
+        assert_eq!(requests[0].1[ACCEPT], GOOGLE_SCHOLAR_GO_ACCEPT);
+    }
+
+    #[tokio::test]
+    async fn empty_query_captcha_and_http_status_fail_closed() {
+        let (client, _, handle) = server().await;
+        let empty = client.search_go("  ", 5).await.unwrap_err();
+        assert!(empty.to_string().contains("query is required"));
+
+        let base = client.python_endpoint.clone();
+        let captcha = GoogleScholarClient::new_with_endpoints(
+            base.join("captcha").unwrap().as_str(),
+            base.as_str(),
+        )
+        .unwrap()
+        .search(&GoogleScholarSearchRequest {
+            query: "rust".into(),
+            top_n: 1,
+            sort_by: GoogleScholarSortBy::Relevance,
+            year_low: None,
+            year_high: None,
+            patents: true,
+        })
+        .await
+        .unwrap_err();
+        assert!(captcha.to_string().contains("CAPTCHA"));
+
+        let status = GoogleScholarClient::new_with_endpoints(
+            base.join("status").unwrap().as_str(),
+            base.as_str(),
+        )
+        .unwrap()
+        .search(&GoogleScholarSearchRequest {
+            query: "rust".into(),
+            top_n: 1,
+            sort_by: GoogleScholarSortBy::Relevance,
+            year_low: None,
+            year_high: None,
+            patents: true,
+        })
+        .await
+        .unwrap_err();
+        assert!(status.to_string().contains("429 Too Many Requests"));
+        handle.abort();
+    }
+
+    #[test]
+    fn parser_preserves_python_and_go_missing_field_differences() {
+        let go = parse_google_scholar_go_html(
+            r#"<div class="gs_ri"><h3 class="gs_rt">No link</h3></div>"#,
+            5,
+        )
+        .unwrap();
+        assert!(go.is_empty());
+
+        let python = parse_scholarly_html(
+            r#"<div class="gs_r gs_or gs_scl"><div class="gs_ri"><h3 class="gs_rt">No link</h3><div class="gs_a">A - 2020</div></div></div>"#,
+            0,
+        )
+        .unwrap_err();
+        assert!(python.to_string().contains("pub_url"));
+        assert_eq!(first_four_digit_year("x 1899 2026"), "2026");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live access to Google Scholar and may encounter anti-bot controls"]
+    async fn live_google_scholar_search() {
+        let publications = GoogleScholarClient::default()
+            .search(&GoogleScholarSearchRequest {
+                query: "rust programming language".into(),
+                top_n: 1,
+                sort_by: GoogleScholarSortBy::Relevance,
+                year_low: None,
+                year_high: None,
+                patents: true,
+            })
+            .await
+            .unwrap();
+        assert!(!publications.is_empty());
+        assert!(!publications[0].title.is_empty());
+    }
+}

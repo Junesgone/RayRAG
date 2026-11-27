@@ -503,4 +503,262 @@ fn extract_toml(data: &[u8]) -> String {
     text
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        Json, Router,
+        extract::{Multipart, State},
+        http::{HeaderMap, StatusCode},
+        response::{IntoResponse, Response},
+        routing::{get, post},
+    };
+    use serde_json::json;
+    use std::collections::HashMap;
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
 
+    #[test]
+    fn xml_extraction_matches_only_balanced_tags() {
+        let text =
+            extract_xml(b"<root><title>Hello</title><bad>Ignored</other><count>2</count></root>")
+                .unwrap();
+        assert!(text.contains("title: Hello"));
+        assert!(text.contains("count: 2"));
+        assert!(!text.contains("Ignored"));
+    }
+
+    #[test]
+    fn opendataloader_config_accepts_ragflow_nested_and_flat_credentials() {
+        let nested = OpenDataLoaderConfig::from_ragflow_key(
+            r#"{
+                "api_key": {
+                    "opendataloader_apiserver": " http://odl.example:9383/ ",
+                    "OPENDATALOADER_API_KEY": " nested-secret ",
+                    "opendataloader_timeout": "not-a-number"
+                }
+            }"#,
+            None,
+        )
+        .unwrap();
+        assert_eq!(nested.api_url(), "http://odl.example:9383");
+        assert_eq!(nested.api_key(), Some("nested-secret"));
+        assert_eq!(nested.timeout().as_secs(), 600);
+        let debug = format!("{nested:?}");
+        assert!(!debug.contains("nested-secret"));
+        assert!(debug.contains("[REDACTED]"));
+
+        let flat = OpenDataLoaderConfig::from_ragflow_key(
+            r#"{
+                "OPENDATALOADER_APISERVER": "http://flat.example/",
+                "OPENDATALOADER_API_KEY": "flat-secret",
+                "OPENDATALOADER_TIMEOUT": "42"
+            }"#,
+            Some("http://ignored.example"),
+        )
+        .unwrap();
+        assert_eq!(flat.api_url(), "http://flat.example");
+        assert_eq!(flat.api_key(), Some("flat-secret"));
+        assert_eq!(flat.timeout().as_secs(), 42);
+
+        let explicit_empty = OpenDataLoaderConfig::from_ragflow_key(
+            r#"{
+                "opendataloader_apiserver": "",
+                "OPENDATALOADER_APISERVER": "http://must-not-win.example"
+            }"#,
+            Some("http://fallback-must-not-win.example"),
+        )
+        .unwrap();
+        assert_eq!(explicit_empty.api_url(), "");
+
+        let invalid_nested = OpenDataLoaderConfig::from_ragflow_key(
+            r#"{
+                "api_key": "not-an-object",
+                "opendataloader_apiserver": "http://sibling-must-not-win.example"
+            }"#,
+            Some("http://fallback.example"),
+        )
+        .unwrap();
+        assert_ne!(
+            invalid_nested.api_url(),
+            "http://sibling-must-not-win.example"
+        );
+    }
+
+    #[test]
+    fn opendataloader_response_prefers_json_and_falls_back_to_markdown() {
+        let structured = response_to_output(
+            Some(json!({
+                "type": "document",
+                "children": [
+                    {"type": "title", "content": "ODL Title"},
+                    {"type": "paragraph", "text": "ODL Body"},
+                    {
+                        "type": "table",
+                        "cells": [
+                            {"row": 0, "content": "a"},
+                            {"row": 0, "content": "b"},
+                            {"row": 2, "content": "z"}
+                        ]
+                    },
+                    {"type": "figure", "content": "chart caption"}
+                ]
+            })),
+            Some("# ignored markdown"),
+        )
+        .unwrap();
+        assert!(structured.structured);
+        assert_eq!(structured.section_count, 2);
+        assert_eq!(structured.table_count, 1);
+        assert_eq!(structured.image_count, 1);
+        assert!(structured.content.contains("ODL Title"));
+        assert!(structured.content.contains("ODL Body"));
+        assert!(structured.content.contains("<!--TABLE_START-->"));
+        assert!(structured.content.contains("a | b\nz"));
+        assert!(structured.content.contains("<!--IMAGE_START-->"));
+        assert!(!structured.content.contains("ignored markdown"));
+
+        let fallback = response_to_output(None, Some("# Markdown heading\n\nBody text.")).unwrap();
+        assert!(!fallback.structured);
+        assert_eq!(fallback.content, "# Markdown heading\n\nBody text.");
+
+        let empty = response_to_output(Some(json!({"type": "document"})), Some("  "));
+        assert!(empty.is_err());
+    }
+
+    #[derive(Default)]
+    struct OpenDataLoaderMockState {
+        attempts: AtomicUsize,
+        received: Mutex<HashMap<String, String>>,
+    }
+
+    async fn health_handler(
+        State(state): State<Arc<OpenDataLoaderMockState>>,
+        headers: HeaderMap,
+    ) -> StatusCode {
+        state.received.lock().unwrap().insert(
+            "health_authorization".into(),
+            headers
+                .get("authorization")
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_owned(),
+        );
+        StatusCode::OK
+    }
+
+    async fn parse_handler(
+        State(state): State<Arc<OpenDataLoaderMockState>>,
+        headers: HeaderMap,
+        mut multipart: Multipart,
+    ) -> Response {
+        state.received.lock().unwrap().insert(
+            "parse_authorization".into(),
+            headers
+                .get("authorization")
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_owned(),
+        );
+        while let Some(field) = multipart.next_field().await.unwrap() {
+            let field_name = field.name().unwrap_or_default().to_owned();
+            let file_name = field.file_name().map(str::to_owned);
+            let content_type = field.content_type().map(str::to_owned);
+            let body = field.bytes().await.unwrap();
+            let mut received = state.received.lock().unwrap();
+            received.insert(
+                field_name.clone(),
+                String::from_utf8_lossy(&body).into_owned(),
+            );
+            if field_name == "file" {
+                received.insert("file_name".into(), file_name.unwrap_or_default());
+                received.insert("file_content_type".into(), content_type.unwrap_or_default());
+            }
+        }
+
+        let attempt = state.attempts.fetch_add(1, Ordering::SeqCst) + 1;
+        if attempt < 3 {
+            return (StatusCode::BAD_GATEWAY, "retry").into_response();
+        }
+        Json(json!({
+            "json_doc": {
+                "type": "title",
+                "content": "HTTP result"
+            },
+            "md_text": "# fallback"
+        }))
+        .into_response()
+    }
+
+    #[tokio::test]
+    async fn opendataloader_http_contract_health_multipart_and_three_attempts() {
+        let state = Arc::new(OpenDataLoaderMockState::default());
+        let app = Router::new()
+            .route("/health", get(health_handler))
+            .route("/file_parse", post(parse_handler))
+            .with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let key = format!(
+            r#"{{
+                "opendataloader_apiserver": "http://{address}/",
+                "opendataloader_api_key": "odl-secret",
+                "opendataloader_timeout": "5"
+            }}"#
+        );
+        let config = OpenDataLoaderConfig::from_ragflow_key(&key, None).unwrap();
+        let client = OpenDataLoaderClient::new(config).unwrap();
+        assert!(client.check_installation().await);
+
+        let output = client
+            .parse_pdf(
+                "sample.pdf",
+                b"%PDF-1.4\nmock",
+                &OpenDataLoaderOptions {
+                    hybrid: Some("docling-fast".into()),
+                    image_output: Some("embedded".into()),
+                    sanitize: Some(true),
+                },
+            )
+            .await
+            .unwrap();
+        server.abort();
+
+        assert_eq!(state.attempts.load(Ordering::SeqCst), 3);
+        assert!(output.content.contains("HTTP result"));
+        let received = state.received.lock().unwrap();
+        assert_eq!(
+            received.get("health_authorization").map(String::as_str),
+            Some("Bearer odl-secret")
+        );
+        assert_eq!(
+            received.get("parse_authorization").map(String::as_str),
+            Some("Bearer odl-secret")
+        );
+        assert_eq!(
+            received.get("file_name").map(String::as_str),
+            Some("sample.pdf")
+        );
+        assert_eq!(
+            received.get("file_content_type").map(String::as_str),
+            Some("application/pdf")
+        );
+        assert_eq!(
+            received.get("file").map(String::as_bytes),
+            Some(b"%PDF-1.4\nmock".as_slice())
+        );
+        assert_eq!(
+            received.get("hybrid").map(String::as_str),
+            Some("docling-fast")
+        );
+        assert_eq!(
+            received.get("image_output").map(String::as_str),
+            Some("embedded")
+        );
+        assert_eq!(received.get("sanitize").map(String::as_str), Some("true"));
+    }
+}

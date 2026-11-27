@@ -2351,7 +2351,916 @@ fn new_message_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+#[cfg(test)]
+mod conversation_store_tests {
+    use super::*;
 
+    #[test]
+    fn completion_payload_serializes_all_generation_parameters() {
+        let generation = GenerationParams::default().merged(GenerationParamsPatch {
+            temperature: Some(0.8),
+            top_p: Some(0.9),
+            frequency_penalty: Some(0.2),
+            presence_penalty: Some(0.3),
+            max_tokens: Some(2048),
+            reasoning: None,
+        });
+        let config = LlmConfig {
+            model: "chat-model".into(),
+            ..LlmConfig::default()
+        };
+        let body = build_chat_request_body(
+            &config,
+            vec![serde_json::json!({"role": "user", "content": "hello"})],
+            generation,
+        );
+        assert_eq!(body["model"], "chat-model");
+        for (key, expected) in [
+            ("temperature", 0.8),
+            ("top_p", 0.9),
+            ("frequency_penalty", 0.2),
+            ("presence_penalty", 0.3),
+        ] {
+            let actual = body[key].as_f64().unwrap();
+            assert!((actual - expected).abs() < 1e-6, "{key}: {actual}");
+        }
+        assert_eq!(body["max_tokens"], 2048);
+    }
+
+    #[test]
+    fn failed_persistence_rolls_back_conversation_mutations() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-conv-rollback-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("conversations.json");
+        let store = ConvStore::new(path.to_str().unwrap()).unwrap();
+        let conversation = store.create("First").unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+
+        assert!(
+            store
+                .add_message(&conversation.id, "user", "hello")
+                .is_err()
+        );
+        assert!(store.get(&conversation.id).unwrap().messages.is_empty());
+        assert!(store.delete_for(&conversation.id, "").is_err());
+        assert!(store.get(&conversation.id).is_some());
+        assert!(store.create("Second").is_err());
+        assert_eq!(store.list().len(), 1);
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn openai_completion_parses_usage_and_infers_missing_total() {
+        let exact = parse_openai_chat_completion(&serde_json::json!({
+            "choices": [{"message": {"content": "answer"}}],
+            "usage": {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10}
+        }))
+        .unwrap();
+        assert_eq!(exact.content, "answer");
+        assert_eq!(
+            exact.usage,
+            Some(TokenUsage {
+                prompt_tokens: 7,
+                completion_tokens: 3,
+                total_tokens: 10,
+            })
+        );
+
+        let inferred = parse_openai_chat_completion(&serde_json::json!({
+            "choices": [{"message": {"content": "answer"}}],
+            "usage": {"prompt_tokens": 4, "completion_tokens": 2}
+        }))
+        .unwrap();
+        assert_eq!(inferred.usage.unwrap().total_tokens, 6);
+
+        let legacy = parse_openai_chat_completion(&serde_json::json!({
+            "choices": [{"message": {"content": "answer"}}]
+        }))
+        .unwrap();
+        assert_eq!(legacy.usage, None);
+    }
+
+    #[test]
+    fn openai_completion_surfaces_reasoning_content_as_think_prefix() {
+        // Qwen3 / DeepSeek-R1 style: reasoning_content is prefixed <think>.
+        let qwen = parse_openai_chat_completion(&serde_json::json!({
+            "choices": [{"message": {
+                "content": "RAG 是检索增强生成。",
+                "reasoning_content": "用户询问 RAG 定义。"
+            }}]
+        }))
+        .unwrap();
+        assert_eq!(
+            qwen.content,
+            "<think>用户询问 RAG 定义。</think>RAG 是检索增强生成。"
+        );
+
+        // `reasoning` alias (Kimi-K2.5 style) is honoured too.
+        let kimi = parse_openai_chat_completion(&serde_json::json!({
+            "choices": [{"message": {
+                "content": "答案",
+                "reasoning": "思考过程"
+            }}]
+        }))
+        .unwrap();
+        assert_eq!(kimi.content, "<think>思考过程</think>答案");
+
+        // Empty reasoning must not wrap an empty <think></think>.
+        let empty = parse_openai_chat_completion(&serde_json::json!({
+            "choices": [{"message": {
+                "content": "answer",
+                "reasoning_content": ""
+            }}]
+        }))
+        .unwrap();
+        assert_eq!(empty.content, "answer");
+    }
+
+    #[test]
+    fn qwen3_requests_disable_thinking_via_extra_body() {
+        let generation = GenerationParams {
+            max_tokens: 128,
+            temperature: 0.7,
+            top_p: 0.9,
+            frequency_penalty: 0.0,
+            presence_penalty: 0.0,
+            reasoning: false,
+        };
+        let qwen_config = LlmConfig {
+            model: "Qwen3-8B".into(),
+            ..LlmConfig::default()
+        };
+        let qwen = build_chat_request_body(
+            &qwen_config,
+            vec![serde_json::json!({"role": "user", "content": "hi"})],
+            generation,
+        );
+        assert_eq!(
+            qwen["extra_body"]["enable_thinking"],
+            serde_json::json!(false)
+        );
+
+        // Non-Qwen3 models keep the body untouched (no extra_body key).
+        let plain_config = LlmConfig {
+            model: "deepseek-chat".into(),
+            ..LlmConfig::default()
+        };
+        let plain = build_chat_request_body(
+            &plain_config,
+            vec![serde_json::json!({"role": "user", "content": "hi"})],
+            generation,
+        );
+        assert!(plain.get("extra_body").is_none());
+    }
+
+    #[test]
+    fn deepseek_flash_requests_carry_application_tools_and_safety() {
+        let config = LlmConfig {
+            api_base: "https://api.deepseek.com/v1".into(),
+            model: "deepseek-flash".into(),
+            deepseek: DeepSeekOptions {
+                web_search: true,
+                read_url: true,
+                safety_check: Some("high".into()),
+                thinking: Some("enabled".into()),
+            },
+            ..LlmConfig::default()
+        };
+        let generation = GenerationParams {
+            max_tokens: 128,
+            temperature: 0.7,
+            top_p: 0.9,
+            frequency_penalty: 0.0,
+            presence_penalty: 0.0,
+            reasoning: false,
+        };
+        let body = build_chat_request_body(
+            &config,
+            vec![serde_json::json!({"role": "user", "content": "latest DeepSeek news"})],
+            generation,
+        );
+        assert_eq!(
+            body["tools"],
+            serde_json::json!([
+                {"type": "deepseek_web_search"},
+                {"type": "deepseek_read_url"}
+            ])
+        );
+        assert_eq!(body["safety_check"], serde_json::json!({"level": "high"}));
+        assert_eq!(body["thinking"], serde_json::json!({"type": "enabled"}));
+        assert!(
+            body.get("tool_choice").is_none(),
+            "the server tools must not force a client tool_choice"
+        );
+    }
+
+    #[test]
+    fn deepseek_legacy_models_do_not_receive_application_fields() {
+        let config = LlmConfig {
+            api_base: "https://api.deepseek.com/v1".into(),
+            model: "deepseek-chat".into(),
+            deepseek: DeepSeekOptions {
+                web_search: true,
+                read_url: true,
+                safety_check: Some("high".into()),
+                thinking: Some("enabled".into()),
+            },
+            ..LlmConfig::default()
+        };
+        let generation = GenerationParams {
+            max_tokens: 64,
+            temperature: 0.0,
+            top_p: 1.0,
+            frequency_penalty: 0.0,
+            presence_penalty: 0.0,
+            reasoning: false,
+        };
+        let body = build_chat_request_body(
+            &config,
+            vec![serde_json::json!({"role": "user", "content": "hi"})],
+            generation,
+        );
+        assert!(body.get("tools").is_none());
+        assert!(body.get("safety_check").is_none());
+        assert!(body.get("thinking").is_none());
+    }
+
+    #[test]
+    fn deepseek_tool_choice_none_disables_the_server_tools() {
+        let config = LlmConfig {
+            api_base: "https://api.deepseek.com".into(),
+            model: "deepseek-flash".into(),
+            deepseek: DeepSeekOptions {
+                web_search: true,
+                read_url: false,
+                safety_check: None,
+                thinking: Some("disabled".into()),
+            },
+            ..LlmConfig::default()
+        };
+        let generation = GenerationParams::default();
+        let mut body = serde_json::json!({
+            "model": "deepseek-flash",
+            "messages": [],
+            "tool_choice": "none"
+        });
+        apply_deepseek_options(&mut body, &config, generation);
+        assert!(
+            body.get("tools").is_none(),
+            "tool_choice=none must turn the server tools off"
+        );
+        assert_eq!(body["thinking"], serde_json::json!({"type": "disabled"}));
+    }
+
+    #[test]
+    fn content_filter_refusals_are_surfaced_instead_of_empty_answers() {
+        let completion = parse_openai_chat_completion(&serde_json::json!({
+            "choices": [{
+                "message": {"role": "assistant", "content": ""},
+                "finish_reason": "content_filter"
+            }]
+        }))
+        .unwrap();
+        assert!(
+            completion.content.contains("content safety check"),
+            "refusal must not look like an empty model answer: {}",
+            completion.content
+        );
+
+        let tool = parse_openai_tool_chat_completion(&serde_json::json!({
+            "choices": [{
+                "message": {"role": "assistant", "content": null},
+                "finish_reason": "content_filter"
+            }]
+        }))
+        .unwrap();
+        assert!(tool.content.contains("content safety check"));
+    }
+
+    #[test]
+    fn openai_tool_completion_skips_think_prefix_when_calling_tools() {
+        let completion = parse_openai_tool_chat_completion(&serde_json::json!({
+            "choices": [{"message": {
+                "content": null,
+                "reasoning_content": "先搜索再回答。",
+                "tool_calls": [{
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "search_my_dateset_0", "arguments": "{}"}
+                }]
+            }}]
+        }))
+        .unwrap();
+        assert_eq!(completion.content, "");
+        assert_eq!(completion.tool_calls.len(), 1);
+
+        // Without tool calls the reasoning prefix is attached, matching
+        // async_chat_with_tools.
+        let reasoning = parse_openai_tool_chat_completion(&serde_json::json!({
+            "choices": [{"message": {
+                "content": "最终答案",
+                "reasoning_content": "思考"
+            }}]
+        }))
+        .unwrap();
+        assert_eq!(reasoning.content, "<think>思考</think>最终答案");
+        assert!(reasoning.tool_calls.is_empty());
+    }
+
+    #[test]
+    fn openai_tool_completion_preserves_calls_null_content_and_usage() {
+        let completion = parse_openai_tool_chat_completion(&serde_json::json!({
+            "choices": [{"message": {
+                "content": null,
+                "tool_calls": [{
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "search_my_dateset_0",
+                        "arguments": "{\"query\":\"rust ownership\"}"
+                    }
+                }]
+            }}],
+            "usage": {"prompt_tokens": 8, "completion_tokens": 4}
+        }))
+        .unwrap();
+
+        assert_eq!(completion.content, "");
+        assert_eq!(completion.tool_calls.len(), 1);
+        assert_eq!(completion.tool_calls[0].id, "call_1");
+        assert_eq!(
+            completion.tool_calls[0].function.name,
+            "search_my_dateset_0"
+        );
+        assert_eq!(completion.usage.unwrap().total_tokens, 12);
+
+        let assistant = ToolChatMessage::assistant(completion.tool_calls);
+        let encoded = serde_json::to_value(assistant).unwrap();
+        assert_eq!(encoded["role"], "assistant");
+        assert!(encoded.get("content").is_none());
+        assert_eq!(encoded["tool_calls"][0]["type"], "function");
+    }
+
+    #[test]
+    fn malformed_tool_call_payload_is_rejected() {
+        let error = parse_openai_tool_chat_completion(&serde_json::json!({
+            "choices": [{"message": {
+                "content": null,
+                "tool_calls": [{"id": "call_1", "type": "function"}]
+            }}]
+        }))
+        .unwrap_err();
+        assert!(error.to_string().contains("invalid LLM tool_calls payload"));
+    }
+
+    #[test]
+    fn exact_usage_survives_exchange_persistence_and_regeneration() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-conv-token-usage-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("conversations.json");
+        let store = ConvStore::new(path.to_str().unwrap()).unwrap();
+        let conversation = store.create_for("owner-1", "Usage").unwrap();
+        let first_usage = TokenUsage {
+            prompt_tokens: 11,
+            completion_tokens: 5,
+            total_tokens: 16,
+        };
+        let message_id = store
+            .append_exchange_with_settings(
+                &conversation.id,
+                "owner-1",
+                ConversationExchange {
+                    question: "question".into(),
+                    answer: "answer".into(),
+                    citations: Vec::new(),
+                    references: Vec::new(),
+                    settings: None,
+                    duration_ms: 10,
+                    usage: Some(first_usage),
+                },
+            )
+            .unwrap()
+            .unwrap();
+        drop(store);
+
+        let restored = ConvStore::new(path.to_str().unwrap()).unwrap();
+        let assistant = &restored.get(&conversation.id).unwrap().messages[1];
+        assert_eq!(assistant.usage, Some(first_usage));
+        let replacement_usage = TokenUsage {
+            prompt_tokens: 13,
+            completion_tokens: 7,
+            total_tokens: 20,
+        };
+        assert!(
+            restored
+                .replace_assistant_message(
+                    &conversation.id,
+                    "owner-1",
+                    &message_id,
+                    AssistantMessageReplacement {
+                        expected_prior_answer: "answer".into(),
+                        answer: "replacement".into(),
+                        citations: Vec::new(),
+                        references: Vec::new(),
+                        kb_ids: Vec::new(),
+                        chat_model: None,
+                        embedding_model: None,
+                        usage: Some(replacement_usage),
+                    },
+                )
+                .unwrap()
+        );
+        assert_eq!(
+            restored.get(&conversation.id).unwrap().messages[1].usage,
+            Some(replacement_usage)
+        );
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn owner_scoping_and_exchange_survive_restart() {
+        let root = std::env::temp_dir().join(format!("rayrag-conv-owner-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("conversations.json");
+        let store = ConvStore::new(path.to_str().unwrap()).unwrap();
+        let conversation = store.create_for("owner-1", "First").unwrap();
+
+        assert!(store.get_for(&conversation.id, "owner-2").is_none());
+        assert!(
+            store
+                .append_exchange(
+                    &conversation.id,
+                    "owner-1",
+                    "question",
+                    "answer",
+                    vec!["source".into()],
+                )
+                .unwrap()
+        );
+        drop(store);
+
+        let restored = ConvStore::new(path.to_str().unwrap()).unwrap();
+        let conversation = restored.get_for(&conversation.id, "owner-1").unwrap();
+        assert_eq!(conversation.messages.len(), 2);
+        assert_eq!(
+            conversation.messages[1].citations.as_deref(),
+            Some(&["source".to_string()][..])
+        );
+        assert_eq!(restored.count_for("owner-1"), 1);
+        assert!(restored.list_for("owner-2").is_empty());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn tenant_scoping_includes_all_tenant_sessions_without_cross_tenant_records() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-conv-tenant-scope-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("conversations.json");
+        let store = ConvStore::new(path.to_str().unwrap()).unwrap();
+        let alice = store
+            .create_for_tenant_settings("alice", "shared", "Alice shared", Vec::new(), None, None)
+            .unwrap();
+        let bob = store
+            .create_for_tenant_settings("bob", "shared", "Bob shared", Vec::new(), None, None)
+            .unwrap();
+        store.create_for("alice", "Alice private").unwrap();
+
+        let shared = store.list_for_tenant("shared");
+        assert_eq!(shared.len(), 2);
+        assert!(shared.iter().any(|entry| entry.id == alice.id));
+        assert!(shared.iter().any(|entry| entry.id == bob.id));
+        assert_eq!(store.list_for_tenant("alice").len(), 1);
+        assert!(store.list_for_tenant("missing").is_empty());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn agent_sessions_persist_and_are_isolated_by_owner_tenant_canvas_and_source() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-conv-agent-scope-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("conversations.json");
+        let store = ConvStore::new(path.to_str().unwrap()).unwrap();
+        let agent = store
+            .create_agent_for("member", "tenant-a", "canvas-a", "Agent", vec![])
+            .unwrap();
+        store
+            .create_agent_for("member", "tenant-a", "canvas-b", "Other", vec![])
+            .unwrap();
+        store
+            .create_agent_for("member", "tenant-b", "canvas-a", "Foreign", vec![])
+            .unwrap();
+        store
+            .create_for_tenant_settings("member", "tenant-a", "Chat", vec![], None, None)
+            .unwrap();
+
+        assert!(
+            store
+                .get_agent_for(&agent.id, "member", "tenant-a", "canvas-a")
+                .is_some()
+        );
+        assert!(
+            store
+                .get_agent_for(&agent.id, "other", "tenant-a", "canvas-a")
+                .is_none()
+        );
+        assert!(
+            store
+                .get_agent_for(&agent.id, "member", "tenant-b", "canvas-a")
+                .is_none()
+        );
+        assert!(
+            store
+                .get_agent_for(&agent.id, "member", "tenant-a", "canvas-b")
+                .is_none()
+        );
+        assert_eq!(
+            store
+                .list_for_tenant_source("tenant-a", "agent", Some("canvas-a"))
+                .len(),
+            1
+        );
+        assert_eq!(
+            store.list_for_tenant_source("tenant-a", "chat", None).len(),
+            1
+        );
+        drop(store);
+
+        let restored = ConvStore::new(path.to_str().unwrap()).unwrap();
+        let restored = restored.get(&agent.id).unwrap();
+        assert_eq!(restored.source, "agent");
+        assert_eq!(restored.canvas_id.as_deref(), Some("canvas-a"));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn failed_exchange_persistence_rolls_back_both_messages() {
+        let root = std::env::temp_dir().join(format!(
+            "rayrag-conv-exchange-rollback-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("conversations.json");
+        let store = ConvStore::new(path.to_str().unwrap()).unwrap();
+        let conversation = store.create_for("owner-1", "First").unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+
+        assert!(
+            store
+                .append_exchange(&conversation.id, "owner-1", "question", "answer", vec![],)
+                .is_err()
+        );
+        assert!(store.get(&conversation.id).unwrap().messages.is_empty());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn legacy_messages_gain_ids_and_feedback_defaults_on_load() {
+        let root = std::env::temp_dir().join(format!(
+            "rayrag-conv-legacy-message-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("conversations.json");
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!([{
+                "id": "legacy-conversation",
+                "name": "Legacy",
+                "owner_id": "owner-1",
+                "messages": [{
+                    "role": "assistant",
+                    "content": "legacy answer",
+                    "citations": ["source"]
+                }],
+                "created_at": 1,
+                "updated_at": 1
+            }]))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let store = ConvStore::new(path.to_str().unwrap()).unwrap();
+        let message = &store.get("legacy-conversation").unwrap().messages[0];
+        assert!(!message.id.is_empty());
+        assert!(message.created_at > 0);
+        assert!(message.references.is_empty());
+        assert_eq!(message.thumbup, None);
+        assert_eq!(message.feedback, None);
+        assert_eq!(message.usage, None);
+        let conversation = store.get("legacy-conversation").unwrap();
+        assert_eq!(conversation.tenant_id, "owner-1");
+        assert_eq!(conversation.source, "chat");
+        assert_eq!(conversation.canvas_id, None);
+        assert!(conversation.kb_ids.is_empty());
+        assert_eq!(conversation.chat_model, None);
+        assert_eq!(conversation.embedding_model, None);
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(persisted[0]["tenant_id"], "owner-1");
+        assert_eq!(persisted[0]["source"], "chat");
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn structured_references_and_feedback_survive_restart() {
+        let root = std::env::temp_dir().join(format!(
+            "rayrag-conv-feedback-restart-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("conversations.json");
+        let store = ConvStore::new(path.to_str().unwrap()).unwrap();
+        let conversation = store.create_for("owner-1", "Feedback").unwrap();
+        let reference = ChunkReference {
+            document_id: None,
+            document_name: None,
+            id: "chunk-a".into(),
+            kb_id: "kb-a".into(),
+            content: "water quality".into(),
+            similarity: Some(0.9),
+            vector_similarity: Some(0.8),
+            term_similarity: Some(0.7),
+            document_metadata: None,
+        };
+        let message_id = store
+            .append_exchange_with_references(
+                &conversation.id,
+                "owner-1",
+                "question",
+                "answer",
+                vec![reference.content.clone()],
+                vec![reference.clone()],
+            )
+            .unwrap()
+            .unwrap();
+        assert!(
+            store
+                .update_message_feedback(
+                    &conversation.id,
+                    "owner-1",
+                    &message_id,
+                    None,
+                    false,
+                    Some("not relevant".into()),
+                )
+                .unwrap()
+        );
+        drop(store);
+
+        let restored = ConvStore::new(path.to_str().unwrap()).unwrap();
+        let target = restored
+            .feedback_target(&conversation.id, "owner-1", &message_id)
+            .unwrap();
+        assert_eq!(target.prior_thumb, Some(false));
+        assert_eq!(target.prior_feedback.as_deref(), Some("not relevant"));
+        assert_eq!(target.references, vec![reference]);
+        assert!(
+            restored
+                .update_message_feedback(
+                    &conversation.id,
+                    "owner-1",
+                    &message_id,
+                    Some(false),
+                    false,
+                    Some("not relevant".into()),
+                )
+                .unwrap()
+        );
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn feedback_compare_and_set_rejects_stale_prior_state() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-conv-feedback-cas-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("conversations.json");
+        let store = ConvStore::new(path.to_str().unwrap()).unwrap();
+        let conversation = store.create_for("owner-1", "Feedback").unwrap();
+        let message_id = store
+            .append_exchange_with_references(
+                &conversation.id,
+                "owner-1",
+                "question",
+                "answer",
+                Vec::new(),
+                Vec::new(),
+            )
+            .unwrap()
+            .unwrap();
+        store
+            .update_message_feedback(&conversation.id, "owner-1", &message_id, None, true, None)
+            .unwrap();
+        let error = store
+            .update_message_feedback(
+                &conversation.id,
+                "owner-1",
+                &message_id,
+                None,
+                false,
+                Some("stale".into()),
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("concurrently"));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn conversation_lifecycle_rename_regenerate_and_delete_pair_are_atomic() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-conv-lifecycle-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("conversations.json");
+        let store = ConvStore::new(path.to_str().unwrap()).unwrap();
+        let conversation = store.create_for("owner-1", " Old ").unwrap();
+        let message_id = store
+            .append_exchange_with_references(
+                &conversation.id,
+                "owner-1",
+                "How is pond oxygen?",
+                "Old answer",
+                vec!["old citation".into()],
+                vec![ChunkReference {
+                    document_id: None,
+                    document_name: None,
+                    id: "chunk-old".into(),
+                    kb_id: "kb-a".into(),
+                    content: "old context".into(),
+                    similarity: Some(0.5),
+                    vector_similarity: Some(0.5),
+                    term_similarity: None,
+                    document_metadata: None,
+                }],
+            )
+            .unwrap()
+            .unwrap();
+        store
+            .update_message_feedback(
+                &conversation.id,
+                "owner-1",
+                &message_id,
+                None,
+                false,
+                Some("old feedback".into()),
+            )
+            .unwrap();
+
+        let renamed = store
+            .rename_for(&conversation.id, "owner-1", "  Oxygen Session  ")
+            .unwrap()
+            .unwrap();
+        assert_eq!(renamed.name, "Oxygen Session");
+        assert!(
+            store
+                .rename_for(&conversation.id, "owner-2", "Forbidden")
+                .unwrap()
+                .is_none()
+        );
+
+        let target = store
+            .regeneration_target(&conversation.id, "owner-1", &message_id)
+            .unwrap();
+        assert_eq!(target.question, "How is pond oxygen?");
+        assert_eq!(target.prior_answer, "Old answer");
+        assert!(target.history.is_empty());
+        assert!(
+            store
+                .replace_assistant_message(
+                    &conversation.id,
+                    "owner-1",
+                    &message_id,
+                    AssistantMessageReplacement {
+                        expected_prior_answer: "Old answer".into(),
+                        answer: "New answer".into(),
+                        citations: vec!["new citation".into()],
+                        references: vec![ChunkReference {
+                            document_id: None,
+                            document_name: None,
+                            id: "chunk-new".into(),
+                            kb_id: "kb-a".into(),
+                            content: "new context".into(),
+                            similarity: Some(0.9),
+                            vector_similarity: Some(0.9),
+                            term_similarity: None,
+                            document_metadata: None,
+                        }],
+                        kb_ids: vec!["kb-a".into()],
+                        chat_model: Some("chat-a".into()),
+                        embedding_model: Some("embed-a".into()),
+                        usage: None,
+                    },
+                )
+                .unwrap()
+        );
+        let regenerated = store.get_for(&conversation.id, "owner-1").unwrap();
+        assert_eq!(regenerated.messages.len(), 2);
+        assert_eq!(regenerated.messages[0].id, message_id);
+        assert_eq!(regenerated.messages[1].id, message_id);
+        assert_eq!(regenerated.messages[1].content, "New answer");
+        assert_eq!(regenerated.messages[1].thumbup, None);
+        assert_eq!(regenerated.messages[1].feedback, None);
+        assert_eq!(regenerated.kb_ids, vec!["kb-a"]);
+        assert_eq!(regenerated.chat_model.as_deref(), Some("chat-a"));
+        assert_eq!(regenerated.embedding_model.as_deref(), Some("embed-a"));
+
+        let error = store
+            .replace_assistant_message(
+                &conversation.id,
+                "owner-1",
+                &message_id,
+                AssistantMessageReplacement {
+                    expected_prior_answer: "Old answer".into(),
+                    answer: "Stale overwrite".into(),
+                    citations: Vec::new(),
+                    references: Vec::new(),
+                    kb_ids: Vec::new(),
+                    chat_model: None,
+                    embedding_model: None,
+                    usage: None,
+                },
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("concurrently"));
+
+        let emptied = store
+            .delete_message_pair_for(&conversation.id, "owner-1", &message_id)
+            .unwrap()
+            .unwrap();
+        assert!(emptied.messages.is_empty());
+        assert!(!store.delete_for(&conversation.id, "owner-2").unwrap());
+        assert!(store.delete_for(&conversation.id, "owner-1").unwrap());
+        assert!(store.get(&conversation.id).is_none());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn lifecycle_persistence_failure_restores_previous_conversation() {
+        let root = std::env::temp_dir().join(format!(
+            "rayrag-conv-lifecycle-rollback-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("conversations.json");
+        let store = ConvStore::new(path.to_str().unwrap()).unwrap();
+        let conversation = store.create_for("owner-1", "Original").unwrap();
+        let message_id = store
+            .append_exchange_with_references(
+                &conversation.id,
+                "owner-1",
+                "Question",
+                "Answer",
+                Vec::new(),
+                Vec::new(),
+            )
+            .unwrap()
+            .unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+
+        assert!(
+            store
+                .rename_for(&conversation.id, "owner-1", "Changed")
+                .is_err()
+        );
+        assert_eq!(store.get(&conversation.id).unwrap().name, "Original");
+        assert!(
+            store
+                .replace_assistant_message(
+                    &conversation.id,
+                    "owner-1",
+                    &message_id,
+                    AssistantMessageReplacement {
+                        expected_prior_answer: "Answer".into(),
+                        answer: "Changed answer".into(),
+                        citations: Vec::new(),
+                        references: Vec::new(),
+                        kb_ids: Vec::new(),
+                        chat_model: None,
+                        embedding_model: None,
+                        usage: None,
+                    },
+                )
+                .is_err()
+        );
+        assert_eq!(
+            store.get(&conversation.id).unwrap().messages[1].content,
+            "Answer"
+        );
+        assert!(
+            store
+                .delete_message_pair_for(&conversation.id, "owner-1", &message_id)
+                .is_err()
+        );
+        assert_eq!(store.get(&conversation.id).unwrap().messages.len(), 2);
+        std::fs::remove_dir_all(root).ok();
+    }
+}
 
 // ── Model factory (rag/llm/__init__.py + module Base abstractions) ──
 
@@ -2947,7 +3856,613 @@ fn base64_encode(data: &[u8]) -> String {
     out
 }
 
+#[cfg(test)]
+mod model_factory_tests {
+    use super::*;
 
+    #[test]
+    fn model_kind_module_names_match_ragflow() {
+        assert_eq!(ModelKind::Chat.module_name(), "chat_model");
+        assert_eq!(ModelKind::Embedding.module_name(), "embedding_model");
+        assert_eq!(ModelKind::Rerank.module_name(), "rerank_model");
+        assert_eq!(ModelKind::Ocr.module_name(), "ocr_model");
+        assert_eq!(ModelKind::Cv.module_name(), "cv_model");
+        assert_eq!(ModelKind::Seq2txt.module_name(), "sequence2txt_model");
+        assert_eq!(ModelKind::Tts.module_name(), "tts_model");
+        assert_eq!(MODEL_KINDS.len(), 7);
+    }
+
+    #[test]
+    fn chat_model_for_returns_working_client() {
+        let chat = chat_model_for("OpenAI", "sk-test", "gpt-4o", None);
+        assert_eq!(chat.model_name(), "gpt-4o");
+        assert_eq!(chat.max_length(), 8192);
+        assert!(model_kind_supported(ModelKind::Chat, "OpenAI"));
+    }
+
+    #[tokio::test]
+    async fn llm_client_chat_model_forwards_generation_patch_and_prompt_envelope() {
+        use axum::{Json, Router, routing::post};
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+
+        let requests: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(Vec::new()));
+        let captured = requests.clone();
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(move |Json(body): Json<serde_json::Value>| {
+                let captured = captured.clone();
+                async move {
+                    captured.lock().await.push(body);
+                    Json(serde_json::json!({
+                        "choices": [{"message": {"content": "extracted"}}],
+                        "usage": {"total_tokens": 3}
+                    }))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = LlmClient::new(LlmConfig {
+            api_base: format!("http://{addr}/v1"),
+            api_key: "key".into(),
+            model: "memory-model".into(),
+            ..LlmConfig::default()
+        });
+        let answer = client
+            .chat_with_generation(
+                "memory system",
+                &[ChatMessage::new("user", "memory history")],
+                GenerationParamsPatch {
+                    temperature: Some(0.73),
+                    ..GenerationParamsPatch::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(answer, "extracted");
+
+        let requests = requests.lock().await;
+        let body = &requests[0];
+        assert!(
+            (body["temperature"].as_f64().unwrap() - 0.73).abs() < 1e-6,
+            "temperature patch must be serialized into the provider request: {body}"
+        );
+        assert_eq!(body["messages"][0]["role"], "system");
+        assert_eq!(body["messages"][0]["content"], "memory system");
+        assert_eq!(body["messages"][1]["role"], "user");
+        assert_eq!(body["messages"][1]["content"], "memory history");
+    }
+
+    #[test]
+    fn anthropic_endpoint_detection_and_normalization() {
+        assert!(is_anthropic_endpoint("https://api.anthropic.com"));
+        assert!(is_anthropic_endpoint(
+            "https://api.anthropic.com/v1/messages"
+        ));
+        assert!(is_anthropic_endpoint("https://api.deepseek.com/anthropic"));
+        assert!(is_anthropic_endpoint("https://api.deepseek.com/anthropic/"));
+        assert!(!is_anthropic_endpoint("https://api.deepseek.com"));
+        assert!(is_responses_endpoint("https://api.deepseek.com/responses"));
+        assert!(is_responses_endpoint("https://api.deepseek.com/responses/"));
+        assert!(!is_responses_endpoint("https://api.deepseek.com"));
+        assert_eq!(
+            responses_endpoint("https://api.deepseek.com/responses"),
+            "https://api.deepseek.com/responses"
+        );
+        assert!(!is_anthropic_endpoint("https://openrouter.ai/api/v1"));
+        assert_eq!(
+            anthropic_endpoint("https://api.anthropic.com"),
+            "https://api.anthropic.com/v1/messages"
+        );
+        assert_eq!(
+            anthropic_endpoint("https://api.anthropic.com/v1"),
+            "https://api.anthropic.com/v1/messages"
+        );
+        assert_eq!(
+            anthropic_endpoint("https://api.anthropic.com/v1/messages"),
+            "https://api.anthropic.com/v1/messages"
+        );
+    }
+
+    #[tokio::test]
+    async fn anthropic_chat_uses_messages_api_body_and_usage() {
+        use axum::{Json, Router, http::HeaderMap, routing::post};
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+
+        let captured: Arc<Mutex<Vec<(serde_json::Value, String, String)>>> =
+            Arc::new(Mutex::new(Vec::new()));
+        let sink = captured.clone();
+        let app = Router::new().route(
+            "/v1/messages",
+            post(
+                move |headers: HeaderMap, Json(body): Json<serde_json::Value>| {
+                    let sink = sink.clone();
+                    async move {
+                        let key = headers
+                            .get("x-api-key")
+                            .and_then(|value| value.to_str().ok())
+                            .unwrap_or_default()
+                            .to_string();
+                        let version = headers
+                            .get("anthropic-version")
+                            .and_then(|value| value.to_str().ok())
+                            .unwrap_or_default()
+                            .to_string();
+                        sink.lock().await.push((body, key, version));
+                        Json(serde_json::json!({
+                            "content": [{"type": "text", "text": "Hello Claude"}],
+                            "usage": {"input_tokens": 3, "output_tokens": 2}
+                        }))
+                    }
+                },
+            ),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = LlmClient::new(LlmConfig {
+            api_base: format!("http://{addr}/v1/messages"),
+            api_key: "sk-ant".into(),
+            model: "claude-test".into(),
+            ..LlmConfig::default()
+        });
+        let completion = client
+            .chat_completion(&[
+                ChatMessage::new("system", "be concise"),
+                ChatMessage::new("user", "hello"),
+            ])
+            .await
+            .unwrap();
+        assert_eq!(completion.content, "Hello Claude");
+        let usage = completion.usage.expect("usage");
+        assert_eq!(usage.prompt_tokens, 3);
+        assert_eq!(usage.completion_tokens, 2);
+        assert_eq!(usage.total_tokens, 5);
+
+        let requests = captured.lock().await;
+        let (body, key, version) = &requests[0];
+        assert_eq!(key, "sk-ant");
+        assert_eq!(version, "2023-06-01");
+        assert_eq!(body["model"], "claude-test");
+        assert_eq!(body["system"], "be concise");
+        assert_eq!(body["messages"].as_array().unwrap().len(), 1);
+        assert_eq!(body["messages"][0]["role"], "user");
+        assert_eq!(body["messages"][0]["content"], "hello");
+    }
+
+    #[tokio::test]
+    async fn anthropic_chat_stream_parses_text_deltas() {
+        use axum::{Json, Router, body::Body, http::header, response::Response, routing::post};
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+
+        let captured: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = captured.clone();
+        let app = Router::new().route(
+            "/v1/messages",
+            post(move |Json(body): Json<serde_json::Value>| {
+                let sink = sink.clone();
+                async move {
+                    sink.lock().await.push(body);
+                    let stream = concat!(
+                        "event: content_block_delta\n",
+                        "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Hel\"}}\n\n",
+                        "event: content_block_delta\n",
+                        "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"lo\"}}\n\n",
+                        "event: message_stop\n",
+                        "data: {\"type\":\"message_stop\"}\n\n"
+                    );
+                    Response::builder()
+                        .status(200)
+                        .header(header::CONTENT_TYPE, "text/event-stream")
+                        .body(Body::from(stream))
+                        .unwrap()
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = LlmClient::new(LlmConfig {
+            api_base: format!("http://{addr}/v1/messages"),
+            api_key: "sk-ant".into(),
+            model: "claude-test".into(),
+            ..LlmConfig::default()
+        });
+        let mut chunks = Vec::new();
+        let full = client
+            .chat_stream(
+                &[ChatMessage::new("user", "hello")],
+                GenerationParamsPatch::default(),
+                |chunk| chunks.push(chunk.to_string()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(full, "Hello");
+        assert_eq!(chunks, vec!["Hel".to_string(), "lo".to_string()]);
+        let requests = captured.lock().await;
+        assert_eq!(requests[0]["stream"], true);
+    }
+
+    #[tokio::test]
+    async fn responses_chat_uses_responses_api_body_and_usage() {
+        use axum::{Json, Router, routing::post};
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+
+        let captured: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = captured.clone();
+        let app = Router::new().route(
+            "/responses",
+            post(move |Json(body): Json<serde_json::Value>| {
+                let sink = sink.clone();
+                async move {
+                    sink.lock().await.push(body);
+                    Json(serde_json::json!({
+                        "object": "response",
+                        "status": "completed",
+                        "output": [
+                            {"type": "reasoning", "content": [{"type": "reasoning_text", "text": "think"}]},
+                            {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "pong"}]}
+                        ],
+                        "usage": {"input_tokens": 5, "output_tokens": 2, "total_tokens": 7}
+                    }))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = LlmClient::new(LlmConfig {
+            api_base: format!("http://{addr}/responses"),
+            api_key: "sk-test".into(),
+            model: "deepseek-flash".into(),
+            ..LlmConfig::default()
+        });
+        let completion = client
+            .chat_completion(&[
+                ChatMessage::new("system", "be concise"),
+                ChatMessage::new("user", "ping"),
+            ])
+            .await
+            .unwrap();
+        assert_eq!(completion.content, "pong");
+        let usage = completion.usage.expect("usage");
+        assert_eq!(usage.prompt_tokens, 5);
+        assert_eq!(usage.completion_tokens, 2);
+        assert_eq!(usage.total_tokens, 7);
+
+        let requests = captured.lock().await;
+        let body = &requests[0];
+        assert_eq!(body["model"], "deepseek-flash");
+        assert_eq!(body["instructions"], "be concise");
+        assert_eq!(body["input"][0]["role"], "user");
+        assert_eq!(body["input"][0]["content"], "ping");
+        assert_eq!(body["max_output_tokens"], 512);
+    }
+
+    #[tokio::test]
+    async fn responses_chat_stream_parses_output_text_deltas() {
+        use axum::{Json, Router, body::Body, http::header, response::Response, routing::post};
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+
+        let captured: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = captured.clone();
+        let app = Router::new().route(
+            "/responses",
+            post(move |Json(body): Json<serde_json::Value>| {
+                let sink = sink.clone();
+                async move {
+                    sink.lock().await.push(body);
+                    let stream = concat!(
+                        "event: response.output_text.delta\n",
+                        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hel\"}\n\n",
+                        "event: response.output_text.delta\n",
+                        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"lo\"}\n\n",
+                        "event: response.completed\n",
+                        "data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"Hello\"}]}]}}\n\n"
+                    );
+                    Response::builder()
+                        .status(200)
+                        .header(header::CONTENT_TYPE, "text/event-stream")
+                        .body(Body::from(stream))
+                        .unwrap()
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = LlmClient::new(LlmConfig {
+            api_base: format!("http://{addr}/responses"),
+            api_key: "sk-test".into(),
+            model: "deepseek-flash".into(),
+            ..LlmConfig::default()
+        });
+        let mut chunks = Vec::new();
+        let full = client
+            .chat_stream(
+                &[ChatMessage::new("user", "ping")],
+                GenerationParamsPatch::default(),
+                |chunk| chunks.push(chunk.to_string()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(full, "Hello");
+        assert_eq!(chunks, vec!["Hel".to_string(), "lo".to_string()]);
+        let requests = captured.lock().await;
+        assert_eq!(requests[0]["stream"], true);
+    }
+
+    #[test]
+    fn embedding_model_for_rejects_builtin_without_path() {
+        let err = embedding_model_for("Builtin", "", "bge-m3", None);
+        assert!(err.is_err());
+        let ok = embedding_model_for("OpenAI", "sk-test", "text-embedding-3-small", None);
+        assert!(ok.is_ok());
+    }
+
+    #[test]
+    fn rerank_model_for_returns_remote_reranker() {
+        let reranker = rerank_model_for("Cohere", "key", "rerank-model", None);
+        assert!(reranker.is_ok());
+    }
+
+    #[test]
+    fn ocr_factory_returns_explicit_error_stub() {
+        let ocr = ocr_model_for("MinerU", "", "mineru", None);
+        assert_eq!(ocr.model_name(), "mineru");
+        assert!(!model_kind_supported(ModelKind::Ocr, "MinerU"));
+        let err = tokio_test_block_on(ocr.parse_pdf("/tmp/nonexistent.pdf"));
+        assert!(err.is_err());
+        let msg = format!("{}", err.unwrap_err());
+        assert!(msg.contains("ocr"), "stub error mentions kind: {msg}");
+    }
+
+    #[test]
+    fn cv_model_builds_vision_payload() {
+        let client = LlmClient::new(LlmConfig {
+            api_base: "https://api.openai.com/v1".into(),
+            api_key: "k".into(),
+            model: "gpt-4o".into(),
+            ..LlmConfig::default()
+        });
+        let cv = OpenAiCvModel::new(client, "Chinese");
+        assert_eq!(cv.model_name(), "gpt-4o");
+        let msgs = cv.vision_messages("描述", "QUJD");
+        assert_eq!(msgs[0]["content"][1]["type"], "image_url");
+        assert_eq!(
+            msgs[0]["content"][1]["image_url"]["url"],
+            "data:image/png;base64,QUJD"
+        );
+    }
+
+    #[test]
+    fn vision_describe_prompt_constant_is_ragflow_pdf_transcription() {
+        // Port of `vision_llm_describe_prompt.md` — the default prompt of
+        // RAGFlow `cv_model.Base.describe` (GptV4 family).
+        assert!(VISION_LLM_DESCRIBE_PROMPT.contains("PDF page image"));
+        assert!(VISION_LLM_DESCRIBE_PROMPT.contains("clean Markdown"));
+        assert!(VISION_LLM_DESCRIBE_PROMPT.contains("return an empty string"));
+    }
+
+    #[tokio::test]
+    async fn describe_figure_with_context_replaces_placeholders_and_falls_back() {
+        use axum::{Json, Router, routing::post};
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+
+        // Mock server that records the text prompt of the vision request.
+        let prompts: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let captured = prompts.clone();
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(move |body: Json<serde_json::Value>| {
+                let captured = captured.clone();
+                async move {
+                    let text = body["messages"][0]["content"][0]["text"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned();
+                    captured.lock().await.push(text);
+                    Json(serde_json::json!({
+                        "choices": [{"message": {"content": "figure text"}}],
+                        "usage": {"total_tokens": 7}
+                    }))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = LlmClient::new(LlmConfig {
+            api_base: format!("http://{addr}/v1"),
+            api_key: "k".into(),
+            model: "gpt-4o".into(),
+            ..LlmConfig::default()
+        });
+        let cv = OpenAiCvModel::new(client, "Chinese");
+
+        // With context: the with-context prompt with placeholders replaced.
+        let out = cv
+            .describe_figure_with_context(b"img", "上文", "下文")
+            .await
+            .unwrap();
+        assert_eq!(out, "figure text");
+        let sent = prompts.lock().await;
+        let with_context = &sent[0];
+        assert!(with_context.contains("{{ context_above }}") == false);
+        assert!(with_context.contains("上文"));
+        assert!(with_context.contains("下文"));
+        assert!(with_context.contains("expert visual data analyst"));
+        drop(sent);
+
+        // Without context: the plain figure prompt, no placeholders left.
+        let _ = cv
+            .describe_figure_with_context(b"img", "", "")
+            .await
+            .unwrap();
+        let sent = prompts.lock().await;
+        let plain = &sent[1];
+        assert!(!plain.contains("{{ context_above }}"));
+        assert!(plain.contains("## ROLE"));
+        assert!(!plain.contains("上文"));
+    }
+
+    #[tokio::test]
+    async fn describe_page_uses_full_transcription_prompt() {
+        use axum::{Json, Router, routing::post};
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+
+        let prompts: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let captured = prompts.clone();
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(move |body: Json<serde_json::Value>| {
+                let captured = captured.clone();
+                async move {
+                    let text = body["messages"][0]["content"][0]["text"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned();
+                    captured.lock().await.push(text);
+                    Json(serde_json::json!({
+                        "choices": [{"message": {"content": "transcribed page"}}],
+                        "usage": {"total_tokens": 9}
+                    }))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = LlmClient::new(LlmConfig {
+            api_base: format!("http://{addr}/v1"),
+            api_key: "k".into(),
+            model: "gpt-4o".into(),
+            ..LlmConfig::default()
+        });
+        let cv = OpenAiCvModel::new(client, "Chinese");
+        let out = cv.describe_page(b"page-image").await.unwrap();
+        assert_eq!(out, "transcribed page");
+        let sent = prompts.lock().await;
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0], VISION_LLM_DESCRIBE_PROMPT);
+        // Image part still travels as an image_url data URL.
+    }
+
+    #[test]
+    fn base64_encode_matches_rfc4648() {
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"hello"), "aGVsbG8=");
+        assert_eq!(base64_encode(b"hello world"), "aGVsbG8gd29ybGQ=");
+        assert_eq!(base64_encode(b"abc"), "YWJj");
+    }
+
+    /// Live DeepSeek Anthropic-compatible endpoint (https://api.deepseek.com/anthropic).
+    /// Ignored by default; run with DEEPSEEK_API_KEY set:
+    /// cargo test --lib live_deepseek_anthropic -- --ignored --test-threads=1
+    #[tokio::test]
+    #[ignore = "live DeepSeek Anthropic endpoint; set DEEPSEEK_API_KEY"]
+    async fn live_deepseek_anthropic_endpoint_streams_and_completes() {
+        let Ok(api_key) = std::env::var("DEEPSEEK_API_KEY") else {
+            return;
+        };
+        if api_key.trim().is_empty() {
+            return;
+        }
+        let client = LlmClient::new(LlmConfig {
+            api_base: "https://api.deepseek.com/anthropic".into(),
+            api_key,
+            model: "deepseek-flash".into(),
+            ..LlmConfig::default()
+        });
+        let messages = [ChatMessage::new(
+            "user",
+            "Reply with exactly two words: hello rayrag",
+        )];
+        let completion = client.chat_completion(&messages).await.unwrap();
+        assert!(
+            !completion.content.trim().is_empty(),
+            "DeepSeek Anthropic non-streaming answer was empty"
+        );
+        let mut streamed = String::new();
+        let full = client
+            .chat_stream(&messages, GenerationParamsPatch::default(), |chunk| {
+                streamed.push_str(chunk)
+            })
+            .await
+            .unwrap();
+        assert!(
+            !full.trim().is_empty(),
+            "DeepSeek Anthropic streaming answer was empty"
+        );
+        assert_eq!(full, streamed);
+    }
+
+    /// Live DeepSeek Responses API endpoint. Ignored by default; run with
+    /// DEEPSEEK_API_KEY set:
+    /// cargo test --lib live_deepseek_responses -- --ignored --test-threads=1
+    #[tokio::test]
+    #[ignore = "live DeepSeek Responses endpoint; set DEEPSEEK_API_KEY"]
+    async fn live_deepseek_responses_endpoint_streams_and_completes() {
+        let Ok(api_key) = std::env::var("DEEPSEEK_API_KEY") else {
+            return;
+        };
+        if api_key.trim().is_empty() {
+            return;
+        }
+        let client = LlmClient::new(LlmConfig {
+            api_base: "https://api.deepseek.com/responses".into(),
+            api_key,
+            model: "deepseek-flash".into(),
+            ..LlmConfig::default()
+        });
+        let messages = [ChatMessage::new(
+            "user",
+            "Reply with exactly two words: hello rayrag",
+        )];
+        let completion = client.chat_completion(&messages).await.unwrap();
+        assert!(
+            !completion.content.trim().is_empty(),
+            "DeepSeek Responses non-streaming answer was empty"
+        );
+        let mut streamed = String::new();
+        let full = client
+            .chat_stream(&messages, GenerationParamsPatch::default(), |chunk| {
+                streamed.push_str(chunk)
+            })
+            .await
+            .unwrap();
+        assert!(
+            !full.trim().is_empty(),
+            "DeepSeek Responses streaming answer was empty"
+        );
+        assert_eq!(full, streamed);
+    }
+}
 
 /// Block on an async future in a sync test (small local helper mirroring
 /// tokio::test's runtime without the attribute).
@@ -3037,4 +4552,38 @@ impl crate::harness::HarnessChat for LlmHarnessChat {
     }
 }
 
+#[cfg(test)]
+mod harness_chat_tests {
+    use super::*;
+    use crate::harness::HarnessChat;
 
+    fn client() -> std::sync::Arc<LlmClient> {
+        std::sync::Arc::new(LlmClient::new(LlmConfig {
+            api_base: "http://127.0.0.1:1/v1".to_string(),
+            api_key: "test".to_string(),
+            model: "test-model".to_string(),
+            ..LlmConfig::default()
+        }))
+    }
+
+    /// An empty call must be an error, not an empty success: a generator that receives `Ok("")`
+    /// records "done" while producing nothing.
+    #[tokio::test]
+    async fn empty_input_is_an_error_not_an_empty_answer() {
+        let chat = LlmHarnessChat::new(client());
+        let result = chat.chat("", &[], &serde_json::json!({})).await;
+        assert!(result.is_err(), "expected an error, got {result:?}");
+        assert!(
+            result.unwrap_err().contains("no system prompt"),
+            "the error should say what was missing"
+        );
+    }
+
+    /// `max_length` and `model_name` answer from the client rather than panicking.
+    #[test]
+    fn length_and_name_come_from_the_client() {
+        let chat = LlmHarnessChat::new(client());
+        assert!(chat.max_length() >= 1024);
+        assert_eq!(chat.model_name(), "test-model");
+    }
+}

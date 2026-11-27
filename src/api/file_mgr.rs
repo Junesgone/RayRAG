@@ -1925,4 +1925,243 @@ fn ensure_system_folders(state: &AppState, auth: &AuthContext) {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    fn record(id: &str) -> FileRecord {
+        FileRecord {
+            id: id.into(),
+            name: format!("{id}.txt"),
+            owner_id: "owner-1".into(),
+            parent_id: "root".into(),
+            size: 1,
+            content_hash: String::new(),
+            file_type: "txt".into(),
+            created_at: 1,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn failed_persistence_rolls_back_file_mutations() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-file-rollback-{}", uuid::Uuid::new_v4()));
+        let store = FileStore::new(root.to_str().unwrap()).unwrap();
+        store.add(record("file-1")).unwrap();
+        let metadata_path = root.join("files.json");
+        std::fs::remove_file(&metadata_path).unwrap();
+        std::fs::create_dir(&metadata_path).unwrap();
+
+        assert!(store.add(record("file-2")).is_err());
+        assert_eq!(store.list_for("owner-1", false, "root").len(), 1);
+        assert!(store.remove("file-1").is_err());
+        assert_eq!(store.list_for("owner-1", false, "root").len(), 1);
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn corrupt_file_json_fails_startup_instead_of_clearing_store() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-file-corrupt-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("files.json"), b"{not-json").unwrap();
+        let error = match FileStore::new(root.to_str().unwrap()) {
+            Err(error) => error,
+            Ok(_) => panic!("corrupt file JSON must fail startup"),
+        };
+        assert!(error.to_string().contains("Failed to parse file metadata"));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn doc_file_cache_caches_ongoing_files_with_ttl() {
+        let root = std::env::temp_dir().join(format!("rayrag-filecache-{}", uuid::Uuid::new_v4()));
+        let cache = DocFileCache::new(root.join("cache").to_str().unwrap()).unwrap();
+        let source_dir = root.join("uploads");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        std::fs::write(source_dir.join("a.pdf"), b"pdf-bytes-a").unwrap();
+        std::fs::write(source_dir.join("b.txt"), b"text-b").unwrap();
+
+        let now = now_ms();
+        let ttl = std::time::Duration::from_secs(60);
+        let locations = vec![
+            ("kb-1".to_string(), "a.pdf".to_string()),
+            ("kb-1".to_string(), "b.txt".to_string()),
+            // Missing source file is skipped, not fatal (RAGFlow storage-error path).
+            ("kb-1".to_string(), "missing.pdf".to_string()),
+        ];
+        let cached = cache.cache_ongoing(&locations, &source_dir, ttl).unwrap();
+        assert_eq!(cached, 2);
+        assert_eq!(cache.len(), 2);
+
+        // Warm read returns the cached file path with the right bytes.
+        let path = cache.get("kb-1", "a.pdf", now).expect("cached file");
+        assert_eq!(std::fs::read(path).unwrap(), b"pdf-bytes-a");
+        // Unknown key misses.
+        assert!(cache.get("kb-2", "a.pdf", now).is_none());
+
+        // Re-polling the same locations does not re-cache (Redis `exist` skip).
+        let cached = cache.cache_ongoing(&locations, &source_dir, ttl).unwrap();
+        assert_eq!(cached, 0);
+        assert_eq!(cache.len(), 2);
+
+        // After TTL the entry expires: get() misses (Redis TTL eviction)...
+        let later = now + 61_000;
+        assert!(cache.get("kb-1", "a.pdf", later).is_none());
+        assert_eq!(cache.len(), 2, "expired entries linger until swept");
+        // ...and sweep_expired removes the entry and its physical file.
+        assert_eq!(cache.sweep_expired(later), 2);
+        assert_eq!(cache.len(), 0);
+        let cache_dir = root.join("cache");
+        let leftover: Vec<_> = std::fs::read_dir(&cache_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
+        assert!(leftover.is_empty(), "cache files must be deleted on sweep");
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn doc_file_cache_is_volatile_across_restarts() {
+        let root = std::env::temp_dir().join(format!("rayrag-filecache2-{}", uuid::Uuid::new_v4()));
+        let cache_dir = root.join("cache");
+        let source_dir = root.join("uploads");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        std::fs::write(source_dir.join("c.md"), b"hello").unwrap();
+
+        let ttl = std::time::Duration::from_secs(60);
+        let cache = DocFileCache::new(cache_dir.to_str().unwrap()).unwrap();
+        cache
+            .cache_ongoing(
+                &[("kb-1".to_string(), "c.md".to_string())],
+                &source_dir,
+                ttl,
+            )
+            .unwrap();
+        assert_eq!(cache.len(), 1);
+
+        // A new DocFileCache (worker restart) drops stale files: Redis-like
+        // volatility — the cache is a warm-up, not durable storage.
+        let restarted = DocFileCache::new(cache_dir.to_str().unwrap()).unwrap();
+        assert_eq!(restarted.len(), 0);
+        assert!(restarted.get("kb-1", "c.md", 1_000_000u64).is_none());
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    fn row_keys(value: &Value) -> Vec<String> {
+        let mut keys: Vec<String> = value
+            .as_object()
+            .map(|map| map.keys().cloned().collect())
+            .unwrap_or_default();
+        keys.sort();
+        keys
+    }
+
+    fn response_body(response: Response) -> Value {
+        let bytes = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(axum::body::to_bytes(response.into_body(), usize::MAX))
+            .unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[test]
+    fn to_json_row_matches_upstream_constructor_data() {
+        let mut folder = record("folder");
+        folder.file_type = "folder".into();
+        let row = to_json_row(&folder, "tenant");
+        assert_eq!(
+            row_keys(&row),
+            vec![
+                "created_by",
+                "id",
+                "location",
+                "name",
+                "parent_id",
+                "size",
+                "source_type",
+                "tenant_id",
+                "type",
+            ]
+        );
+        assert_eq!(row["created_by"], "tenant");
+        assert_eq!(row["type"], "folder");
+        assert_eq!(row["location"], "");
+    }
+
+    #[test]
+    fn created_folder_validation_matches_upstream_wording() {
+        let missing = validate_create_folder(&json!({"type": "folder"}));
+        let body = response_body(missing.err().expect("missing name"));
+        assert_eq!(body["code"], 101);
+        assert_eq!(
+            body["message"],
+            "Field: <name> - Message: <Field required> - Value: <{'type': 'folder'}>"
+        );
+
+        let extra_field = validate_create_folder(&json!({"name": "x", "nope": 1}));
+        let body = response_body(extra_field.err().expect("extra field"));
+        assert_eq!(
+            body["message"],
+            "Field: <nope> - Message: <Extra inputs are not permitted> - Value: <1>"
+        );
+
+        let too_long = validate_create_folder(&json!({"name": "x".repeat(256)}));
+        let body = response_body(too_long.err().expect("too long"));
+        let message = body["message"].as_str().unwrap();
+        assert!(message.starts_with(
+            "Field: <name> - Message: <String should have at most 255 characters> - Value: <"
+        ));
+    }
+
+    #[test]
+    fn move_validation_matches_upstream_model_validator() {
+        let none = validate_move(&json!({"src_file_ids": ["a"]}));
+        let body = response_body(none.err().expect("model error"));
+        assert_eq!(
+            body["message"],
+            "Field: <> - Message: <Value error, At least one of dest_file_id or new_name must be provided> - Value: <{'src_file_ids': ['a']}>"
+        );
+
+        let multi = validate_move(&json!({
+            "src_file_ids": ["a", "b"],
+            "new_name": "nope.txt"
+        }));
+        let body = response_body(multi.err().expect("model error"));
+        assert_eq!(
+            body["message"],
+            "Field: <> - Message: <Value error, new_name can only be used with a single file> - Value: <{'src_file_ids': ['a', 'b'], 'new_name': 'nope.txt'}>"
+        );
+
+        let empty = validate_move(&json!({"src_file_ids": []}));
+        let body = response_body(empty.err().expect("empty list"));
+        assert_eq!(
+            body["message"],
+            "Field: <src_file_ids> - Message: <List should have at least 1 item after validation, not 0> - Value: <[]>"
+        );
+    }
+
+    #[test]
+    fn upload_filenames_map_to_upstream_file_types() {
+        assert_eq!(filename_type("a.pdf"), "pdf");
+        assert_eq!(filename_type("notes.TXT"), "doc");
+        assert_eq!(filename_type("voice.mp3"), "aural");
+        assert_eq!(filename_type("photo.JPEG"), "visual");
+        assert_eq!(filename_type("archive.zip"), "other");
+        assert_eq!(filename_type("noext"), "other");
+        assert_eq!(
+            upload_path_segments("docs/2026/report.txt"),
+            vec!["docs", "2026", "report.txt"]
+        );
+        assert!(
+            upload_path_segments("../etc/passwd")
+                .iter()
+                .all(|segment| segment != "..")
+        );
+    }
+}

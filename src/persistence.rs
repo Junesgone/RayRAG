@@ -774,7 +774,552 @@ mod postgres_backend {
         unreachable!("retry loop always returns")
     }
 
-    
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn retryable_pg_error_classification() {
+            assert!(is_retryable_sqlstate("40P01"));
+            assert!(is_retryable_sqlstate("40001"));
+            assert!(!is_retryable_sqlstate("23505"));
+            assert!(!is_retryable_pg_error(&anyhow::anyhow!("io error")));
+        }
+
+        #[test]
+        fn retry_pg_write_succeeds_after_transient_abort() {
+            let mut attempts = 0;
+            let result = retry_pg_write_with(
+                || {
+                    attempts += 1;
+                    if attempts == 1 {
+                        Err(anyhow::anyhow!("simulated 40P01"))
+                    } else {
+                        Ok(())
+                    }
+                },
+                |error| error.to_string().contains("40P01"),
+            );
+            assert!(result.is_ok());
+            assert_eq!(attempts, 2);
+        }
+
+        #[test]
+        fn retry_pg_write_gives_up_after_three_attempts() {
+            let mut attempts = 0;
+            let result = retry_pg_write_with(
+                || {
+                    attempts += 1;
+                    Err(anyhow::anyhow!("simulated 40001"))
+                },
+                |error| error.to_string().contains("40001"),
+            );
+            assert!(result.is_err());
+            assert_eq!(attempts, 3);
+        }
+
+        #[test]
+        fn retry_pg_write_does_not_retry_non_retryable_errors() {
+            let mut attempts = 0;
+            let result = retry_pg_write_with(
+                || {
+                    attempts += 1;
+                    Err(anyhow::anyhow!("unique violation"))
+                },
+                |error| error.to_string().contains("40P01"),
+            );
+            assert!(result.is_err());
+            assert_eq!(attempts, 1);
+        }
+
+        #[test]
+        fn postgres_18_snapshot_round_trip() {
+            let Some(url) = std::env::var("RAYRAG_POSTGRES_TEST_URL")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+            else {
+                return;
+            };
+            let namespace = format!("test-{}", uuid::Uuid::new_v4());
+            let mirror = start_mirror(url.clone(), Some("18.7".into()), namespace.clone()).unwrap();
+            let path = Path::new("web/postgres-smoke.json");
+            mirror.store(path, b"postgres-18.7-snapshot").unwrap();
+            assert_eq!(
+                mirror.load(path).unwrap().unwrap(),
+                b"postgres-18.7-snapshot"
+            );
+
+            let path_key = snapshot_key(&namespace, path);
+            drop(mirror);
+            Client::connect(&url, NoTls)
+                .unwrap()
+                .execute(
+                    "DELETE FROM rayrag_state_snapshots WHERE path_key = $1",
+                    &[&path_key],
+                )
+                .unwrap();
+        }
+    }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
 
+    struct FakeMirror {
+        fail_store: bool,
+        payload: Mutex<Option<Vec<u8>>>,
+    }
+
+    impl SnapshotMirror for FakeMirror {
+        fn store(&self, _path: &Path, data: &[u8]) -> anyhow::Result<()> {
+            if self.fail_store {
+                anyhow::bail!("mirror unavailable");
+            }
+            *self.payload.lock().unwrap() = Some(data.to_vec());
+            Ok(())
+        }
+
+        fn load(&self, _path: &Path) -> anyhow::Result<Option<Vec<u8>>> {
+            Ok(self.payload.lock().unwrap().clone())
+        }
+    }
+
+    #[test]
+    fn mirror_failure_restores_previous_local_snapshot() {
+        let root = std::env::temp_dir().join(format!(
+            "rayrag-persistence-mirror-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("state.json");
+        atomic_write_local(&path, b"old").unwrap();
+        let mirror = FakeMirror {
+            fail_store: true,
+            payload: Mutex::new(None),
+        };
+        assert!(atomic_write_with_mirror(&path, b"new", Some(&mirror)).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"old");
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn failed_mirror_removes_new_local_snapshot() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("state.json");
+        let mirror = FakeMirror {
+            fail_store: true,
+            payload: Mutex::new(None),
+        };
+        let error = atomic_write_with_mirror(&path, b"new", Some(&mirror)).unwrap_err();
+        assert!(error.to_string().contains("mirror unavailable"));
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn mirror_and_local_rollback_errors_are_both_reported() {
+        struct RollbackFailureMirror;
+        impl SnapshotMirror for RollbackFailureMirror {
+            fn store(&self, path: &Path, _data: &[u8]) -> anyhow::Result<()> {
+                std::fs::remove_file(path)?;
+                std::fs::create_dir(path)?;
+                anyhow::bail!("mirror unavailable fixture");
+            }
+            fn load(&self, _path: &Path) -> anyhow::Result<Option<Vec<u8>>> {
+                Ok(None)
+            }
+        }
+        for existing in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join("state.json");
+            if existing {
+                atomic_write_local(&path, b"old").unwrap();
+            }
+            let error = atomic_write_with_mirror(&path, b"new", Some(&RollbackFailureMirror))
+                .unwrap_err()
+                .to_string();
+            for detail in [
+                "mirror unavailable fixture",
+                "local rollback failed",
+                "state.json",
+                "repair the local snapshot",
+            ] {
+                assert!(error.contains(detail), "{error}");
+            }
+            assert!(path.is_dir());
+        }
+    }
+
+    #[test]
+    fn successful_mirror_receives_exact_snapshot() {
+        let root = std::env::temp_dir().join(format!(
+            "rayrag-persistence-mirror-success-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("state.json");
+        let mirror = FakeMirror {
+            fail_store: false,
+            payload: Mutex::new(None),
+        };
+        atomic_write_with_mirror(&path, b"snapshot", Some(&mirror)).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"snapshot");
+        assert_eq!(mirror.load(&path).unwrap().unwrap(), b"snapshot");
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn missing_snapshot_is_restored_but_existing_local_state_wins() {
+        let root = std::env::temp_dir().join(format!(
+            "rayrag-persistence-restore-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("state.json");
+        let mirror = FakeMirror {
+            fail_store: false,
+            payload: Mutex::new(Some(b"postgres-copy".to_vec())),
+        };
+        assert!(restore_if_missing_with_mirror(&path, Some(&mirror)).unwrap());
+        assert_eq!(std::fs::read(&path).unwrap(), b"postgres-copy");
+
+        atomic_write_local(&path, b"local-newer").unwrap();
+        assert!(!restore_if_missing_with_mirror(&path, Some(&mirror)).unwrap());
+        assert_eq!(std::fs::read(&path).unwrap(), b"local-newer");
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn json_snapshot_round_trips_through_atomic_write() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-persistence-json-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("table.json");
+        let value = serde_json::json!({"dimensions": [1024, 1536], "kb": "kb-1"});
+        save_json(&path, &value).unwrap();
+        let loaded: serde_json::Value = load_json(&path).unwrap().unwrap();
+        assert_eq!(loaded, value);
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn json_loader_treats_missing_file_as_fresh_state() {
+        let root = std::env::temp_dir().join(format!(
+            "rayrag-persistence-json-missing-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("absent.json");
+        let loaded: Option<serde_json::Value> = load_json(&path).unwrap();
+        assert!(loaded.is_none());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn quarantined_state_files_are_kept_and_logged_instead_of_read_as_empty() {
+        use std::collections::HashMap;
+        let root = std::env::temp_dir().join(format!(
+            "rayrag-persistence-quarantine-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+
+        // Old schema (`[]` where a map is expected): the data must survive the load.
+        let path = root.join("chat_apps.json");
+        std::fs::write(&path, b"[]").unwrap();
+        let loaded: HashMap<String, String> = load_json_or_quarantine(&path).unwrap();
+        assert!(loaded.is_empty());
+        assert!(!path.exists(), "the damaged file must be moved aside");
+        let backups: Vec<_> = std::fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .filter(|name| name.contains("corrupt-"))
+            .collect();
+        assert_eq!(backups.len(), 1, "exactly one backup: {backups:?}");
+        assert_eq!(
+            std::fs::read(root.join(&backups[0])).unwrap(),
+            b"[]",
+            "the backup keeps the original bytes"
+        );
+
+        // A missing file is a fresh deployment, not a fault.
+        let fresh: HashMap<String, String> =
+            load_json_or_quarantine(&root.join("absent.json")).unwrap();
+        assert!(fresh.is_empty());
+
+        // A healthy file is returned untouched, and is not moved aside.
+        let healthy = root.join("healthy.json");
+        std::fs::write(&healthy, br#"{"a":"1"}"#).unwrap();
+        let value: HashMap<String, String> = load_json_or_quarantine(&healthy).unwrap();
+        assert_eq!(value.get("a").map(String::as_str), Some("1"));
+        assert!(healthy.exists());
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    #[cfg(feature = "postgres-backend")]
+    fn postgres_password_rotation_validates_before_database_or_file_changes() {
+        let root = tempfile::tempdir().unwrap();
+        let env_path = root.path().join(".env");
+        for password in ["", "short", "long\0password"] {
+            let error = sync_postgres_admin_password_at(
+                "invalid-url",
+                password,
+                root.path().to_str().unwrap(),
+                &env_path,
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(error.contains("at least 6 characters"), "{error}");
+            assert!(!env_path.exists());
+            assert!(!postgres_credentials_path(root.path().to_str().unwrap()).exists());
+        }
+    }
+
+    #[test]
+    #[cfg(all(feature = "postgres-backend", unix))]
+    #[ignore = "requires a disposable SCRAM PostgreSQL instance and an unprivileged test user"]
+    fn postgres_password_rotation_restores_files_and_database_on_env_write_failure() {
+        use std::os::unix::fs::PermissionsExt;
+        let url = std::env::var("RAYRAG_POSTGRES_ROTATION_TEST_URL")
+            .expect("set RAYRAG_POSTGRES_ROTATION_TEST_URL to a disposable database");
+        let root = tempfile::tempdir().unwrap();
+        let static_dir = root.path().join("static");
+        let env_dir = root.path().join("config");
+        std::fs::create_dir_all(&static_dir).unwrap();
+        std::fs::create_dir_all(&env_dir).unwrap();
+        let env_path = env_dir.join(".env");
+        std::fs::write(&env_path, "# retained\nRAYRAG_CHAT_MODEL=test model\n").unwrap();
+        let static_dir = static_dir.to_str().unwrap();
+        let initial_config: postgres::Config = url.parse().unwrap();
+        let initial_password = std::str::from_utf8(initial_config.get_password().unwrap()).unwrap();
+        let users_path = root.path().join("users.json");
+        std::fs::write(&users_path, b"[]").unwrap();
+        let users = crate::auth::UserStore::new(users_path.to_str().unwrap()).unwrap();
+        std::fs::set_permissions(&env_path, std::fs::Permissions::from_mode(0o400)).unwrap();
+        std::fs::set_permissions(&env_dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let registration = users.register_with(
+            "Owner",
+            "owner@example.test",
+            "rejected%41fixture",
+            |password| {
+                sync_postgres_admin_password_at(&url, password, static_dir, &env_path)?;
+                Ok(())
+            },
+        );
+        std::fs::set_permissions(&env_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::set_permissions(&env_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let error = registration.unwrap_err().to_string();
+        assert!(error.contains("Registration was rolled back"), "{error}");
+        assert!(users.list_users().is_empty());
+        assert!(!postgres_credentials_path(static_dir).exists());
+        initial_config.connect(postgres::NoTls).unwrap();
+        let mut rejected_registration = initial_config.clone();
+        rejected_registration.password("rejected%41fixture");
+        assert!(rejected_registration.connect(postgres::NoTls).is_err());
+        let reopened = crate::auth::UserStore::new(users_path.to_str().unwrap()).unwrap();
+        assert!(reopened.list_users().is_empty());
+        let user = users
+            .register_with(
+                "Owner",
+                "owner@example.test",
+                initial_password,
+                |password| {
+                    sync_postgres_admin_password_at(&url, password, static_dir, &env_path)?;
+                    Ok(())
+                },
+            )
+            .unwrap();
+        assert_eq!(user.role, "admin");
+        let new_password = "rotate'd\\:%41@# /?";
+        let mut updated = None;
+        assert!(
+            users
+                .update_password_with(&user.id, Some(initial_password), new_password, |password| {
+                    updated = Some(sync_postgres_admin_password_at(
+                        &url, password, static_dir, &env_path,
+                    )?);
+                    Ok(())
+                })
+                .unwrap()
+        );
+        let updated = updated.unwrap();
+        let config: postgres::Config = updated.parse().unwrap();
+        assert_eq!(config.get_password(), Some(new_password.as_bytes()));
+        config.connect(postgres::NoTls).unwrap();
+        assert!(postgres::Client::connect(&url, postgres::NoTls).is_err());
+        let credential_path = postgres_credentials_path(static_dir);
+        assert_eq!(
+            load_postgres_url(&credential_path).unwrap(),
+            Some(updated.clone())
+        );
+        let saved = std::fs::read(&credential_path).unwrap();
+        let saved_env = std::fs::read(&env_path).unwrap();
+        let saved_users = std::fs::read(&users_path).unwrap();
+        assert!(users.login(&user.email, new_password).unwrap().is_some());
+        assert!(
+            users
+                .login(&user.email, initial_password)
+                .unwrap()
+                .is_none()
+        );
+        assert!(String::from_utf8_lossy(&saved_env).contains("RAYRAG_CHAT_MODEL=test model"));
+
+        for first_rotation in [false, true] {
+            if first_rotation {
+                std::fs::remove_file(&credential_path).unwrap();
+            }
+            std::fs::set_permissions(&env_path, std::fs::Permissions::from_mode(0o400)).unwrap();
+            std::fs::set_permissions(&env_dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+            let result = users.update_password_with(
+                &user.id,
+                Some(new_password),
+                "rejected%41fixture",
+                |password| {
+                    sync_postgres_admin_password_at(&updated, password, static_dir, &env_path)?;
+                    Ok(())
+                },
+            );
+            std::fs::set_permissions(&env_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+            std::fs::set_permissions(&env_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+            let error = result
+                .expect_err("the readonly env must reject rotation")
+                .to_string();
+            assert!(error.contains("connection files restored"), "{error}");
+            assert!(
+                error.contains("previous account password was restored"),
+                "{error}"
+            );
+            assert_eq!(std::fs::read(&env_path).unwrap(), saved_env);
+            assert_eq!(std::fs::read(&users_path).unwrap(), saved_users);
+            let reopened = crate::auth::UserStore::new(users_path.to_str().unwrap()).unwrap();
+            for store in [&users, &reopened] {
+                assert!(store.login(&user.email, new_password).unwrap().is_some());
+                assert!(
+                    store
+                        .login(&user.email, "rejected%41fixture")
+                        .unwrap()
+                        .is_none()
+                );
+            }
+            if first_rotation {
+                assert!(!credential_path.exists());
+            } else {
+                assert_eq!(std::fs::read(&credential_path).unwrap(), saved);
+                assert_eq!(
+                    std::fs::metadata(&credential_path)
+                        .unwrap()
+                        .permissions()
+                        .mode()
+                        & 0o777,
+                    0o600
+                );
+            }
+            config.connect(postgres::NoTls).unwrap();
+            let mut rejected = config.clone();
+            rejected.password("rejected%41fixture");
+            assert!(rejected.connect(postgres::NoTls).is_err());
+        }
+    }
+
+    #[test]
+    fn saved_postgres_credentials_preserve_encoded_url_and_missing_file_semantics() {
+        let root = tempfile::tempdir().unwrap();
+        let path = postgres_credentials_path(root.path().to_str().unwrap());
+        assert_eq!(load_postgres_url(&path).unwrap(), None);
+        let url =
+            "postgresql://admin%40example.com:p%40ss%3Aword@localhost:5432/rayrag?sslmode=disable";
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!({"url": url})).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(load_postgres_url(&path).unwrap().as_deref(), Some(url));
+    }
+
+    #[test]
+    fn damaged_saved_postgres_credentials_report_recovery_without_leaking_secrets() {
+        let root = tempfile::tempdir().unwrap();
+        let path = postgres_credentials_path(root.path().to_str().unwrap());
+        let secret = "private-password-marker";
+        let payloads = [
+            format!(r#"{{"url":"postgresql://admin:{secret}@localhost/rayrag""#),
+            format!(r#"{{"url":{{"password":"{secret}"}}}}"#),
+            r#"{"url":""}"#.to_string(),
+            r#"{"url":"   "}"#.to_string(),
+            format!(r#"{{"url":"https://admin:{secret}@localhost/rayrag"}}"#),
+            format!(r#"{{"url":"{secret}"}}"#),
+            r#"{"url":"postgresql://localhost/rayrag"}"#.to_string(),
+            "null".to_string(),
+        ];
+        for payload in payloads {
+            std::fs::write(&path, payload).unwrap();
+            let error = apply_persisted_postgres_url(root.path().to_str().unwrap())
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("pg_credentials.json"), "{error}");
+            assert!(error.contains("Restore this file"), "{error}");
+            assert!(!error.contains(secret), "{error}");
+        }
+        std::fs::write(&path, [0xff, 0xfe]).unwrap();
+        assert!(
+            load_postgres_url(&path)
+                .unwrap_err()
+                .to_string()
+                .contains("UTF-8 JSON")
+        );
+    }
+
+    #[test]
+    fn unreadable_saved_postgres_credentials_are_reported() {
+        let root = tempfile::tempdir().unwrap();
+        let path = postgres_credentials_path(root.path().to_str().unwrap());
+        std::fs::create_dir(&path).unwrap();
+        let error = apply_persisted_postgres_url(root.path().to_str().unwrap())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("Cannot load the saved PostgreSQL credential"));
+        assert!(error.contains("pg_credentials.json"));
+        assert!(error.contains("restart RayRAG"));
+    }
+
+    #[test]
+    fn dsn_diagnostics_never_print_the_password() {
+        assert_eq!(
+            redact_dsn("postgresql://rayrag:change-me@127.0.0.1:5432/rayrag"),
+            "postgresql://rayrag:***@127.0.0.1:5432/rayrag"
+        );
+        // No credentials at all: the endpoint still has to be recognisable.
+        assert_eq!(
+            redact_dsn("postgresql://127.0.0.1:55432/rayrag"),
+            "postgresql://127.0.0.1:55432/rayrag"
+        );
+        // A password containing '@' keeps only the last separator.
+        assert_eq!(
+            redact_dsn("postgresql://rayrag:p@ss@db:5432/rayrag"),
+            "postgresql://rayrag:***@db:5432/rayrag"
+        );
+        assert!(redact_dsn("not-a-dsn").contains("unparsable"));
+        assert!(
+            !redact_dsn("postgresql://rayrag:change-me@127.0.0.1:5432/rayrag")
+                .contains("change-me")
+        );
+    }
+
+    #[test]
+    fn json_loader_rejects_corrupt_snapshots() {
+        let root = std::env::temp_dir().join(format!(
+            "rayrag-persistence-json-corrupt-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("corrupt.json");
+        atomic_write_local(&path, b"{not json").unwrap();
+        let result: anyhow::Result<Option<serde_json::Value>> = load_json(&path);
+        assert!(result.is_err());
+        std::fs::remove_dir_all(root).ok();
+    }
+}

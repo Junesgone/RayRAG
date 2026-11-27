@@ -1419,8 +1419,1133 @@ impl RagTools {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
 
+    #[test]
+    fn question_keywords_splits_significant_and_numbers() {
+        let (words, numbers) = question_keywords("What is the legal population of Paris in 2019?");
+        assert!(words.contains("legal"));
+        assert!(words.contains("population"));
+        assert!(words.contains("paris"));
+        assert!(!words.contains("the"));
+        assert!(!words.contains("what"));
+        assert!(numbers.contains("2019"));
+        // CJK text falls back to whole tokens.
+        let (cjk, _) = question_keywords("巴黎人口");
+        assert!(cjk.contains("巴黎人口"));
+        // All-stopword input falls back to the length filter only.
+        let (fallback, _) = question_keywords("the of and");
+        assert_eq!(
+            fallback.len(),
+            3,
+            "the stopword-only fallback keeps the long tokens"
+        );
+    }
 
+    #[test]
+    fn cache_similar_matches_reask_patterns() {
+        let a = question_keywords("population of Paris 2019");
+        let b = question_keywords("legal population of Paris 2019");
+        assert!(cache_similar(&a, &b), "3/5 overlap collapses the re-ask");
+        let other = question_keywords("population of Brown County 2019");
+        assert!(!cache_similar(&b, &other));
+        let different_year = question_keywords("population of Paris 2015");
+        assert!(
+            !cache_similar(&a, &different_year),
+            "numbers must match exactly"
+        );
+        let empty = (HashSet::new(), HashSet::new());
+        assert!(!cache_similar(&empty, &a));
+    }
 
+    #[test]
+    fn resolve_effective_question_prefers_original_same_turn() {
+        let original = "Who was the purchaser of the OmiyaSoft stake?";
+        let rewrite = "Who was the purchaser of the OmiyaSoft stake";
+        assert_eq!(resolve_effective_question(rewrite, original), original);
+        let different = "What is the population of Paris?";
+        assert_eq!(resolve_effective_question(different, original), different);
+        assert_eq!(resolve_effective_question("", original), "");
+        assert_eq!(resolve_effective_question("q", ""), "q");
+        assert_eq!(resolve_effective_question("q", "   "), "q");
+    }
 
+    #[test]
+    fn citation_guidelines_appends_illustrative_note() {
+        let default = get_citation_guidelines(&HashMap::new());
+        assert!(default.contains("[ID:"));
+        assert!(default.contains("illustrative only"));
+        let mut custom = HashMap::new();
+        custom.insert(
+            "citation_guidelines".to_string(),
+            "CUSTOM RULES".to_string(),
+        );
+        let overridden = get_citation_guidelines(&custom);
+        assert!(overridden.starts_with("CUSTOM RULES\n\nIMPORTANT:"));
+    }
 
+    #[test]
+    fn construction_groups_kbs_and_dedupes_scope() {
+        let tools = RagTools::new(RagToolsConfig {
+            chat_max_length: 8192,
+            doc_scope: Some(vec!["d1".to_string(), "d2".to_string(), "d1".to_string()]),
+            kbs_by_ids: vec![
+                KbRef {
+                    id: "kb1".to_string(),
+                    tenant_id: String::new(),
+                    field_map: None,
+                },
+                KbRef {
+                    id: "kb2".to_string(),
+                    tenant_id: String::new(),
+                    field_map: Some(serde_json::Map::from_iter([(
+                        "city".to_string(),
+                        json!("text"),
+                    )])),
+                },
+            ],
+            ..RagToolsConfig::default()
+        });
+        assert_eq!(tools.kb_ids, vec!["kb1".to_string()]);
+        assert_eq!(
+            tools
+                .sql_kbs
+                .iter()
+                .map(|kb| kb.id.clone())
+                .collect::<Vec<_>>(),
+            vec!["kb2".to_string()]
+        );
+        assert_eq!(tools.field_map.get("city"), Some(&json!("text")));
+        assert_eq!(
+            tools.doc_scope,
+            Some(vec!["d1".to_string(), "d2".to_string()]),
+            "scope is deduped in order"
+        );
+        assert!(tools.has_unstructured());
+        assert!(tools.has_structured());
+        assert!(!tools.has_web());
+        assert!(tools.has_llm());
+    }
+
+    #[test]
+    fn scoped_doc_ids_matrix() {
+        let bound = RagTools::new(RagToolsConfig {
+            doc_scope: Some(vec!["d1".to_string(), "d2".to_string()]),
+            ..RagToolsConfig::default()
+        });
+        assert_eq!(
+            bound.scoped_doc_ids(None),
+            Some(vec!["d1".to_string(), "d2".to_string()])
+        );
+        assert_eq!(
+            bound.scoped_doc_ids(Some(&[])),
+            Some(vec!["d1".to_string(), "d2".to_string()])
+        );
+        assert_eq!(
+            bound.scoped_doc_ids(Some(&["d2".to_string(), "d9".to_string()])),
+            Some(vec!["d2".to_string()]),
+            "the bound scope is the hard constraint"
+        );
+        let unbound = RagTools::new(RagToolsConfig::default());
+        assert_eq!(unbound.scoped_doc_ids(None), None);
+        assert_eq!(
+            unbound.scoped_doc_ids(Some(&["d5".to_string()])),
+            Some(vec!["d5".to_string()])
+        );
+    }
+
+    #[test]
+    fn fit_messages_keeps_the_pair_within_budget() {
+        let tools = RagTools::new(RagToolsConfig {
+            chat_max_length: 128,
+            ..RagToolsConfig::default()
+        });
+        let long = "x".repeat(5000);
+        let messages = tools.fit_messages("system", &long);
+        assert_eq!(messages.len(), 2);
+        let content_len = messages[1]["content"].as_str().unwrap().chars().count();
+        assert!(
+            content_len < 5000,
+            "the fitter trims the oversized user turn"
+        );
+    }
+}
+#[cfg(test)]
+mod formalize_tests {
+    use super::*;
+    use async_trait::async_trait;
+    use serde_json::json;
+    use std::sync::Mutex;
+
+    struct MockChat {
+        reply: Result<String, String>,
+        max_length: usize,
+        calls: Mutex<Vec<String>>,
+    }
+
+    impl MockChat {
+        fn ok(reply: &str) -> Self {
+            Self {
+                reply: Ok(reply.to_string()),
+                max_length: 4096,
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+        fn err() -> Self {
+            Self {
+                reply: Err("boom".to_string()),
+                max_length: 4096,
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl crate::harness::HarnessChat for MockChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            _history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            self.calls.lock().unwrap().push("chat".to_string());
+            self.reply.clone()
+        }
+        fn max_length(&self) -> usize {
+            self.max_length
+        }
+    }
+
+    fn tools_with_kb() -> RagTools {
+        RagTools::new(RagToolsConfig {
+            kbs: vec![KbRef {
+                id: "kb1".to_string(),
+                tenant_id: String::new(),
+                field_map: None,
+            }],
+            chat_max_length: 4096,
+            ..RagToolsConfig::default()
+        })
+    }
+
+    #[test]
+    fn sys_prompt_router_matrix() {
+        let tools = RagTools::new(RagToolsConfig {
+            chat_max_length: 4096,
+            ..RagToolsConfig::default()
+        });
+        let plain = tools.sys_prompt();
+        assert!(plain.starts_with("You are a smart agent."));
+        assert!(
+            !plain.contains("summarize_document"),
+            "no KB -> no summarize line"
+        );
+
+        let with_kb = tools_with_kb().sys_prompt();
+        assert!(with_kb.contains("Call `summarize_document` ONLY"));
+
+        let custom = RagTools::new(RagToolsConfig {
+            system_prompt: "CUSTOM".to_string(),
+            chat_max_length: 4096,
+            ..RagToolsConfig::default()
+        });
+        assert!(
+            custom
+                .sys_prompt()
+                .starts_with("CUSTOM\n\nYou are a smart agent.")
+        );
+    }
+
+    #[tokio::test]
+    async fn formalize_single_turn_keeps_question_verbatim() {
+        let tools = tools_with_kb();
+        let chat = MockChat::err();
+        let messages = vec![json!({"role": "user", "content": "  Who discovered radium?  "})];
+        let (question, keywords) = tools.formalize(&chat, &messages).await;
+        assert_eq!(question, "Who discovered radium?", "trimmed, not rewritten");
+        assert!(keywords.is_empty() || keywords == "Who discovered radium?");
+    }
+
+    #[tokio::test]
+    async fn formalize_multi_turn_parses_think_and_fences() {
+        let tools = tools_with_kb();
+        let chat = MockChat::ok(
+            "<think>hmm</think>```json\n{\"question\": \"standalone?\", \"keywords\": \"a, b, a, c\"}\n```",
+        );
+        let messages = vec![
+            json!({"role": "user", "content": "first"}),
+            json!({"role": "assistant", "content": "second"}),
+            json!({"role": "user", "content": "third"}),
+        ];
+        let (question, keywords) = tools.formalize(&chat, &messages).await;
+        assert_eq!(question, "standalone?");
+        assert_eq!(keywords, "a b c", "deduped and space-joined");
+        assert_eq!(chat.calls.lock().unwrap().len(), 1, "one LLM round-trip");
+    }
+
+    #[tokio::test]
+    async fn formalize_multi_turn_falls_back_to_last_user() {
+        let tools = tools_with_kb();
+        let chat = MockChat::ok("no json here");
+        let messages = vec![
+            json!({"role": "user", "content": "first"}),
+            json!({"role": "user", "content": "second"}),
+        ];
+        let (question, keywords) = tools.formalize(&chat, &messages).await;
+        assert_eq!(question, "second");
+        assert!(keywords.is_empty());
+    }
+
+    #[tokio::test]
+    async fn extract_keywords_empty_question_returns_empty() {
+        let tools = tools_with_kb();
+        let chat = MockChat::err();
+        assert!(tools.extract_keywords(&chat, "").await.is_empty());
+        assert!(
+            chat.calls.lock().unwrap().is_empty(),
+            "no LLM call for empty input"
+        );
+    }
+}
+#[cfg(test)]
+mod retrieval_tests {
+    use super::*;
+    use async_trait::async_trait;
+    use serde_json::json;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct MockBackend {
+        retrieval: Option<Value>,
+        calls: Mutex<Vec<RagRetrievalRequest>>,
+        known: HashSet<String>,
+        web: Option<Value>,
+        sql: Option<Value>,
+    }
+
+    #[async_trait]
+    impl RagRetrievalBackend for MockBackend {
+        async fn retrieval(&self, request: &RagRetrievalRequest) -> Option<Value> {
+            self.calls.lock().unwrap().push(request.clone());
+            self.retrieval.clone()
+        }
+        fn retrieval_by_children(&self, chunks: &[Value], _tenant_ids: &[String]) -> Vec<Value> {
+            let mut out: Vec<Value> = chunks.to_vec();
+            out.push(json!({"child": true}));
+            out
+        }
+        fn rank_feature(&self, question: &str) -> Value {
+            json!({"rf": question})
+        }
+        fn filter_known_doc_ids(&self, _candidates: &[String]) -> HashSet<String> {
+            self.known.clone()
+        }
+        async fn web_retrieve_chunks(&self, _query: &str) -> Option<Value> {
+            self.web.clone()
+        }
+        async fn use_sql(
+            &self,
+            _question: &str,
+            _field_map: &serde_json::Map<String, Value>,
+            _tenant_id: &str,
+            _chat: &dyn HarnessChat,
+            _kb_ids: &[String],
+            _doc_ids: Option<Vec<String>>,
+        ) -> Option<Value> {
+            self.sql.clone()
+        }
+        fn flattened_meta_by_kbs(&self, _kb_ids: &[String]) -> Value {
+            json!({})
+        }
+        fn doc_titles_for_kb(&self, _kb_id: &str) -> Vec<(String, String)> {
+            Vec::new()
+        }
+        fn doc_kb_id(&self, _doc_id: &str) -> Option<String> {
+            None
+        }
+        async fn chunk_list(
+            &self,
+            _doc_id: &str,
+            _tenant_id: &str,
+            _kb_id: &str,
+            _max_count: usize,
+            _offset: usize,
+        ) -> Vec<Value> {
+            Vec::new()
+        }
+    }
+
+    struct MockChat {
+        reply: String,
+    }
+
+    #[async_trait]
+    impl crate::harness::HarnessChat for MockChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            _history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            Ok(self.reply.clone())
+        }
+        fn max_length(&self) -> usize {
+            4096
+        }
+    }
+
+    fn tools_with_kb() -> RagTools {
+        RagTools::new(RagToolsConfig {
+            kbs: vec![KbRef {
+                id: "kb1".to_string(),
+                tenant_id: "t1".to_string(),
+                field_map: None,
+            }],
+            tenant_ids: vec!["t1".to_string()],
+            chat_max_length: 4096,
+            ..RagToolsConfig::default()
+        })
+    }
+
+    #[tokio::test]
+    async fn retrieve_returns_empty_without_kbs() {
+        let tools = RagTools::new(RagToolsConfig::default());
+        let backend = MockBackend::default();
+        let out = tools
+            .retrieve(&backend, "q", None, None, None, None, false)
+            .await;
+        assert_eq!(out, json!({"chunks": [], "doc_aggs": []}));
+        assert!(backend.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn retrieve_passes_effective_request() {
+        let tools = tools_with_kb();
+        let backend = MockBackend {
+            retrieval: Some(json!({"chunks": [{"id": "c1"}], "doc_aggs": [{"d": 1}]})),
+            ..MockBackend::default()
+        };
+        let out = tools
+            .retrieve(&backend, "q", Some(&json!("kw")), None, None, None, false)
+            .await;
+        assert_eq!(
+            out["chunks"].as_array().unwrap().len(),
+            2,
+            "children merged"
+        );
+        assert_eq!(out["doc_aggs"], json!([{"d": 1}]));
+        let calls = backend.calls.lock().unwrap();
+        let request = &calls[0];
+        assert_eq!(request.top_n, 6, "method default");
+        assert_eq!(request.similarity_threshold, 0.2, "method default");
+        assert_eq!(request.vector_similarity_weight, 0.0, "no embedding -> 0");
+        assert_eq!(request.question, "q kw", "question gains the keywords");
+        assert_eq!(request.rank_feature, json!({"rf": "q kw"}));
+        assert_eq!(request.doc_ids, None);
+    }
+
+    #[tokio::test]
+    async fn retrieve_sentinel_scope_short_circuits() {
+        let mut tools = tools_with_kb();
+        tools.doc_scope = Some(vec!["-999".to_string()]);
+        let backend = MockBackend::default();
+        let out = tools
+            .retrieve(&backend, "q", None, None, None, None, false)
+            .await;
+        assert_eq!(out["chunks"], json!([]));
+        assert!(backend.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn retrieve_unknown_docs_fall_back_or_block() {
+        let tools = tools_with_kb();
+        let backend = MockBackend::default();
+        let out = tools
+            .retrieve(
+                &backend,
+                "q",
+                None,
+                Some(&["missing".to_string()]),
+                None,
+                None,
+                false,
+            )
+            .await;
+        assert_eq!(out["chunks"], json!([]));
+        {
+            let calls = backend.calls.lock().unwrap();
+            assert_eq!(
+                calls[0].doc_ids, None,
+                "unknown ids fall back to unfiltered"
+            );
+        }
+
+        let mut bound = tools_with_kb();
+        bound.doc_scope = Some(vec!["d1".to_string()]);
+        let blocked = bound
+            .retrieve(
+                &backend,
+                "q",
+                None,
+                Some(&["missing".to_string()]),
+                None,
+                None,
+                false,
+            )
+            .await;
+        assert_eq!(blocked["chunks"], json!([]));
+        assert_eq!(backend.calls.lock().unwrap().len(), 1, "bound scope blocks");
+    }
+
+    #[tokio::test]
+    async fn web_and_structured_paths() {
+        let mut tools = tools_with_kb();
+        let backend = MockBackend {
+            web: Some(json!({"chunks": [{"w": 1}], "doc_aggs": []})),
+            ..MockBackend::default()
+        };
+        assert_eq!(tools.web_retrieve(&backend, "q").await["chunks"], json!([]));
+        tools.web_search = Some(json!({"provider": "mock"}));
+        assert_eq!(
+            tools.web_retrieve(&backend, "q").await["chunks"],
+            json!([{"w": 1}])
+        );
+
+        assert_eq!(
+            tools
+                .structured_retrieve(
+                    &MockChat {
+                        reply: String::new()
+                    },
+                    &backend,
+                    "q"
+                )
+                .await["answer"],
+            json!("")
+        );
+        let mut structured = tools_with_kb();
+        structured
+            .field_map
+            .insert("city".to_string(), json!("text"));
+        structured.sql_kbs = vec![KbRef {
+            id: "sql1".to_string(),
+            tenant_id: "t1".to_string(),
+            field_map: Some(serde_json::Map::new()),
+        }];
+        let sql_backend = MockBackend {
+            sql: Some(
+                json!({"answer": "42", "reference": {"chunks": [{"id": "c"}], "doc_aggs": []}}),
+            ),
+            ..MockBackend::default()
+        };
+        let out = structured
+            .structured_retrieve(
+                &MockChat {
+                    reply: String::new(),
+                },
+                &sql_backend,
+                "q",
+            )
+            .await;
+        assert_eq!(out["answer"], json!("42"));
+        assert_eq!(out["chunks"], json!([{"id": "c"}]));
+    }
+
+    #[test]
+    fn fit_evidence_bounds_long_text() {
+        let tools = tools_with_kb();
+        let short = "evidence";
+        assert_eq!(tools.fit_evidence("q", short), short);
+        let long = "x".repeat(100_000);
+        let fitted = tools.fit_evidence("q", &long);
+        assert!(fitted.chars().count() < long.chars().count());
+    }
+
+    #[tokio::test]
+    async fn judge_and_followups_parse_json() {
+        let tools = tools_with_kb();
+        let judge_chat = MockChat {
+            reply:
+                "<think>t</think>```json\n{\"is_sufficient\": true, \"useful_chunk_ids\": [1]}\n```"
+                    .to_string(),
+        };
+        let verdict = tools.judge_sufficiency(&judge_chat, "q", "evidence").await;
+        assert_eq!(verdict["is_sufficient"], json!(true));
+
+        let follow_chat = MockChat {
+            reply: "{\"questions\": [{\"question\": \"q1\", \"query\": \"x\"}, {\"question\": \"  \"}, 7]}"
+                .to_string(),
+        };
+        let followups = tools
+            .gen_followups(&follow_chat, "q", "", &[], "evidence")
+            .await;
+        assert_eq!(followups.len(), 1);
+        assert_eq!(followups[0]["question"], json!("q1"));
+    }
+}
+#[cfg(test)]
+mod document_tests {
+    use super::*;
+    use serde_json::json;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct MockDocs {
+        pages: Mutex<Vec<Vec<Value>>>,
+        chunk_calls: Mutex<Vec<(usize, usize)>>,
+        metas: Value,
+        meta_calls: Mutex<usize>,
+        docs: HashMap<String, Vec<(String, String)>>,
+        doc_kb: Option<String>,
+    }
+
+    #[async_trait]
+    impl RagRetrievalBackend for MockDocs {
+        async fn retrieval(&self, _request: &RagRetrievalRequest) -> Option<Value> {
+            None
+        }
+        fn retrieval_by_children(&self, chunks: &[Value], _tenant_ids: &[String]) -> Vec<Value> {
+            chunks.to_vec()
+        }
+        fn rank_feature(&self, _question: &str) -> Value {
+            json!({})
+        }
+        fn filter_known_doc_ids(&self, _candidates: &[String]) -> HashSet<String> {
+            HashSet::new()
+        }
+        async fn web_retrieve_chunks(&self, _query: &str) -> Option<Value> {
+            None
+        }
+        async fn use_sql(
+            &self,
+            _question: &str,
+            _field_map: &serde_json::Map<String, Value>,
+            _tenant_id: &str,
+            _chat: &dyn HarnessChat,
+            _kb_ids: &[String],
+            _doc_ids: Option<Vec<String>>,
+        ) -> Option<Value> {
+            None
+        }
+        fn flattened_meta_by_kbs(&self, _kb_ids: &[String]) -> Value {
+            *self.meta_calls.lock().unwrap() += 1;
+            self.metas.clone()
+        }
+        fn doc_titles_for_kb(&self, kb_id: &str) -> Vec<(String, String)> {
+            self.docs.get(kb_id).cloned().unwrap_or_default()
+        }
+        fn doc_kb_id(&self, _doc_id: &str) -> Option<String> {
+            self.doc_kb.clone()
+        }
+        async fn chunk_list(
+            &self,
+            _doc_id: &str,
+            _tenant_id: &str,
+            _kb_id: &str,
+            max_count: usize,
+            offset: usize,
+        ) -> Vec<Value> {
+            self.chunk_calls.lock().unwrap().push((max_count, offset));
+            let mut pages = self.pages.lock().unwrap();
+            if pages.is_empty() {
+                Vec::new()
+            } else {
+                pages.remove(0)
+            }
+        }
+    }
+
+    fn chunk(id: &str, content: &str, title: &str) -> Value {
+        json!({"chunk_id": id, "content_with_weight": content, "docnm_kwd": title})
+    }
+
+    fn tools_fixture() -> RagTools {
+        RagTools::new(RagToolsConfig {
+            kbs: vec![KbRef {
+                id: "kb1".to_string(),
+                tenant_id: "t1".to_string(),
+                field_map: None,
+            }],
+            chat_max_length: 4096,
+            ..RagToolsConfig::default()
+        })
+    }
+
+    #[test]
+    fn kb_prompt_renders_and_budgets() {
+        let mut kbinfos = Kbinfos::default();
+        kbinfos.chunks = vec![
+            chunk("c1", "alpha", "T1"),
+            chunk("c2", "", "T2"),
+            chunk("c3", "gamma", "T3"),
+        ];
+        let blocks = kb_prompt(&kbinfos, 10_000, false);
+        assert_eq!(blocks.len(), 2, "empty content is skipped");
+        assert!(blocks[0].starts_with("\nID: 0"));
+        assert!(blocks[0].contains("\n├── Title: T1"));
+        assert!(blocks[0].ends_with("\n└── Content:\nalpha"));
+        assert!(blocks[1].starts_with("\nID: 1"));
+
+        let starved = kb_prompt(&kbinfos, 0, false);
+        assert!(starved.is_empty(), "the token budget gates the blocks");
+
+        let hashed = kb_prompt(&kbinfos, 10_000, true);
+        let expected = crate::common::misc_utils::hash_str2int("c1", 500);
+        assert!(hashed[0].starts_with(&format!("\nID: {expected}")));
+    }
+
+    #[test]
+    fn kb_prompt_renders_metadata_and_collapses_newlines() {
+        let mut kbinfos = Kbinfos::default();
+        kbinfos.chunks = vec![json!({
+            "chunk_id": "c1",
+            "content_with_weight": "body",
+            "docnm_kwd": "A\nB",
+            "url": "http://x",
+            "document_metadata": {"city": "Paris"},
+        })];
+        let blocks = kb_prompt(&kbinfos, 10_000, false);
+        assert!(blocks[0].contains("\n├── Title: A B"), "newlines collapse");
+        assert!(blocks[0].contains("\n├── URL: http://x"));
+        assert!(blocks[0].contains("\n├── city: Paris"));
+    }
+
+    #[tokio::test]
+    async fn fetch_full_document_pages_and_budget() {
+        let tools = tools_fixture();
+        let backend = MockDocs {
+            pages: Mutex::new(vec![
+                vec![chunk("c1", "alpha", "Doc"), chunk("c2", "beta", "Doc")],
+                vec![chunk("c3", "gamma", "Doc")],
+            ]),
+            doc_kb: Some("kb1".to_string()),
+            ..MockDocs::default()
+        };
+        let out = tools.fetch_full_document(&backend, "d1").await;
+        assert_eq!(out["chunks"].as_array().unwrap().len(), 3);
+        assert_eq!(out["doc_aggs"][0]["doc_name"], json!("Doc"));
+        assert_eq!(out["doc_aggs"][0]["count"], json!(3));
+        let calls = backend.chunk_calls.lock().unwrap();
+        assert_eq!(calls.len(), 3, "two pages fetched, third is empty");
+        assert_eq!(calls[0], (128, 0));
+        assert_eq!(calls[1], (256, 128));
+    }
+
+    #[tokio::test]
+    async fn fetch_full_document_stops_on_token_budget() {
+        let mut tools = tools_fixture();
+        tools.chat_max_length = 1;
+        let backend = MockDocs {
+            pages: Mutex::new(vec![vec![
+                chunk("c1", "alpha beta", "Doc"),
+                chunk("c2", "beta", "Doc"),
+            ]]),
+            doc_kb: Some("kb1".to_string()),
+            ..MockDocs::default()
+        };
+        let out = tools.fetch_full_document(&backend, "d1").await;
+        assert_eq!(
+            out["chunks"].as_array().unwrap().len(),
+            0,
+            "first chunk already over budget"
+        );
+        assert_eq!(
+            backend.chunk_calls.lock().unwrap().len(),
+            1,
+            "outer paging stops"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_full_document_respects_scope_and_unknown_docs() {
+        let mut tools = tools_fixture();
+        tools.doc_scope = Some(vec!["d9".to_string()]);
+        let backend = MockDocs {
+            doc_kb: Some("kb1".to_string()),
+            ..MockDocs::default()
+        };
+        let out = tools.fetch_full_document(&backend, "d1").await;
+        assert_eq!(out["chunks"], json!([]));
+        assert!(backend.chunk_calls.lock().unwrap().is_empty());
+
+        let unknown = tools_fixture();
+        let no_kb = MockDocs::default();
+        let out = unknown.fetch_full_document(&no_kb, "d1").await;
+        assert_eq!(out["chunks"], json!([]));
+    }
+
+    #[tokio::test]
+    async fn summarize_document_composes_header_and_tail() {
+        let mut tools = tools_fixture();
+        tools.do_refer = Some(true);
+        tools.kbinfos.chunks.push(chunk("old", "old body", "Old"));
+        let backend = MockDocs {
+            pages: Mutex::new(vec![vec![chunk("c1", "new body", "New")]]),
+            doc_kb: Some("kb1".to_string()),
+            ..MockDocs::default()
+        };
+        let blocks = tools.summarize_document(&backend, "d1").await;
+        assert_eq!(blocks.len(), 2, "header + one NEW block");
+        assert!(blocks[0].starts_with("# Citation rules"));
+        assert!(blocks[0].contains("illustrative only"));
+        assert!(blocks[1].contains("new body"));
+        assert_eq!(tools.kbinfos.chunks.len(), 2, "the pool keeps both chunks");
+
+        let mut plain = tools_fixture();
+        plain.do_refer = Some(false);
+        let backend = MockDocs {
+            pages: Mutex::new(vec![vec![chunk("c1", "body", "T")]]),
+            doc_kb: Some("kb1".to_string()),
+            ..MockDocs::default()
+        };
+        let blocks = plain.summarize_document(&backend, "d1").await;
+        assert_eq!(blocks.len(), 1);
+        assert!(!blocks[0].starts_with("# Citation rules"));
+    }
+
+    #[tokio::test]
+    async fn doc_helpers_matrix() {
+        let tools = tools_fixture();
+        let backend = MockDocs {
+            metas: json!({"city": {"type": "text"}}),
+            docs: HashMap::from([(
+                "kb1".to_string(),
+                vec![
+                    ("d1".to_string(), "One".to_string()),
+                    ("d2".to_string(), "Two".to_string()),
+                ],
+            )]),
+            ..MockDocs::default()
+        };
+        let titles = tools.collect_doc_titles(&backend, 512).unwrap();
+        assert_eq!(titles.len(), 2);
+        assert!(tools.collect_doc_titles(&backend, 1).is_none(), "cap quirk");
+
+        assert!(tools.filter_known_doc_ids(&backend, &[]).is_empty());
+        assert!(
+            tools
+                .filter_known_doc_ids(&backend, &["d1".to_string()])
+                .is_empty(),
+            "the mock returns nothing; the empty-input path is the contract"
+        );
+    }
+
+    #[tokio::test]
+    async fn metas_cache_memoises() {
+        let mut tools = tools_fixture();
+        let backend = MockDocs {
+            metas: json!({"city": "x"}),
+            ..MockDocs::default()
+        };
+        let first = tools.get_cached_metas(&backend).await;
+        let second = tools.get_cached_metas(&backend).await;
+        assert_eq!(first, second);
+        assert_eq!(*backend.meta_calls.lock().unwrap(), 1, "one lookup only");
+
+        let mut kb_less = RagTools::new(RagToolsConfig::default());
+        assert_eq!(kb_less.get_cached_metas(&backend).await, json!({}));
+        assert_eq!(
+            *backend.meta_calls.lock().unwrap(),
+            1,
+            "no lookup without KBs"
+        );
+    }
+}
+#[cfg(test)]
+mod rag_tool_tests {
+    use super::*;
+    use crate::harness::action_session::LlmReply;
+    use crate::harness::orchestrator::direct::Kbinfos;
+    use crate::harness::stats::StatsHandle;
+    use crate::harness::tools::search::{
+        HarnessRetriever, RetrievalRequest, SearchContext, SearchSettings,
+    };
+    use serde_json::json;
+
+    struct MockChat {
+        reply: String,
+    }
+
+    #[async_trait]
+    impl HarnessChat for MockChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            _history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            Ok(self.reply.clone())
+        }
+        fn max_length(&self) -> usize {
+            4096
+        }
+    }
+
+    struct MockRetriever;
+
+    #[async_trait]
+    impl HarnessRetriever for MockRetriever {
+        async fn retrieval(&self, _request: RetrievalRequest) -> Result<Kbinfos, String> {
+            Ok(Kbinfos::default())
+        }
+    }
+
+    struct MockKbReads;
+
+    #[async_trait]
+    impl RagRetrievalBackend for MockKbReads {
+        async fn retrieval(&self, _request: &RagRetrievalRequest) -> Option<Value> {
+            None
+        }
+        fn retrieval_by_children(&self, chunks: &[Value], _tenant_ids: &[String]) -> Vec<Value> {
+            chunks.to_vec()
+        }
+        fn rank_feature(&self, _question: &str) -> Value {
+            json!({})
+        }
+        fn filter_known_doc_ids(&self, _candidates: &[String]) -> HashSet<String> {
+            HashSet::new()
+        }
+        async fn web_retrieve_chunks(&self, _query: &str) -> Option<Value> {
+            None
+        }
+        async fn use_sql(
+            &self,
+            _question: &str,
+            _field_map: &serde_json::Map<String, Value>,
+            _tenant_id: &str,
+            _chat: &dyn HarnessChat,
+            _kb_ids: &[String],
+            _doc_ids: Option<Vec<String>>,
+        ) -> Option<Value> {
+            None
+        }
+        fn flattened_meta_by_kbs(&self, _kb_ids: &[String]) -> Value {
+            json!({})
+        }
+        fn doc_titles_for_kb(&self, _kb_id: &str) -> Vec<(String, String)> {
+            Vec::new()
+        }
+        fn doc_kb_id(&self, _doc_id: &str) -> Option<String> {
+            None
+        }
+        async fn chunk_list(
+            &self,
+            _doc_id: &str,
+            _tenant_id: &str,
+            _kb_id: &str,
+            _max_count: usize,
+            _offset: usize,
+        ) -> Vec<Value> {
+            Vec::new()
+        }
+    }
+
+    struct MockActionSearch;
+
+    #[async_trait]
+    impl ActionSearchBackend for MockActionSearch {
+        async fn grep_search(
+            &self,
+            _q: &str,
+            _t: usize,
+            _s: Option<&[String]>,
+            _k: Option<&str>,
+        ) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+        async fn hybrid_search(&self, _q: &str, _t: usize, _c: bool) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+        async fn list_chunks(&self, _d: &str) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+        fn has_web(&self) -> bool {
+            false
+        }
+        async fn web_search(&self, _q: &str) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+    }
+
+    struct MockActionTools;
+
+    #[async_trait]
+    impl ActionToolBackend for MockActionTools {
+        async fn navigate_tree(&self, _q: &str) -> crate::harness::tools::navigation::NavResult {
+            crate::harness::tools::navigation::NavResult::default()
+        }
+        async fn navigate_structure(
+            &self,
+            _d: &str,
+            _q: &str,
+            _k: &str,
+        ) -> crate::harness::tools::navigation::NavResult {
+            crate::harness::tools::navigation::NavResult::default()
+        }
+        async fn calculate(&self, _q: &str, _f: &[String]) -> Option<Value> {
+            None
+        }
+        async fn graph_explore(&self, _q: &str, _s: &[String]) -> Value {
+            json!({"answer": "", "chunks": []})
+        }
+    }
+
+    struct MockActionLlm;
+
+    #[async_trait]
+    impl ActionLlmBackend for MockActionLlm {
+        async fn complete_with_tools(
+            &self,
+            _messages: &[Value],
+            _schemas: &[Value],
+            _timeout_s: f64,
+        ) -> Option<LlmReply> {
+            None
+        }
+        async fn complete_plain(&self, _messages: &[Value], _timeout_s: f64) -> Option<LlmReply> {
+            None
+        }
+    }
+
+    struct Fixture {
+        tools: RagTools,
+        retriever: MockRetriever,
+        kb_reads: MockKbReads,
+        chat: MockChat,
+        action_search: MockActionSearch,
+        action_tools: MockActionTools,
+        action_llm: MockActionLlm,
+        stats: StatsHandle,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            Self {
+                tools: RagTools::new(RagToolsConfig {
+                    kbs: vec![KbRef {
+                        id: "kb1".to_string(),
+                        tenant_id: "t1".to_string(),
+                        field_map: None,
+                    }],
+                    empty_response: "NO EVIDENCE".to_string(),
+                    thinking_mode: "high".to_string(),
+                    chat_max_length: 4096,
+                    ..RagToolsConfig::default()
+                }),
+                retriever: MockRetriever,
+                kb_reads: MockKbReads,
+                chat: MockChat {
+                    reply: String::new(),
+                },
+                action_search: MockActionSearch,
+                action_tools: MockActionTools,
+                action_llm: MockActionLlm,
+                stats: StatsHandle::new(),
+            }
+        }
+    }
+
+    fn search_ctx(retriever: &MockRetriever) -> SearchContext<'_> {
+        SearchContext {
+            kb_ids: vec!["kb1".to_string()],
+            sql_kb_ids: Vec::new(),
+            tenant_ids: vec!["t1".to_string()],
+            has_embed_model: false,
+            settings: SearchSettings {
+                top_n: None,
+                top_k: None,
+                rerank_candidates_count: None,
+                vector_similarity_weight: None,
+                similarity_threshold: None,
+            },
+            retriever,
+            scoped_doc_ids: None,
+            search_cache: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn rag_tool_returns_empty_response_without_evidence() {
+        let mut fixture = Fixture::new();
+        let ctx = search_ctx(&fixture.retriever);
+        let backends = AgenticBackends {
+            search: &ctx,
+            retrieval: &fixture.kb_reads,
+            chat: &fixture.chat,
+            action_search: &fixture.action_search,
+            action_tools: &fixture.action_tools,
+            action_llm: &fixture.action_llm,
+            direct: None,
+            stats: StatsHandle::new(),
+        };
+        let answer = fixture.tools.rag(&backends, "Who?", &json!({})).await;
+        assert_eq!(answer, "NO EVIDENCE");
+    }
+
+    #[tokio::test]
+    async fn rag_tool_cache_reuses_prior_answer() {
+        let mut fixture = Fixture::new();
+        let ctx = search_ctx(&fixture.retriever);
+        let backends = AgenticBackends {
+            search: &ctx,
+            retrieval: &fixture.kb_reads,
+            chat: &fixture.chat,
+            action_search: &fixture.action_search,
+            action_tools: &fixture.action_tools,
+            action_llm: &fixture.action_llm,
+            direct: None,
+            stats: StatsHandle::new(),
+        };
+        fixture.tools.rag_cache.insert(
+            "population of Paris 2019".to_string(),
+            (
+                "CACHED ANSWER".to_string(),
+                question_keywords("population of Paris 2019"),
+            ),
+        );
+        let answer = fixture
+            .tools
+            .rag(&backends, "legal population of Paris 2019", &json!({}))
+            .await;
+        assert_eq!(
+            answer, "CACHED ANSWER",
+            "near-identical re-ask reuses the cache"
+        );
+    }
+
+    #[tokio::test]
+    async fn rag_tool_cache_skipped_after_insufficient_round() {
+        let mut fixture = Fixture::new();
+        let ctx = search_ctx(&fixture.retriever);
+        let backends = AgenticBackends {
+            search: &ctx,
+            retrieval: &fixture.kb_reads,
+            chat: &fixture.chat,
+            action_search: &fixture.action_search,
+            action_tools: &fixture.action_tools,
+            action_llm: &fixture.action_llm,
+            direct: None,
+            stats: StatsHandle::new(),
+        };
+        fixture.tools.rag_cache.insert(
+            "population of Paris 2019".to_string(),
+            (
+                "CACHED ANSWER".to_string(),
+                question_keywords("population of Paris 2019"),
+            ),
+        );
+        fixture.tools.rag_verdict = Some(json!({"status": "INSUFFICIENT"}));
+        let answer = fixture
+            .tools
+            .rag(&backends, "legal population of Paris 2019", &json!({}))
+            .await;
+        assert_ne!(answer, "CACHED ANSWER", "insufficient rounds must re-run");
+        assert!(answer.contains("[Research status]"));
+        assert_eq!(fixture.tools.consecutive_unanswerable, 1);
+    }
+}

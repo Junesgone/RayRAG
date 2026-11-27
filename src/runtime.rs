@@ -1512,4 +1512,929 @@ pub fn track_elapsed(
     Ok(output)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::anyhow;
+    use std::collections::HashSet;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
+    #[test]
+    fn component_catalog_is_unique_sorted_and_has_stable_shape() {
+        let all = component_descriptors(&[]);
+        assert!(!all.is_empty());
+        assert!(
+            all.windows(2)
+                .all(|pair| pair[0].name.as_str() < pair[1].name.as_str())
+        );
+        let names: HashSet<_> = all.iter().map(|descriptor| &descriptor.name).collect();
+        assert_eq!(names.len(), all.len());
+        assert!(all.iter().all(|descriptor| {
+            matches!(
+                descriptor.category.as_str(),
+                "agent" | "ingestion" | "shared"
+            )
+        }));
+        let parallel = all
+            .iter()
+            .find(|descriptor| descriptor.name == "parallel")
+            .unwrap();
+        assert_eq!(
+            parallel
+                .inputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["cpn_id", "items_ref", "max_concurrency"]
+        );
+        assert_eq!(
+            parallel
+                .outputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["_result"]
+        );
+        let user_fill_up = all
+            .iter()
+            .find(|descriptor| descriptor.name == "userfillup")
+            .unwrap();
+        assert_eq!(
+            user_fill_up
+                .inputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["enable_tips", "inputs", "layout_recognize", "tips"]
+        );
+        assert_eq!(
+            user_fill_up
+                .outputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["*", "tips", "user_input"]
+        );
+
+        let message = all
+            .iter()
+            .find(|descriptor| descriptor.name == "message")
+            .unwrap();
+        assert_eq!(
+            message
+                .inputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["content", "stream", "text"]
+        );
+        assert_eq!(
+            message
+                .outputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["content", "downloads"]
+        );
+        let invoke = all
+            .iter()
+            .find(|descriptor| descriptor.name == "invoke")
+            .unwrap();
+        assert_eq!(
+            invoke.inputs.keys().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "clean_html",
+                "datatype",
+                "headers",
+                "method",
+                "proxy",
+                "timeout",
+                "url",
+                "variables"
+            ]
+        );
+        assert_eq!(
+            invoke
+                .outputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["_ERROR", "result"]
+        );
+        for name in ["generate", "llm"] {
+            let llm = all
+                .iter()
+                .find(|descriptor| descriptor.name == name)
+                .unwrap();
+            assert_eq!(
+                llm.inputs.keys().map(String::as_str).collect::<Vec<_>>(),
+                [
+                    "frequency_penalty",
+                    "llm_id",
+                    "max_retries",
+                    "max_tokens",
+                    "message_history_window_size",
+                    "model_id",
+                    "outputs.structured",
+                    "presence_penalty",
+                    "prompts",
+                    "sys_prompt",
+                    "temperature",
+                    "top_p"
+                ],
+                "{name}"
+            );
+            assert_eq!(
+                llm.outputs.keys().map(String::as_str).collect::<Vec<_>>(),
+                ["_ERROR", "content", "structured"],
+                "{name}"
+            );
+        }
+        let agent = all
+            .iter()
+            .find(|descriptor| descriptor.name == "agent")
+            .unwrap();
+        assert_eq!(
+            agent.inputs.keys().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "frequency_penalty",
+                "llm_id",
+                "max_retries",
+                "max_rounds",
+                "max_tokens",
+                "mcp",
+                "message_history_window_size",
+                "model_id",
+                "outputs.structured",
+                "presence_penalty",
+                "prompts",
+                "sys_prompt",
+                "temperature",
+                "tools",
+                "top_p"
+            ]
+        );
+        assert_eq!(
+            agent.outputs.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["_ERROR", "content", "structured", "tool_calls"]
+        );
+        let duckduckgo = all
+            .iter()
+            .find(|descriptor| descriptor.name == "duckduckgo")
+            .unwrap();
+        assert_eq!(
+            duckduckgo
+                .inputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            [
+                "channel",
+                "delay_after_error",
+                "max_retries",
+                "query",
+                "top_n"
+            ]
+        );
+        assert_eq!(
+            duckduckgo
+                .outputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["_ERROR", "doc_aggs", "formalized_content", "json"]
+        );
+        let wikipedia = all
+            .iter()
+            .find(|descriptor| descriptor.name == "wikipedia")
+            .unwrap();
+        assert_eq!(
+            wikipedia
+                .inputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            [
+                "delay_after_error",
+                "language",
+                "max_retries",
+                "query",
+                "top_n"
+            ]
+        );
+        assert_eq!(
+            wikipedia
+                .outputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["_ERROR", "doc_aggs", "formalized_content", "json"]
+        );
+        let google = all
+            .iter()
+            .find(|descriptor| descriptor.name == "google")
+            .unwrap();
+        assert_eq!(
+            google.inputs.keys().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "api_key",
+                "country",
+                "delay_after_error",
+                "language",
+                "max_retries",
+                "num",
+                "q",
+                "start"
+            ]
+        );
+        assert_eq!(
+            google
+                .outputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["_ERROR", "doc_aggs", "formalized_content", "json"]
+        );
+        let google_scholar = all
+            .iter()
+            .find(|descriptor| descriptor.name == "googlescholar")
+            .unwrap();
+        assert_eq!(
+            google_scholar
+                .inputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            [
+                "delay_after_error",
+                "max_retries",
+                "patents",
+                "query",
+                "sort_by",
+                "top_n",
+                "year_high",
+                "year_low"
+            ]
+        );
+        assert_eq!(
+            google_scholar
+                .outputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["_ERROR", "doc_aggs", "formalized_content", "json"]
+        );
+        let github = all
+            .iter()
+            .find(|descriptor| descriptor.name == "github")
+            .unwrap();
+        assert_eq!(
+            github.inputs.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["delay_after_error", "max_retries", "query", "top_n"]
+        );
+        assert_eq!(
+            github
+                .outputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["_ERROR", "doc_aggs", "formalized_content", "json"]
+        );
+        let yahoo_finance = all
+            .iter()
+            .find(|descriptor| descriptor.name == "yahoofinance")
+            .unwrap();
+        assert_eq!(
+            yahoo_finance
+                .inputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            [
+                "balance_sheet",
+                "cash_flow_statement",
+                "count",
+                "delay_after_error",
+                "financials",
+                "history",
+                "income_stmt",
+                "info",
+                "max_retries",
+                "news",
+                "stock_code"
+            ]
+        );
+        assert_eq!(
+            yahoo_finance
+                .outputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["_ERROR", "report"]
+        );
+        let arxiv = all
+            .iter()
+            .find(|descriptor| descriptor.name == "arxiv")
+            .unwrap();
+        assert_eq!(
+            arxiv.inputs.keys().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "delay_after_error",
+                "max_retries",
+                "query",
+                "sort_by",
+                "top_n"
+            ]
+        );
+        assert_eq!(
+            arxiv.outputs.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["_ERROR", "doc_aggs", "formalized_content", "json"]
+        );
+        let pubmed = all
+            .iter()
+            .find(|descriptor| descriptor.name == "pubmed")
+            .unwrap();
+        assert_eq!(
+            pubmed.inputs.keys().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "delay_after_error",
+                "email",
+                "max_retries",
+                "query",
+                "top_n"
+            ]
+        );
+        assert_eq!(
+            pubmed
+                .outputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["_ERROR", "doc_aggs", "formalized_content", "json"]
+        );
+        let categorize = all
+            .iter()
+            .find(|descriptor| descriptor.name == "categorize")
+            .unwrap();
+        assert_eq!(
+            categorize
+                .inputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            [
+                "category_description",
+                "llm_id",
+                "message_history_window_size",
+                "model_id",
+                "query"
+            ]
+        );
+        assert_eq!(
+            categorize
+                .outputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["_ERROR", "_next", "category_name"]
+        );
+        let excel = all
+            .iter()
+            .find(|descriptor| descriptor.name == "excelprocessor")
+            .unwrap();
+        assert_eq!(
+            excel.inputs.keys().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "bytes",
+                "file_ref",
+                "file_refs",
+                "input_files",
+                "join_on",
+                "merge_strategy",
+                "operation",
+                "output_data",
+                "output_filename",
+                "output_format",
+                "sheet_selection",
+                "transform_data",
+                "transform_instructions"
+            ]
+        );
+        assert_eq!(
+            excel.outputs.keys().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "_ERROR",
+                "attachment",
+                "bytes",
+                "data",
+                "markdown",
+                "rows",
+                "sheet_names",
+                "size",
+                "summary"
+            ]
+        );
+        let docs_generator = all
+            .iter()
+            .find(|descriptor| descriptor.name == "docsgenerator")
+            .unwrap();
+        assert_eq!(
+            docs_generator
+                .inputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            [
+                "add_page_numbers",
+                "add_timestamp",
+                "content",
+                "filename",
+                "font_size",
+                "footer_text",
+                "header_text",
+                "include_download_info_in_content",
+                "output_format",
+                "watermark_text"
+            ]
+        );
+        assert_eq!(
+            docs_generator
+                .outputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            [
+                "_ERROR",
+                "attachment",
+                "bytes",
+                "created",
+                "doc_id",
+                "download",
+                "filename",
+                "mime_type",
+                "preview_url",
+                "size"
+            ]
+        );
+    }
+
+    #[test]
+    fn ragflow_flow_control_descriptors_are_complete() {
+        let all = component_descriptors(&[]);
+        let iteration = all
+            .iter()
+            .find(|descriptor| descriptor.name == "iteration")
+            .unwrap();
+        assert_eq!(
+            iteration
+                .inputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["items_ref", "variable"]
+        );
+        assert_eq!(
+            iteration
+                .outputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["_ERROR"]
+        );
+        let iteration_item = all
+            .iter()
+            .find(|descriptor| descriptor.name == "iterationitem")
+            .unwrap();
+        assert!(iteration_item.inputs.is_empty());
+        assert_eq!(
+            iteration_item
+                .outputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["index", "item"]
+        );
+        for name in ["exitloop", "loopitem"] {
+            let descriptor = all
+                .iter()
+                .find(|d| d.name == name)
+                .unwrap_or_else(|| panic!("{name} descriptor is missing"));
+            assert!(
+                descriptor.inputs.is_empty() && descriptor.outputs.is_empty(),
+                "{name} should expose no fields"
+            );
+        }
+        let list_operations = all
+            .iter()
+            .find(|descriptor| descriptor.name == "listoperations")
+            .unwrap();
+        assert_eq!(
+            list_operations
+                .inputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            [
+                "filter",
+                "n",
+                "operations",
+                "query",
+                "sort_method",
+                "strict"
+            ]
+        );
+        assert_eq!(
+            list_operations
+                .outputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["first", "last", "result"]
+        );
+        let loop_ = all
+            .iter()
+            .find(|descriptor| descriptor.name == "loop")
+            .unwrap();
+        assert_eq!(
+            loop_.inputs.keys().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "logical_operator",
+                "loop_termination_condition",
+                "loop_variables",
+                "maximum_loop_count"
+            ]
+        );
+        let data_operations = all
+            .iter()
+            .find(|descriptor| descriptor.name == "dataoperations")
+            .unwrap();
+        assert_eq!(
+            data_operations
+                .inputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            [
+                "filter_values",
+                "operations",
+                "query",
+                "remove_keys",
+                "rename_keys",
+                "select_keys",
+                "updates"
+            ]
+        );
+        assert_eq!(
+            data_operations
+                .outputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["result"]
+        );
+    }
+
+    #[test]
+    fn component_catalog_filters_categories_without_duplicate_rows() {
+        let ingestion = component_descriptors(&[
+            ComponentCategory::Ingestion,
+            ComponentCategory::Ingestion,
+            ComponentCategory::Shared,
+        ]);
+        assert_eq!(
+            ingestion
+                .iter()
+                .map(|descriptor| descriptor.name.as_str())
+                .collect::<Vec<_>>(),
+            ["extractor", "file", "parser", "tokenchunker", "tokenizer"]
+        );
+        assert!(
+            ingestion
+                .iter()
+                .all(|descriptor| descriptor.category == "ingestion")
+        );
+    }
+
+    #[test]
+    fn component_category_and_agent_lookup_are_case_insensitive() {
+        assert_eq!(
+            ComponentCategory::parse(" INGESTION "),
+            Some(ComponentCategory::Ingestion)
+        );
+        assert_eq!(ComponentCategory::parse("unknown"), None);
+        assert!(is_supported_agent_component(" StringTransform "));
+        assert!(is_supported_agent_component("DataOperations"));
+        assert!(is_supported_agent_component(" DocGenerator "));
+        assert!(is_supported_agent_component("DocsGenerator"));
+        assert!(is_supported_agent_component(" ExcelProcessor "));
+        assert!(is_supported_agent_component("Loop"));
+        assert!(is_supported_agent_component("LoopItem"));
+        assert!(is_supported_agent_component("Iteration"));
+        assert!(is_supported_agent_component("IterationItem"));
+        assert!(is_supported_agent_component("ExitLoop"));
+        assert!(is_supported_agent_component("ListOperations"));
+        assert!(is_supported_agent_component("Parallel"));
+        assert!(is_supported_agent_component("UserFillUp"));
+        assert!(is_supported_agent_component("LLM"));
+        assert!(is_supported_agent_component(" Invoke "));
+        assert!(!is_supported_agent_component("browser"));
+        assert!(!is_supported_agent_component("parser"));
+    }
+
+    #[test]
+    fn progress_reports_exact_success_and_failure_protocol() {
+        let mut calls = Vec::new();
+        {
+            let mut callback = |progress, message: &str| {
+                calls.push((progress, message.to_owned()));
+            };
+            let value = track_progress("Parser", Some(&mut callback), || Ok::<_, anyhow::Error>(7))
+                .unwrap();
+            assert_eq!(value, 7);
+        }
+        assert_eq!(
+            calls,
+            [(0, "Parser Started".into()), (1, "Parser Done".into())]
+        );
+
+        calls.clear();
+        let mut callback = |progress, message: &str| calls.push((progress, message.to_owned()));
+        let error = track_progress("Tokenizer", Some(&mut callback), || {
+            Err::<(), _>(anyhow!("boom"))
+        })
+        .unwrap_err();
+        assert_eq!(error.to_string(), "boom");
+        assert_eq!(
+            calls,
+            [
+                (0, "Tokenizer Started".into()),
+                (-1, "Tokenizer: boom".into())
+            ]
+        );
+    }
+
+    #[test]
+    fn progress_without_observer_still_runs_and_preserves_error() {
+        let called = AtomicBool::new(false);
+        let value = track_progress("File", None, || {
+            called.store(true, Ordering::Relaxed);
+            Ok::<_, anyhow::Error>("ok")
+        })
+        .unwrap();
+        assert_eq!(value, "ok");
+        assert!(called.load(Ordering::Relaxed));
+
+        let error = track_progress("File", None, || Err::<(), _>(anyhow!("exact"))).unwrap_err();
+        assert_eq!(error.to_string(), "exact");
+    }
+
+    #[tokio::test]
+    async fn timeout_returns_success_inner_error_and_elapsed_deadline() {
+        assert_eq!(
+            with_timeout(Duration::from_millis(50), async {
+                Ok::<_, anyhow::Error>(3)
+            })
+            .await
+            .unwrap(),
+            3
+        );
+
+        let inner = with_timeout(Duration::from_millis(50), async {
+            Err::<(), _>(anyhow!("inner"))
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(inner.to_string(), "inner");
+
+        let deadline = with_timeout(Duration::from_millis(10), async {
+            std::future::pending::<Result<()>>().await
+        })
+        .await
+        .unwrap_err();
+        assert!(deadline.is::<tokio::time::error::Elapsed>());
+    }
+
+    #[test]
+    fn elapsed_adds_timing_fields_and_preserves_business_values() {
+        let output = track_elapsed("Parser", || {
+            std::thread::sleep(Duration::from_millis(2));
+            Ok(Map::from_iter([("chunks".into(), Value::from(3))]))
+        })
+        .unwrap();
+        assert_eq!(output["chunks"], 3);
+        let created = output["_created_time"].as_str().unwrap();
+        assert!(created.contains('T') && created.ends_with('Z'), "{created}");
+        assert!(output["_elapsed_time"].as_f64().unwrap() >= 0.001);
+
+        let preserved = track_elapsed("Tokenizer", || {
+            Ok(Map::from_iter([
+                ("_created_time".into(), Value::String("caller".into())),
+                ("_elapsed_time".into(), Value::from(42.0)),
+            ]))
+        })
+        .unwrap();
+        assert_eq!(preserved["_created_time"], "caller");
+        assert_eq!(preserved["_elapsed_time"], 42.0);
+    }
+
+    #[test]
+    fn elapsed_accepts_empty_output_and_attributes_errors() {
+        let empty = track_elapsed("File", || Ok(Map::new())).unwrap();
+        assert!(empty.contains_key("_created_time"));
+        assert!(empty.contains_key("_elapsed_time"));
+
+        let error = track_elapsed("Extractor", || Err(anyhow!("downstream"))).unwrap_err();
+        assert_eq!(error.to_string(), "Extractor: downstream");
+        assert_eq!(error.root_cause().to_string(), "downstream");
+    }
+
+    #[test]
+    fn translate_descriptor_is_registered_with_deepl_contract() {
+        assert!(is_supported_agent_component("translate"));
+        assert!(is_supported_agent_component("Translate"));
+        let all = component_descriptors(&[]);
+        let translate = all
+            .iter()
+            .find(|descriptor| descriptor.name == "translate")
+            .unwrap();
+        assert_eq!(translate.category, "agent");
+        assert_eq!(
+            translate
+                .inputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["auth_key", "content", "source_lang", "target_lang"]
+        );
+        assert_eq!(
+            translate
+                .outputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["content"]
+        );
+    }
+
+    #[test]
+    fn jin10_descriptor_matches_jin10_py_contract() {
+        assert!(is_supported_agent_component("jin10"));
+        let all = component_descriptors(&[]);
+        let jin10 = all
+            .iter()
+            .find(|descriptor| descriptor.name == "jin10")
+            .unwrap();
+        assert_eq!(jin10.category, "agent");
+        // RAGFlow Jin10Param canvas fields (secret_key via env fallback) plus
+        // the shared DSL retry fields must all be documented.
+        assert_eq!(
+            jin10.inputs.keys().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "calendar_datatype",
+                "calendar_type",
+                "delay_after_error",
+                "filter",
+                "flash_type",
+                "max_retries",
+                "query",
+                "secret_key",
+                "symbols_datatype",
+                "symbols_type",
+                "top_n",
+                "type"
+            ]
+        );
+        assert_eq!(
+            jin10.outputs.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["_ERROR", "doc_aggs", "formalized_content", "json"]
+        );
+    }
+
+    #[test]
+    fn qweather_descriptor_matches_qweather_py_contract() {
+        assert!(is_supported_agent_component("qweather"));
+        let all = component_descriptors(&[]);
+        let qweather = all
+            .iter()
+            .find(|descriptor| descriptor.name == "qweather")
+            .unwrap();
+        assert_eq!(qweather.category, "agent");
+        // RAGFlow QWeatherParam: web_apikey, lang, type, user_type (paid),
+        // time_period plus the shared DSL retry fields.
+        assert_eq!(
+            qweather
+                .inputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            [
+                "delay_after_error",
+                "lang",
+                "location",
+                "max_retries",
+                "paid",
+                "time_period",
+                "top_n",
+                "type",
+                "web_apikey"
+            ]
+        );
+        assert_eq!(
+            qweather
+                .outputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["_ERROR", "doc_aggs", "formalized_content", "json"]
+        );
+    }
+
+    #[test]
+    fn retrieval_descriptor_exposes_ragflow_retrieval_params() {
+        assert!(is_supported_agent_component("retrieval"));
+        let all = component_descriptors(&[]);
+        let retrieval = all
+            .iter()
+            .find(|descriptor| descriptor.name == "retrieval")
+            .unwrap();
+        assert_eq!(retrieval.category, "agent");
+        // RAGFlow RetrievalParam fields exercised by the Rust executor and
+        // validator, including the fail-closed unsupported modes.
+        assert_eq!(
+            retrieval
+                .inputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            [
+                "cross_languages",
+                "dataset_ids",
+                "empty_response",
+                "kb_ids",
+                "keywords_similarity_weight",
+                "memory_ids",
+                "meta_data_filter",
+                "query",
+                "rerank_id",
+                "retrieval_from",
+                "similarity_threshold",
+                "toc_enhance",
+                "top_k",
+                "top_n",
+                "use_kg"
+            ]
+        );
+        assert_eq!(
+            retrieval
+                .outputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["_ERROR", "doc_aggs", "formalized_content", "json"]
+        );
+    }
+
+    #[test]
+    fn ragflow_agent_tools_package_is_fully_registered() {
+        // Every non-base module of RAGFlow agent/tools/ must be reachable as
+        // an Agent component (tavily maps to tavilysearch + tavilyextract,
+        // deepl maps to translate, wencai maps to iwencai).
+        for name in [
+            "akshare",
+            "arxiv",
+            "code_exec",
+            "crawler",
+            "duckduckgo",
+            "email",
+            "exesql",
+            "github",
+            "google",
+            "googlescholar",
+            "jin10",
+            "pubmed",
+            "qweather",
+            "retrieval",
+            "searxng",
+            "tavilysearch",
+            "tavilyextract",
+            "tushare",
+            "iwencai",
+            "wencai",
+            "wikipedia",
+            "yahoofinance",
+            "translate",
+        ] {
+            assert!(
+                is_supported_agent_component(name),
+                "RAGFlow tool module must be registered: {name}"
+            );
+        }
+        assert!(is_supported_agent_component("SearXNG"));
+        assert!(is_supported_agent_component("QWeather"));
+        assert!(is_supported_agent_component("Jin10"));
+        assert!(is_supported_agent_component("Retrieval"));
+        assert!(is_supported_agent_component("TavilySearch"));
+        assert!(is_supported_agent_component("WenCai"));
+        assert!(is_supported_agent_component("YahooFinance"));
+    }
+}

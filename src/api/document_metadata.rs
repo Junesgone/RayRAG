@@ -1295,4 +1295,261 @@ fn apply_deletes(meta: &mut Map<String, Value>, deletes: &[MetadataDelete]) {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    fn object(value: Value) -> Map<String, Value> {
+        value.as_object().unwrap().clone()
+    }
+
+    #[test]
+    fn record_wire_schema_uses_upstream_id_and_accepts_legacy_doc_id() {
+        let record = DocumentMetadataRecord {
+            doc_id: "doc-a".into(),
+            kb_id: "kb-a".into(),
+            meta_fields: object(serde_json::json!({ "author": "Ada" })),
+        };
+        let encoded = serde_json::to_value(&record).unwrap();
+        assert_eq!(encoded["id"], "doc-a");
+        assert_eq!(encoded["kb_id"], "kb-a");
+        assert_eq!(encoded["meta_fields"]["author"], "Ada");
+        assert!(encoded.get("doc_id").is_none());
+
+        let legacy: DocumentMetadataRecord = serde_json::from_value(serde_json::json!({
+            "doc_id": "legacy-doc",
+            "kb_id": "legacy-kb",
+            "meta_fields": {}
+        }))
+        .unwrap();
+        assert_eq!(legacy.doc_id, "legacy-doc");
+        assert_eq!(legacy.kb_id, "legacy-kb");
+
+        let canonical: DocumentMetadataRecord = serde_json::from_value(serde_json::json!({
+            "id": "canonical-doc",
+            "kb_id": "canonical-kb"
+        }))
+        .unwrap();
+        assert_eq!(canonical.doc_id, "canonical-doc");
+        assert!(canonical.meta_fields.is_empty());
+    }
+
+    #[test]
+    fn replacement_normalizes_lists_and_removes_old_keys() {
+        let store = DocumentMetadataStore::in_memory();
+        store
+            .replace(
+                "doc-a",
+                "kb-a",
+                object(serde_json::json!({
+                    "authors": ["关羽、孙权", "孙权", "张辽"],
+                    "old": true
+                })),
+            )
+            .unwrap();
+        let replaced = store
+            .replace(
+                "doc-a",
+                "kb-a",
+                object(serde_json::json!({ "authors": ["关羽, 张辽"] })),
+            )
+            .unwrap();
+        assert_eq!(replaced["authors"], serde_json::json!(["关羽", "张辽"]));
+        assert!(!replaced.contains_key("old"));
+    }
+
+    #[test]
+    fn metadata_filter_supports_lists_comparisons_and_logic() {
+        let store = DocumentMetadataStore::in_memory();
+        store
+            .replace(
+                "doc-a",
+                "kb-a",
+                object(serde_json::json!({ "tags": ["Water", "Fish"], "score": 10 })),
+            )
+            .unwrap();
+        store
+            .replace(
+                "doc-b",
+                "kb-a",
+                object(serde_json::json!({ "tags": ["Feed"], "score": 4 })),
+            )
+            .unwrap();
+        let filters = vec![
+            MetadataFilter {
+                key: "tags".into(),
+                op: "contains".into(),
+                value: Value::String("water".into()),
+            },
+            MetadataFilter {
+                key: "score".into(),
+                op: ">=".into(),
+                value: serde_json::json!(8),
+            },
+        ];
+        assert_eq!(
+            store
+                .filter_doc_ids(&["kb-a".into()], &filters, "and")
+                .unwrap(),
+            vec!["doc-a"]
+        );
+        assert_eq!(
+            store
+                .filter_doc_ids(&["kb-a".into()], &filters, "or")
+                .unwrap(),
+            vec!["doc-a"]
+        );
+    }
+
+    #[test]
+    fn batch_update_creates_missing_rows_and_removes_empty_rows() {
+        let store = DocumentMetadataStore::in_memory();
+        assert_eq!(
+            store
+                .batch_update(
+                    "kb-a",
+                    &["doc-a".into()],
+                    &[MetadataUpdate {
+                        key: "authors".into(),
+                        value: Value::String("关羽、孙权".into()),
+                        r#match: None,
+                    }],
+                    &[],
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            store.get("doc-a", "kb-a").unwrap()["authors"],
+            Value::String("关羽、孙权".into())
+        );
+
+        assert_eq!(
+            store
+                .batch_update(
+                    "kb-a",
+                    &["doc-a".into()],
+                    &[],
+                    &[MetadataDelete {
+                        key: "authors".into(),
+                        value: None,
+                    }],
+                )
+                .unwrap(),
+            1
+        );
+        assert!(store.get("doc-a", "kb-a").is_none());
+
+        assert_eq!(
+            store
+                .batch_update(
+                    "kb-a",
+                    &["doc-b".into()],
+                    &[MetadataUpdate {
+                        key: "authors".into(),
+                        value: Value::String("ignored".into()),
+                        r#match: Some(Value::String("missing".into())),
+                    }],
+                    &[],
+                )
+                .unwrap(),
+            0
+        );
+        assert!(store.get("doc-b", "kb-a").is_none());
+
+        assert_eq!(
+            store
+                .batch_update(
+                    "kb-a",
+                    &["doc-c".into()],
+                    &[MetadataUpdate {
+                        key: "rank".into(),
+                        value: Value::Number(1.into()),
+                        r#match: Some(Value::Number(0.into())),
+                    }],
+                    &[],
+                )
+                .unwrap(),
+            0
+        );
+        assert!(store.get("doc-c", "kb-a").is_none());
+    }
+
+    #[test]
+    fn summary_batch_update_and_restart_are_consistent() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-document-metadata-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("document_metadata.json");
+        let store = DocumentMetadataStore::new(path.to_str().unwrap()).unwrap();
+        store
+            .replace(
+                "doc-a",
+                "kb-a",
+                object(serde_json::json!({ "tags": ["water"], "year": 2026 })),
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .batch_update(
+                    "kb-a",
+                    &["doc-a".into()],
+                    &[MetadataUpdate {
+                        key: "tags".into(),
+                        value: Value::String("fish".into()),
+                        r#match: None,
+                    }],
+                    &[MetadataDelete {
+                        key: "year".into(),
+                        value: None,
+                    }],
+                )
+                .unwrap(),
+            1
+        );
+        let summary = store.summary("kb-a", None);
+        assert_eq!(summary["tags"].value_type, "list");
+        assert_eq!(summary["tags"].values.len(), 2);
+        let persisted: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(persisted[0]["id"], "doc-a");
+        assert!(persisted[0].get("doc_id").is_none());
+        drop(store);
+        let restored = DocumentMetadataStore::new(path.to_str().unwrap()).unwrap();
+        assert_eq!(
+            restored.get("doc-a", "kb-a").unwrap()["tags"],
+            serde_json::json!(["water", "fish"])
+        );
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn persistence_failure_rolls_back_metadata_replacement() {
+        let root = std::env::temp_dir().join(format!(
+            "rayrag-document-metadata-failure-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("document_metadata.json");
+        let store = DocumentMetadataStore::new(path.to_str().unwrap()).unwrap();
+        store
+            .replace(
+                "doc-a",
+                "kb-a",
+                object(serde_json::json!({ "author": "old" })),
+            )
+            .unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(
+            store
+                .replace(
+                    "doc-a",
+                    "kb-a",
+                    object(serde_json::json!({ "author": "new" })),
+                )
+                .is_err()
+        );
+        assert_eq!(store.get("doc-a", "kb-a").unwrap()["author"], "old");
+        std::fs::remove_dir_all(root).ok();
+    }
+}

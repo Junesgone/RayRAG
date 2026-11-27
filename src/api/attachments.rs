@@ -585,4 +585,56 @@ pub async fn preview_attachment(
     stream_attachment(&state, &auth, &attachment_id, &query, true).await
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn an_internal_url_is_refused_before_anything_is_fetched() {
+        for blocked in [
+            "http://127.0.0.1:9390/api/v1/version",
+            "http://localhost/admin",
+            "http://10.0.0.5/secret",
+            "http://192.168.1.10/router",
+            "http://172.16.4.4/",
+            "file:///etc/passwd",
+            "http://nas.local/",
+        ] {
+            assert!(
+                url_is_fetchable(blocked).is_err(),
+                "{blocked} must be refused"
+            );
+        }
+        for allowed in ["https://example.com/page", "http://example.com/a/b.html"] {
+            assert!(
+                url_is_fetchable(allowed).is_ok(),
+                "{allowed} must be allowed"
+            );
+        }
+    }
+
+    #[test]
+    fn the_requested_extension_chooses_the_content_type() {
+        let attachment = Attachment {
+            id: "a1".into(),
+            name: "notes.txt".into(),
+            size: 3,
+            extension: "txt".into(),
+            mime_type: "text/plain".into(),
+            owner_id: "u".into(),
+            storage_name: "a1.txt".into(),
+            created_at: 1,
+            source_url: None,
+            agent_id: None,
+        };
+        let mut query = HashMap::new();
+        query.insert("ext".to_string(), ".pdf".to_string());
+        let (content_type, extension) = requested_content_type(&query, &attachment);
+        assert_eq!(content_type, "application/pdf");
+        assert_eq!(extension, "pdf");
+        // Without a hint the uploaded type is used.
+        let (content_type, extension) = requested_content_type(&HashMap::new(), &attachment);
+        assert_eq!(content_type, "text/plain");
+        assert_eq!(extension, "txt");
+    }
+}

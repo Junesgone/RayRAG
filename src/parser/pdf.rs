@@ -313,4 +313,143 @@ pub fn content_to_text_page(content: &lopdf::content::Content) -> String {
     content_to_text(content)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    /// A minimal valid PDF with one page and no outline tree.
+    fn minimal_pdf() -> Vec<u8> {
+        // Hand-built minimal PDF (header, 1 page, trailer). Enough for
+        // lopdf::Document::load_mem + get_pages.
+        let mut pdf = String::from("%PDF-1.4\n");
+        pdf.push_str("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+        pdf.push_str("2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
+        pdf.push_str("3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>\nendobj\n");
+        pdf.push_str("4 0 obj\n<< /Length 0 >>\nstream\n\nendstream\nendobj\n");
+        // xref and trailer with startxref
+        let xref_offset = pdf.len();
+        pdf.push_str(&format!(
+            "xref\n0 5\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n0000000202 00000 n \ntrailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n"
+        ));
+        pdf.into_bytes()
+    }
+
+    #[test]
+    fn pdf_without_outline_returns_empty() {
+        let data = minimal_pdf();
+        let outlines = PdfParser::extract_outlines(&data).unwrap();
+        assert!(outlines.is_empty());
+    }
+
+    #[test]
+    fn parse_attaches_no_outline_metadata_when_absent() {
+        let data = minimal_pdf();
+        let doc = PdfParser::new().parse("no_outline.pdf", &data).unwrap();
+        assert!(!doc.metadata.contains_key("__outline__"));
+    }
+
+    /// A one-page PDF with two 12 pt lines at known baselines.
+    fn positioned_pdf() -> Vec<u8> {
+        use lopdf::{Document as PdfDocument, Object, Stream, dictionary};
+        let mut doc = PdfDocument::with_version("1.7");
+        let pages_id = doc.new_object_id();
+        let font_id = doc.add_object(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "Helvetica",
+            "FirstChar" => 32,
+            "LastChar" => 126,
+            "Widths" => (32..=126)
+                .map(|code| Object::Real(if code == 32 { 250.0 } else { 500.0 }))
+                .collect::<Vec<Object>>(),
+            "Encoding" => "WinAnsiEncoding",
+        });
+        let content_id = doc.add_object(Stream::new(
+            dictionary! {},
+            b"BT /F1 12 Tf 72 700 Td (positioned line one) Tj 0 -200 Td (positioned line two) Tj ET"
+                .to_vec(),
+        ));
+        let page_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Contents" => content_id,
+            "Resources" => dictionary! { "Font" => dictionary! { "F1" => font_id } },
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page_id.into()],
+                "Count" => 1,
+            }),
+        );
+        let catalog_id = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        doc.trailer.set("Root", catalog_id);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("save generated pdf");
+        bytes
+    }
+
+    #[test]
+    fn parse_emits_position_tags_and_marks_the_document_position_aware() {
+        let data = positioned_pdf();
+        let doc = PdfParser::new().parse("positioned.pdf", &data).unwrap();
+        assert!(
+            doc.metadata
+                .contains_key(crate::chunk::RAGFLOW_POSITION_TAGS_METADATA),
+            "positioned content must flip the chunker into position-aware mode"
+        );
+        assert!(
+            doc.content.contains("positioned line one@@1\t"),
+            "{}",
+            doc.content
+        );
+
+        // The chunker keeps the boxes as `position_int` and drops the tags from
+        // the visible text, exactly like `naive_merge`.
+        use crate::chunk::{ChunkStrategy, NaiveChunker};
+        let chunks = NaiveChunker::new()
+            .chunk(&doc, &crate::ParserConfig::default())
+            .unwrap();
+        assert_eq!(chunks.len(), 1, "{chunks:?}");
+        assert_eq!(
+            chunks[0].content,
+            "positioned line one\npositioned line two"
+        );
+        let positions: Vec<Vec<i32>> = serde_json::from_str(
+            chunks[0]
+                .metadata
+                .get("position_int")
+                .expect("position_int metadata"),
+        )
+        .expect("positions parse");
+        assert_eq!(positions.len(), 2, "{positions:?}");
+        for position in &positions {
+            assert_eq!(position.len(), 5, "{positions:?}");
+            assert_eq!(position[0], 1, "page numbers are 1-based: {positions:?}");
+        }
+        // First paragraph: x0 72, top 792 - (700 + 9) = 83.
+        assert_eq!(positions[0][1], 72);
+        assert_eq!(positions[0][3], 83);
+        // Second paragraph moved down 200 pt by `0 -200 Td`.
+        assert_eq!(positions[1][3], 283);
+    }
+
+    // Real-PDF outline extraction (ignored by default). Requires
+    // RAYRAG_TEST_PDF_OUTLINE pointing at a PDF with bookmarks (e.g. a
+    // reportlab-generated outline_test.pdf with a nested outline tree).
+    #[test]
+    #[ignore]
+    fn gpu_pdf_outline_extraction_live() {
+        let path = std::env::var("RAYRAG_TEST_PDF_OUTLINE").expect("RAYRAG_TEST_PDF_OUTLINE");
+        let data = std::fs::read(&path).expect("read pdf");
+        let outlines = PdfParser::extract_outlines(&data).expect("extract");
+        assert!(!outlines.is_empty(), "expected outline entries");
+        let has_nested = outlines.iter().any(|e| e.depth > 0);
+        assert!(has_nested, "expected nested outline entries: {outlines:?}");
+        let has_page = outlines.iter().any(|e| e.page > 0);
+        assert!(has_page, "expected resolved page numbers: {outlines:?}");
+        tracing::info!("PDF outline ({path}): {outlines:?}");
+    }
+}

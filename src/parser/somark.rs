@@ -880,4 +880,343 @@ fn somark_internal_type(block_type: &str) -> &'static str {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        Json, Router,
+        body::Bytes,
+        extract::{Multipart, State},
+        http::StatusCode,
+        response::{IntoResponse, Response},
+        routing::{head, post},
+    };
+    use serde_json::{Value, json};
+    use std::collections::HashMap;
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
 
+    #[test]
+    fn somark_config_accepts_wrapper_shapes_defaults_and_redacts_secrets() {
+        let nested = SoMarkConfig::from_ragflow_key(
+            r#"{
+                "api_key": {
+                    "somark_base_url": " http://somark.example/api/v1/ ",
+                    "SOMARK_API_KEY": " secret with spaces ",
+                    "somark_image_format": " BASE64 ",
+                    "SOMARK_FORMULA_FORMAT": "mathml",
+                    "somark_enable_text_cross_page": "yes",
+                    "SOMARK_ENABLE_INLINE_IMAGE": "0"
+                }
+            }"#,
+            None,
+        )
+        .unwrap();
+        assert_eq!(nested.base_url(), "http://somark.example/api/v1");
+        assert_eq!(nested.api_key(), Some(" secret with spaces "));
+        assert_eq!(nested.element_formats()["image"], "base64");
+        assert_eq!(nested.element_formats()["formula"], "mathml");
+        assert!(nested.feature_config()["enable_text_cross_page"]);
+        assert!(!nested.feature_config()["enable_inline_image"]);
+        assert_eq!(nested.element_formats()["table"], "html");
+        assert!(nested.feature_config()["enable_table_image"]);
+        assert!(!format!("{nested:?}").contains("secret with spaces"));
+        assert!(format!("{nested:?}").contains("[REDACTED]"));
+
+        let plain_secret =
+            SoMarkConfig::from_ragflow_key(" raw-api-key ", Some("https://somark.tech/api/v1"))
+                .unwrap();
+        assert_eq!(plain_secret.api_key(), Some(" raw-api-key "));
+        assert_eq!(plain_secret.base_url(), "https://somark.tech/api/v1");
+
+        let explicit_empty = SoMarkConfig::from_ragflow_key(
+            r#"{"somark_base_url":"","SOMARK_BASE_URL":"http://must-not-win"}"#,
+            Some("http://fallback-must-not-win"),
+        )
+        .unwrap();
+        assert_eq!(explicit_empty.base_url(), "");
+    }
+
+    #[test]
+    fn somark_blocks_match_fixed_type_filtering_and_marker_contract() {
+        let pages = json!([
+            {
+                "page_num": 0,
+                "page_size": {"w": 600, "h": 800},
+                "blocks": [
+                    {"type":"title","content":"Chapter","title_level":2,"bbox":[1,2,3,4]},
+                    {"type":"text","content":" body ","bbox":[1,2,3,4]},
+                    {"type":"figure","content":"Figure caption","bbox":[1,2,3,4]},
+                    {"type":"cs","content":"","bbox":[1,2,3,4]},
+                    {"type":"qrcode","content":"","bbox":[1,2,3,4]},
+                    {"type":"stamp","content":"","bbox":[1,2,3,4]},
+                    {"type":"figure","content":"no geometry"},
+                    {"type":"table","content":"<table><tr><td>x</td></tr></table>","bbox":[1,2,3,4]},
+                    {"type":"equation","content":"E=mc^2","bbox":[1,2,3,4]},
+                    {"type":"code","content":"fn main() {}","bbox":[1,2,3,4]},
+                    {"type":"figure_caption","content":"caption text","bbox":[1,2,3,4]},
+                    {"type":"cate","content":"toc","bbox":[1,2,3,4]},
+                    {"type":"cate_item","content":"toc item","bbox":[1,2,3,4]},
+                    {"type":"blank","content":"blank","bbox":[1,2,3,4]},
+                    {"type":"header","content":"header","bbox":[1,2,3,4]},
+                    {"type":"footer","content":"footer","bbox":[1,2,3,4]},
+                    {"type":"brand_new","content":"future text","bbox":[1,2,3,4]}
+                ]
+            }
+        ]);
+        let output = convert_somark_pages(pages.as_array().unwrap(), false).unwrap();
+        assert_eq!(output.page_count, 1);
+        assert_eq!(output.block_count, 11);
+        assert!(output.content.contains("## Chapter"));
+        assert!(output.content.contains("body"));
+        assert!(output.content.contains("<!--IMAGE_START-->"));
+        assert!(output.content.contains("Figure caption"));
+        assert!(output.content.contains("cs 2"));
+        assert!(output.content.contains("qrcode 3"));
+        assert!(output.content.contains("stamp 4"));
+        assert!(!output.content.contains("no geometry"));
+        assert!(output.content.contains("<!--TABLE_START-->"));
+        assert!(output.content.contains("<table>"));
+        assert!(output.content.contains("E=mc^2"));
+        assert!(output.content.contains("fn main() {}"));
+        assert!(output.content.contains("future text"));
+        assert!(!output.content.contains("toc"));
+        assert!(!output.content.contains("header"));
+        assert!(!output.content.contains("footer"));
+
+        let kept = convert_somark_pages(pages.as_array().unwrap(), true).unwrap();
+        assert!(kept.content.contains("header"));
+        assert!(kept.content.contains("footer"));
+    }
+
+    #[test]
+    fn somark_line_tags_use_one_based_pages_normalized_raw_bbox_and_zero_fallback() {
+        let pages = json!([{
+            "page_num":4,
+            "page_size":{"w":600,"h":800},
+            "blocks":[
+                {"type":"text","content":"reversed","bbox":[100,40,10,20]},
+                {"type":"footnote","content":"no geometry"}
+            ]
+        }]);
+
+        let output = convert_somark_pages(pages.as_array().unwrap(), false).unwrap();
+        assert!(
+            output
+                .content
+                .contains("reversed@@5\t10.0\t100.0\t20.0\t40.0##")
+        );
+        assert!(
+            output
+                .content
+                .contains("no geometry@@5\t0.0\t0.0\t0.0\t0.0##")
+        );
+    }
+
+    #[derive(Default)]
+    struct SoMarkState {
+        submit_attempts: AtomicUsize,
+        poll_attempts: AtomicUsize,
+        fields: Mutex<HashMap<String, String>>,
+    }
+
+    async fn somark_head() -> StatusCode {
+        StatusCode::NOT_FOUND
+    }
+
+    async fn somark_submit(
+        State(state): State<Arc<SoMarkState>>,
+        mut multipart: Multipart,
+    ) -> Response {
+        let mut fields = HashMap::new();
+        while let Some(field) = multipart.next_field().await.unwrap() {
+            let name = field.name().unwrap_or_default().to_owned();
+            let file_name = field.file_name().map(str::to_owned);
+            let content_type = field.content_type().map(str::to_owned);
+            let body = field.bytes().await.unwrap();
+            fields.insert(name.clone(), String::from_utf8_lossy(&body).into_owned());
+            if name == "file" {
+                fields.insert("file_name".into(), file_name.unwrap_or_default());
+                fields.insert("file_content_type".into(), content_type.unwrap_or_default());
+            }
+        }
+        *state.fields.lock().unwrap() = fields;
+        if state.submit_attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+            return Json(json!({"code":1124,"message":"busy"})).into_response();
+        }
+        Json(json!({"code":0,"data":{"task_id":"task/with space"}})).into_response()
+    }
+
+    async fn somark_poll(State(state): State<Arc<SoMarkState>>, body: Bytes) -> Response {
+        state.fields.lock().unwrap().insert(
+            "poll_body".into(),
+            String::from_utf8_lossy(&body).into_owned(),
+        );
+        if state.poll_attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+            return Json(json!({"code":0,"data":{"status":"PROCESSING"}})).into_response();
+        }
+        Json(json!({
+            "code":0,
+            "data":{
+                "status":"SUCCESS",
+                "result":{
+                    "outputs":{
+                        "json":{
+                            "pages":[{
+                                "page_num":0,
+                                "page_size":{"w":600,"h":800},
+                                "blocks":[
+                                    {"type":"title","content":"HTTP title","title_level":1,"bbox":[1,2,3,4]},
+                                    {"type":"figure","content":"HTTP figure","bbox":[1,2,3,4]}
+                                ]
+                            }]
+                        }
+                    }
+                }
+            }
+        }))
+        .into_response()
+    }
+
+    #[tokio::test]
+    async fn somark_async_contract_retries_qps_polls_and_converts_result() {
+        let state = Arc::new(SoMarkState::default());
+        let app = Router::new()
+            .route("/", head(somark_head))
+            .route("/parse/async", post(somark_submit))
+            .route("/parse/async_check", post(somark_poll))
+            .with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let config = SoMarkConfig::from_ragflow_key(
+            &format!(
+                r#"{{
+                    "somark_base_url":"http://{address}",
+                    "somark_api_key":"somark secret",
+                    "somark_image_format":"base64",
+                    "somark_formula_format":"mathml",
+                    "somark_table_format":"markdown",
+                    "somark_cs_format":"image",
+                    "somark_enable_text_cross_page":true,
+                    "somark_enable_inline_image":false,
+                    "somark_submit_backoff_base_ms":1,
+                    "somark_submit_backoff_max_ms":2,
+                    "somark_submit_backoff_jitter_ms":0,
+                    "somark_poll_interval_base_ms":1,
+                    "somark_poll_interval_max_ms":2,
+                    "somark_submit_budget_seconds":2,
+                    "somark_poll_budget_seconds":2
+                }}"#
+            ),
+            None,
+        )
+        .unwrap();
+        let client = SoMarkClient::new(config).unwrap();
+        client.check_installation().await.unwrap();
+        let output = client
+            .parse_pdf("my document.pdf", b"%PDF-1.4\nmock", None)
+            .await
+            .unwrap();
+        server.abort();
+
+        assert_eq!(state.submit_attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(state.poll_attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(output.page_count, 1);
+        assert!(output.content.contains("# HTTP title"));
+        assert!(output.content.contains("<!--IMAGE_START-->"));
+        let fields = state.fields.lock().unwrap();
+        assert_eq!(
+            fields.get("file_name").map(String::as_str),
+            Some("mydocument.pdf")
+        );
+        assert_eq!(
+            fields.get("file_content_type").map(String::as_str),
+            Some("application/pdf")
+        );
+        assert_eq!(
+            fields.get("output_formats").map(String::as_str),
+            Some("json")
+        );
+        assert_eq!(
+            fields.get("api_key").map(String::as_str),
+            Some("somark secret")
+        );
+        let element_formats: Value =
+            serde_json::from_str(fields.get("element_formats").unwrap()).unwrap();
+        assert_eq!(element_formats["image"], "base64");
+        assert_eq!(element_formats["formula"], "mathml");
+        assert_eq!(element_formats["table"], "markdown");
+        let features: Value = serde_json::from_str(fields.get("feature_config").unwrap()).unwrap();
+        assert_eq!(features["enable_text_cross_page"], true);
+        assert_eq!(features["enable_inline_image"], false);
+        assert!(
+            fields
+                .get("poll_body")
+                .is_some_and(|body| body.contains("task_id=task%2Fwith+space"))
+        );
+        assert!(
+            fields
+                .get("poll_body")
+                .is_some_and(|body| body.contains("api_key=somark+secret"))
+        );
+    }
+
+    #[derive(Default)]
+    struct UsageState {
+        calls: AtomicUsize,
+        bodies: Mutex<Vec<String>>,
+    }
+
+    async fn somark_usage(State(state): State<Arc<UsageState>>, body: Bytes) -> Json<Value> {
+        state
+            .bodies
+            .lock()
+            .unwrap()
+            .push(String::from_utf8_lossy(&body).into_owned());
+        if state.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            Json(json!({
+                "code":0,
+                "data":{"remaining_paid_pages":2,"remaining_free_pages_this_month":0}
+            }))
+        } else {
+            Json(json!({
+                "code":0,
+                "data":{"remaining_paid_pages":0,"remaining_free_pages_this_month":0}
+            }))
+        }
+    }
+
+    #[tokio::test]
+    async fn somark_saas_usage_requires_remaining_quota_and_sends_api_key() {
+        let state = Arc::new(UsageState::default());
+        let app = Router::new()
+            .route("/usage", post(somark_usage))
+            .with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let config = SoMarkConfig::from_ragflow_key(
+            &format!(r#"{{"somark_base_url":"http://{address}","somark_api_key":"usage key"}}"#),
+            None,
+        )
+        .unwrap();
+        let client = SoMarkClient::new(config).unwrap();
+
+        client.check_saas_usage().await.unwrap();
+        let error = client.check_saas_usage().await.unwrap_err();
+        server.abort();
+
+        assert!(error.to_string().contains("insufficient parse pages"));
+        assert!(
+            state
+                .bodies
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|body| body == "api_key=usage+key")
+        );
+    }
+}

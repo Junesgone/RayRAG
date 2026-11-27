@@ -361,4 +361,66 @@ pub fn search(
         .collect()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn add_dedups_and_grep_narrows() {
+        let mut memory: Vec<Value> = Vec::new();
+        let chunks = vec![
+            json!({"chunk_id": "c1", "content": "Short one mentioning Rifampicin clearly."}),
+            json!({"chunk_id": "c1", "content": "duplicate id"}),
+            json!({"id": "c2", "content": "Sentence A about unrelated topics. The abbreviation RIF appears here for treatment. Another sentence follows with details. Yet more context sentences are present in this chunk to exceed the short threshold by a wide margin so that sentence-level narrowing applies to it. Final trailing sentence."}),
+        ];
+        assert_eq!(add(&mut memory, &chunks), 2);
+        assert_eq!(size(&memory), 2);
+
+        // `\bRIF\b` matches the abbreviation, not "Rifampicin".
+        let hits = grep(&memory, &["RIF".to_string()], GREP_MAX_CHUNKS);
+        assert_eq!(hits.len(), 1);
+        assert!(
+            hits[0]["content"]
+                .as_str()
+                .unwrap()
+                .contains("abbreviation")
+        );
+
+        // A full word hits the short chunk that keeps its whole text.
+        let hits = grep(&memory, &["Rifampicin".to_string()], GREP_MAX_CHUNKS);
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0]["content"].as_str().unwrap().contains("Rifampicin"));
+
+        // Prefix tolerance: "abbreviation" matches "abbreviated".
+        let hits = grep(&memory, &["abbreviation".to_string()], GREP_MAX_CHUNKS);
+        assert_eq!(hits.len(), 1);
+
+        clear(&mut memory);
+        assert_eq!(size(&memory), 0);
+    }
+
+    #[test]
+    fn significant_terms_cover_numbers_cjk_and_words() {
+        let terms = significant_terms("What is the population of 利福平 in 1999?", 18);
+        assert!(terms.contains(&"1999".to_string()));
+        assert!(terms.contains(&"population".to_string()));
+        assert!(terms.contains(&"利福平".to_string()));
+        assert!(!terms.contains(&"what".to_string()));
+    }
+
+    #[test]
+    fn search_ranks_by_overlap_and_ratio() {
+        let memory = vec![
+            json!({"chunk_id": "a", "content": "Rifampicin abbreviated RIF treats tuberculosis infections."}),
+            json!({"chunk_id": "b", "content": "Rifampicin only."}),
+            json!({"chunk_id": "c", "content": "Nothing relevant at all here."}),
+        ];
+        let results = search(&memory, "Rifampicin abbreviated", 6, 2, 0.12);
+        assert!(!results.is_empty());
+        assert_eq!(results[0]["chunk_id"], json!("a"));
+        assert!(results.iter().all(|row| row["chunk_id"] != json!("c")));
+
+        // A query with no shared terms clears nothing.
+        assert!(search(&memory, "zzz qqq", 6, 2, 0.12).is_empty());
+    }
+}

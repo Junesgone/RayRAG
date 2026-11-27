@@ -575,7 +575,262 @@ pub async fn exec_list_chunks(
     search_outcome(&out, &ids, new_evidence)
 }
 
+#[cfg(test)]
+mod executor_tests {
+    use super::*;
+    use async_trait::async_trait;
+    use serde_json::json;
 
+    struct MockBackend {
+        grep: Vec<Value>,
+        hybrid: Vec<Value>,
+        document: Vec<Value>,
+        web: Vec<Value>,
+        web_enabled: bool,
+        fail: bool,
+        calls: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl Default for MockBackend {
+        fn default() -> Self {
+            Self {
+                grep: Vec::new(),
+                hybrid: Vec::new(),
+                document: Vec::new(),
+                web: Vec::new(),
+                web_enabled: false,
+                fail: false,
+                calls: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ActionSearchBackend for MockBackend {
+        async fn grep_search(
+            &self,
+            query: &str,
+            _top_n: usize,
+            _doc_scope: Option<&[String]>,
+            keywords: Option<&str>,
+        ) -> Result<Vec<Value>, String> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("grep:{query}:{keywords:?}"));
+            if self.fail {
+                return Err("boom".to_string());
+            }
+            Ok(self.grep.clone())
+        }
+        async fn hybrid_search(
+            &self,
+            query: &str,
+            _top_n: usize,
+            use_compiled: bool,
+        ) -> Result<Vec<Value>, String> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("hybrid:{query}:{use_compiled}"));
+            if self.fail {
+                return Err("boom".to_string());
+            }
+            Ok(self.hybrid.clone())
+        }
+        async fn list_chunks(&self, doc_id: &str) -> Result<Vec<Value>, String> {
+            self.calls.lock().unwrap().push(format!("list:{doc_id}"));
+            if self.fail {
+                return Err("boom".to_string());
+            }
+            Ok(self.document.clone())
+        }
+        fn has_web(&self) -> bool {
+            self.web_enabled
+        }
+        async fn web_search(&self, query: &str) -> Result<Vec<Value>, String> {
+            self.calls.lock().unwrap().push(format!("web:{query}"));
+            if self.fail {
+                return Err("boom".to_string());
+            }
+            Ok(self.web.clone())
+        }
+    }
+
+    fn chunk(id: &str, content: &str, doc_id: &str) -> Value {
+        json!({"chunk_id": id, "content_with_weight": content, "doc_id": doc_id})
+    }
+
+    #[test]
+    fn admission_caps_and_table_passthrough() {
+        let mut kbinfos = Kbinfos::default();
+        let mut kb_seen: HashSet<String> = HashSet::new();
+        let mut out: Vec<Value> = Vec::new();
+        let mut ids: Vec<String> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+
+        let table =
+            json!({"chunk_id": "t1", "content_with_weight": "| a |\n| - |\n| 1 |", "doc_id": "d1"});
+        assert!(!is_table_chunk(
+            &json!({"content_with_weight": "plain prose"})
+        ));
+        assert!(admit_evidence(
+            &mut kbinfos,
+            &mut kb_seen,
+            &table,
+            &mut out,
+            &mut ids,
+            &mut seen,
+            true
+        ));
+        assert_eq!(
+            out[0]["content"],
+            json!("| a |\n| - |\n| 1 |"),
+            "tables stay whole"
+        );
+        assert_eq!(out[0]["doc_id"], json!("d1"));
+
+        let long = "x".repeat(2000);
+        assert!(admit_evidence(
+            &mut kbinfos,
+            &mut kb_seen,
+            &chunk("c2", &long, "d1"),
+            &mut out,
+            &mut ids,
+            &mut seen,
+            false
+        ));
+        assert_eq!(out[1]["content"].as_str().unwrap().chars().count(), 1200);
+        assert!(out[1].get("doc_id").is_none());
+
+        // Already-seen chunk -> not new, not duplicated.
+        assert!(!admit_evidence(
+            &mut kbinfos,
+            &mut kb_seen,
+            &chunk("c2", &long, "d1"),
+            &mut out,
+            &mut ids,
+            &mut seen,
+            false
+        ));
+        assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn admission_early_stops_at_pool_cap() {
+        let mut kbinfos = Kbinfos::default();
+        for index in 0..EVIDENCE_POOL_CAP {
+            kbinfos.chunks.push(chunk(&format!("pre{index}"), "x", "d"));
+        }
+        let mut kb_seen: HashSet<String> = HashSet::new();
+        let mut out: Vec<Value> = Vec::new();
+        let mut ids: Vec<String> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        assert!(!admit_evidence(
+            &mut kbinfos,
+            &mut kb_seen,
+            &chunk("late", "y", "d"),
+            &mut out,
+            &mut ids,
+            &mut seen,
+            true
+        ));
+        assert!(out.is_empty(), "pool cap blocks further admits");
+    }
+
+    #[test]
+    fn outcome_and_query_args_mirror_upstream() {
+        let miss = search_outcome(&[], &[], 0);
+        assert_eq!(miss.status, OUTCOME_MISS);
+        assert_eq!(miss.reason, "no_doc");
+        let redundant = search_outcome(&[json!({"id": "c1"})], &["c1".to_string()], 0);
+        assert_eq!(redundant.status, OUTCOME_REDUNDANT);
+        let ok = search_outcome(&[json!({"id": "c2"})], &["c2".to_string()], 1);
+        assert_eq!(ok.status, OUTCOME_OK);
+        assert_eq!(ok.metrics["hits"], json!(1));
+
+        assert_eq!(arg_query_list(&json!({"query": "one"}), 3), vec!["one"]);
+        assert_eq!(
+            arg_query_list(&json!({"query": ["a", "b", "c", "d"]}), 3),
+            vec!["a", "b", "c"]
+        );
+        assert!(arg_query_list(&json!({}), 3).is_empty());
+    }
+
+    #[tokio::test]
+    async fn retrieve_and_search_executors() {
+        let backend = MockBackend {
+            grep: vec![chunk("c1", "alpha", "d1"), chunk("c2", "beta", "d1")],
+            hybrid: vec![chunk("c1", "alpha", "d1"), chunk("c3", "gamma", "d1")],
+            ..Default::default()
+        };
+        let mut kbinfos = Kbinfos::default();
+        let outcome = exec_retrieve(
+            &backend,
+            &mut kbinfos,
+            &["q1".to_string()],
+            None,
+            "nav hint",
+        )
+        .await;
+        assert_eq!(outcome.status, OUTCOME_OK);
+        assert_eq!(
+            outcome.evidence_ids,
+            vec!["c1".to_string(), "c2".to_string()]
+        );
+        assert_eq!(kbinfos.chunks.len(), 2);
+        assert!(backend.calls.lock().unwrap()[0].contains("Some(\"nav hint\")"));
+
+        // Second search over the same chunks -> redundant.
+        let outcome = exec_search_chunks(&backend, &mut kbinfos, &["q2".to_string()], true).await;
+        assert_eq!(outcome.status, OUTCOME_OK, "c3 is new");
+        let outcome = exec_search_chunks(&backend, &mut kbinfos, &["q3".to_string()], false).await;
+        assert_eq!(outcome.status, OUTCOME_REDUNDANT);
+
+        // Backend failure -> continue with an empty (miss) outcome.
+        let failing = MockBackend {
+            fail: true,
+            ..Default::default()
+        };
+        let outcome = exec_retrieve(&failing, &mut kbinfos, &["q".to_string()], None, "").await;
+        assert_eq!(outcome.status, OUTCOME_MISS);
+    }
+
+    #[tokio::test]
+    async fn web_and_list_chunks_contracts() {
+        let mut kbinfos = Kbinfos::default();
+        let no_web = MockBackend::default();
+        let outcome = exec_web_search(&no_web, &mut kbinfos, &["q".to_string()]).await;
+        assert_eq!(outcome.status, OUTCOME_ERROR);
+        assert_eq!(outcome.reason, "infra");
+        assert!(
+            outcome.payload[0]["note"]
+                .as_str()
+                .unwrap()
+                .contains("NOT configured")
+        );
+
+        let web = MockBackend {
+            web_enabled: true,
+            web: vec![chunk("w1", "web hit", "w")],
+            ..Default::default()
+        };
+        let outcome = exec_web_search(&web, &mut kbinfos, &["q".to_string()]).await;
+        assert_eq!(outcome.status, OUTCOME_OK);
+        assert!(
+            outcome.payload[0].get("doc_id").is_none(),
+            "web entries omit doc_id"
+        );
+
+        let doc = MockBackend {
+            document: vec![chunk("d1", "doc text", "doc")],
+            ..Default::default()
+        };
+        let outcome = exec_list_chunks(&doc, &mut kbinfos, "doc").await;
+        assert_eq!(outcome.status, OUTCOME_OK);
+        assert_eq!(outcome.evidence_ids, vec!["d1".to_string()]);
+    }
+}
 
 // ── Terminal parsing + tool surface (part 3a) ──────────────────────────────
 
@@ -919,7 +1174,167 @@ pub fn parse_tool_calls(raw_calls: &[Value]) -> Vec<ToolCall> {
     calls
 }
 
+#[cfg(test)]
+mod parse_tests {
+    use super::*;
+    use serde_json::json;
 
+    fn state_with(vars: Vec<Variable>) -> SlotState {
+        SlotState::new(vars, 0)
+    }
+
+    #[test]
+    fn tag_and_json_extraction() {
+        let text = "blah <state>{\"new_states\": []}</state> tail";
+        assert_eq!(
+            extract_tag(text, "state"),
+            Some("{\"new_states\": []}".to_string())
+        );
+        // Fenced fallback for models that ignore the XML protocol.
+        let fenced = "here you go\n```json\n{\"answer\": \"42\"}\n```";
+        assert_eq!(
+            extract_tag(fenced, "answer"),
+            Some("{\"answer\": \"42\"}".to_string())
+        );
+        assert_eq!(extract_tag("no protocol here", "state"), None);
+        // extract_json picks the first parseable object.
+        assert_eq!(
+            extract_json("noise {\"a\": 1} trailing"),
+            Some(json!({"a": 1}))
+        );
+        assert_eq!(extract_json("no objects"), None);
+
+        let mut var = Variable {
+            id: 1,
+            r#type: "person".to_string(),
+            ..Default::default()
+        };
+        var.candidate = Some("Ada".to_string());
+        assert_eq!(var.candidate.as_deref(), Some("Ada"));
+    }
+
+    #[test]
+    fn apply_patch_only_mutates_existing_ids() {
+        let base = state_with(vec![Variable {
+            id: 1,
+            r#type: "person".to_string(),
+            ..Default::default()
+        }]);
+        // Unknown id -> no change -> None.
+        assert!(apply_patch(&base, &[json!({"id": 9, "candidate": "X"})]).is_none());
+        // Missing id -> structural error -> None.
+        assert!(apply_patch(&base, &[json!({"candidate": "X"})]).is_none());
+        // Valid patch on an existing id.
+        let patched = apply_patch(
+            &base,
+            &[json!({"id": 1, "candidate": "Ada", "candidate_strength": 1.7, "discovered_clues": ["a", "b"]})],
+        )
+        .expect("patch applied");
+        assert_eq!(patched.depth, 1);
+        assert_eq!(patched.state[0].candidate.as_deref(), Some("Ada"));
+        assert_eq!(
+            patched.state[0].candidate_strength,
+            Some(1.0),
+            "strength clamps to 1.0"
+        );
+        assert_eq!(
+            patched.state[0].discovered_clues,
+            vec!["a".to_string(), "b".to_string()]
+        );
+        // Patch that changes nothing -> None.
+        assert!(apply_patch(&base, &[json!({"id": 1})]).is_none());
+    }
+
+    #[test]
+    fn terminal_parsing_paths() {
+        let base = state_with(vec![Variable {
+            id: 1,
+            r#type: "person".to_string(),
+            ..Default::default()
+        }]);
+        // <state> with bare-dict branches gets wrapped and patched.
+        let (branches, answer, kind, _payload) = parse_terminal(
+            "<state>{\"new_states\": [{\"id\": 1, \"candidate\": \"Ada\"}]}</state>",
+            &base,
+        );
+        assert_eq!(kind.as_deref(), Some("state"));
+        assert!(answer.is_none());
+        assert_eq!(branches.len(), 1);
+        assert_eq!(branches[0].state[0].candidate.as_deref(), Some("Ada"));
+
+        // <answer> may patch the parent state too.
+        let (states, answer, kind, payload) = parse_terminal(
+            "<answer>{\"answer\": \" 42 \", \"new_state\": [{\"id\": 1, \"candidate\": \"Ada\"}]}</answer>",
+            &base,
+        );
+        assert_eq!(kind.as_deref(), Some("answer"));
+        assert_eq!(answer.as_deref(), Some("42"));
+        assert_eq!(states.len(), 1);
+        assert_eq!(states[0].state[0].candidate.as_deref(), Some("Ada"));
+        assert_eq!(payload.unwrap()["answer"], json!(" 42 "));
+
+        // Empty answer -> None, no branches.
+        let (states, answer, kind, _) =
+            parse_terminal("<answer>{\"answer\": \"  \"}</answer>", &base);
+        assert!(answer.is_none());
+        assert_eq!(kind.as_deref(), Some("answer"));
+        assert_eq!(states.len(), 1, "final_state mirrors the parent");
+
+        // Neither block -> nothing.
+        let (states, answer, kind, _) = parse_terminal("just prose", &base);
+        assert!(states.is_empty() && answer.is_none() && kind.is_none());
+    }
+
+    #[test]
+    fn tool_calls_normalize_and_mark_unknown() {
+        let raw = vec![
+            json!({"id": "c1", "function": {"name": "retrieve", "arguments": "{\"query\": [\"a\"]}"}}),
+            json!({"function": {"name": "state", "arguments": "not json"}}),
+            json!({"id": "c3", "function": {"name": "search_chunks", "arguments": {"query": "b"}}}),
+        ];
+        let calls = parse_tool_calls(&raw);
+        assert_eq!(calls.len(), 3);
+        assert_eq!(calls[0].id, "c1");
+        assert_eq!(calls[0].args["query"][0], json!("a"));
+        assert!(!calls[0].unknown);
+        assert_eq!(calls[1].id, "call_1", "missing ids are synthesized");
+        assert!(calls[1].unknown, "XML protocol tags are unknown tools");
+        assert_eq!(calls[1].args, json!({}), "bad JSON falls back to {{}}");
+        assert_eq!(
+            calls[2].args["query"],
+            json!("b"),
+            "object args pass through"
+        );
+    }
+
+    #[test]
+    fn tool_surface_gates() {
+        let mut high = std::collections::BTreeSet::new();
+        for name in ["retrieve", "search_chunks", "navigate_tree", "web_search"] {
+            high.insert(name.to_string());
+        }
+        let mut ultra = high.clone();
+        ultra.insert("graph_explore".to_string());
+        let none: HashSet<String> = HashSet::new();
+        assert_eq!(
+            active_tool_specs(&high, true, &none),
+            vec!["retrieve", "search_chunks", "navigate_tree", "web_search"]
+        );
+        assert_eq!(
+            active_tool_specs(&high, false, &none),
+            vec!["retrieve", "search_chunks", "navigate_tree"],
+            "no provider hides web_search"
+        );
+        assert!(active_tool_specs(&ultra, true, &none).contains(&"graph_explore".to_string()));
+        let disabled: HashSet<String> = ["navigate_tree".to_string()].into_iter().collect();
+        assert!(!active_tool_specs(&high, true, &disabled).contains(&"navigate_tree".to_string()));
+
+        assert_eq!(reason_status("no_structure"), OUTCOME_EMPTY);
+        assert_eq!(reason_status("no_doc"), OUTCOME_MISS);
+        assert_eq!(reason_status("bad_args"), OUTCOME_ERROR);
+        assert_eq!(reason_status("infra"), OUTCOME_ERROR);
+    }
+}
 
 // ── Tool spec constants (part 3b-1; `_TOOL_MAP` schemas verbatim) ───────────
 
@@ -1053,7 +1468,43 @@ pub fn active_tool_schemas(names: &[String]) -> Vec<Value> {
         .collect()
 }
 
+#[cfg(test)]
+mod spec_tests {
+    use super::*;
 
+    #[test]
+    fn all_eight_specs_build_with_verbatim_names() {
+        let names: Vec<String> = TOOL_MAP_NAMES.iter().map(|n| (*n).to_string()).collect();
+        let specs = active_tool_schemas(&names);
+        assert_eq!(specs.len(), 8);
+        for (index, spec) in specs.iter().enumerate() {
+            assert_eq!(spec["type"], serde_json::json!("function"));
+            assert_eq!(
+                spec["function"]["name"],
+                serde_json::json!(TOOL_MAP_NAMES[index])
+            );
+            let description = spec["function"]["description"].as_str().unwrap();
+            assert!(
+                description.chars().count() > 40,
+                "spec {} carries a description",
+                TOOL_MAP_NAMES[index]
+            );
+            assert_eq!(
+                spec["function"]["parameters"]["type"],
+                serde_json::json!("object")
+            );
+        }
+        // Subset filtering keeps registry order.
+        let subset = active_tool_schemas(&["list_chunks".to_string(), "retrieve".to_string()]);
+        assert_eq!(subset.len(), 2);
+        assert_eq!(subset[0]["function"]["name"], serde_json::json!("retrieve"));
+        assert_eq!(
+            subset[1]["function"]["name"],
+            serde_json::json!("list_chunks")
+        );
+        assert!(tool_spec("unknown").is_none());
+    }
+}
 
 // ── Tool loop (part 3b-2a): executors, dispatch, policy ─────────────────────
 
@@ -2807,10 +3258,1649 @@ pub async fn run_action_session(
     }
 }
 
+#[cfg(test)]
+mod loop_tests {
+    use super::*;
+    use async_trait::async_trait;
+    use serde_json::json;
 
+    struct MockSearch;
+    #[async_trait]
+    impl ActionSearchBackend for MockSearch {
+        async fn grep_search(
+            &self,
+            _q: &str,
+            _t: usize,
+            _s: Option<&[String]>,
+            _k: Option<&str>,
+        ) -> Result<Vec<Value>, String> {
+            Ok(vec![])
+        }
+        async fn hybrid_search(&self, _q: &str, _t: usize, _c: bool) -> Result<Vec<Value>, String> {
+            Ok(vec![])
+        }
+        async fn list_chunks(&self, _d: &str) -> Result<Vec<Value>, String> {
+            Ok(vec![])
+        }
+        fn has_web(&self) -> bool {
+            false
+        }
+        async fn web_search(&self, _q: &str) -> Result<Vec<Value>, String> {
+            Ok(vec![])
+        }
+    }
 
+    struct MockTools {
+        nav_result: std::sync::Mutex<NavResult>,
+        calc: bool,
+        graph: Value,
+    }
 
+    #[async_trait]
+    impl ActionToolBackend for MockTools {
+        async fn navigate_tree(&self, _q: &str) -> NavResult {
+            self.nav_result.lock().unwrap().clone()
+        }
+        async fn navigate_structure(&self, _d: &str, _q: &str, _k: &str) -> NavResult {
+            self.nav_result.lock().unwrap().clone()
+        }
+        async fn calculate(&self, _q: &str, _f: &[String]) -> Option<Value> {
+            if self.calc {
+                Some(json!({"expression": "1+1", "value": "2"}))
+            } else {
+                None
+            }
+        }
+        async fn graph_explore(&self, _q: &str, _s: &[String]) -> Value {
+            self.graph.clone()
+        }
+    }
 
+    fn runtime<'a>(search: &'a MockSearch, tools: &'a MockTools) -> ActionRuntime<'a> {
+        ActionRuntime { search, tools }
+    }
 
+    #[tokio::test]
+    async fn dispatch_and_disable_paths() {
+        let search = MockSearch;
+        let tools = MockTools {
+            nav_result: std::sync::Mutex::new(NavResult {
+                empty_reason: "no_structure".to_string(),
+                ..NavResult::default()
+            }),
+            calc: true,
+            graph: json!({"answer": "", "chunks": []}),
+        };
+        let rt = runtime(&search, &tools);
+        let mut kbinfos = Kbinfos::default();
+        let disabled: HashSet<String> = HashSet::new();
 
+        let outcome = execute_tool(
+            &rt,
+            &mut kbinfos,
+            &disabled,
+            "navigate_tree",
+            &json!({"query": "q"}),
+        )
+        .await;
+        assert_eq!(outcome.status, OUTCOME_EMPTY);
+        assert_eq!(outcome.reason, "no_structure");
 
+        let outcome = execute_tool(
+            &rt,
+            &mut kbinfos,
+            &disabled,
+            "calculate",
+            &json!({"question": "q", "facts": ["1", "1"]}),
+        )
+        .await;
+        assert_eq!(outcome.status, OUTCOME_OK);
+        assert_eq!(outcome.payload[0]["result"], json!("2"));
+
+        let outcome = execute_tool(
+            &rt,
+            &mut kbinfos,
+            &disabled,
+            "graph_explore",
+            &json!({"query": "q"}),
+        )
+        .await;
+        assert_eq!(outcome.status, OUTCOME_EMPTY);
+        assert_eq!(outcome.reason, "no_structure");
+
+        let outcome = execute_tool(&rt, &mut kbinfos, &disabled, "bogus", &json!({})).await;
+        assert_eq!(outcome.status, OUTCOME_ERROR);
+        assert_eq!(outcome.reason, "bad_args");
+
+        // Disabled tools short-circuit with a note.
+        let mut blocked: HashSet<String> = HashSet::new();
+        blocked.insert("graph_explore".to_string());
+        let outcome = execute_tool(
+            &rt,
+            &mut kbinfos,
+            &blocked,
+            "graph_explore",
+            &json!({"query": "q"}),
+        )
+        .await;
+        assert_eq!(outcome.status, OUTCOME_EMPTY);
+        assert!(
+            outcome.payload[0]["note"]
+                .as_str()
+                .unwrap()
+                .contains("unavailable")
+        );
+
+        // calculate without a derivable answer is poor.
+        let tools = MockTools {
+            calc: false,
+            ..tools
+        };
+        let rt = runtime(&search, &tools);
+        let outcome = execute_tool(
+            &rt,
+            &mut kbinfos,
+            &disabled,
+            "calculate",
+            &json!({"question": "q", "facts": ["x"]}),
+        )
+        .await;
+        assert_eq!(outcome.status, OUTCOME_POOR);
+    }
+
+    #[tokio::test]
+    async fn tool_node_policy_covers_guards() {
+        let search = MockSearch;
+        let tools = MockTools {
+            nav_result: std::sync::Mutex::new(NavResult {
+                empty_reason: "no_structure".to_string(),
+                ..NavResult::default()
+            }),
+            calc: true,
+            graph: json!({"answer": "", "chunks": []}),
+        };
+        let rt = runtime(&search, &tools);
+        let mut kbinfos = Kbinfos::default();
+        let mut seen: Vec<String> = vec!["alpha creator OmiyaSoft".to_string()];
+        let mut cache = std::collections::HashMap::new();
+        let mut strikes = std::collections::HashMap::new();
+        let mut disabled: HashSet<String> = HashSet::new();
+        let pending = vec![
+            // Near-duplicate of an earlier retrieval -> skipped.
+            ToolCall {
+                id: "c1".into(),
+                name: "search_chunks".into(),
+                args: json!({"query": "OmiyaSoft alpha creator"}),
+                unknown: false,
+            },
+            // Unknown tool -> correction.
+            ToolCall {
+                id: "c2".into(),
+                name: "state".into(),
+                args: json!({}),
+                unknown: true,
+            },
+            // A working tool clears strikes.
+            ToolCall {
+                id: "c3".into(),
+                name: "navigate_tree".into(),
+                args: json!({"query": "q"}),
+                unknown: false,
+            },
+        ];
+        // First pass: two no_structure empties disable navigate_tree.
+        let first = tool_node_policy(
+            &rt,
+            &mut kbinfos,
+            &pending[2..],
+            &mut seen,
+            &mut cache,
+            &mut strikes,
+            &mut disabled,
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(first.skipped_dup, 0);
+        assert!(first.disabled.is_empty(), "one strike is not enough");
+        let second = tool_node_policy(
+            &rt,
+            &mut kbinfos,
+            &pending[2..],
+            &mut seen,
+            &mut cache,
+            &mut strikes,
+            &mut disabled,
+            &[],
+            None,
+        )
+        .await;
+        assert!(
+            second.disabled.contains("navigate_tree"),
+            "second strike disables"
+        );
+
+        let mut strikes2 = std::collections::HashMap::new();
+        strikes2.insert("navigate_tree".to_string(), 1);
+        let mut disabled2: HashSet<String> = HashSet::new();
+        let ok_nav = MockTools {
+            nav_result: std::sync::Mutex::new(NavResult {
+                doc_ids: vec!["d1".to_string()],
+                ..NavResult::default()
+            }),
+            calc: true,
+            graph: json!({"answer": "", "chunks": []}),
+        };
+        let rt2 = runtime(&search, &ok_nav);
+        cache.clear();
+        let third = tool_node_policy(
+            &rt2,
+            &mut kbinfos,
+            &pending[2..],
+            &mut seen,
+            &mut cache,
+            &mut strikes2,
+            &mut disabled2,
+            &[],
+            None,
+        )
+        .await;
+        assert!(
+            strikes2.get("navigate_tree").is_none(),
+            "a real hit clears the strike record"
+        );
+        assert_eq!(third.evidence_ids, vec!["d1".to_string()]);
+
+        // Near-dup skip + unknown correction in one pass.
+        let mixed = tool_node_policy(
+            &rt2,
+            &mut kbinfos,
+            &pending[..2],
+            &mut seen,
+            &mut cache,
+            &mut strikes2,
+            &mut disabled2,
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(mixed.skipped_dup, 1);
+        assert!(
+            mixed.tool_messages[0]["content"]
+                .as_str()
+                .unwrap()
+                .contains("near-duplicate")
+        );
+        assert!(
+            mixed.tool_messages[1]["content"]
+                .as_str()
+                .unwrap()
+                .contains("is not a tool")
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn near_dup_detects_paraphrases() {
+        let seen = vec!["Culdcept original creator designer OmiyaSoft".to_string()];
+        assert!(is_near_dup(
+            "Culdcept creator designer OmiyaSoft original",
+            &seen
+        ));
+        assert!(!is_near_dup("weather in Tokyo tomorrow", &seen));
+        assert!(!is_near_dup("", &seen));
+        assert!(!is_near_dup("short", &seen));
+        assert!(!is_near_dup("culdcept", &[]));
+    }
+
+    #[test]
+    fn variable_and_state_render() {
+        let mut variable = Variable {
+            id: 1,
+            r#type: "person".to_string(),
+            question_clues: vec!["the founder".to_string()],
+            ..Default::default()
+        };
+        assert!(!variable.filled());
+        assert_eq!(variable.brief(), "[1] person: EMPTY");
+        variable.candidate = Some("Ada".to_string());
+        variable.candidate_strength = Some(0.75);
+        assert!(variable.filled());
+        assert_eq!(variable.brief(), "[1] person: Ada (0.75)");
+
+        let mut empty = Variable {
+            id: 2,
+            r#type: "date".to_string(),
+            candidate: Some(String::new()),
+            ..Default::default()
+        };
+        assert!(!empty.filled(), "empty candidate is unfilled");
+        empty.discovered_clues = vec!["a".to_string(), "b".to_string()];
+
+        let state = SlotState::new(vec![variable.clone(), empty.clone()], 2);
+        assert!(
+            state.id.starts_with("002_"),
+            "depth-prefixed id: {}",
+            state.id
+        );
+        assert_eq!(state.unresolved().len(), 1);
+        assert_eq!(state.by_id(2).map(|v| v.id), Some(2));
+        assert_eq!(state.brief(), "d2(+.)");
+        let rendered = state.render_slots();
+        assert!(rendered.contains("- id=1 type=person"));
+        assert!(rendered.contains("CANDIDATE: Ada (strength=0.75)"));
+        assert!(rendered.contains("discovered_clues: a; b"));
+    }
+
+    #[test]
+    fn tool_outcome_constructors() {
+        let outcome = ToolOutcome::ok(vec![json!({"chunk_id": "c1"})], vec!["c1".to_string()]);
+        assert_eq!(outcome.status, OUTCOME_OK);
+        assert_eq!(outcome.reason, "");
+        assert_eq!(outcome.evidence_ids, vec!["c1".to_string()]);
+        let empty = ToolOutcome::empty("no_structure");
+        assert_eq!(empty.status, OUTCOME_EMPTY);
+        assert_eq!(empty.reason, "no_structure");
+        assert_eq!(ToolOutcome::miss().status, OUTCOME_MISS);
+    }
+}
+#[cfg(test)]
+mod session_loop_tests {
+    use super::*;
+    use serde_json::json;
+    use std::collections::BTreeSet;
+    use std::sync::Mutex;
+
+    struct MockSearch;
+
+    #[async_trait]
+    impl ActionSearchBackend for MockSearch {
+        async fn grep_search(
+            &self,
+            _q: &str,
+            _t: usize,
+            _s: Option<&[String]>,
+            _k: Option<&str>,
+        ) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+        async fn hybrid_search(&self, _q: &str, _t: usize, _c: bool) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+        async fn list_chunks(&self, _d: &str) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+        fn has_web(&self) -> bool {
+            false
+        }
+        async fn web_search(&self, _q: &str) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+    }
+
+    struct MockTools;
+
+    #[async_trait]
+    impl ActionToolBackend for MockTools {
+        async fn navigate_tree(&self, _q: &str) -> NavResult {
+            NavResult::default()
+        }
+        async fn navigate_structure(&self, _d: &str, _q: &str, _k: &str) -> NavResult {
+            NavResult::default()
+        }
+        async fn calculate(&self, _q: &str, _facts: &[String]) -> Option<Value> {
+            Some(json!({"expression": "1+1", "result": "2"}))
+        }
+        async fn graph_explore(&self, _q: &str, _s: &[String]) -> Value {
+            json!({"answer": "", "chunks": []})
+        }
+    }
+
+    struct MockLlm {
+        with_tools: Mutex<Vec<Option<LlmReply>>>,
+        plain: Mutex<Vec<Option<LlmReply>>>,
+        with_tools_calls: Mutex<Vec<(Vec<Value>, Vec<Value>, f64)>>,
+        plain_calls: Mutex<Vec<(Vec<Value>, f64)>>,
+    }
+
+    impl MockLlm {
+        fn new(with_tools: Vec<Option<LlmReply>>, plain: Vec<Option<LlmReply>>) -> Self {
+            Self {
+                with_tools: Mutex::new(with_tools),
+                plain: Mutex::new(plain),
+                with_tools_calls: Mutex::new(Vec::new()),
+                plain_calls: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ActionLlmBackend for MockLlm {
+        async fn complete_with_tools(
+            &self,
+            messages: &[Value],
+            tool_schemas: &[Value],
+            timeout_s: f64,
+        ) -> Option<LlmReply> {
+            self.with_tools_calls.lock().unwrap().push((
+                messages.to_vec(),
+                tool_schemas.to_vec(),
+                timeout_s,
+            ));
+            let mut queue = self.with_tools.lock().unwrap();
+            if queue.is_empty() {
+                None
+            } else {
+                queue.remove(0)
+            }
+        }
+        async fn complete_plain(&self, messages: &[Value], timeout_s: f64) -> Option<LlmReply> {
+            self.plain_calls
+                .lock()
+                .unwrap()
+                .push((messages.to_vec(), timeout_s));
+            let mut queue = self.plain.lock().unwrap();
+            if queue.is_empty() {
+                None
+            } else {
+                queue.remove(0)
+            }
+        }
+    }
+
+    fn content_reply(content: &str) -> LlmReply {
+        LlmReply {
+            content: content.to_string(),
+            tool_calls: Vec::new(),
+        }
+    }
+
+    fn call_reply(id: &str, name: &str, args: &Value) -> LlmReply {
+        LlmReply {
+            content: "working on it".to_string(),
+            tool_calls: vec![json!({
+                "id": id,
+                "type": "function",
+                "function": {"name": name, "arguments": args.to_string()},
+            })],
+        }
+    }
+
+    fn session_fixture() -> SessionState {
+        let mut session = SessionState::new(
+            SlotState::new(
+                vec![
+                    Variable {
+                        id: 0,
+                        r#type: "found".to_string(),
+                        candidate: Some("x".to_string()),
+                        ..Variable::default()
+                    },
+                    Variable {
+                        id: 1,
+                        r#type: "missing".to_string(),
+                        ..Variable::default()
+                    },
+                ],
+                0,
+            ),
+            "ultra",
+            BTreeSet::from([
+                "retrieve".to_string(),
+                "search_chunks".to_string(),
+                "calculate".to_string(),
+            ]),
+            false,
+            "who?",
+        );
+        session
+            .messages
+            .push(json!({"role": "user", "content": "who?"}));
+        session
+    }
+
+    #[tokio::test]
+    async fn run_action_node_terminal_converges() {
+        let llm = MockLlm::new(
+            vec![Some(content_reply(
+                "<answer>{\"answer\": \"forty-two\"}</answer>",
+            ))],
+            vec![],
+        );
+        let mut state = session_fixture();
+        run_action_node(&llm, &mut state).await;
+        assert!(state.done);
+        assert_eq!(state.found_answer.as_deref(), Some("forty-two"));
+        assert_eq!(state.attempts, 1);
+        assert_eq!(
+            state.messages.len(),
+            1,
+            "terminal turns append no assistant message"
+        );
+        let calls = llm.with_tools_calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].2, ACTION_TIMEOUT_S);
+        assert!(!calls[0].1.is_empty(), "tool schemas must be advertised");
+    }
+
+    #[tokio::test]
+    async fn run_action_node_timeout_converges_empty() {
+        let llm = MockLlm::new(vec![None], vec![]);
+        let mut state = session_fixture();
+        run_action_node(&llm, &mut state).await;
+        assert!(state.done);
+        assert!(state.found_answer.is_none());
+        assert!(state.new_states.is_empty());
+        assert_eq!(state.attempts, 1);
+        assert_eq!(
+            state.messages.len(),
+            1,
+            "no message is appended on a timeout"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_action_node_tool_call_message_shape() {
+        let args = json!({"query": ["alpha"]});
+        let llm = MockLlm::new(vec![Some(call_reply("c1", "search_chunks", &args))], vec![]);
+        let mut state = session_fixture();
+        run_action_node(&llm, &mut state).await;
+        assert!(!state.done);
+        assert_eq!(state.pending_calls.len(), 1);
+        assert_eq!(state.pending_calls[0].id, "c1");
+        assert_eq!(state.pending_calls[0].name, "search_chunks");
+        assert!(!state.pending_calls[0].unknown);
+        let message = &state.messages[1];
+        assert_eq!(message["role"], "assistant");
+        assert_eq!(message["content"], "working on it");
+        let call = &message["tool_calls"][0];
+        assert_eq!(call["id"], "c1");
+        assert_eq!(call["type"], "function");
+        assert_eq!(call["function"]["name"], "search_chunks");
+        let arguments: Value =
+            serde_json::from_str(call["function"]["arguments"].as_str().unwrap()).unwrap();
+        assert_eq!(arguments, args);
+    }
+
+    #[tokio::test]
+    async fn run_action_node_nudges_without_terminal() {
+        let llm = MockLlm::new(vec![Some(content_reply("just thinking"))], vec![]);
+        let mut state = session_fixture();
+        run_action_node(&llm, &mut state).await;
+        assert!(!state.done);
+        assert!(state.pending_calls.is_empty());
+        assert_eq!(state.messages.len(), 3);
+        assert_eq!(state.messages[1]["role"], "assistant");
+        assert_eq!(state.messages[2]["role"], "user");
+        assert_eq!(state.messages[2]["content"], NUDGE_TEXT);
+    }
+
+    #[test]
+    fn strip_unpaired_tool_calls_matrix() {
+        let paired = json!({
+            "role": "assistant",
+            "content": "paired",
+            "tool_calls": [{"id": "c1"}],
+        });
+        let unpaired = json!({
+            "role": "assistant",
+            "content": "unpaired",
+            "tool_calls": [{"id": "c2"}],
+        });
+        let messages = vec![
+            json!({"role": "user", "content": "q"}),
+            paired.clone(),
+            json!({"role": "tool", "tool_call_id": "c1", "content": "ok"}),
+            unpaired.clone(),
+        ];
+        let cleaned = strip_unpaired_tool_calls(&messages);
+        assert_eq!(cleaned.len(), 4);
+        assert!(cleaned[1].get("tool_calls").is_some(), "paired stays");
+        assert!(cleaned[3].get("tool_calls").is_none(), "unpaired drops");
+        assert_eq!(cleaned[3]["content"], "unpaired", "content is kept");
+    }
+
+    #[tokio::test]
+    async fn finalize_prompts_strips_and_harvests() {
+        let llm = MockLlm::new(vec![], vec![Some(content_reply("no JSON at all"))]);
+        let mut state = session_fixture();
+        state.messages.push(json!({
+            "role": "assistant",
+            "content": "working on it",
+            "tool_calls": [{"id": "c9", "type": "function",
+                "function": {"name": "calculate", "arguments": "{}"}}],
+        }));
+        state.messages.push(json!({
+            "role": "assistant",
+            "content": "the corpus narration carries a promising clue indeed",
+        }));
+        finalize_node(&llm, &mut state).await;
+        assert!(state.done);
+        assert_eq!(
+            state.new_states.len(),
+            1,
+            "loose-clue harvest patches a slot"
+        );
+        let slot = state.new_states[0]
+            .state
+            .iter()
+            .find(|variable| variable.id == 1)
+            .unwrap();
+        assert!(slot.discovered_clues[0].starts_with("narrative: "));
+        let plain_calls = llm.plain_calls.lock().unwrap();
+        assert_eq!(plain_calls.len(), 1);
+        assert_eq!(plain_calls[0].1, 150.0);
+        let history = &plain_calls[0].0;
+        let last = history.last().unwrap();
+        assert_eq!(last["role"], "user");
+        assert_eq!(last["content"], BUDGET_PROMPT);
+        let stripped = history
+            .iter()
+            .find(|message| message["content"] == "working on it")
+            .unwrap();
+        assert!(stripped.get("tool_calls").is_none());
+    }
+
+    #[test]
+    fn route_matrix() {
+        let mut state = session_fixture();
+        assert_eq!(route(&state), RouteDecision::RunAction);
+        state.done = true;
+        assert_eq!(route(&state), RouteDecision::End);
+        state.done = false;
+        state.pending_calls.push(ToolCall {
+            id: "c1".to_string(),
+            name: "retrieve".to_string(),
+            args: json!({}),
+            unknown: false,
+        });
+        state.attempts = state.max_turns();
+        assert_eq!(
+            route(&state),
+            RouteDecision::Tool,
+            "pending beats the budget"
+        );
+        state.pending_calls.clear();
+        assert_eq!(route(&state), RouteDecision::Finalize);
+        state.attempts = 1;
+        state.skipped_dup = 2;
+        assert_eq!(route(&state), RouteDecision::Finalize);
+        state.skipped_dup = 0;
+        assert_eq!(route_after_tool(&state), RouteDecision::RunAction);
+        state.attempts = state.max_turns();
+        assert_eq!(route_after_tool(&state), RouteDecision::Finalize);
+    }
+
+    #[tokio::test]
+    async fn run_session_loop_tool_then_answer() {
+        let args = json!({"question": "1+1", "facts": ["1", "1"]});
+        let llm = MockLlm::new(
+            vec![
+                Some(call_reply("c1", "calculate", &args)),
+                Some(content_reply("<answer>{\"answer\": \"2\"}</answer>")),
+            ],
+            vec![],
+        );
+        let search = MockSearch;
+        let tools = MockTools;
+        let runtime = ActionRuntime {
+            search: &search,
+            tools: &tools,
+        };
+        let mut kbinfos = Kbinfos::default();
+        let mut state = session_fixture();
+        run_session_loop(&runtime, &llm, &mut kbinfos, &mut state).await;
+        assert!(state.done);
+        assert_eq!(state.found_answer.as_deref(), Some("2"));
+        assert_eq!(state.attempts, 2);
+        assert_eq!(state.messages.len(), 3);
+        assert_eq!(state.messages[2]["role"], "tool");
+        assert_eq!(state.messages[2]["tool_call_id"], "c1");
+        assert_eq!(state.outcomes.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn run_session_loop_budget_finalizes() {
+        let nudge = "thinking hard about the question without a terminal block";
+        let llm = MockLlm::new(
+            vec![
+                Some(content_reply(nudge)),
+                Some(content_reply(nudge)),
+                Some(content_reply(nudge)),
+                Some(content_reply(nudge)),
+            ],
+            vec![Some(content_reply("<state>{\"new_states\": []}</state>"))],
+        );
+        let search = MockSearch;
+        let tools = MockTools;
+        let runtime = ActionRuntime {
+            search: &search,
+            tools: &tools,
+        };
+        let mut kbinfos = Kbinfos::default();
+        let mut state = session_fixture();
+        run_session_loop(&runtime, &llm, &mut kbinfos, &mut state).await;
+        assert!(state.done);
+        assert_eq!(state.attempts, ACTION_MAX_TURNS);
+        assert_eq!(llm.with_tools_calls.lock().unwrap().len(), 4);
+        assert_eq!(llm.plain_calls.lock().unwrap().len(), 1);
+        assert_eq!(
+            state.new_states.len(),
+            1,
+            "finalize harvest keeps breadcrumbs"
+        );
+    }
+}
+#[cfg(test)]
+mod nav_prefix_tests {
+    use super::*;
+    use serde_json::json;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    fn chunk(id: &str, content: &str, doc_id: &str) -> Value {
+        json!({"chunk_id": id, "content_with_weight": content, "doc_id": doc_id})
+    }
+
+    struct NavMockSearch {
+        grep: Vec<Value>,
+        keywords: Mutex<Vec<Option<String>>>,
+    }
+
+    #[async_trait]
+    impl ActionSearchBackend for NavMockSearch {
+        async fn grep_search(
+            &self,
+            _q: &str,
+            _t: usize,
+            _s: Option<&[String]>,
+            keywords: Option<&str>,
+        ) -> Result<Vec<Value>, String> {
+            self.keywords
+                .lock()
+                .unwrap()
+                .push(keywords.map(str::to_string));
+            Ok(self.grep.clone())
+        }
+        async fn hybrid_search(&self, _q: &str, _t: usize, _c: bool) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+        async fn list_chunks(&self, _d: &str) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+        fn has_web(&self) -> bool {
+            false
+        }
+        async fn web_search(&self, _q: &str) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+    }
+
+    struct NavMockTools {
+        tree: NavResult,
+        structure: NavResult,
+    }
+
+    #[async_trait]
+    impl ActionToolBackend for NavMockTools {
+        async fn navigate_tree(&self, _q: &str) -> NavResult {
+            self.tree.clone()
+        }
+        async fn navigate_structure(&self, _d: &str, _q: &str, _k: &str) -> NavResult {
+            self.structure.clone()
+        }
+        async fn calculate(&self, _q: &str, _f: &[String]) -> Option<Value> {
+            None
+        }
+        async fn graph_explore(&self, _q: &str, _s: &[String]) -> Value {
+            json!({"answer": "", "chunks": []})
+        }
+    }
+
+    fn ctx_fixture() -> NavContext {
+        NavContext {
+            direction: "alpha topic".to_string(),
+            known_docs: vec!["d1".to_string()],
+            routed_docs: vec![("d1".to_string(), "routed summary".to_string())],
+            nav_hint: "routed summary".to_string(),
+        }
+    }
+
+    #[test]
+    fn nav_rules_table_matches_upstream() {
+        assert!(NAV_RULES_ENABLED);
+        assert_eq!(NAV_START_RULE, "locate");
+        assert_eq!(NAV_RULES.len(), 3);
+        assert_eq!(NAV_RULES[0].id, "locate");
+        assert_eq!(NAV_RULES[0].tool, "navigate_tree");
+        assert_eq!(NAV_RULES[1].id, "drill");
+        assert_eq!(NAV_RULES[1].tool, "navigate_structure");
+        assert_eq!(NAV_RULES[2].id, "global");
+        assert_eq!(NAV_RULES[2].tool, "retrieve");
+        assert!(NAV_RULES.iter().all(|rule| rule.mode == NavMode::Auto));
+        assert_eq!(NAV_RULES[0].next_rule(OUTCOME_OK), "drill");
+        assert_eq!(NAV_RULES[0].next_rule(OUTCOME_MISS), "global");
+        assert_eq!(NAV_RULES[0].next_rule(OUTCOME_POOR), "global");
+        assert_eq!(NAV_RULES[1].next_rule(OUTCOME_OK), "");
+        assert_eq!(NAV_RULES[1].next_rule(OUTCOME_EMPTY), "global");
+        assert_eq!(NAV_RULES[2].next_rule(OUTCOME_OK), "");
+        assert_eq!(
+            NAV_RULES[0].next_rule(OUTCOME_REDUNDANT),
+            "",
+            "unmapped statuses end the chain"
+        );
+    }
+
+    #[tokio::test]
+    async fn drill_merge_soft_boosts_and_reranks() {
+        let search = NavMockSearch {
+            grep: vec![
+                chunk("cB", "beta text", "d9"),
+                chunk("cA", "alpha text", "d1"),
+            ],
+            keywords: Mutex::new(Vec::new()),
+        };
+        let tools = NavMockTools {
+            tree: NavResult::default(),
+            structure: NavResult {
+                chunk_ptrs: 1,
+                chunk_paths: HashMap::from([("cA".to_string(), "Root > A".to_string())]),
+                ..NavResult::default()
+            },
+        };
+        let runtime = ActionRuntime {
+            search: &search,
+            tools: &tools,
+        };
+        let mut kbinfos = Kbinfos::default();
+        let ctx = ctx_fixture();
+        let available: HashSet<String> = ["retrieve".to_string(), "navigate_structure".to_string()]
+            .into_iter()
+            .collect();
+        let oc = run_drill_merge(&runtime, &mut kbinfos, &ctx, &available, 10.0).await;
+        assert_eq!(oc.status, OUTCOME_OK);
+        assert_eq!(oc.payload.len(), 2);
+        assert_eq!(oc.payload[0]["id"], "cA", "routed chunk floats to the top");
+        assert_eq!(oc.payload[0]["nav_rank"], 0);
+        assert_eq!(oc.payload[0]["structure_path"], "Root > A");
+        assert_eq!(oc.payload[1]["id"], "cB", "non-routed chunk stays below");
+        assert_eq!(oc.payload[1]["nav_rank"], 1);
+        assert!(oc.payload[1].get("structure_path").is_none());
+        assert!(oc.evidence_ids.contains(&"cA".to_string()));
+        assert!(oc.evidence_ids.contains(&"d1".to_string()));
+        let keywords = search.keywords.lock().unwrap();
+        assert_eq!(
+            keywords[0].as_deref(),
+            Some("routed summary"),
+            "nav hint is a soft BM25 boost"
+        );
+    }
+
+    #[tokio::test]
+    async fn nav_chain_locates_then_drills_to_completion() {
+        let search = NavMockSearch {
+            grep: vec![chunk("cA", "alpha text", "d1")],
+            keywords: Mutex::new(Vec::new()),
+        };
+        let tools = NavMockTools {
+            tree: NavResult {
+                doc_ids: vec!["d1".to_string()],
+                routed_docs: vec![("d1".to_string(), "routed summary".to_string())],
+                ..NavResult::default()
+            },
+            structure: NavResult {
+                chunk_ptrs: 1,
+                chunk_paths: HashMap::from([("cA".to_string(), "Root > A".to_string())]),
+                ..NavResult::default()
+            },
+        };
+        let runtime = ActionRuntime {
+            search: &search,
+            tools: &tools,
+        };
+        let mut kbinfos = Kbinfos::default();
+        let mut ctx = NavContext {
+            direction: "alpha topic".to_string(),
+            ..NavContext::default()
+        };
+        let available: HashSet<String> = [
+            "navigate_tree".to_string(),
+            "retrieve".to_string(),
+            "navigate_structure".to_string(),
+        ]
+        .into_iter()
+        .collect();
+        let mut messages: Vec<Value> = Vec::new();
+        let mut evidence_ids: Vec<String> = Vec::new();
+        let mut outcomes: Vec<Value> = Vec::new();
+        let pending = run_nav_chain(
+            &runtime,
+            &mut kbinfos,
+            &mut ctx,
+            NAV_START_RULE,
+            30.0,
+            &available,
+            &mut messages,
+            &mut evidence_ids,
+            &mut outcomes,
+            "nav",
+            0,
+        )
+        .await;
+        assert_eq!(pending, "", "drill OK ends the ladder");
+        assert_eq!(ctx.known_docs, vec!["d1".to_string()]);
+        assert_eq!(
+            ctx.routed_docs,
+            vec![("d1".to_string(), "routed summary".to_string())]
+        );
+        assert_eq!(ctx.nav_hint, "routed summary");
+        assert_eq!(outcomes.len(), 2);
+        assert_eq!(outcomes[0]["name"], "navigate_tree");
+        assert_eq!(outcomes[1]["name"], "navigate_structure");
+        assert_eq!(messages.len(), 4, "two completed assistant/tool pairs");
+        assert_eq!(messages[0]["tool_calls"][0]["id"], "nav_locate");
+        assert_eq!(messages[2]["tool_calls"][0]["id"], "nav_drill");
+        assert!(evidence_ids.contains(&"cA".to_string()));
+        assert!(evidence_ids.contains(&"d1".to_string()));
+    }
+
+    #[tokio::test]
+    async fn nav_prefix_requires_navigate_tree() {
+        let search = NavMockSearch {
+            grep: Vec::new(),
+            keywords: Mutex::new(Vec::new()),
+        };
+        let tools = NavMockTools {
+            tree: NavResult::default(),
+            structure: NavResult::default(),
+        };
+        let runtime = ActionRuntime {
+            search: &search,
+            tools: &tools,
+        };
+        let mut kbinfos = Kbinfos::default();
+        let available: HashSet<String> = ["retrieve".to_string()].into_iter().collect();
+        let (messages, evidence_ids, outcomes, pending) =
+            run_nav_prefix(&runtime, &mut kbinfos, "q", Some(30.0), &available, None).await;
+        assert!(messages.is_empty() && evidence_ids.is_empty() && outcomes.is_empty());
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn emit_nav_pair_caps_payload() {
+        let mut messages: Vec<Value> = Vec::new();
+        let oc = ToolOutcome::ok(
+            vec![json!({"id": "c1", "content": "x"})],
+            vec!["c1".to_string()],
+        );
+        let added = emit_nav_pair(
+            &mut messages,
+            "nav_global",
+            "retrieve",
+            &json!({"query": ["q"]}),
+            &oc,
+            0,
+        );
+        assert!(added > 0);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"], "assistant");
+        assert_eq!(messages[1]["role"], "tool");
+        assert_eq!(messages[1]["tool_call_id"], "nav_global");
+        let parsed: Value = serde_json::from_str(messages[1]["content"].as_str().unwrap()).unwrap();
+        assert_eq!(parsed["passages"][0]["id"], "c1");
+
+        let big = "y".repeat(2000);
+        let oc_big = ToolOutcome::ok(
+            vec![json!({"id": "c2", "content": big})],
+            vec!["c2".to_string()],
+        );
+        let mut capped: Vec<Value> = Vec::new();
+        let added = emit_nav_pair(
+            &mut capped,
+            "nav_global",
+            "retrieve",
+            &json!({}),
+            &oc_big,
+            100,
+        );
+        assert_eq!(added, 800, "max(max_chars, 800) keeps at least 800 chars");
+        assert_eq!(capped[1]["content"].as_str().unwrap().chars().count(), 800);
+    }
+
+    #[test]
+    fn extract_relevant_evidence_ranks_by_tokens() {
+        let mut kbinfos = Kbinfos::default();
+        kbinfos.chunks = vec![
+            chunk("c1", "alpha", "d1"),
+            chunk("c2", "gamma", "d1"),
+            chunk("c3", "alpha beta gamma", "d1"),
+        ];
+        let text = extract_relevant_evidence(&kbinfos, "alpha gamma", 4);
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 3);
+        assert!(lines[0].starts_with("[c3] "), "two token hits rank first");
+        assert!(lines[1].starts_with("[c1] "));
+        assert!(lines[2].starts_with("[c2] "));
+        let none = extract_relevant_evidence(&kbinfos, "", 2);
+        let lines: Vec<&str> = none.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert!(
+            lines[0].starts_with("[c2] "),
+            "no tokens -> the last chunks"
+        );
+        assert!(lines[1].starts_with("[c3] "));
+        assert!(extract_relevant_evidence(&Kbinfos::default(), "alpha", 4).is_empty());
+    }
+}
+#[cfg(test)]
+mod session_entry_tests {
+    use super::*;
+    use serde_json::json;
+    use std::collections::BTreeSet;
+    use std::sync::Mutex;
+
+    struct EntryMockSearch {
+        grep: Vec<Value>,
+    }
+
+    #[async_trait]
+    impl ActionSearchBackend for EntryMockSearch {
+        async fn grep_search(
+            &self,
+            _q: &str,
+            _t: usize,
+            _s: Option<&[String]>,
+            _k: Option<&str>,
+        ) -> Result<Vec<Value>, String> {
+            Ok(self.grep.clone())
+        }
+        async fn hybrid_search(&self, _q: &str, _t: usize, _c: bool) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+        async fn list_chunks(&self, _d: &str) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+        fn has_web(&self) -> bool {
+            false
+        }
+        async fn web_search(&self, _q: &str) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+    }
+
+    struct EntryMockTools {
+        tree: NavResult,
+        structure: NavResult,
+    }
+
+    #[async_trait]
+    impl ActionToolBackend for EntryMockTools {
+        async fn navigate_tree(&self, _q: &str) -> NavResult {
+            self.tree.clone()
+        }
+        async fn navigate_structure(&self, _d: &str, _q: &str, _k: &str) -> NavResult {
+            self.structure.clone()
+        }
+        async fn calculate(&self, _q: &str, _f: &[String]) -> Option<Value> {
+            Some(json!({"expression": "1+1", "result": "2"}))
+        }
+        async fn graph_explore(&self, _q: &str, _s: &[String]) -> Value {
+            json!({"answer": "", "chunks": []})
+        }
+    }
+
+    struct EntryMockLlm {
+        with_tools: Mutex<Vec<Option<LlmReply>>>,
+        plain: Mutex<Vec<Option<LlmReply>>>,
+        with_tools_calls: Mutex<Vec<(Vec<Value>, f64)>>,
+        plain_calls: Mutex<Vec<(Vec<Value>, f64)>>,
+    }
+
+    impl EntryMockLlm {
+        fn new(with_tools: Vec<Option<LlmReply>>, plain: Vec<Option<LlmReply>>) -> Self {
+            Self {
+                with_tools: Mutex::new(with_tools),
+                plain: Mutex::new(plain),
+                with_tools_calls: Mutex::new(Vec::new()),
+                plain_calls: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ActionLlmBackend for EntryMockLlm {
+        async fn complete_with_tools(
+            &self,
+            messages: &[Value],
+            _schemas: &[Value],
+            timeout_s: f64,
+        ) -> Option<LlmReply> {
+            self.with_tools_calls
+                .lock()
+                .unwrap()
+                .push((messages.to_vec(), timeout_s));
+            let mut queue = self.with_tools.lock().unwrap();
+            if queue.is_empty() {
+                None
+            } else {
+                queue.remove(0)
+            }
+        }
+        async fn complete_plain(&self, messages: &[Value], timeout_s: f64) -> Option<LlmReply> {
+            self.plain_calls
+                .lock()
+                .unwrap()
+                .push((messages.to_vec(), timeout_s));
+            let mut queue = self.plain.lock().unwrap();
+            if queue.is_empty() {
+                None
+            } else {
+                queue.remove(0)
+            }
+        }
+    }
+
+    fn content_reply(content: &str) -> LlmReply {
+        LlmReply {
+            content: content.to_string(),
+            tool_calls: Vec::new(),
+        }
+    }
+
+    fn call_reply(id: &str, name: &str, args: &Value) -> LlmReply {
+        LlmReply {
+            content: String::new(),
+            tool_calls: vec![json!({
+                "id": id,
+                "type": "function",
+                "function": {"name": name, "arguments": args.to_string()},
+            })],
+        }
+    }
+
+    fn fixture_chunk(id: &str, content: &str, doc_id: &str) -> Value {
+        json!({"chunk_id": id, "content_with_weight": content, "doc_id": doc_id})
+    }
+
+    fn parent_fixture() -> SlotState {
+        SlotState::new(
+            vec![Variable {
+                id: 0,
+                r#type: "answer".to_string(),
+                question_clues: vec!["who?".to_string()],
+                ..Variable::default()
+            }],
+            0,
+        )
+    }
+
+    #[test]
+    fn init_retry_timeout_matrix() {
+        assert_eq!(init_retry_timeout(45.0, None), 90.0);
+        assert_eq!(init_retry_timeout(45.0, Some(100.0)), 90.0);
+        assert_eq!(init_retry_timeout(45.0, Some(60.0)), 55.0);
+        assert_eq!(
+            init_retry_timeout(45.0, Some(40.0)),
+            45.0,
+            "never below the first bound"
+        );
+        assert_eq!(init_retry_timeout(45.0, Some(3.0)), 45.0);
+        assert_eq!(init_retry_timeout(45.0, Some(0.0)), 90.0);
+    }
+
+    #[tokio::test]
+    async fn initialize_state_parses_llm_json() {
+        let fenced = "```json\n{\"slots\": [{\"id\": 0, \"type\": \"person\", \"clues\": [\"c1\", \"c2\", \"c3\", \"c4\", \"c5\"], \"source\": \"ds\"}], \"first_queries\": [\"q1\", \"q2\", \"q3\", \"q4\"]}\n```";
+        let llm = EntryMockLlm::new(vec![], vec![Some(content_reply(fenced))]);
+        let (root, queries) = initialize_state(&llm, "who?", &[], None).await;
+        assert_eq!(root.state.len(), 1);
+        assert_eq!(root.state[0].r#type, "person");
+        assert_eq!(
+            root.state[0].question_clues.len(),
+            4,
+            "clues are capped at 4"
+        );
+        assert_eq!(queries.len(), 3, "first_queries are capped at 3");
+        assert_eq!(queries[0], "q1");
+        let calls = llm.plain_calls.lock().unwrap();
+        assert_eq!(calls.len(), 1, "a parsed table needs no retry");
+        assert_eq!(calls[0].1, INIT_TIMEOUT_S);
+        assert_eq!(calls[0].0[0]["role"], "system");
+        assert!(
+            calls[0].0[1]["content"]
+                .as_str()
+                .unwrap()
+                .starts_with("Question: who?")
+        );
+    }
+
+    #[tokio::test]
+    async fn initialize_state_falls_back_to_fanouts() {
+        let llm = EntryMockLlm::new(vec![], vec![None, None]);
+        let hints = vec!["aspect one".to_string(), "aspect two".to_string()];
+        let (root, queries) = initialize_state(&llm, "who?", &hints, None).await;
+        assert_eq!(root.state.len(), 2);
+        assert!(root.state.iter().all(|slot| slot.r#type == "aspect"));
+        assert_eq!(root.state[0].question_clues, vec!["aspect one".to_string()]);
+        assert_eq!(queries, hints);
+        let calls = llm.plain_calls.lock().unwrap();
+        assert_eq!(calls.len(), 2, "one retry when the parse fails");
+        assert_eq!(calls[1].1, 90.0, "the retry gets the doubled budget");
+    }
+
+    #[tokio::test]
+    async fn initialize_state_answer_slot_fallback() {
+        let llm = EntryMockLlm::new(vec![], vec![None, None]);
+        let (root, queries) = initialize_state(&llm, "who exactly?", &[], None).await;
+        assert_eq!(root.state.len(), 1);
+        assert_eq!(root.state[0].r#type, "answer");
+        assert_eq!(
+            root.state[0].question_clues,
+            vec!["who exactly?".to_string()]
+        );
+        assert_eq!(queries, vec!["who exactly?".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn run_action_session_without_model_returns_empty() {
+        let search = EntryMockSearch { grep: Vec::new() };
+        let tools = EntryMockTools {
+            tree: NavResult::default(),
+            structure: NavResult::default(),
+        };
+        let runtime = ActionRuntime {
+            search: &search,
+            tools: &tools,
+        };
+        let mut kbinfos = Kbinfos::default();
+        let mode_tools: BTreeSet<String> = ["retrieve".to_string()].into_iter().collect();
+        let result = run_action_session(
+            &runtime,
+            None,
+            &mut kbinfos,
+            "who?",
+            &parent_fixture(),
+            &mode_tools,
+            "high",
+            false,
+            &HashSet::new(),
+            Some(60.0),
+            "",
+            None,
+            None,
+        )
+        .await;
+        assert!(result.messages.is_empty());
+        assert!(result.found_answer.is_none());
+        assert!(result.new_states.is_empty());
+    }
+
+    #[tokio::test]
+    async fn run_action_session_end_to_end_terminal() {
+        let search = EntryMockSearch { grep: Vec::new() };
+        let tools = EntryMockTools {
+            tree: NavResult::default(),
+            structure: NavResult::default(),
+        };
+        let runtime = ActionRuntime {
+            search: &search,
+            tools: &tools,
+        };
+        let llm = EntryMockLlm::new(
+            vec![
+                Some(call_reply(
+                    "c1",
+                    "calculate",
+                    &json!({"question": "1+1", "facts": ["1", "1"]}),
+                )),
+                Some(content_reply("<answer>{\"answer\": \"2\"}</answer>")),
+            ],
+            vec![],
+        );
+        let mut kbinfos = Kbinfos::default();
+        let mode_tools: BTreeSet<String> = ["calculate".to_string()].into_iter().collect();
+        let result = run_action_session(
+            &runtime,
+            Some(&llm),
+            &mut kbinfos,
+            "how much?",
+            &parent_fixture(),
+            &mode_tools,
+            "high",
+            false,
+            &HashSet::new(),
+            Some(60.0),
+            "",
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(result.found_answer.as_deref(), Some("2"));
+        assert_eq!(result.messages.len(), 4);
+        assert_eq!(result.messages[0]["role"], "system");
+        assert_eq!(result.messages[0]["content"], ACTION_RUN_PROMPT);
+        assert!(
+            result.messages[1]["content"]
+                .as_str()
+                .unwrap()
+                .contains("Direction: how much?")
+        );
+        assert_eq!(result.messages[2]["role"], "assistant");
+        assert_eq!(result.messages[3]["role"], "tool");
+        let calls = llm.with_tools_calls.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        assert!(calls[0].1 >= 15.0 && calls[0].1 <= ACTION_TIMEOUT_S);
+    }
+
+    #[tokio::test]
+    async fn run_action_session_seeds_nav_prefix() {
+        let search = EntryMockSearch {
+            grep: vec![fixture_chunk("cA", "alpha text", "d1")],
+        };
+        let tools = EntryMockTools {
+            tree: NavResult {
+                doc_ids: vec!["d1".to_string()],
+                routed_docs: vec![("d1".to_string(), "routed summary".to_string())],
+                ..NavResult::default()
+            },
+            structure: NavResult {
+                chunk_ptrs: 1,
+                chunk_paths: std::collections::HashMap::from([(
+                    "cA".to_string(),
+                    "Root > A".to_string(),
+                )]),
+                ..NavResult::default()
+            },
+        };
+        let runtime = ActionRuntime {
+            search: &search,
+            tools: &tools,
+        };
+        let llm = EntryMockLlm::new(
+            vec![Some(content_reply(
+                "<answer>{\"answer\": \"done\"}</answer>",
+            ))],
+            vec![],
+        );
+        let mut kbinfos = Kbinfos::default();
+        let mode_tools: BTreeSet<String> = [
+            "navigate_tree".to_string(),
+            "navigate_structure".to_string(),
+            "retrieve".to_string(),
+        ]
+        .into_iter()
+        .collect();
+        let result = run_action_session(
+            &runtime,
+            Some(&llm),
+            &mut kbinfos,
+            "alpha topic",
+            &parent_fixture(),
+            &mode_tools,
+            "high",
+            false,
+            &HashSet::new(),
+            Some(60.0),
+            "",
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(result.found_answer.as_deref(), Some("done"));
+        assert_eq!(result.messages.len(), 6, "system + seed + two nav pairs");
+        assert_eq!(result.messages[2]["tool_calls"][0]["id"], "nav_locate");
+        assert_eq!(result.messages[4]["tool_calls"][0]["id"], "nav_drill");
+        assert!(result.retrieved_evidence_ids.contains(&"cA".to_string()));
+        assert!(result.retrieved_evidence_ids.contains(&"d1".to_string()));
+        let calls = llm.with_tools_calls.lock().unwrap();
+        assert!(
+            calls[0].0[1]["content"]
+                .as_str()
+                .unwrap()
+                .contains("Direction: alpha topic")
+        );
+    }
+
+    #[test]
+    fn prompt_consts_are_verbatim_and_trimmed() {
+        assert!(ACTION_RUN_PROMPT.starts_with("You are a deep research assistant"));
+        assert!(ACTION_RUN_PROMPT.contains("# TOOL PLAYBOOK"));
+        assert!(!ACTION_RUN_PROMPT.ends_with(char::is_whitespace));
+        assert!(ACTION_INITIALIZE_STATE_PROMPT.starts_with("You are a research strategist."));
+        assert!(ACTION_INITIALIZE_STATE_PROMPT.contains("first_queries"));
+        assert!(!ACTION_INITIALIZE_STATE_PROMPT.ends_with(char::is_whitespace));
+    }
+}
+#[cfg(test)]
+mod ladder_resume_tests {
+    use super::*;
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    fn chunk(id: &str, content: &str, doc_id: &str) -> Value {
+        json!({"chunk_id": id, "content_with_weight": content, "doc_id": doc_id})
+    }
+
+    struct LadderMockSearch {
+        grep: Vec<Value>,
+    }
+
+    #[async_trait]
+    impl ActionSearchBackend for LadderMockSearch {
+        async fn grep_search(
+            &self,
+            _q: &str,
+            _t: usize,
+            _s: Option<&[String]>,
+            _k: Option<&str>,
+        ) -> Result<Vec<Value>, String> {
+            Ok(self.grep.clone())
+        }
+        async fn hybrid_search(&self, _q: &str, _t: usize, _c: bool) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+        async fn list_chunks(&self, _d: &str) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+        fn has_web(&self) -> bool {
+            false
+        }
+        async fn web_search(&self, _q: &str) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+    }
+
+    struct LadderMockTools {
+        tree: NavResult,
+        structure: NavResult,
+    }
+
+    #[async_trait]
+    impl ActionToolBackend for LadderMockTools {
+        async fn navigate_tree(&self, _q: &str) -> NavResult {
+            self.tree.clone()
+        }
+        async fn navigate_structure(&self, _d: &str, _q: &str, _k: &str) -> NavResult {
+            self.structure.clone()
+        }
+        async fn calculate(&self, _q: &str, _f: &[String]) -> Option<Value> {
+            None
+        }
+        async fn graph_explore(&self, _q: &str, _s: &[String]) -> Value {
+            json!({"answer": "", "chunks": []})
+        }
+    }
+
+    fn available_fixture() -> HashSet<String> {
+        ["navigate_tree", "retrieve", "navigate_structure"]
+            .iter()
+            .map(|name| name.to_string())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn ladder_resumes_after_weak_rung() {
+        let search = LadderMockSearch {
+            grep: vec![chunk("cA", "alpha text", "d1")],
+        };
+        let tools = LadderMockTools {
+            tree: NavResult {
+                doc_ids: vec!["d1".to_string()],
+                routed_docs: vec![("d1".to_string(), "routed summary".to_string())],
+                ..NavResult::default()
+            },
+            structure: NavResult {
+                chunk_ptrs: 1,
+                chunk_paths: HashMap::from([("cA".to_string(), "Root > A".to_string())]),
+                ..NavResult::default()
+            },
+        };
+        let runtime = ActionRuntime {
+            search: &search,
+            tools: &tools,
+        };
+        let mut kbinfos = Kbinfos::default();
+        let pending = vec![ToolCall {
+            id: "c1".to_string(),
+            name: "navigate_tree".to_string(),
+            args: json!({"query": "alpha topic"}),
+            unknown: false,
+        }];
+        let mut seen_queries = Vec::new();
+        let mut cache = HashMap::new();
+        let mut strikes = HashMap::new();
+        let mut disabled = HashSet::new();
+        let available = available_fixture();
+        let mut pending_rule = "locate".to_string();
+        let mut ladder = LadderResume {
+            direction: "alpha topic",
+            routed_docs: &[],
+            deadline_left: Some(60.0),
+            pending_rule: &mut pending_rule,
+            available: &available,
+        };
+        let result = tool_node_policy(
+            &runtime,
+            &mut kbinfos,
+            &pending,
+            &mut seen_queries,
+            &mut cache,
+            &mut strikes,
+            &mut disabled,
+            &[],
+            Some(&mut ladder),
+        )
+        .await;
+        assert_eq!(pending_rule, "", "drill OK ends the ladder");
+        assert_eq!(result.tool_messages.len(), 3, "call + one ladder pair");
+        assert_eq!(
+            result.tool_messages[1]["tool_calls"][0]["id"],
+            "ladder_drill"
+        );
+        assert_eq!(
+            result.tool_messages[1]["tool_calls"][0]["function"]["name"],
+            "navigate_structure"
+        );
+        assert_eq!(result.tool_messages[2]["role"], "tool");
+        assert_eq!(result.outcomes.len(), 2, "call outcome + ladder outcome");
+        assert_eq!(result.outcomes[1]["name"], "navigate_structure");
+        assert!(result.evidence_ids.contains(&"cA".to_string()));
+    }
+
+    #[tokio::test]
+    async fn ladder_skipped_when_rung_finished() {
+        let search = LadderMockSearch { grep: Vec::new() };
+        let tools = LadderMockTools {
+            tree: NavResult {
+                doc_ids: vec!["d1".to_string()],
+                ..NavResult::default()
+            },
+            structure: NavResult::default(),
+        };
+        let runtime = ActionRuntime {
+            search: &search,
+            tools: &tools,
+        };
+        let mut kbinfos = Kbinfos::default();
+        let pending = vec![ToolCall {
+            id: "c1".to_string(),
+            name: "navigate_tree".to_string(),
+            args: json!({"query": "alpha topic"}),
+            unknown: false,
+        }];
+        let mut seen_queries = Vec::new();
+        let mut cache = HashMap::new();
+        let mut strikes = HashMap::new();
+        let mut disabled = HashSet::new();
+        let available = available_fixture();
+        let mut pending_rule = "drill".to_string();
+        let mut ladder = LadderResume {
+            direction: "alpha topic",
+            routed_docs: &[],
+            deadline_left: Some(60.0),
+            pending_rule: &mut pending_rule,
+            available: &available,
+        };
+        let result = tool_node_policy(
+            &runtime,
+            &mut kbinfos,
+            &pending,
+            &mut seen_queries,
+            &mut cache,
+            &mut strikes,
+            &mut disabled,
+            &[],
+            Some(&mut ladder),
+        )
+        .await;
+        assert_eq!(
+            pending_rule, "drill",
+            "an OK verdict on drill ends the chain"
+        );
+        assert_eq!(result.tool_messages.len(), 1, "no ladder pair is appended");
+        assert_eq!(result.outcomes.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn ladder_absent_by_default() {
+        let search = LadderMockSearch { grep: Vec::new() };
+        let tools = LadderMockTools {
+            tree: NavResult::default(),
+            structure: NavResult::default(),
+        };
+        let runtime = ActionRuntime {
+            search: &search,
+            tools: &tools,
+        };
+        let mut kbinfos = Kbinfos::default();
+        let pending = vec![ToolCall {
+            id: "c1".to_string(),
+            name: "navigate_tree".to_string(),
+            args: json!({"query": "alpha topic"}),
+            unknown: false,
+        }];
+        let mut seen_queries = Vec::new();
+        let mut cache = HashMap::new();
+        let mut strikes = HashMap::new();
+        let mut disabled = HashSet::new();
+        let result = tool_node_policy(
+            &runtime,
+            &mut kbinfos,
+            &pending,
+            &mut seen_queries,
+            &mut cache,
+            &mut strikes,
+            &mut disabled,
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(result.tool_messages.len(), 1);
+        assert_eq!(result.outcomes.len(), 1);
+    }
+}

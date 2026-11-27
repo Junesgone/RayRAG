@@ -760,4 +760,117 @@ pub async fn rerun_agent(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pipeline::{PipelineReport, StageReport};
 
+    fn report() -> PipelineReport {
+        PipelineReport {
+            stages: vec![
+                StageReport {
+                    id: "parser",
+                    component: "Parser",
+                    title: "Parser",
+                    elapsed_seconds: 1.5,
+                    outputs: serde_json::json!({
+                        "output_format": {"type": "string", "value": "text"},
+                        "text": {"type": "string", "value": "hello"}
+                    }),
+                },
+                StageReport {
+                    id: "tokenChunker",
+                    component: "TokenChunker",
+                    title: "Token chunker",
+                    elapsed_seconds: 0.25,
+                    outputs: serde_json::json!({
+                        "output_format": {"type": "string", "value": "chunks"},
+                        "chunks": {"type": "array", "value": [{"content": "hello"}]},
+                        "_elapsed_time": {"type": "number", "value": 0.25}
+                    }),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn parse_dsl_matches_the_dataflow_result_contract() {
+        let dsl = build_parse_dsl(&report(), "report.pdf");
+        // `pages/dataflow-result/hooks.ts::useTimelineDataFlow` walks
+        // `dsl.components` and resolves each key against `dsl.graph.nodes`.
+        assert_eq!(dsl["path"], serde_json::json!(["parser", "tokenChunker"]));
+        let nodes = dsl["graph"]["nodes"].as_array().unwrap();
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(nodes[0]["id"], "parser");
+        assert_eq!(nodes[0]["data"]["name"], "Parser");
+        assert_eq!(nodes[1]["id"], "tokenChunker");
+        assert_eq!(
+            dsl["graph"]["edges"][0],
+            serde_json::json!({"source": "parser", "target": "tokenChunker"})
+        );
+        assert_eq!(
+            dsl["components"]["tokenChunker"]["obj"]["component_name"],
+            "TokenChunker"
+        );
+        assert_eq!(
+            dsl["components"]["tokenChunker"]["obj"]["params"]["outputs"]["output_format"]["value"],
+            "chunks"
+        );
+        assert_eq!(
+            dsl["components"]["tokenChunker"]["obj"]["params"]["_elapsed_time"]["value"],
+            0.25
+        );
+        assert_eq!(dsl["globals"]["sys.filename"], "report.pdf");
+        assert_eq!(report().total_seconds(), 1.75);
+        assert_eq!(report().stage("parser").unwrap().elapsed_seconds, 1.5);
+        assert!(report().stage("missing").is_none());
+    }
+
+    #[test]
+    fn logs_are_scoped_to_their_dataset_and_dsl_updates_persist() {
+        let store = IngestionLogStore::in_memory();
+        let mut log = IngestionLog {
+            id: "log-1".into(),
+            tenant_id: "tenant-a".into(),
+            kb_id: "kb-1".into(),
+            document_id: "doc-1".into(),
+            document_name: "report.pdf".into(),
+            document_suffix: "pdf".into(),
+            document_type: "pdf".into(),
+            parser_id: "naive".into(),
+            pipeline_id: String::new(),
+            pipeline_title: String::new(),
+            source_from: "upload".into(),
+            dsl: build_parse_dsl(&report(), "report.pdf"),
+            progress: 1.0,
+            progress_msg: String::new(),
+            operation_status: "done".into(),
+            status: "1".into(),
+            task_type: "dataflow".into(),
+            avatar: String::new(),
+            log_type: "file".into(),
+            process_begin_at: 1,
+            process_duration: 1.75,
+            create_time: 1,
+            create_date: "2026-01-01 00:00:00".into(),
+            update_time: 1,
+            update_date: "2026-01-01 00:00:00".into(),
+        };
+        store.insert(log.clone()).unwrap();
+        assert!(store.get("kb-1", "log-1").is_some());
+        assert!(store.get("kb-2", "log-1").is_none());
+        assert_eq!(store.list_for_kb("kb-1").len(), 1);
+        assert!(
+            store
+                .update_dsl("log-1", serde_json::json!({"path": ["parser"]}))
+                .unwrap()
+        );
+        assert_eq!(
+            store.get("kb-1", "log-1").unwrap().dsl["path"],
+            serde_json::json!(["parser"])
+        );
+        log.kb_id = "kb-2".into();
+        store.insert(log).unwrap();
+        assert_eq!(store.list_for_kb("kb-2").len(), 1);
+    }
+}

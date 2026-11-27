@@ -550,7 +550,13 @@ impl OnlineVectorMirror {
         })
     }
 
-    
+    #[cfg(all(test, feature = "zvec-backend"))]
+    fn native(root: PathBuf) -> Self {
+        Self {
+            root: Some(root),
+            collections: Mutex::new(HashMap::new()),
+        }
+    }
 
     #[cfg(feature = "zvec-backend")]
     fn replace_collection(
@@ -1266,7 +1272,437 @@ mod zvec_backend {
         Ok(())
     }
 
-    
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::collections::HashMap;
+
+        #[test]
+        fn native_collection_upserts_queries_and_reopens() {
+            let root =
+                std::env::temp_dir().join(format!("rayrag-zvec-native-{}", uuid::Uuid::new_v4()));
+            let path = root.join("collection");
+            let collection = ZvecCollection::open(&path, "native_test", 2).unwrap();
+            let chunk = IndexedChunk {
+                id: "native-chunk".into(),
+                doc_name: "native.txt".into(),
+                content: "native zvec search".into(),
+                embedding: vec![1.0, 0.0],
+                token_count: 3,
+                position: 0,
+                metadata: HashMap::from([
+                    ("doc_id".into(), uuid::Uuid::new_v4().to_string()),
+                    ("content_type".into(), "text".into()),
+                    ("position_int".into(), "[[1,10,100,20,40]]".into()),
+                    ("page_num_int".into(), "[1]".into()),
+                    ("top_int".into(), "[20]".into()),
+                ]),
+            };
+            collection.upsert(&[chunk]).unwrap();
+            let results = collection.search(&[1.0, 0.0], 1).unwrap();
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].chunk.id, "native-chunk");
+            assert_eq!(collection.len().unwrap(), 1);
+            drop(collection);
+
+            let reopened = ZvecCollection::open(&path, "native_test", 2).unwrap();
+            assert_eq!(reopened.len().unwrap(), 1);
+            let results = reopened.search(&[1.0, 0.0], 1).unwrap();
+            assert_eq!(results[0].chunk.content, "native zvec search");
+
+            // `clear` must empty a collection whose row count far exceeds one page:
+            // it deletes page by page instead of asking the native layer for every
+            // key at once (the call that grew past the container ceiling).
+            let many: Vec<IndexedChunk> = (0..37)
+                .map(|index| IndexedChunk {
+                    id: format!("page-chunk-{index}"),
+                    doc_name: "pages.txt".into(),
+                    content: format!("page {index}"),
+                    embedding: vec![1.0, 0.0],
+                    token_count: 1,
+                    position: index,
+                    metadata: HashMap::from([("doc_id".into(), "pages".into())]),
+                })
+                .collect();
+            reopened.upsert(&many).unwrap();
+            assert_eq!(reopened.len().unwrap(), 38);
+            // A page smaller than the collection forces several rounds.
+            assert_eq!(reopened.clear(5).unwrap(), 38);
+            assert_eq!(reopened.len().unwrap(), 0);
+            assert_eq!(
+                reopened.clear(5).unwrap(),
+                0,
+                "clearing an empty collection is a no-op"
+            );
+            assert_eq!(
+                results[0]
+                    .chunk
+                    .metadata
+                    .get("position_int")
+                    .map(String::as_str),
+                Some("[[1,10,100,20,40]]")
+            );
+            assert_eq!(
+                results[0]
+                    .chunk
+                    .metadata
+                    .get("page_num_int")
+                    .map(String::as_str),
+                Some("[1]")
+            );
+            assert_eq!(
+                results[0].chunk.metadata.get("top_int").map(String::as_str),
+                Some("[20]")
+            );
+            drop(reopened);
+            std::fs::remove_dir_all(root).ok();
+        }
+    }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[cfg(feature = "zvec-backend")]
+    fn indexed_chunk(id: &str, kb_id: &str, embedding: Vec<f32>) -> IndexedChunk {
+        IndexedChunk {
+            id: id.into(),
+            doc_name: format!("{id}.txt"),
+            content: format!("content {id}"),
+            embedding,
+            token_count: 2,
+            position: 0,
+            metadata: HashMap::from([
+                ("kb_id".into(), kb_id.into()),
+                ("doc_id".into(), format!("doc-{id}")),
+                ("content_type".into(), "text".into()),
+            ]),
+        }
+    }
+
+    #[cfg(feature = "zvec-backend")]
+    #[test]
+    fn online_native_mirror_isolates_kbs_and_applies_partial_updates() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-zvec-online-{}", uuid::Uuid::new_v4()));
+        let mirror = OnlineVectorMirror::native(root.clone());
+        let first = indexed_chunk("a", "kb-a", vec![1.0, 0.0]);
+        let second = indexed_chunk("b", "kb-b", vec![0.0, 1.0]);
+        mirror
+            .sync_snapshot(&[], &[first.clone(), second.clone()])
+            .unwrap();
+        assert_eq!(mirror.collection("kb-a", 2).unwrap().len().unwrap(), 1);
+        assert_eq!(mirror.collection("kb-b", 2).unwrap().len().unwrap(), 1);
+
+        // Dropping one owner's chunk deletes it from that owner's collection only.
+        mirror
+            .sync_snapshot(
+                &[first.clone(), second.clone()],
+                std::slice::from_ref(&second),
+            )
+            .unwrap();
+        assert_eq!(mirror.collection("kb-a", 2).unwrap().len().unwrap(), 0);
+        assert_eq!(mirror.collection("kb-b", 2).unwrap().len().unwrap(), 1);
+
+        // Re-adding it upserts again without touching the other owner.
+        mirror
+            .sync_snapshot(
+                std::slice::from_ref(&second),
+                &[first.clone(), second.clone()],
+            )
+            .unwrap();
+        assert_eq!(mirror.collection("kb-a", 2).unwrap().len().unwrap(), 1);
+        assert_eq!(mirror.collection("kb-b", 2).unwrap().len().unwrap(), 1);
+        drop(mirror);
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    /// A document commit updates only that document's ids; a peer document in the
+    /// same knowledge base must stay in the collection.
+    #[cfg(feature = "zvec-backend")]
+    #[test]
+    fn online_native_mirror_replaces_one_document_without_rewriting_its_peer() {
+        let root = std::env::temp_dir().join(format!("rayrag-zvec-doc-{}", uuid::Uuid::new_v4()));
+        let mirror = OnlineVectorMirror::native(root.clone());
+        let mut a1 = indexed_chunk("a1", "kb-shared", vec![1.0, 0.0]);
+        let mut a2 = indexed_chunk("a2", "kb-shared", vec![1.0, 0.0]);
+        let mut peer = indexed_chunk("b", "kb-shared", vec![0.0, 1.0]);
+        for chunk in [&mut a1, &mut a2] {
+            chunk.metadata.insert("doc_id".into(), "doc-a".into());
+        }
+        peer.metadata.insert("doc_id".into(), "doc-b".into());
+        mirror
+            .sync_snapshot(&[], &[a1.clone(), a2.clone(), peer.clone()])
+            .unwrap();
+        assert_eq!(mirror.collection("kb-shared", 2).unwrap().len().unwrap(), 3);
+
+        let mut replacement = indexed_chunk("a3", "kb-shared", vec![1.0, 0.0]);
+        replacement.metadata.insert("doc_id".into(), "doc-a".into());
+        mirror
+            .replace_document_chunks(
+                "kb-shared",
+                &[a1.clone(), a2.clone()],
+                &[replacement.clone()],
+            )
+            .unwrap();
+        let collection = mirror.collection("kb-shared", 2).unwrap();
+        assert_eq!(collection.len().unwrap(), 2);
+        let ids: HashSet<String> = collection
+            .search(&[1.0, 0.0], 10)
+            .unwrap()
+            .into_iter()
+            .map(|result| result.chunk.id)
+            .collect();
+        assert!(ids.contains("a3"));
+        assert!(
+            ids.contains("b"),
+            "the peer document must remain in the collection"
+        );
+        assert!(!ids.contains("a1") && !ids.contains("a2"));
+
+        // Reversing the document update restores its old ids and leaves the peer.
+        mirror
+            .replace_document_chunks("kb-shared", &[replacement], &[a1.clone(), a2.clone()])
+            .unwrap();
+        assert_eq!(mirror.collection("kb-shared", 2).unwrap().len().unwrap(), 3);
+        drop(mirror);
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    /// Startup reclaims the collection directories the index no longer carries
+    /// instead of opening, emptying and flushing each one on every boot — that loop
+    /// paid a native open per leftover directory and never got rid of any of them
+    /// (the deployment had accumulated 42 directories / 1.3 GB).
+    #[cfg(feature = "zvec-backend")]
+    #[test]
+    fn online_native_mirror_reclaims_directories_the_index_dropped() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-zvec-reclaim-{}", uuid::Uuid::new_v4()));
+        let mirror = OnlineVectorMirror::native(root.clone());
+        let kept = indexed_chunk("a", "kb-live", vec![1.0, 0.0]);
+        let dropped = indexed_chunk("b", "kb-dropped", vec![0.0, 1.0]);
+        mirror
+            .sync_snapshot(&[], &[kept.clone(), dropped.clone()])
+            .unwrap();
+        let dropped_dir = root.join(safe_collection_name("kb-dropped"));
+        let live_dir = root.join(safe_collection_name("kb-live"));
+        assert!(dropped_dir.is_dir(), "the dropped collection exists first");
+        assert!(live_dir.is_dir(), "the live collection exists first");
+        drop(mirror);
+
+        // A fresh process starts against an index that only carries kb-live.
+        let mirror = OnlineVectorMirror::native(root.clone());
+        let counts: HashMap<String, usize> = [("kb-live".to_string(), 1)].into_iter().collect();
+        assert_eq!(mirror.reclaim_unindexed_collections(&counts).unwrap(), 1);
+        assert!(
+            !dropped_dir.exists(),
+            "a collection the index dropped must be reclaimed from disk"
+        );
+        assert!(live_dir.is_dir(), "a collection the index carries stays");
+        assert_eq!(mirror.collection("kb-live", 2).unwrap().len().unwrap(), 1);
+
+        // An orphan directory nobody owns is reclaimed as well, without ever being
+        // opened as a native collection, and a second pass has nothing left to do.
+        let orphan = root.join("orphan-collection");
+        std::fs::create_dir_all(&orphan).unwrap();
+        std::fs::write(orphan.join("junk.bin"), b"not a collection").unwrap();
+        assert_eq!(mirror.reclaim_unindexed_collections(&counts).unwrap(), 1);
+        assert!(!orphan.exists(), "an unowned directory must be reclaimed");
+        assert_eq!(mirror.reclaim_unindexed_collections(&counts).unwrap(), 0);
+
+        // A collection this process holds open keeps its storage: the reclaim pass
+        // never removes a directory out from under a live handle.
+        let open_dir = root.join(safe_collection_name("kb-open"));
+        mirror
+            .collection("kb-open", 2)
+            .unwrap()
+            .upsert(std::slice::from_ref(&dropped))
+            .unwrap();
+        assert!(open_dir.is_dir());
+        assert_eq!(mirror.reclaim_unindexed_collections(&counts).unwrap(), 0);
+        assert!(
+            open_dir.is_dir(),
+            "an open collection must not lose its storage underneath it"
+        );
+        drop(mirror);
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    /// Reconciliation loads a knowledge base's chunks **only** when its collection
+    /// drifted: the steady state (a collection that already holds exactly the rows
+    /// the index carries) must not read a single chunk. That is what keeps a normal
+    /// boot flat instead of rewriting every collection.
+    #[cfg(feature = "zvec-backend")]
+    #[test]
+    fn online_native_mirror_loads_chunks_only_for_drifted_collections() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let root = std::env::temp_dir().join(format!("rayrag-zvec-lazy-{}", uuid::Uuid::new_v4()));
+        let mirror = OnlineVectorMirror::native(root.clone());
+        let first = indexed_chunk("a", "kb-a", vec![1.0, 0.0]);
+        let second = indexed_chunk("b", "kb-b", vec![0.0, 1.0]);
+        mirror
+            .sync_snapshot(&[], &[first.clone(), second.clone()])
+            .unwrap();
+        drop(mirror);
+
+        // A fresh process sees collections that already match the index.
+        let mirror = OnlineVectorMirror::native(root.clone());
+        let counts: HashMap<String, usize> = [("kb-a".to_string(), 1), ("kb-b".to_string(), 1)]
+            .into_iter()
+            .collect();
+        let loads = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&loads);
+        mirror
+            .reconcile_snapshot(&counts, move |_| {
+                counter.fetch_add(1, Ordering::SeqCst);
+                Vec::new()
+            })
+            .unwrap();
+        assert_eq!(
+            loads.load(Ordering::SeqCst),
+            0,
+            "a mirror that agrees with the index must not load any chunk"
+        );
+
+        // One owner drifts (the index knows two chunks it does not hold): exactly
+        // that owner is loaded and rebuilt.
+        let counts: HashMap<String, usize> = [("kb-a".to_string(), 2), ("kb-b".to_string(), 1)]
+            .into_iter()
+            .collect();
+        let loads = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&loads);
+        mirror
+            .reconcile_snapshot(&counts, move |kb_id| {
+                counter.fetch_add(1, Ordering::SeqCst);
+                if kb_id == "kb-a" {
+                    vec![first.clone(), indexed_chunk("c", "kb-a", vec![0.5, 0.5])]
+                } else {
+                    Vec::new()
+                }
+            })
+            .unwrap();
+        assert_eq!(
+            loads.load(Ordering::SeqCst),
+            1,
+            "only the drifted owner may be loaded"
+        );
+        assert_eq!(mirror.collection("kb-a", 2).unwrap().len().unwrap(), 2);
+        assert_eq!(mirror.collection("kb-b", 2).unwrap().len().unwrap(), 1);
+        drop(mirror);
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    /// The compiled-in default decides the backend when the environment does
+    /// not: the shipped build (with `zvec-backend`) uses the native collection,
+    /// a build without it keeps the portable JSON index.
+    #[test]
+    fn default_backend_follows_the_compiled_features() {
+        let expected = if cfg!(feature = "zvec-backend") {
+            "zvec"
+        } else {
+            "json"
+        };
+        assert_eq!(default_vector_backend(), expected);
+        // An explicit value always wins over the default. The resolution is asserted directly rather
+        // than through the environment: `set_var` is process-global, so a parallel test opening a
+        // store at that moment used to fail this one.
+        assert_eq!(requested_backend(Some("json")), "json");
+        assert_eq!(requested_backend(Some(" JSON ")), "json");
+        assert_eq!(requested_backend(Some("")), expected);
+        assert_eq!(requested_backend(None), expected);
+        // Opening a real collection is covered by the store tests below; doing it here would take
+        // the zvec lock that another test in this binary may already hold.
+    }
+
+    fn json_backend_is_immediately_searchable_after_insert() {
+        let root = std::env::temp_dir().join(format!("rayrag-vector-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("index.json");
+        let store = ZvecStore::from_file("test", 2, path.to_str().unwrap()).unwrap();
+        let chunk = Chunk {
+            id: "chunk-1".into(),
+            content: "hello".into(),
+            content_type: "text".into(),
+            doc_id: uuid::Uuid::new_v4(),
+            position: 0,
+            token_count: 1,
+            embedding: Some(vec![1.0, 0.0]),
+            metadata: HashMap::from([
+                ("position_int".into(), "[[1,10,100,20,40]]".into()),
+                ("page_num_int".into(), "[1]".into()),
+                ("top_int".into(), "[20]".into()),
+            ]),
+        };
+        store.insert(&[chunk]).unwrap();
+        let persisted: Vec<IndexedChunk> =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(persisted.len(), 1);
+        assert_eq!(
+            persisted[0].metadata.get("kb_id").map(String::as_str),
+            Some("test")
+        );
+        assert_eq!(
+            persisted[0]
+                .metadata
+                .get("available_int")
+                .map(String::as_str),
+            Some("1")
+        );
+        assert_eq!(
+            persisted[0]
+                .metadata
+                .get("position_int")
+                .map(String::as_str),
+            Some("00000001_0000000a_00000064_00000014_00000028")
+        );
+        let results = store.search(&[1.0, 0.0], 1).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].chunk.id, "chunk-1");
+        assert_eq!(
+            results[0]
+                .chunk
+                .metadata
+                .get("position_int")
+                .map(String::as_str),
+            Some("[[1,10,100,20,40]]")
+        );
+        assert_eq!(
+            results[0]
+                .chunk
+                .metadata
+                .get("page_num_int")
+                .map(String::as_str),
+            Some("[1]")
+        );
+        assert_eq!(
+            results[0].chunk.metadata.get("top_int").map(String::as_str),
+            Some("[20]")
+        );
+        assert_eq!(store.len(), 1);
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn insert_rejects_mixed_vector_dimensions_without_partial_write() {
+        let root = std::env::temp_dir().join(format!("rayrag-vector-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("index.json");
+        let store = ZvecStore::from_file("test", 2, path.to_str().unwrap()).unwrap();
+        let chunk = Chunk {
+            id: "bad".into(),
+            content: "bad".into(),
+            content_type: "text".into(),
+            doc_id: uuid::Uuid::new_v4(),
+            position: 0,
+            token_count: 1,
+            embedding: Some(vec![1.0]),
+            metadata: HashMap::new(),
+        };
+        assert!(store.insert(&[chunk]).is_err());
+        assert!(store.is_empty());
+        assert!(!path.exists());
+        std::fs::remove_dir_all(root).ok();
+    }
+}

@@ -259,4 +259,34 @@ pub async fn toggle_plugin(
     )
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn the_catalogue_comes_from_the_registry_and_names_the_datasets_that_exist() {
+        // A catalogue built with no datasets still offers the tools; the enrichment only changes the
+        // retrieval tool's description, never whether a tool exists.
+        let empty = crate::mcp_server::ToolRegistry::default();
+        let names: Vec<&str> = empty.list().iter().map(|tool| tool.name.as_str()).collect();
+        assert!(names.contains(&"ragflow_retrieval"), "{names:?}");
+        assert!(names.contains(&"list_datasets"), "{names:?}");
+        // The tools this deployment offers are the registry's, so nothing can drift from it.
+        let enriched = crate::mcp_server::ToolRegistry::default().enrich_datasets(&[
+            crate::mcp_server::DatasetInfo {
+                id: "kb-1".into(),
+                description: "Handbook".into(),
+            },
+        ]);
+        let retrieval = enriched
+            .list()
+            .iter()
+            .find(|tool| tool.name == "ragflow_retrieval")
+            .expect("the retrieval tool exists");
+        assert!(
+            retrieval.description.contains("kb-1"),
+            "the live dataset listing reaches the tool: {}",
+            retrieval.description
+        );
+    }
+}

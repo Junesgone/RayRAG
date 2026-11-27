@@ -72,7 +72,14 @@ impl WikipediaClient {
         })
     }
 
-    
+    #[cfg(test)]
+    pub(crate) fn new_with_endpoint(endpoint: &str) -> Result<Self> {
+        Self::new(Some(
+            endpoint
+                .parse()
+                .context("invalid Wikipedia test endpoint")?,
+        ))
+    }
 
     fn endpoint(&self, language: &str) -> Result<reqwest::Url> {
         if let Some(endpoint) = &self.endpoint_override {
@@ -246,4 +253,168 @@ async fn read_bounded_body(response: reqwest::Response) -> Result<Vec<u8>> {
     Ok(body)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        Router,
+        extract::{Query, State},
+        http::StatusCode,
+        response::IntoResponse,
+        routing::get,
+    };
+    use serde_json::{Map, json};
+    use std::sync::{Arc, Mutex};
 
+    #[derive(Clone, Default)]
+    struct Recorded(Arc<Mutex<Vec<Map<String, Value>>>>);
+
+    async fn wikipedia_mock(
+        State(recorded): State<Recorded>,
+        Query(query): Query<Map<String, Value>>,
+    ) -> impl IntoResponse {
+        recorded.0.lock().unwrap().push(query.clone());
+        if query.get("list").and_then(Value::as_str) == Some("search") {
+            return (
+                StatusCode::OK,
+                axum::Json(json!({"query": {"search": [
+                    {"title": "Rust (programming language)", "snippet": "<span>Rust</span> language"},
+                    {"title": "Rust disambiguation", "snippet": "many meanings"},
+                    {"title": "Missing page", "snippet": "gone"}
+                ]}})),
+            );
+        }
+        let title = query
+            .get("titles")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let page = match title {
+            "Rust (programming language)" => json!({
+                "123": {
+                    "pageid": 123,
+                    "title": "Rust (programming language)",
+                    "fullurl": "https://en.wikipedia.org/wiki/Rust_(programming_language)",
+                    "extract": "Rust is a programming language."
+                }
+            }),
+            "Rust disambiguation" => json!({
+                "456": {"pageid": 456, "title": "Rust", "pageprops": {"disambiguation": ""}}
+            }),
+            _ => json!({"-1": {"title": "Missing page", "missing": ""}}),
+        };
+        (
+            StatusCode::OK,
+            axum::Json(json!({"query": {"pages": page}})),
+        )
+    }
+
+    async fn mock_server(recorded: Recorded) -> (String, tokio::task::JoinHandle<()>) {
+        let app = Router::new()
+            .route("/w/api.php", get(wikipedia_mock))
+            .with_state(recorded);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{address}/w/api.php"), handle)
+    }
+
+    #[tokio::test]
+    async fn search_builds_fixed_action_queries_and_skips_missing_or_disambiguation_pages() {
+        let recorded = Recorded::default();
+        let (endpoint, server) = mock_server(recorded.clone()).await;
+        let client = WikipediaClient::new_with_endpoint(&endpoint).unwrap();
+        let articles = client
+            .search(&WikipediaSearchRequest {
+                query: "rust language".into(),
+                language: "en".into(),
+                top_n: 3,
+            })
+            .await
+            .unwrap();
+        assert_eq!(articles.len(), 1);
+        assert_eq!(articles[0].title, "Rust (programming language)");
+        assert_eq!(articles[0].summary, "Rust is a programming language.");
+        assert_eq!(articles[0].snippet, "<span>Rust</span> language");
+
+        let calls = recorded.0.lock().unwrap();
+        assert_eq!(calls.len(), 4);
+        assert_eq!(calls[0]["action"], "query");
+        assert_eq!(calls[0]["list"], "search");
+        assert_eq!(calls[0]["srsearch"], "rust language");
+        assert_eq!(calls[0]["srlimit"], "3");
+        assert_eq!(calls[1]["prop"], "info|pageprops|extracts");
+        assert_eq!(calls[1]["explaintext"], "");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn status_shape_and_language_validation_fail_closed() {
+        async fn bad(Query(query): Query<Map<String, Value>>) -> impl IntoResponse {
+            if query.get("srsearch").and_then(Value::as_str) == Some("status") {
+                return (
+                    StatusCode::BAD_GATEWAY,
+                    axum::Json(json!({"error": "down"})),
+                );
+            }
+            (StatusCode::OK, axum::Json(json!({"query": {}})))
+        }
+        let app = Router::new().route("/", get(bad));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = WikipediaClient::new_with_endpoint(&format!("http://{address}/")).unwrap();
+        for (query, expected) in [
+            ("status", "HTTP 502"),
+            ("shape", "query.search must be an array"),
+        ] {
+            let error = client
+                .search(&WikipediaSearchRequest {
+                    query: query.into(),
+                    language: "en".into(),
+                    top_n: 5,
+                })
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains(expected), "{error:#}");
+        }
+        let error = client
+            .search(&WikipediaSearchRequest {
+                query: "x".into(),
+                language: "not-a-language".into(),
+                top_n: 1,
+            })
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("not supported"));
+        server.abort();
+    }
+
+    #[test]
+    fn production_url_is_https_and_language_scoped() {
+        let url = wikipedia_api_url("zh").unwrap();
+        assert_eq!(url.scheme(), "https");
+        assert_eq!(url.host_str(), Some("zh.wikipedia.org"));
+        assert_eq!(url.path(), "/w/api.php");
+        assert!(wikipedia_api_url("zh.example.test").is_err());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live access to the public Wikipedia API"]
+    async fn live_public_api_returns_a_rust_article() {
+        let articles = WikipediaClient::default()
+            .search(&WikipediaSearchRequest {
+                query: "Rust programming language".into(),
+                language: "en".into(),
+                top_n: 1,
+            })
+            .await
+            .unwrap();
+        assert_eq!(articles.len(), 1);
+        assert!(!articles[0].summary.is_empty());
+        assert!(
+            articles[0]
+                .url
+                .starts_with("https://en.wikipedia.org/wiki/")
+        );
+    }
+}

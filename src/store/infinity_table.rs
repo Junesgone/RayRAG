@@ -248,4 +248,159 @@ pub fn load_registry(path: &Path) -> Result<VectorDimensionRegistry> {
     Ok(crate::persistence::load_json(path)?.unwrap_or_default())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn vector_field_parsing_accepts_only_dimensioned_names() {
+        assert_eq!(parse_vector_field("q_1024_vec"), Some(1024));
+        assert_eq!(parse_vector_field("q_2_vec"), Some(2));
+        assert_eq!(parse_vector_field("q_0_vec"), None);
+        assert_eq!(parse_vector_field("q_1024"), None);
+        assert_eq!(parse_vector_field("content_ltks"), None);
+        assert_eq!(parse_vector_field("q_1024_vec_idx"), None);
+    }
+
+    #[test]
+    fn infer_vector_size_scans_record_keys_like_python_regex() {
+        let record: Map<String, Value> = [
+            ("id".into(), Value::String("c1".into())),
+            ("content".into(), Value::String("text".into())),
+            ("q_768_vec".into(), Value::Array(vec![])),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(infer_vector_size(&record), Some(768));
+        let without: Map<String, Value> = [("id".into(), Value::String("c1".into()))]
+            .into_iter()
+            .collect();
+        assert_eq!(infer_vector_size(&without), None);
+    }
+
+    #[test]
+    fn table_parser_detection_requires_json_object_chunk_data() {
+        let with_table: Map<String, Value> = [(
+            INFINITY_CHUNK_DATA_FIELD.into(),
+            serde_json::json!({"cells": ["a"]}),
+        )]
+        .into_iter()
+        .collect();
+        assert!(detect_table_parser(&with_table));
+        let without: Map<String, Value> =
+            [(INFINITY_CHUNK_DATA_FIELD.into(), Value::String("{}".into()))]
+                .into_iter()
+                .collect();
+        assert!(!detect_table_parser(&without));
+        let absent: Map<String, Value> = Map::new();
+        assert!(!detect_table_parser(&absent));
+    }
+
+    #[test]
+    fn hnsw_descriptor_matches_the_fixed_python_connector() {
+        let index = HnswVectorIndex::standard(1024);
+        assert_eq!(index.column_name(), "q_1024_vec");
+        assert_eq!(index.python_index_name(), "q_vec_idx");
+        assert_eq!(index.dimensioned_index_name(), "q_1024_vec_idx");
+        assert_eq!(index.m, 16);
+        assert_eq!(index.ef_construction, 50);
+        assert_eq!(index.metric, "cosine");
+        assert_eq!(index.encoding, "lvq");
+        assert_eq!(
+            index.extra_options(),
+            serde_json::json!({
+                "M": "16",
+                "ef_construction": "50",
+                "metric": "cosine",
+                "encode": "lvq"
+            })
+            .as_object()
+            .cloned()
+            .unwrap()
+        );
+        assert_eq!(crate::settings::INFINITY_CHUNK_VECTOR_INDEX_TYPE, "hnsw");
+    }
+
+    #[test]
+    fn registry_keeps_multiple_dimensions_in_one_table() {
+        let mut registry = VectorDimensionRegistry::new();
+        assert_eq!(
+            registry.ensure_column(768),
+            DimensionChange {
+                column_created: true,
+                index_created: true
+            }
+        );
+        assert!(registry.ensure_column(768).is_noop());
+        registry.ensure_column(1024);
+        assert_eq!(registry.dimensions(), vec![768, 1024]);
+        assert!(registry.column(1024).is_some());
+        // Old dimensions coexist: re-embedding never removes a column.
+        assert!(registry.remove_column(768));
+        assert_eq!(registry.dimensions(), vec![1024]);
+        assert!(!registry.remove_column(768));
+    }
+
+    #[test]
+    fn table_drop_removes_every_dimension_column() {
+        let mut registry = VectorDimensionRegistry::new();
+        registry.ensure_column(384);
+        registry.ensure_column(1536);
+        assert_eq!(registry.drop_table(), 2);
+        assert!(registry.is_empty());
+    }
+
+    #[test]
+    fn table_create_plan_adds_vector_and_optional_chunk_data() {
+        let plan = TableCreatePlan::plan(1024, Some(TABLE_PARSER_ID)).unwrap();
+        assert!(plan.chunk_data);
+        assert_eq!(plan.vector_index.dimension, 1024);
+        let columns = plan.extra_columns();
+        assert_eq!(columns.len(), 2);
+        assert_eq!(columns[0].0, "chunk_data");
+        assert_eq!(columns[0].1["type"], "json");
+        assert_eq!(columns[1].0, "q_1024_vec");
+        assert_eq!(columns[1].1["type"], "vector,1024,float");
+
+        let plain = TableCreatePlan::plan(768, Some("naive")).unwrap();
+        assert!(!plain.chunk_data);
+        assert_eq!(plain.extra_columns().len(), 1);
+        assert!(TableCreatePlan::plan(0, None).is_err());
+    }
+
+    #[test]
+    fn embedding_fill_zeroes_only_missing_dimension_columns() {
+        let registry = {
+            let mut registry = VectorDimensionRegistry::new();
+            registry.ensure_column(2);
+            registry.ensure_column(3);
+            registry
+        };
+        let mut record: Map<String, Value> = [("q_2_vec".into(), serde_json::json!([1.0, 0.5]))]
+            .into_iter()
+            .collect();
+        assert_eq!(plan_embedding_fill(&mut record, &registry), 1);
+        assert_eq!(record["q_2_vec"], serde_json::json!([1.0, 0.5]));
+        assert_eq!(record["q_3_vec"], serde_json::json!([0.0, 0.0, 0.0]));
+        assert_eq!(plan_embedding_fill(&mut record, &registry), 0);
+    }
+
+    #[test]
+    fn registry_persists_across_restarts_and_missing_files_are_fresh() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-infinity-table-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("dimensions.json");
+        let mut registry = VectorDimensionRegistry::new();
+        registry.ensure_column(384);
+        registry.ensure_column(1024);
+        save_registry(&path, &registry).unwrap();
+
+        let loaded = load_registry(&path).unwrap();
+        assert_eq!(loaded, registry);
+
+        let fresh = load_registry(&root.join("absent.json")).unwrap();
+        assert!(fresh.is_empty());
+        std::fs::remove_dir_all(root).ok();
+    }
+}

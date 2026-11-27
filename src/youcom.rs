@@ -205,4 +205,146 @@ async fn read_bounded_body(response: reqwest::Response) -> Result<Vec<u8>> {
     Ok(body)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        Json, Router,
+        extract::Query,
+        http::{HeaderMap, StatusCode},
+        routing::get,
+    };
+    use std::collections::HashMap;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
 
+    #[test]
+    fn freshness_payload_and_content() {
+        assert_eq!(normalize_freshness(None).unwrap(), "");
+        assert_eq!(normalize_freshness(Some("ANY")).unwrap(), "");
+        assert_eq!(normalize_freshness(Some("month")).unwrap(), "month");
+        assert!(normalize_freshness(Some("hour")).is_err());
+
+        let params = build_params("q", 150, "day");
+        assert_eq!(params["count"], 100);
+        assert_eq!(params["freshness"], "day");
+        assert!(build_params("q", 10, "").get("freshness").is_none());
+
+        let web = json!({"snippets": [" a  b ", "", "c"], "description": "ignored"});
+        assert_eq!(result_content(&web), "a b c");
+        let news = json!({"description": " the  news "});
+        assert_eq!(result_content(&news), "the news");
+    }
+
+    #[test]
+    fn merge_sections_prefers_web_then_news_and_trims() {
+        let results = json!({
+            "web": [{"url": "w1"}, {"url": "w2"}, {"url": "w3"}],
+            "news": [{"url": "n1"}, {"url": "n2"}]
+        });
+        let merged = merge_sections(&results, 3);
+        assert_eq!(merged.len(), 3);
+        assert_eq!(merged[0]["url"], "w1");
+        assert_eq!(merged[2]["url"], "w3");
+        let merged_more = merge_sections(&results, 10);
+        assert_eq!(merged_more.len(), 5);
+        assert_eq!(merged_more[4]["url"], "n2");
+        assert!(merge_sections(&json!("nope"), 5).is_empty());
+    }
+
+    async fn spawn_sequence(
+        statuses: Vec<StatusCode>,
+    ) -> (
+        String,
+        Arc<AtomicUsize>,
+        Arc<std::sync::Mutex<Vec<Value>>>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let capture = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let state = counter.clone();
+        let seen = capture.clone();
+        let app = Router::new()
+            .route(
+                "/v1/search",
+                get({
+                    let state = state.clone();
+                    let seen = seen.clone();
+                    move |headers: HeaderMap, Query(params): Query<HashMap<String, String>>| {
+                        let state = state.clone();
+                        let seen = seen.clone();
+                        let statuses = statuses.clone();
+                        async move {
+                            let index = state.fetch_add(1, Ordering::SeqCst);
+                            seen.lock().unwrap().push(json!({
+                                "key": headers.get("x-api-key").and_then(|v| v.to_str().ok()).unwrap_or_default(),
+                                "user_agent": headers.get("user-agent").and_then(|v| v.to_str().ok()).unwrap_or_default(),
+                                "params": params,
+                            }));
+                            let status = statuses.get(index).copied().unwrap_or(StatusCode::OK);
+                            if status == StatusCode::OK {
+                                (status, Json(json!({"results": {"web": [{"url": "w", "snippets": ["s"]}]}})))
+                            } else {
+                                (status, Json(json!({"error": "bad"})))
+                            }
+                        }
+                    }
+                }),
+            )
+            .route("/v1/agents/search", get(|| async { (StatusCode::UNAUTHORIZED, "keyless reached") }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{address}"), counter, capture, server)
+    }
+
+    #[tokio::test]
+    async fn keyed_search_sends_key_and_params() {
+        let (base, counter, capture, server) = spawn_sequence(vec![StatusCode::OK]).await;
+        let client = YouComClient::new_with_endpoints(
+            &format!("{base}/v1/search"),
+            &format!("{base}/v1/agents/search"),
+        )
+        .unwrap();
+        let params = build_params("hello world", 10, "week");
+        let data = client
+            .search("sk-y", &params, 1, Duration::from_millis(1))
+            .await
+            .unwrap();
+        server.abort();
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+        assert_eq!(data["results"]["web"][0]["url"], "w");
+        let seen = capture.lock().unwrap();
+        assert_eq!(seen[0]["key"], "sk-y");
+        assert_eq!(seen[0]["user_agent"], YOUCOM_USER_AGENT);
+        assert_eq!(seen[0]["params"]["query"], "hello world");
+        assert_eq!(seen[0]["params"]["count"], "10");
+        assert_eq!(seen[0]["params"]["freshness"], "week");
+    }
+
+    #[tokio::test]
+    async fn retries_every_failure_then_reports_status() {
+        let (base, counter, _, server) =
+            spawn_sequence(vec![StatusCode::BAD_REQUEST, StatusCode::BAD_REQUEST]).await;
+        let client = YouComClient::new_with_endpoints(
+            &format!("{base}/v1/search"),
+            &format!("{base}/v1/agents/search"),
+        )
+        .unwrap();
+        let error = client
+            .search(
+                "sk",
+                &build_params("q", 10, ""),
+                2,
+                Duration::from_millis(1),
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+        server.abort();
+        assert!(error.contains("400"), "{error}");
+        assert_eq!(counter.load(Ordering::SeqCst), 2);
+    }
+}

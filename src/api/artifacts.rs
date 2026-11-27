@@ -375,4 +375,77 @@ pub async fn delete_artifact(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    fn store() -> ArtifactStore {
+        ArtifactStore::in_memory()
+    }
+
+    #[test]
+    fn an_artifact_is_stored_read_back_and_scoped_to_its_owner() {
+        let store = store();
+        assert!(store.put("alice", "chart.png", "image/png", "aGVsbG8="));
+        assert_eq!(store.put_all(
+            "alice",
+            &[
+                json!({"name": "report.csv", "mime_type": "text/csv", "content_b64": "YSxi"}),
+                json!({"name": "no-bytes.pdf", "mime_type": "application/pdf", "content_b64": ""}),
+            ]
+        ), 1, "the artifact without bytes is skipped, not stored empty");
+
+        // The owner reads them back with their bytes intact.
+        let chart = store.get_for("alice", false, "chart.png").unwrap();
+        assert_eq!(chart.content_b64, "aGVsbG8=");
+        assert_eq!(chart.mime_type, "image/png");
+        assert_eq!(store.list_for("alice", false).len(), 2);
+
+        // Another user does not see them, and an administrator does.
+        assert!(store.get_for("bob", false, "chart.png").is_none());
+        assert!(store.get_for("bob", true, "chart.png").is_some());
+        assert!(store.list_for("bob", false).is_empty());
+        assert_eq!(store.list_for("bob", true).len(), 2);
+
+        // Deleting is scoped the same way.
+        assert!(!store.delete_for("bob", false, "chart.png"));
+        assert!(store.get_for("alice", false, "chart.png").is_some());
+        assert!(store.delete_for("alice", false, "chart.png"));
+        assert!(store.get_for("alice", false, "chart.png").is_none());
+        assert_eq!(store.list_for("alice", false).len(), 1);
+
+        // Storing the same name again replaces it rather than building a duplicate.
+        assert!(store.put("alice", "report.csv", "text/csv", "bmV3"));
+        let listed = store.list_for("alice", false);
+        assert_eq!(listed.len(), 1, "{listed:?}");
+        assert_eq!(
+            store
+                .get_for("alice", false, "report.csv")
+                .unwrap()
+                .content_b64,
+            "bmV3"
+        );
+    }
+
+    #[test]
+    fn unsafe_names_and_unsupported_types_are_refused() {
+        let store = store();
+        for name in ["../escape.png", "dir/file.png", "..\\windows.png", ""] {
+            assert!(
+                !store.put("alice", name, "image/png", "aGVsbG8="),
+                "{name:?} must be refused"
+            );
+        }
+        // A safe name with a type RayRAG does not serve is refused too, as upstream refuses it.
+        assert!(!store.put("alice", "script.sh", "text/x-sh", "aGVsbG8="));
+        assert!(!store.put("alice", "archive.zip", "application/zip", "aGVsbG8="));
+        assert!(store.list_for("alice", false).is_empty());
+    }
+
+    #[test]
+    fn the_stored_size_is_the_decoded_size() {
+        let store = store();
+        assert!(store.put("alice", "data.json", "application/json", "YWJjZA=="));
+        assert_eq!(store.get_for("alice", false, "data.json").unwrap().size, 4);
+    }
+}

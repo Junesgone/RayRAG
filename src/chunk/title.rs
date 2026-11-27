@@ -475,4 +475,176 @@ impl ChunkStrategy for TitleChunker {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Document, ParserConfig};
+    use uuid::Uuid;
 
+    fn doc(content: &str) -> Document {
+        Document {
+            id: Uuid::new_v4(),
+            name: "test.md".into(),
+            content: content.into(),
+            mime_type: "text/markdown".into(),
+            size: content.len(),
+            metadata: HashMap::new(),
+        }
+    }
+
+    const SAMPLE: &str = "# 第一章\n\n这是第一章的正文内容。\n\n## 1.1 小节\n\n这是小节正文。\n\n# 第二章\n\n这是第二章的正文。\n";
+
+    #[test]
+    fn hierarchy_splits_by_heading_levels() {
+        let d = doc(SAMPLE);
+        let mut cfg = ParserConfig::default();
+        cfg.chunk_method = "title".into();
+        cfg.delimiter_mode = "hierarchy".into();
+        cfg.hierarchy = Some(2);
+        let out = TitleChunker.chunk(&d, &cfg).unwrap();
+        // 第一章(含1.1) + 第二章 = 2 块
+        assert_eq!(out.len(), 2);
+        assert!(out[0].content.contains("第一章"));
+        assert!(out[0].content.contains("1.1 小节"));
+        assert!(out[1].content.contains("第二章"));
+    }
+
+    #[test]
+    fn hierarchy_depth_target_merges_deeper_heads() {
+        let d = doc(SAMPLE);
+        let mut cfg = ParserConfig::default();
+        cfg.chunk_method = "title".into();
+        cfg.delimiter_mode = "hierarchy".into();
+        cfg.hierarchy = Some(1); // 只有一级标题成块，1.1 并入第一章
+        let out = TitleChunker.chunk(&d, &cfg).unwrap();
+        assert_eq!(out.len(), 2);
+        assert!(out[0].content.contains("1.1 小节"));
+    }
+
+    #[test]
+    fn group_merges_small_sections() {
+        let d = doc(SAMPLE);
+        let mut cfg = ParserConfig::default();
+        cfg.chunk_method = "title".into();
+        cfg.delimiter_mode = "group".into();
+        let out = TitleChunker.chunk(&d, &cfg).unwrap();
+        // 内容很少 → 全部合并为一块
+        assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn include_heading_content_controls_heading_in_body() {
+        let d = doc(SAMPLE);
+        let mut cfg = ParserConfig::default();
+        cfg.chunk_method = "title".into();
+        cfg.delimiter_mode = "hierarchy".into();
+        cfg.include_heading_content = true;
+        let out = TitleChunker.chunk(&d, &cfg).unwrap();
+        assert!(out[0].content.starts_with("第一章"));
+    }
+
+    #[test]
+    fn root_as_heading_prepends_root_text() {
+        let d = doc(SAMPLE);
+        let mut cfg = ParserConfig::default();
+        cfg.chunk_method = "title".into();
+        cfg.delimiter_mode = "hierarchy".into();
+        cfg.hierarchy = Some(2);
+        cfg.root_chunk_as_heading = true;
+        let out = TitleChunker.chunk(&d, &cfg).unwrap();
+        // 根块被前置到后续块并丢弃 → 只剩第二章块
+        assert_eq!(out.len(), 1);
+        assert!(out[0].content.contains("第一章"));
+        assert!(out[0].content.contains("第二章"));
+    }
+
+    #[test]
+    fn pdf_outline_metadata_is_preferred() {
+        let mut d = doc("正文内容");
+        d.metadata.insert(
+            super::super::OUTLINE_METADATA.into(),
+            r#"[{"title":"节A","depth":0,"page":1},{"title":"节B","depth":0,"page":2}]"#.into(),
+        );
+        d.content = "节A\n内容A\n节B\n内容B\n".into();
+        let mut cfg = ParserConfig::default();
+        cfg.chunk_method = "title".into();
+        let out = TitleChunker.chunk(&d, &cfg).unwrap();
+        assert!(out.len() >= 2);
+    }
+
+    #[test]
+    fn numbered_sections_produce_hierarchical_chunks() {
+        // 章节序号：`1.` → depth 1，`1.1` → depth 2（点分段数）。
+        let d = doc("1. 引言\n引言正文。\n1.1 背景\n背景正文。\n2. 结论\n结论正文。\n");
+        let mut cfg = ParserConfig::default();
+        cfg.chunk_method = "title".into();
+        cfg.delimiter_mode = "hierarchy".into();
+        cfg.hierarchy = Some(1); // 只到一级：1.1 并入 1. 引言
+        let out = TitleChunker.chunk(&d, &cfg).unwrap();
+        assert_eq!(out.len(), 2);
+        assert!(out[0].content.contains("引言"));
+        assert!(out[0].content.contains("背景"));
+        assert!(out[1].content.contains("结论"));
+
+        cfg.hierarchy = Some(2); // 两级各成块
+        let out = TitleChunker.chunk(&d, &cfg).unwrap();
+        assert_eq!(out.len(), 3);
+        assert!(out[1].content.contains("背景"));
+    }
+
+    #[test]
+    fn numbered_body_lines_are_not_headers() {
+        // 纯数字正文行（无后续分隔符/文字）不应被识别为标题。
+        let d = doc("2024 年报告\n营收 3.5 亿。\n增长 12%。\n");
+        let mut cfg = ParserConfig::default();
+        cfg.chunk_method = "title".into();
+        cfg.delimiter_mode = "hierarchy".into();
+        let out = TitleChunker.chunk(&d, &cfg).unwrap();
+        assert_eq!(out.len(), 1);
+        assert!(out[0].content.contains("2024 年报告"));
+    }
+
+    #[test]
+    fn custom_title_levels_regex_families_resolve_levels() {
+        let d = doc("第一章 概述\n概述正文。\n第一节 背景\n背景正文。\n第二章 结论\n结论正文。\n");
+        let mut cfg = ParserConfig::default();
+        cfg.chunk_method = "title".into();
+        cfg.delimiter_mode = "hierarchy".into();
+        cfg.title_levels = vec![
+            r"^第[一二三四五六七八九十百0-9]+章".into(),
+            r"^第[一二三四五六七八九十百0-9]+节".into(),
+        ];
+        cfg.hierarchy = Some(2);
+        cfg.include_heading_content = true;
+        let out = TitleChunker.chunk(&d, &cfg).unwrap();
+        assert_eq!(out.len(), 3);
+        assert!(out[0].content.contains("第一章 概述"));
+        assert!(out[1].content.contains("第一节 背景"));
+        assert!(out[2].content.contains("第二章 结论"));
+    }
+
+    #[test]
+    fn outline_continuity_matches_fuzzy_headings() {
+        // PDF 大纲标题与正文行存在细微差异（后缀）时，通过二元组相似度
+        // 连续性检查（>0.8）仍能命中标题（对齐 RAGFlow _outline_similarity）。
+        let mut d = doc("");
+        d.metadata.insert(
+            super::super::OUTLINE_METADATA.into(),
+            r#"[{"title":"1.1 小节","depth":0,"page":1},{"title":"2.1 小结","depth":0,"page":2}]"#
+                .into(),
+        );
+        d.content = "1.1 小节（续）\n内容甲。\n2.1 小结\n内容乙。\n".into();
+        let mut cfg = ParserConfig::default();
+        cfg.chunk_method = "title".into();
+        let out = TitleChunker.chunk(&d, &cfg).unwrap();
+        assert_eq!(out.len(), 2);
+        assert!(out[0].content.contains("内容甲"));
+        assert!(out[1].content.contains("内容乙"));
+    }
+
+    #[test]
+    fn outline_similarity_rejects_unrelated_lines() {
+        assert!(TitleChunker::outline_similarity("1.1 小节", "1.1 小节（续）") > 0.8);
+        assert!(TitleChunker::outline_similarity("1.1 小节", "完全无关的正文行") < 0.8);
+    }
+}

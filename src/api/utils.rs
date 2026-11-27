@@ -197,7 +197,7 @@ pub fn get_parser_config(
 
     let method_defaults = match chunk_method {
         "naive" => serde_json::json!({
-            "layout_recognize": "DeepDOC",
+            "layout_recognize": "Docling",
             "chunk_token_num": 512,
             "delimiter": "\n",
             "auto_keywords": 0,
@@ -407,4 +407,139 @@ pub mod datetime {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn filename_type_classifies_ragflow_extensions() {
+        // PDF
+        assert_eq!(filename_type(Some("report.pdf")), FileType::Pdf);
+        assert_eq!(filename_type(Some("a/b/c/report.PDF")), FileType::Pdf);
+        // DOC family
+        assert_eq!(filename_type(Some("notes.docx")), FileType::Doc);
+        assert_eq!(filename_type(Some("script.py")), FileType::Doc);
+        assert_eq!(filename_type(Some("data.jsonl")), FileType::Doc);
+        assert_eq!(filename_type(Some("page.html")), FileType::Doc);
+        // AURAL
+        assert_eq!(filename_type(Some("audio.mp3")), FileType::Aural);
+        assert_eq!(filename_type(Some("voice.flac")), FileType::Aural);
+        // VISUAL
+        assert_eq!(filename_type(Some("photo.JPG")), FileType::Visual);
+        assert_eq!(filename_type(Some("clip.mp4")), FileType::Visual);
+        assert_eq!(filename_type(Some("vector.svg")), FileType::Visual);
+        // OTHER
+        assert_eq!(filename_type(Some("archive.zip")), FileType::Other);
+        assert_eq!(filename_type(Some("noext")), FileType::Other);
+        // Robustness: None / empty / over-long names fall back to OTHER
+        assert_eq!(filename_type(None), FileType::Other);
+        assert_eq!(filename_type(Some("")), FileType::Other);
+        assert_eq!(filename_type(Some("   ")), FileType::Other);
+        let long_name = format!("{}.pdf", "a".repeat(260));
+        assert_eq!(filename_type(Some(&long_name)), FileType::Other);
+    }
+
+    #[test]
+    fn sanitize_path_strips_traversal_and_unsafe_chars() {
+        // Note: RAGFlow's regex [^A-Za-z0-9_\-/] also strips '.' and spaces.
+        assert_eq!(sanitize_path(Some("a/b/c.pdf")), "a/b/cpdf");
+        assert_eq!(sanitize_path(Some("../../etc/passwd")), "etc/passwd");
+        assert_eq!(sanitize_path(Some("a\\b\\c")), "a/b/c");
+        assert_eq!(
+            sanitize_path(Some("/leading/trailing/")),
+            "leading/trailing"
+        );
+        assert_eq!(sanitize_path(Some("a b*c?d")), "abcd");
+        assert_eq!(sanitize_path(Some(".")), "");
+        assert_eq!(sanitize_path(Some("..")), "");
+        assert_eq!(sanitize_path(None), "");
+        assert_eq!(sanitize_path(Some("")), "");
+    }
+
+    #[test]
+    fn get_parser_config_merges_defaults_and_flattens_parent_child() {
+        // naive defaults
+        let config = get_parser_config(Some("naive"), None);
+        assert_eq!(config["chunk_token_num"], 512);
+        assert_eq!(config["layout_recognize"], "Docling");
+        assert_eq!(config["table_context_size"], 0);
+        assert_eq!(config["raptor"]["use_raptor"], true);
+        assert_eq!(config["graphrag"]["entity_types"][1], "person");
+        // children_delimiter empty when parent_child disabled
+        assert_eq!(config["children_delimiter"], "");
+
+        // user overrides win; unknown keys are appended
+        let user = serde_json::json!({
+            "chunk_token_num": 1024,
+            "raptor": { "use_raptor": false },
+            "custom_flag": true,
+        });
+        let merged = get_parser_config(Some("naive"), Some(&user));
+        assert_eq!(merged["chunk_token_num"], 1024);
+        assert_eq!(merged["raptor"]["use_raptor"], false);
+        assert_eq!(merged["custom_flag"], true);
+        assert_eq!(merged["layout_recognize"], "Docling");
+
+        // parent_child enabled -> children_delimiter comes from the flattened config
+        let with_pc = serde_json::json!({
+            "parent_child": { "use_parent_child": true, "children_delimiter": "\n" }
+        });
+        let merged_pc = get_parser_config(Some("naive"), Some(&with_pc));
+        assert_eq!(merged_pc["children_delimiter"], "\n");
+
+        // method without defaults (e.g. "tag") -> only base defaults
+        let tag_config = get_parser_config(Some("tag"), None);
+        assert_eq!(tag_config["table_context_size"], 0);
+        assert_eq!(tag_config["image_context_size"], 0);
+        assert!(tag_config.get("chunk_token_num").is_none());
+
+        // None chunk method -> naive
+        assert_eq!(get_parser_config(None, None)["layout_recognize"], "Docling");
+    }
+
+    #[test]
+    fn init_dataset_defaults_and_datetime_roundtrip() {
+        // parser_id defaults to naive, llm_id injected from tenant
+        let (parser_id, config) = init_dataset_defaults(None, None, Some("deepseek-chat"));
+        assert_eq!(parser_id, "naive");
+        assert_eq!(config["llm_id"], "deepseek-chat");
+        assert_eq!(config["chunk_token_num"], 512);
+
+        // explicit parser id is preserved
+        let (parser_id, config) = init_dataset_defaults(Some("knowledge_graph"), None, None);
+        assert_eq!(parser_id, "knowledge_graph");
+        assert_eq!(config["chunk_token_num"], 8192);
+        assert!(config.get("llm_id").is_none());
+
+        // datetime: known epoch -> RFC3339 / RAGFlow %Y-%m-%d %H:%M:%S
+        let ms = 1_700_000_000_000; // 2023-11-14T22:13:20Z
+        assert_eq!(datetime::ms_to_rfc3339(ms), "2023-11-14T22:13:20+00:00");
+        assert_eq!(datetime::format_datetime(ms), "2023-11-14 22:13:20");
+        assert_eq!(datetime::format_date(ms), "2023-11-14");
+        assert_eq!(datetime::format_utc_day(ms), "2023-11-14");
+        // UTC day start for that timestamp (2023-11-14T00:00:00Z)
+        assert_eq!(datetime::start_of_utc_day(ms), 1_699_920_000_000);
+        assert_eq!(
+            datetime::start_of_utc_day(ms + 3_600_000),
+            datetime::start_of_utc_day(ms)
+        );
+
+        // civil_from_days cross-checked with chrono
+        let days = (ms / 86_400_000) as i64;
+        let (y, m, d) = datetime::civil_from_days(days);
+        assert_eq!((y, m, d), (2023, 11, 14));
+    }
+
+    #[test]
+    fn hashes_match_ragflow_formats() {
+        // MD5 of "abc"
+        assert_eq!(hash_md5_hex(b"abc"), "900150983cd24fb0d6963f7d28e17f72");
+        // hash128 is always 32 lowercase hex chars (xxh3-128)
+        let digest = hash128(b"hello world");
+        assert_eq!(digest.len(), 32);
+        assert!(digest.chars().all(|ch| ch.is_ascii_hexdigit()));
+        // deterministic
+        assert_eq!(hash128(b"hello world"), hash128(b"hello world"));
+        assert_ne!(hash128(b"hello world"), hash128(b"hello world!"));
+    }
+}

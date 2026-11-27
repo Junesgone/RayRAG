@@ -186,4 +186,138 @@ fn string_list(raw: Option<&String>) -> Vec<String> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
 
+    fn metadata(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn every_field_upstream_names_is_present() {
+        let fields = citation_fields(
+            "c1",
+            "d1",
+            "guide.md",
+            "kb-1",
+            "Retrieval augmented generation",
+            &metadata(&[]),
+        );
+        for key in [
+            "id",
+            "document_id",
+            "document_keyword",
+            "dataset_id",
+            "content_ltks",
+            "image_id",
+            "important_keywords",
+            "tag_kwd",
+            "positions",
+            "url",
+            "doc_type",
+        ] {
+            assert!(fields.contains_key(key), "missing {key}");
+        }
+        assert_eq!(fields["id"], json!("c1"));
+        assert_eq!(fields["document_keyword"], json!("guide.md"));
+        assert_eq!(fields["dataset_id"], json!("kb-1"));
+        // Empty is the honest answer when the deployment stored nothing.
+        assert_eq!(fields["positions"], json!([]));
+        assert_eq!(fields["image_id"], json!(""));
+        assert_eq!(fields["important_keywords"], json!([]));
+        assert_eq!(fields["tag_kwd"], json!([]));
+        // Content without stored tokens is still tokenised, not left empty.
+        assert!(
+            !fields["content_ltks"].as_str().unwrap().trim().is_empty(),
+            "{fields:?}"
+        );
+    }
+
+    #[test]
+    fn stored_values_are_used_verbatim_and_parsed_when_they_are_json() {
+        let fields = citation_fields(
+            "c1",
+            "d1",
+            "guide.md",
+            "kb-1",
+            "text",
+            &metadata(&[
+                ("img_id", "img-9"),
+                ("url", "https://example.cn/doc"),
+                ("doc_type", "pdf"),
+                ("content_ltks", "already tokenised"),
+                ("important_kwd", "[\"alpha\",\"beta\"]"),
+                ("tag_kwd", "gamma"),
+                ("positions", "[[12,11,11,11,11]]"),
+            ]),
+        );
+        assert_eq!(fields["image_id"], json!("img-9"));
+        assert_eq!(fields["url"], json!("https://example.cn/doc"));
+        assert_eq!(fields["doc_type"], json!("pdf"));
+        assert_eq!(fields["content_ltks"], json!("already tokenised"));
+        assert_eq!(fields["important_keywords"], json!(["alpha", "beta"]));
+        assert_eq!(fields["tag_kwd"], json!(["gamma"]));
+        assert_eq!(fields["positions"], json!([[12, 11, 11, 11, 11]]));
+    }
+
+    #[test]
+    fn a_position_that_is_not_json_is_wrapped_rather_than_dropped() {
+        assert_eq!(parse_positions("12,11,11"), json!([[12, 11, 11]]));
+        assert_eq!(parse_positions(""), json!([]));
+        assert_eq!(parse_positions("no numbers here"), json!([]));
+        // Malformed JSON must not panic, and it must not be guessed at either: the numbers inside a
+        // truncated tuple are not a position this deployment ever stored.
+        assert_eq!(parse_positions("[[12,"), json!([]));
+    }
+
+    #[test]
+    fn a_reference_reports_the_same_keys_from_its_metadata() {
+        let mut document_metadata = Map::new();
+        document_metadata.insert("url".into(), json!("https://example.cn/a"));
+        document_metadata.insert("doc_type".into(), json!("markdown"));
+        document_metadata.insert("img_id".into(), json!("img-1"));
+        document_metadata.insert("positions".into(), json!([[1, 2, 3]]));
+        let reference = crate::llm::ChunkReference {
+            document_id: Some("d1".into()),
+            document_name: Some("a.md".into()),
+            id: "c1".into(),
+            kb_id: "kb-1".into(),
+            content: "text".into(),
+            similarity: Some(0.9),
+            vector_similarity: Some(0.8),
+            term_similarity: Some(0.7),
+            document_metadata: Some(document_metadata),
+        };
+        let fields = citation_fields_for_reference(&reference);
+        assert_eq!(fields["id"], json!("c1"));
+        assert_eq!(fields["document_name"], json!("a.md"));
+        assert_eq!(fields["dataset_id"], json!("kb-1"));
+        assert_eq!(fields["url"], json!("https://example.cn/a"));
+        assert_eq!(fields["doc_type"], json!("markdown"));
+        assert_eq!(fields["image_id"], json!("img-1"));
+        assert_eq!(fields["positions"], json!([[1, 2, 3]]));
+
+        // A reference with no metadata still answers every key.
+        let bare = crate::llm::ChunkReference {
+            document_id: None,
+            document_name: None,
+            id: "c2".into(),
+            kb_id: "kb-1".into(),
+            content: "text".into(),
+            similarity: None,
+            vector_similarity: None,
+            term_similarity: None,
+            document_metadata: None,
+        };
+        let fields = citation_fields_for_reference(&bare);
+        assert_eq!(fields["positions"], json!([]));
+        assert_eq!(fields["url"], json!(""));
+        assert_eq!(fields["doc_type"], json!(""));
+        assert_eq!(fields["document_name"], json!(""));
+    }
+}

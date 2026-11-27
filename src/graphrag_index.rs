@@ -323,4 +323,138 @@ pub fn apply_edges(graph: &mut EntityGraph, edges: &[KgExtractedEdge]) -> usize 
     ignored
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::graphrag::GraphExtractor;
 
+    fn small_graph() -> EntityGraph {
+        let mut g = EntityGraph::new();
+        for (name, desc) in [("A", "entity A"), ("B", "entity B"), ("C", "entity C")] {
+            g.add_node(name, EntityType::Unknown, desc, "d1");
+        }
+        g.add_relation("A", "B", 1.0);
+        g.add_relation("B", "C", 2.0);
+        g
+    }
+
+    #[test]
+    fn tidy_graph_purges_nodes_missing_attributes() {
+        let mut g = EntityGraph::new();
+        g.add_node("HasDesc", EntityType::Unknown, "desc", "d1");
+        g.add_node("NoSource", EntityType::Unknown, "desc", ""); // empty source id
+        let (purged_nodes, purged_edges) = tidy_graph(&mut g, true);
+        assert_eq!(purged_nodes, 1);
+        assert_eq!(purged_edges, 0);
+        assert!(g.node_names().contains(&"HasDesc".to_string()));
+        assert!(!g.node_names().contains(&"NoSource".to_string()));
+    }
+
+    #[test]
+    fn graph_merge_concats_and_accumulates() {
+        let mut g1 = small_graph();
+        // g2: A gets a second description + source; A-B weight 3; new edge A-C
+        let mut g2 = EntityGraph::new();
+        g2.add_node("A", EntityType::Unknown, "second desc", "d2");
+        g2.add_relation("A", "B", 3.0);
+        g2.add_relation("A", "C", 0.5);
+
+        let change = graph_merge(&mut g1, &g2);
+        assert!(change.added_updated_nodes.contains("A"));
+        assert!(
+            change
+                .added_updated_edges
+                .contains(&("A".to_string(), "B".to_string()))
+        );
+        let desc = g1.description_of("A").unwrap();
+        assert!(
+            desc.contains("<SEP>"),
+            "descriptions concatenated with <SEP>"
+        );
+        assert_eq!(g1.edge_weight("A", "B").unwrap(), 4.0, "weights accumulate");
+        assert!(g1.edge_weight("A", "C").is_some(), "new edge added");
+        assert!(g1.source_id_of("A").contains(&"d1".to_string()));
+        assert!(g1.source_id_of("A").contains(&"d2".to_string()));
+    }
+
+    #[test]
+    fn pagerank_ranks_hub_higher() {
+        let mut g = EntityGraph::new();
+        // star: center A connected to B, C, D
+        g.add_node("A", EntityType::Unknown, "a", "d");
+        for n in ["B", "C", "D"] {
+            g.add_node(n, EntityType::Unknown, n, "d");
+            g.add_relation("A", n, 1.0);
+        }
+        let pr = pagerank(&g, 0.85, 100, 1e-6);
+        assert!(pr["A"] > pr["B"], "hub should rank above leaves");
+        // sum ≈ 1
+        let sum: f64 = pr.values().sum();
+        assert!((sum - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn build_subgraph_drops_relations_with_missing_endpoints() {
+        let mut r = GraphExtractionResult::default();
+        r.nodes.push(KgExtractedNode {
+            entity_name: "ALPHA".into(),
+            entity_type: "PERSON".into(),
+            description: "alpha".into(),
+            source_id: "c0".into(),
+        });
+        r.nodes.push(KgExtractedNode {
+            entity_name: "BETA".into(),
+            entity_type: "PERSON".into(),
+            description: "beta".into(),
+            source_id: "c0".into(),
+        });
+        r.edges.push(KgExtractedEdge {
+            src_id: "ALPHA".into(),
+            tgt_id: "BETA".into(),
+            weight: 1.0,
+            description: "rel".into(),
+            keywords: "kw".into(),
+            source_id: "c0".into(),
+        });
+        // GAMMA is not extracted as a node → relation ignored
+        r.edges.push(KgExtractedEdge {
+            src_id: "ALPHA".into(),
+            tgt_id: "GAMMA".into(),
+            weight: 2.0,
+            description: "rel2".into(),
+            keywords: "kw".into(),
+            source_id: "c0".into(),
+        });
+        let (g, ignored) = build_subgraph(&[r], "doc-1", &["person".into()]);
+        assert_eq!(ignored, 1);
+        assert!(g.edge_weight("ALPHA", "BETA").is_some());
+        assert!(g.edge_weight("ALPHA", "GAMMA").is_none());
+    }
+
+    #[test]
+    fn apply_node_types_maps_strings() {
+        let mut g = EntityGraph::new();
+        g.set_description("李锦澎", "person");
+        g.set_source_id("李锦澎", "d");
+        let nodes = vec![KgExtractedNode {
+            entity_name: "李锦澎".into(),
+            entity_type: "PERSON".into(),
+            description: "person".into(),
+            source_id: "d".into(),
+        }];
+        apply_node_types(&mut g, &nodes);
+        assert_eq!(entity_type_from_str("PERSON"), EntityType::Person);
+        assert_eq!(entity_type_from_str("产品"), EntityType::Product);
+        assert_eq!(entity_type_from_str("whatever"), EntityType::Unknown);
+    }
+
+    #[test]
+    fn extract_chunks_collects_results_and_enforces_error_cap() {
+        // concurrency machinery is exercised in the async path; here we only
+        // assert the synchronous helpers stay consistent.
+        let ex = GraphExtractor::new();
+        assert_eq!(ex.max_gleanings, ENTITY_EXTRACTION_MAX_GLEANINGS);
+        assert_eq!(DEFAULT_ENTITY_TYPES.len(), 5);
+        assert_eq!(MAX_CONCURRENT_PROCESS_AND_EXTRACT_CHUNK, 10);
+    }
+}

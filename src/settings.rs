@@ -1927,4 +1927,726 @@ pub fn skill_infinity_fulltext_index_name(field: &str, analyzer: &str) -> String
     )
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    fn reader<'a>(entries: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |key| {
+            entries
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| v.to_string())
+        }
+    }
+
+    #[test]
+    fn register_enabled_resolution_keeps_the_page_and_the_api_in_step() {
+        // Upstream default: unset means enabled (`settings.REGISTER_ENABLED = 1`),
+        // which is what the login page's `registerEnabled` gate already assumed.
+        assert_eq!(resolve_register_enabled(None, None), 1);
+        assert_eq!(resolve_register_enabled(Some("1"), None), 1);
+        assert_eq!(resolve_register_enabled(Some(" 1 "), None), 1);
+        // Explicitly off stays off.
+        assert_eq!(resolve_register_enabled(Some("0"), None), 0);
+        // A nonsense value falls back to the upstream default, like `int()` failing.
+        assert_eq!(resolve_register_enabled(Some("nope"), None), 1);
+        // The legacy RayRAG opt-in can only widen the gate, never narrow it.
+        assert_eq!(resolve_register_enabled(Some("0"), Some("true")), 1);
+        assert_eq!(resolve_register_enabled(Some("0"), Some("YES")), 1);
+        assert_eq!(resolve_register_enabled(Some("0"), Some("1")), 1);
+        assert_eq!(resolve_register_enabled(Some("0"), Some("0")), 0);
+        assert_eq!(resolve_register_enabled(Some("0"), Some("false")), 0);
+        // The upstream switch decides, so the two can never contradict each
+        // other into the old failure mode (page enabled, API 403).
+        assert_eq!(resolve_register_enabled(Some("1"), Some("0")), 1);
+
+        let settings = Settings::from_reader(reader(&[("RAYRAG_ALLOW_REGISTRATION", "true")]));
+        assert_eq!(settings.register_enabled, 1);
+        let settings = Settings::from_reader(reader(&[
+            ("REGISTER_ENABLED", "0"),
+            ("RAYRAG_ALLOW_REGISTRATION", "true"),
+        ]));
+        assert_eq!(settings.register_enabled, 1);
+    }
+
+    #[test]
+    fn defaults_match_python_rag_settings() {
+        let settings = Settings::from_reader(reader(&[]));
+        assert_eq!(settings.timezone, "Asia/Shanghai");
+        assert_eq!(settings.storage_impl, StorageImpl::Minio);
+        assert_eq!(settings.doc_engine, DocEngine::Elasticsearch);
+        assert_eq!(settings.doc_maximum_size, 128 * 1024 * 1024);
+        assert_eq!(settings.doc_bulk_size, 4);
+        assert_eq!(settings.embedding_batch_size, 16);
+        assert_eq!(settings.register_enabled, 1);
+        assert!(!settings.disable_password_login);
+        assert_eq!(settings.strong_test_count, 8);
+        assert_eq!(settings.max_file_num_per_user, 0);
+        assert_eq!(settings.secret_key, None);
+        assert!(!settings.crypto_enabled);
+        assert_eq!(settings.crypto_algorithm, "aes-256-cbc");
+        assert!(!settings.sandbox_enabled);
+        assert_eq!(settings.sandbox_host, "sandbox-executor-manager");
+        assert_eq!(get_svr_queue_name(0), "rag_flow_svr_queue");
+        assert_eq!(get_svr_queue_name(1), "rag_flow_svr_queue_1");
+        assert_eq!(
+            get_svr_queue_names(),
+            vec!["rag_flow_svr_queue_1", "rag_flow_svr_queue"]
+        );
+        assert_eq!(FLOAT_ZERO, 1e-8);
+        assert_eq!(PARAM_MAXDEPTH, 5);
+    }
+
+    /// Gate for the internal parameter/interface registry: every `.env.example`
+    /// key must be documented there (and vice versa), so a parameter cannot be
+    /// added with a name that the registry — and therefore future code — does
+    /// not know about. Refresh with the registry generator script. The doc is
+    /// trimmed from published snapshots, so the gate skips when it is absent.
+    #[test]
+    fn env_example_and_interface_registry_stay_in_sync() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let example =
+            std::fs::read_to_string(root.join(".env.example")).expect(".env.example must exist");
+        let registry_path = root.join("docs").join("parameter-interface-registry.md");
+        let Ok(registry) = std::fs::read_to_string(&registry_path) else {
+            // Internal-only asset (see the publish snapshot excludes); nothing
+            // to gate when it has been trimmed.
+            return;
+        };
+        // The template comments out values whose absence is meaningful, and the
+        // generator documents those too — compare both spellings.
+        let example_keys: std::collections::BTreeSet<String> = example
+            .lines()
+            .filter_map(|line| {
+                let line = line.trim().strip_prefix('#').unwrap_or(line.trim());
+                let (key, _) = line.split_once('=')?;
+                let key = key.trim();
+                (!key.is_empty()
+                    && key
+                        .chars()
+                        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'))
+                .then(|| key.to_string())
+            })
+            .collect();
+        // Only the generated env section lists parameters; the route table below
+        // uses the same `| \`…\` |` shape for HTTP paths and methods.
+        let env_section = registry
+            .split("<!-- BEGIN GENERATED ENV -->")
+            .nth(1)
+            .and_then(|rest| rest.split("<!-- END GENERATED ENV -->").next())
+            .expect("generated env section markers must exist in the registry");
+        let registry_keys: std::collections::BTreeSet<String> = env_section
+            .lines()
+            .filter_map(|line| {
+                let rest = line.trim().strip_prefix("| `")?;
+                let (key, _) = rest.split_once("` |")?;
+                key.chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+                    .then(|| key.to_string())
+            })
+            .collect();
+        let missing: Vec<_> = example_keys.difference(&registry_keys).cloned().collect();
+        let extra: Vec<_> = registry_keys.difference(&example_keys).cloned().collect();
+        assert!(
+            missing.is_empty(),
+            ".env.example keys missing from the registry: {missing:?}"
+        );
+        assert!(
+            extra.is_empty(),
+            "registry keys not present in .env.example: {extra:?}"
+        );
+    }
+
+    #[test]
+    fn env_values_override_defaults_with_python_type_conversion() {
+        let settings = Settings::from_reader(reader(&[
+            ("TZ", "UTC"),
+            ("DB_TYPE", "postgres"),
+            ("STORAGE_IMPL", "aws_s3"),
+            ("DOC_ENGINE", "Infinity"),
+            ("MAX_CONTENT_LENGTH", "1048576"),
+            ("DOC_BULK_SIZE", "8"),
+            ("EMBEDDING_BATCH_SIZE", "32"),
+            ("REGISTER_ENABLED", "0"),
+            ("DISABLE_PASSWORD_LOGIN", "true"),
+            ("STRONG_TEST_COUNT", "16"),
+            ("MAX_FILE_NUM_PER_USER", "100"),
+            ("RAGFLOW_CRYPTO_ENABLED", "True"),
+            ("RAGFLOW_CRYPTO_ALGORITHM", "aes-256-gcm"),
+            ("SANDBOX_ENABLED", "1"),
+            ("SANDBOX_HOST", "sandbox-2"),
+        ]));
+        assert_eq!(settings.timezone, "UTC");
+        assert_eq!(settings.database_type, "postgres");
+        assert_eq!(settings.storage_impl, StorageImpl::AwsS3);
+        assert_eq!(settings.doc_engine, DocEngine::Infinity);
+        assert!(settings.doc_engine.is_infinity());
+        assert_eq!(settings.doc_maximum_size, 1048576);
+        assert_eq!(settings.doc_bulk_size, 8);
+        assert_eq!(settings.embedding_batch_size, 32);
+        assert_eq!(settings.register_enabled, 0);
+        assert!(settings.disable_password_login);
+        assert_eq!(settings.strong_test_count, 16);
+        assert_eq!(settings.max_file_num_per_user, 100);
+        assert!(settings.crypto_enabled);
+        assert_eq!(settings.crypto_algorithm, "aes-256-gcm");
+        assert!(settings.sandbox_enabled);
+        assert_eq!(settings.sandbox_host, "sandbox-2");
+
+        // Loose boolean parsing mirrors Python `in ("1","true","yes")`.
+        assert!(parse_disable_password_login_env("YES"));
+        assert!(parse_disable_password_login_env("1"));
+        assert!(!parse_disable_password_login_env("0"));
+        assert!(!parse_disable_password_login_env(""));
+
+        // oceanbase/seekdb family flags.
+        assert!(DocEngine::Oceanbase.is_oceanbase());
+        assert!(DocEngine::Seekdb.is_oceanbase_family());
+        assert!(DocEngine::Oceanbase.is_oceanbase_family());
+        assert!(!DocEngine::Elasticsearch.is_oceanbase_family());
+    }
+
+    #[test]
+    fn secret_key_requires_32_chars_and_rejects_stale_date_placeholders() {
+        let short = "0123456789abcdef";
+        assert_eq!(init_secret_key(Some(short), None), None);
+        let good = "0123456789abcdef0123456789abcdef";
+        assert_eq!(init_secret_key(Some(good), None), Some(good.to_owned()));
+        // A configured key equal to today's date is a stale placeholder in
+        // `init_secret_key`; note the date itself is 10 chars so a ≥32-char
+        // key can never equal it — the check is defensive, mirroring Python.
+        let today = {
+            let now = time::OffsetDateTime::now_utc();
+            format!(
+                "{:04}-{:02}-{:02}",
+                now.year(),
+                now.month() as u8,
+                now.day()
+            )
+        };
+        let mut padded = today;
+        while padded.len() < 32 {
+            padded.push('x');
+        }
+        // padded != today and len >= 32 → accepted (Python: key != str(date.today())).
+        assert_eq!(init_secret_key(None, Some(&padded)), Some(padded.clone()));
+        let configured = "abcdef0123456789abcdef0123456789";
+        assert_eq!(
+            init_secret_key(None, Some(configured)),
+            Some(configured.to_owned())
+        );
+        // Explicit env key always wins over the configured one.
+        assert_eq!(
+            init_secret_key(Some(good), Some(configured)),
+            Some(good.to_owned())
+        );
+    }
+
+    #[test]
+    fn model_entry_parsing_and_resolution_match_python() {
+        // String entry → bare name, no factory.
+        let entry = parse_model_entry(&Value::String("deepseek-v3".into()));
+        assert_eq!(entry.name, "deepseek-v3");
+        assert_eq!(entry.factory, None);
+
+        // Dict entry with explicit fields.
+        let dict = serde_json::json!({
+            "name": "qwen-max",
+            "factory": "volcengine",
+            "api_key": "k",
+            "base_url": "https://ark.cn-beijing.volces.com"
+        });
+        let entry = parse_model_entry(&dict);
+        assert_eq!(entry.name, "qwen-max");
+        assert_eq!(entry.factory.as_deref(), Some("volcengine"));
+        assert_eq!(entry.api_key.as_deref(), Some("k"));
+
+        // Per-model config resolution: name@factory composition, fallbacks.
+        // Entry-level factory/api_key/base_url win over the backups — the
+        // same `or` chaining as `_resolve_per_model_config`.
+        let resolved =
+            resolve_per_model_config(&entry, "default-factory", "default-key", "default-url");
+        assert_eq!(resolved.name, "qwen-max@volcengine");
+        assert_eq!(resolved.factory.as_deref(), Some("volcengine"));
+        assert_eq!(resolved.api_key.as_deref(), Some("k"));
+        assert_eq!(
+            resolved.base_url.as_deref(),
+            Some("https://ark.cn-beijing.volces.com")
+        );
+
+        // A bare-name entry picks up the backup factory and composes name@factory.
+        let bare = parse_model_entry(&Value::String("bge-m3".into()));
+        let resolved = resolve_per_model_config(&bare, "tei", "", "");
+        assert_eq!(resolved.name, "bge-m3@tei");
+        assert_eq!(resolved.factory.as_deref(), Some("tei"));
+
+        // Names already containing '@' are not re-composed.
+        let already = parse_model_entry(&Value::String("gpt-4o@openai".into()));
+        let resolved = resolve_per_model_config(&already, "other", "", "");
+        assert_eq!(resolved.name, "gpt-4o@openai");
+    }
+
+    #[test]
+    fn service_conf_defaults_mirror_shipped_yaml() {
+        let conf = ServiceConf::default();
+        assert_eq!(conf.ragflow_host, "0.0.0.0");
+        assert_eq!(conf.http_port, 9380);
+        assert_eq!(conf.admin_port, 9381);
+        assert_eq!(conf.mysql.name, "rag_flow");
+        assert_eq!(conf.mysql.port, 3306);
+        assert_eq!(conf.mysql.max_connections, 900);
+        assert_eq!(conf.minio.host, "localhost:9000");
+        assert_eq!(conf.es.hosts, "http://localhost:1200");
+        assert_eq!(conf.os.hosts, "http://localhost:1201");
+        assert_eq!(conf.infinity.uri, "localhost:23817");
+        assert_eq!(conf.infinity.postgres_port, 5432);
+        assert_eq!(conf.redis.db, 1);
+        assert_eq!(conf.redis.host, "localhost:6379");
+        assert_eq!(conf.message_queue_type, "redis");
+    }
+
+    #[test]
+    fn service_conf_parses_document_and_applies_user_default_llm() {
+        // JSON shape of conf/service_conf.yaml (YAML ⊃ JSON).
+        let document = serde_json::json!({
+            "ragflow": {"host": "127.0.0.1", "http_port": 9390},
+            "admin": {"host": "127.0.0.1", "http_port": 9391},
+            "mysql": {"name": "rag_flow", "user": "root", "password": "p",
+                      "host": "db.internal", "port": 3307, "max_connections": 100,
+                      "stale_timeout": 30},
+            "minio": {"user": "rag_flow", "password": "p", "host": "minio:9000",
+                      "bucket": "rag", "prefix_path": "kb"},
+            "es": {"hosts": "http://es:1200", "username": "elastic", "password": "p"},
+            "os": {"hosts": "http://os:1201", "username": "admin", "password": "p"},
+            "infinity": {"uri": "infinity:23817", "postgres_port": 5433, "db_name": "kb"},
+            "redis": {"db": 2, "username": "", "password": "p", "host": "redis:6379"},
+            "task_executor": {"message_queue_type": "redis"},
+            "file_syncer": {"max_concurrent_syncs": 9, "sync_interval": 7},
+            "user_default_llm": {
+                "factory": "ZHIPU-AI",
+                "api_key": "key",
+                "base_url": "https://open.bigmodel.cn/api/paas/v4",
+                "default_models": {
+                    "embedding_model": {"name": "embedding-3", "factory": "ZHIPU-AI",
+                                        "api_key": "key",
+                                        "base_url": "https://open.bigmodel.cn/api/paas/v4"}
+                }
+            }
+        });
+        let conf = ServiceConf::from_value(&document);
+        assert_eq!(conf.ragflow_host, "127.0.0.1");
+        assert_eq!(conf.http_port, 9390);
+        assert_eq!(conf.admin_port, 9391);
+        assert_eq!(conf.mysql.host, "db.internal");
+        assert_eq!(conf.mysql.port, 3307);
+        assert_eq!(conf.mysql.max_connections, 100);
+        assert_eq!(conf.minio.bucket, "rag");
+        assert_eq!(conf.es.hosts, "http://es:1200");
+        assert_eq!(conf.redis.db, 2);
+        assert_eq!(conf.user_default_llm.factory, "ZHIPU-AI");
+        // file_syncer keys parse (legacy dead-config parity).
+        assert_eq!(conf.file_syncer.max_concurrent_syncs, 9);
+        assert_eq!(conf.file_syncer.sync_interval, 7);
+        // Missing keys keep the shipped defaults.
+        let partial = ServiceConf::from_value(&serde_json::json!({"ragflow": {"http_port": 9400}}));
+        assert_eq!(partial.http_port, 9400);
+        assert_eq!(partial.admin_port, 9381);
+        assert_eq!(partial.mysql.name, "rag_flow");
+        assert_eq!(partial.file_syncer.max_concurrent_syncs, 4);
+
+        // Apply onto a settings snapshot: fills the LLM defaults that the env
+        // reader intentionally leaves empty, composing name@factory.
+        let mut settings = Settings::from_reader(|_| None);
+        assert!(settings.llm_factory.is_empty());
+        conf.apply_to_settings(&mut settings);
+        assert_eq!(settings.llm_factory, "ZHIPU-AI");
+        assert_eq!(
+            settings.llm_base_url,
+            "https://open.bigmodel.cn/api/paas/v4"
+        );
+        let embedding = settings.default_models.get("embedding_model").unwrap();
+        assert_eq!(embedding.name, "embedding-3@ZHIPU-AI");
+        assert_eq!(embedding.factory.as_deref(), Some("ZHIPU-AI"));
+        assert_eq!(embedding.api_key.as_deref(), Some("key"));
+    }
+
+    #[test]
+    fn es_field_kind_resolves_suffix_and_regex_templates() {
+        // Suffix rules (conf/mapping.json / conf/os_mapping.json).
+        assert_eq!(es_field_kind("weight_int"), FieldKind::Int);
+        assert_eq!(es_field_kind("rank_flt"), FieldKind::Float);
+        assert_eq!(es_field_kind("content_ltks"), FieldKind::LongTokens);
+        assert_eq!(es_field_kind("content_tks"), FieldKind::Tokens);
+        assert_eq!(
+            es_field_kind("content_with_weight"),
+            FieldKind::UnindexedText
+        );
+        assert_eq!(es_field_kind("tag_list"), FieldKind::UnindexedText);
+        assert_eq!(es_field_kind("pagerank_fea"), FieldKind::RankFeature);
+        assert_eq!(es_field_kind("tag_feas"), FieldKind::RankFeatures);
+        assert_eq!(es_field_kind("q_256_vec"), FieldKind::Text);
+        assert_eq!(es_field_kind("q_768_vec"), FieldKind::DenseVector(768));
+        assert_eq!(es_field_kind("q_3072_vec"), FieldKind::Text);
+        assert_eq!(es_field_kind("q_10240_vec"), FieldKind::Text);
+        assert_eq!(
+            opensearch_field_kind("q_10240_vec"),
+            FieldKind::DenseVector(10240)
+        );
+        assert_eq!(es_field_kind("blob_bin"), FieldKind::Binary);
+        // Regex templates: *_(kwd|id|ids|uid|uids)|uid|id → keyword.
+        assert_eq!(es_field_kind("docnm_kwd"), FieldKind::Keyword);
+        assert_eq!(es_field_kind("id"), FieldKind::Keyword);
+        assert_eq!(opensearch_field_kind("id"), FieldKind::Text);
+        assert_eq!(es_field_kind("kb_id"), FieldKind::Keyword);
+        assert_eq!(es_field_kind("user_id"), FieldKind::Keyword);
+        // Regex templates: *(_dt|_time|_at) → date.
+        assert_eq!(es_field_kind("create_time"), FieldKind::DateTime);
+        assert_eq!(es_field_kind("update_at"), FieldKind::DateTime);
+        assert_eq!(es_field_kind("created_dt"), FieldKind::DateTime);
+        // Unmatched → dynamic text.
+        assert_eq!(es_field_kind("title"), FieldKind::Text);
+        // Postgres/zvec column mapping.
+        assert_eq!(zvec_column_kind("weight_int"), "INTEGER");
+        assert_eq!(zvec_column_kind("rank_flt"), "REAL");
+        assert_eq!(zvec_column_kind("q_768_vec"), "VECTOR(768)");
+        assert_eq!(zvec_column_kind("content_tks"), "TEXT");
+        assert_eq!(zvec_column_kind("blob_bin"), "BYTEA");
+        // All 73 ordered base fields from conf/infinity_mapping.json.
+        assert_eq!(
+            INFINITY_CHUNK_FIELDS
+                .iter()
+                .map(|field| field.name)
+                .collect::<Vec<_>>(),
+            vec![
+                "id",
+                "doc_id",
+                "kb_id",
+                "mom_id",
+                "mom",
+                "create_time",
+                "create_timestamp_flt",
+                "img_id",
+                "docnm",
+                "name_kwd",
+                "tag_kwd",
+                "important_kwd_empty_count",
+                "important_keywords",
+                "questions",
+                "content",
+                "authors",
+                "page_num_int",
+                "top_int",
+                "position_int",
+                "weight_int",
+                "weight_flt",
+                "chunk_order_int",
+                "rank_int",
+                "rank_flt",
+                "available_int",
+                "knowledge_graph_kwd",
+                "entities_kwd",
+                "pagerank_fea",
+                "tag_feas",
+                "from_entity_kwd",
+                "to_entity_kwd",
+                "entity_kwd",
+                "entity_type_kwd",
+                "source_id",
+                "n_hop_with_weight",
+                "mom_with_weight",
+                "removed_kwd",
+                "doc_type_kwd",
+                "toc_kwd",
+                "raptor_kwd",
+                "raptor_layer_int",
+                "extra",
+                "compile_kwd",
+                "source_chunk_ids",
+                "source_doc_ids",
+                "compilation_template_ids",
+                "compilation_template_kind_kwd",
+                "chunk_hash_kwd",
+                "input_hash_kwd",
+                "artifact_slug_kwd",
+                "md_with_weight",
+                "summary_with_weight",
+                "skill_with_weight",
+                "skill_kwd",
+                "children_kwd",
+                "doc_ids_kwd",
+                "slug_kwd",
+                "title_kwd",
+                "page_type_kwd",
+                "entity_names_kwd",
+                "outlinks_kwd",
+                "related_kb_pages_kwd",
+                "type_kwd",
+                "from_kwd",
+                "to_kwd",
+                "rechunk_kwd",
+                "rechunked_from_template_id",
+                "rechunked_from_chunk_ids",
+                "superseded_by_chunk_id",
+                "doc_count_int",
+                "depth_int",
+                "outlinks_int",
+                "token_num",
+            ]
+        );
+        assert_eq!(INFINITY_CHUNK_UPSTREAM_BYTES, 5_413);
+        assert_eq!(INFINITY_CHUNK_UPSTREAM_LINES, 76);
+        assert_eq!(INFINITY_CHUNK_UPSTREAM_BLOB.len(), 40);
+        assert_eq!(INFINITY_CHUNK_FIELDS.len(), 73);
+        assert_eq!(
+            INFINITY_CHUNK_FIELDS
+                .iter()
+                .filter(|field| field.infinity_type == "varchar")
+                .count(),
+            59
+        );
+        assert_eq!(
+            INFINITY_CHUNK_FIELDS
+                .iter()
+                .filter(|field| field.infinity_type == "integer")
+                .count(),
+            11
+        );
+        assert_eq!(
+            INFINITY_CHUNK_FIELDS
+                .iter()
+                .filter(|field| field.infinity_type == "float")
+                .count(),
+            3
+        );
+        let fulltext_indexes = INFINITY_CHUNK_FIELDS
+            .iter()
+            .map(|field| match field.analyzer {
+                InfinityChunkAnalyzer::None => 0,
+                InfinityChunkAnalyzer::Single(_) => 1,
+                InfinityChunkAnalyzer::Multiple(analyzers) => analyzers.len(),
+            })
+            .sum::<usize>();
+        assert_eq!(fulltext_indexes, 45);
+        assert_eq!(
+            INFINITY_CHUNK_FIELDS
+                .iter()
+                .filter(|field| field.secondary_cardinality.is_some())
+                .count(),
+            2
+        );
+        assert_eq!(
+            INFINITY_CHUNK_FIELDS
+                .iter()
+                .filter(|field| field.comment.is_some())
+                .count(),
+            5
+        );
+        assert_eq!(INFINITY_CHUNK_FIELDS[2].secondary_cardinality, Some("low"));
+        assert_eq!(
+            INFINITY_CHUNK_FIELDS[24].default,
+            InfinityChunkDefault::Integer(1)
+        );
+        assert_eq!(INFINITY_CHUNK_FIELDS[24].secondary_cardinality, Some("low"));
+        assert_eq!(
+            INFINITY_CHUNK_FIELDS[8].analyzer,
+            InfinityChunkAnalyzer::Multiple(INFINITY_RAG_ANALYZERS)
+        );
+        assert_eq!(
+            INFINITY_CHUNK_FIELDS[9].analyzer,
+            InfinityChunkAnalyzer::Single("whitespace-#")
+        );
+        assert_eq!(
+            INFINITY_CHUNK_FIELDS[28].analyzer,
+            InfinityChunkAnalyzer::Single("rankfeatures")
+        );
+        assert_eq!(
+            infinity_chunk_field_for_alias("content_ltks"),
+            Some("content")
+        );
+        assert_eq!(
+            infinity_chunk_field_for_alias("title_sm_tks"),
+            Some("docnm")
+        );
+        assert_eq!(infinity_chunk_field_for_alias("missing"), None);
+        assert_eq!(infinity_chunk_vector_field(1024), "q_1024_vec");
+        assert_eq!(infinity_chunk_vector_index(1024), "q_1024_vec_idx");
+        assert_eq!(INFINITY_CHUNK_PYTHON_VECTOR_INDEX, "q_vec_idx");
+        assert_eq!(infinity_chunk_secondary_index("kb_id"), "sec_kb_id");
+        assert_eq!(
+            infinity_chunk_fulltext_index("content", "whitespace-#"),
+            "ft_content_whitespace__"
+        );
+        assert_eq!(INFINITY_CHUNK_VECTOR_INDEX_TYPE, "hnsw");
+        assert_eq!(INFINITY_CHUNK_VECTOR_INDEX_M, 16);
+        assert_eq!(INFINITY_CHUNK_VECTOR_INDEX_EF_CONSTRUCTION, 50);
+        assert_eq!(INFINITY_CHUNK_VECTOR_INDEX_METRIC, "cosine");
+        assert_eq!(INFINITY_CHUNK_VECTOR_INDEX_ENCODING, "lvq");
+        assert_eq!(INFINITY_CHUNK_DATA_FIELD, "chunk_data");
+        assert_eq!(INFINITY_CHUNK_DATA_TYPE, "json");
+        assert_eq!(INFINITY_CHUNK_DATA_DEFAULT, "{}");
+        assert_eq!(MESSAGE_INFINITY_FIELDS.len(), 17);
+        assert_eq!(MESSAGE_INFINITY_FIELDS[0].name, "id");
+        assert_eq!(MESSAGE_INFINITY_FIELDS[0].infinity_type, "varchar");
+        assert_eq!(
+            MESSAGE_INFINITY_FIELDS[0].default,
+            MessageInfinityDefault::Text("")
+        );
+        assert_eq!(MESSAGE_INFINITY_FIELDS[9].name, "valid_at_flt");
+        assert_eq!(
+            MESSAGE_INFINITY_FIELDS[9].default,
+            MessageInfinityDefault::Float(0.0)
+        );
+        assert_eq!(MESSAGE_INFINITY_FIELDS[14].name, "status_int");
+        assert_eq!(
+            MESSAGE_INFINITY_FIELDS[14].default,
+            MessageInfinityDefault::Integer(1)
+        );
+        assert_eq!(
+            MESSAGE_INFINITY_FIELDS[16].analyzers,
+            ["rag-coarse", "rag-fine"]
+        );
+        assert_eq!(MESSAGE_INFINITY_FIELDS[16].comment, Some("content_ltks"));
+        assert_eq!(MESSAGE_INFINITY_VECTOR_FIELD_PREFIX, "q_");
+        assert_eq!(MESSAGE_INFINITY_VECTOR_FIELD_SUFFIX, "_vec");
+        assert_eq!(MESSAGE_INFINITY_VECTOR_ELEMENT_TYPE, "float");
+        assert_eq!(MESSAGE_INFINITY_VECTOR_INDEX_NAME, "q_vec_idx");
+        assert_eq!(MESSAGE_INFINITY_VECTOR_INDEX_TYPE, "hnsw");
+        assert_eq!(MESSAGE_INFINITY_VECTOR_INDEX_M, 16);
+        assert_eq!(MESSAGE_INFINITY_VECTOR_INDEX_EF_CONSTRUCTION, 50);
+        assert_eq!(MESSAGE_INFINITY_VECTOR_INDEX_METRIC, "cosine");
+        assert_eq!(MESSAGE_INFINITY_VECTOR_INDEX_ENCODING, "lvq");
+        let skill_es = skill_es_mapping();
+        assert_eq!(skill_es["settings"]["index"]["number_of_shards"], 1);
+        assert_eq!(skill_es["settings"]["index"]["number_of_replicas"], 0);
+        assert_eq!(skill_es["settings"]["index"]["refresh_interval"], "1000ms");
+        assert_eq!(
+            skill_es["settings"]["similarity"]["scripted_sim"]["type"],
+            "scripted"
+        );
+        assert_eq!(
+            skill_es["settings"]["similarity"]["scripted_sim"]["script"]["source"],
+            SKILL_ES_SIMILARITY_SCRIPT
+        );
+        assert_eq!(skill_es["mappings"]["dynamic"], false);
+        let skill_es_properties = skill_es["mappings"]["properties"].as_object().unwrap();
+        assert_eq!(skill_es_properties.len(), 22);
+        assert_eq!(SKILL_ES_FIELDS.len(), 22);
+        assert_eq!(
+            skill_es_properties
+                .keys()
+                .map(String::as_str)
+                .collect::<std::collections::HashSet<_>>(),
+            SKILL_ES_FIELDS
+                .iter()
+                .map(|field| field.name)
+                .collect::<std::collections::HashSet<_>>()
+        );
+        for field in ["name", "tags", "description", "content"] {
+            assert_eq!(skill_es_properties[field]["type"], "text");
+            assert_eq!(skill_es_properties[field]["index"], false);
+            assert_eq!(skill_es_properties[field]["store"], true);
+            let token_field = format!("{field}_tks");
+            assert_eq!(skill_es_properties[&token_field]["analyzer"], "whitespace");
+            assert_eq!(
+                skill_es_properties[&token_field]["similarity"],
+                "scripted_sim"
+            );
+            assert_eq!(skill_es_properties[&token_field]["store"], true);
+        }
+        assert_eq!(
+            SKILL_ES_VECTOR_DIMS,
+            [3072, 2560, 1536, 1024, 768, 512, 256]
+        );
+        for dims in SKILL_ES_VECTOR_DIMS {
+            let vector_field = format!("q_{dims}_vec");
+            assert_eq!(skill_es_properties[&vector_field]["type"], "dense_vector");
+            assert_eq!(skill_es_properties[&vector_field]["dims"], *dims);
+            assert_eq!(skill_es_properties[&vector_field]["index"], true);
+            assert_eq!(skill_es_properties[&vector_field]["similarity"], "cosine");
+            assert!(skill_es_properties[&vector_field].get("store").is_none());
+        }
+        assert_eq!(SKILL_INFINITY_FIELDS.len(), 11);
+        assert_eq!(SKILL_INFINITY_FIELDS[0].name, "skill_id");
+        assert_eq!(SKILL_INFINITY_FIELDS[0].infinity_type, "varchar");
+        assert_eq!(
+            SKILL_INFINITY_FIELDS[0].default,
+            SkillInfinityDefault::Text("")
+        );
+        assert_eq!(SKILL_INFINITY_FIELDS[0].index_type, Some("secondary"));
+        assert_eq!(SKILL_INFINITY_FIELDS[1].name, "space_id");
+        assert_eq!(SKILL_INFINITY_FIELDS[1].index_type, Some("secondary"));
+        for field in &SKILL_INFINITY_FIELDS[3..=6] {
+            assert_eq!(field.analyzers, ["rag-coarse", "rag-fine"]);
+        }
+        assert_eq!(SKILL_INFINITY_FIELDS[7].name, "version");
+        assert_eq!(
+            SKILL_INFINITY_FIELDS[7].default,
+            SkillInfinityDefault::Text("1.0.0")
+        );
+        assert_eq!(SKILL_INFINITY_FIELDS[8].name, "status");
+        assert_eq!(
+            SKILL_INFINITY_FIELDS[8].default,
+            SkillInfinityDefault::Text("1")
+        );
+        assert_eq!(SKILL_INFINITY_FIELDS[9].infinity_type, "bigint");
+        assert_eq!(
+            SKILL_INFINITY_FIELDS[9].default,
+            SkillInfinityDefault::BigInt(0)
+        );
+        assert_eq!(SKILL_INFINITY_VECTOR_FIELD_PREFIX, "q_");
+        assert_eq!(SKILL_INFINITY_VECTOR_FIELD_SUFFIX, "_vec");
+        assert_eq!(SKILL_INFINITY_VECTOR_ELEMENT_TYPE, "float");
+        assert_eq!(SKILL_INFINITY_VECTOR_INDEX_SUFFIX, "_idx");
+        assert_eq!(SKILL_INFINITY_VECTOR_INDEX_TYPE, "hnsw");
+        assert_eq!(SKILL_INFINITY_VECTOR_INDEX_M, 16);
+        assert_eq!(SKILL_INFINITY_VECTOR_INDEX_EF_CONSTRUCTION, 50);
+        assert_eq!(SKILL_INFINITY_VECTOR_INDEX_METRIC, "cosine");
+        assert_eq!(SKILL_INFINITY_VECTOR_INDEX_ENCODING, "lvq");
+        assert_eq!(SKILL_INFINITY_SECONDARY_INDEX_PREFIX, "sec_");
+        assert_eq!(SKILL_INFINITY_FULLTEXT_INDEX_PREFIX, "ft_");
+        assert_eq!(skill_infinity_vector_field(1024), "q_1024_vec");
+        assert_eq!(skill_infinity_vector_index_name(1024), "q_1024_vec_idx");
+        assert_eq!(
+            skill_infinity_secondary_index_name("skill_id"),
+            "sec_skill_id"
+        );
+        assert_eq!(
+            skill_infinity_secondary_index_name("space_id"),
+            "sec_space_id"
+        );
+        for field in ["name", "tags", "description", "content"] {
+            for analyzer in SKILL_INFINITY_ANALYZERS {
+                assert_eq!(
+                    skill_infinity_fulltext_index_name(field, analyzer),
+                    format!("ft_{field}_{}", analyzer.replace('-', "_"))
+                );
+            }
+        }
+        assert_eq!(DOC_META_FIELDS.len(), 3);
+        assert_eq!(DOC_META_ES_NUMBER_OF_SHARDS, 2);
+        assert_eq!(DOC_META_ES_NUMBER_OF_REPLICAS, 0);
+        assert_eq!(DOC_META_ES_REFRESH_INTERVAL, "1000ms");
+        assert_eq!(
+            serde_json::to_value(DOC_META_ES_SOURCE_ENABLED).unwrap(),
+            Value::Bool(true)
+        );
+        assert_eq!(DOC_META_ES_DYNAMIC, "runtime");
+        assert_eq!(DOC_META_FIELDS[0].name, "id");
+        assert_eq!(DOC_META_FIELDS[0].es_type, "keyword");
+        assert!(DOC_META_FIELDS[0].es_store);
+        assert_eq!(DOC_META_FIELDS[0].infinity_type, "varchar");
+        assert_eq!(DOC_META_FIELDS[0].infinity_default, "");
+        assert_eq!(DOC_META_FIELDS[2].name, "meta_fields");
+        assert_eq!(DOC_META_FIELDS[2].es_type, "object");
+        assert!(DOC_META_FIELDS[2].es_dynamic);
+        assert_eq!(DOC_META_FIELDS[2].infinity_type, "json");
+        assert_eq!(DOC_META_FIELDS[2].infinity_default, "{}");
+        // Replacement markers document the actual JSON/PostgreSQL/zvec split.
+        assert!(ENGINE_MAPPING_NOTE.contains("optional opaque PostgreSQL 18 mirror"));
+        assert!(ENGINE_MAPPING_NOTE.contains("isolated collections"));
+        assert!(PASSWORD_TRANSPORT_KEYS_POLICY.contains("not JWT signing keys"));
+        assert!(PASSWORD_TRANSPORT_KEYS_POLICY.contains("RAYRAG_PASSWORD_PRIVATE_KEY_FILE"));
+        assert!(PASSWORD_TRANSPORT_KEYS_POLICY.contains("Argon2id"));
+    }
+}

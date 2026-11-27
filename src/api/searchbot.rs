@@ -299,4 +299,54 @@ fn sse_response(body: String) -> Response {
         .into_response()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn the_frames_use_upstreams_envelope() {
+        let answer = answer_frame("hello", json!({"chunks": [], "doc_aggs": [], "total": 0}));
+        assert!(answer.starts_with("data:{"), "{answer}");
+        assert!(
+            answer.ends_with("\n\n"),
+            "each frame ends with a blank line"
+        );
+        let payload: Value =
+            serde_json::from_str(answer.trim_start_matches("data:").trim()).unwrap();
+        assert_eq!(payload["code"], 0);
+        assert_eq!(payload["message"], "");
+        assert_eq!(payload["data"]["answer"], "hello");
+        assert!(payload["data"]["reference"]["chunks"].is_array());
+
+        // The failure frame keeps the error in both places, as upstream does.
+        let failure = error_frame("boom");
+        let payload: Value =
+            serde_json::from_str(failure.trim_start_matches("data:").trim()).unwrap();
+        assert_eq!(payload["code"], 500);
+        assert_eq!(payload["message"], "boom");
+        assert_eq!(payload["data"]["answer"], "**ERROR**: boom");
+
+        // And the stream ends with the boolean the client waits for.
+        let done: Value =
+            serde_json::from_str(done_frame().trim_start_matches("data:").trim()).unwrap();
+        assert_eq!(done["data"], true);
+    }
+
+    #[test]
+    fn the_prompt_carries_the_question_and_the_retrieved_material() {
+        let chunks = vec![
+            json!({"content_with_weight": "Rust ships cargo.", "docnm_kwd": "rust.md"}),
+            json!({"content": "Cargo builds projects."}),
+            json!({"content_with_weight": ""}),
+        ];
+        let prompt = build_prompt("What ships rust?", &chunks);
+        assert!(prompt.contains("What ships rust?"), "{prompt}");
+        assert!(prompt.contains("Rust ships cargo."), "{prompt}");
+        assert!(prompt.contains("【rust.md】"), "{prompt}");
+        // A chunk without a name is still used, under a neutral label.
+        assert!(prompt.contains("Cargo builds projects."), "{prompt}");
+
+        // Nothing retrieved means the question goes to the model on its own rather than an empty prompt.
+        assert_eq!(build_prompt("only a question", &[]), "only a question");
+    }
+}

@@ -4585,7 +4585,41 @@ async fn execute_canvas_agent_tool(
     .await
 }
 
-
+#[cfg(test)]
+async fn execute_canvas_agent_tool_with_tavily(
+    runtime: &mut CanvasRuntime,
+    agent: &CanvasNode,
+    tools: &[CanvasAgentTool],
+    call: &ToolCall,
+    input: &WorkflowRunInput<'_>,
+    tavily: &dyn TavilyProvider,
+) -> Result<String> {
+    let wikipedia = WikipediaClient::default();
+    let duckduckgo = DuckDuckGoClient::default();
+    let google = GoogleClient::default();
+    let google_scholar = GoogleScholarClient::default();
+    let github = GitHubClient::default();
+    let arxiv = ArxivClient::default();
+    let pubmed = PubMedClient::default();
+    execute_canvas_agent_tool_with_providers(
+        runtime,
+        agent,
+        tools,
+        call,
+        input,
+        CanvasAgentToolProviders {
+            tavily,
+            wikipedia: &wikipedia,
+            duckduckgo: &duckduckgo,
+            google: &google,
+            google_scholar: &google_scholar,
+            github: &github,
+            arxiv: &arxiv,
+            pubmed: &pubmed,
+        },
+    )
+    .await
+}
 
 #[derive(Clone, Copy)]
 struct CanvasAgentToolProviders<'a> {
@@ -11507,7 +11541,17 @@ fn string_transform_delimiters(node: &CanvasNode) -> Result<Vec<&str>> {
         .collect()
 }
 
-
+/// Resolve RAGFlow canvas references for StringTransform merge mode. Lists use
+/// the component's first delimiter, unlike general Message interpolation,
+/// which serializes native JSON arrays.
+#[cfg(test)]
+fn resolve_string_transform_template(
+    runtime: &CanvasRuntime,
+    template: &str,
+    delimiter: &str,
+) -> String {
+    resolve_string_transform_template_with_input(runtime, template, delimiter, None)
+}
 
 fn resolve_string_transform_template_with_input(
     runtime: &CanvasRuntime,
@@ -13897,7 +13941,23 @@ fn resolve_template_for_display(runtime: &CanvasRuntime, template: &str) -> Stri
     resolve_template_with_partial(runtime, template).0
 }
 
-
+#[cfg(test)]
+fn extract_template_refs(template: &str) -> Vec<String> {
+    let mut references = Vec::new();
+    for capture in selector_regex().captures_iter(template) {
+        let selector = capture
+            .get(1)
+            .expect("selector regex has a capture")
+            .as_str();
+        if !references
+            .iter()
+            .any(|existing: &String| existing == selector)
+        {
+            references.push(selector.to_owned());
+        }
+    }
+    references
+}
 
 fn selector_regex() -> &'static Regex {
     static SELECTOR: OnceLock<Regex> = OnceLock::new();
@@ -15543,7 +15603,7954 @@ fn validate_identifier(value: &str, description: &str) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
 
+    struct RecordingLlmResolver {
+        api_base: String,
+        selectors: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    impl WorkflowLlmResolver for RecordingLlmResolver {
+        fn resolve_chat_model(&self, selector: &str) -> Result<LlmClient> {
+            self.selectors.lock().unwrap().push(selector.to_owned());
+            let model = selector
+                .split_once('@')
+                .map_or(selector, |(model, _)| model)
+                .to_owned();
+            Ok(LlmClient::new(crate::llm::LlmConfig {
+                api_base: self.api_base.clone(),
+                api_key: "tenant-secret".into(),
+                model,
+                ..crate::llm::LlmConfig::default()
+            }))
+        }
+    }
+
+    fn extractor_dsl() -> Value {
+        json!({
+            "components": {
+                "begin": {
+                    "obj": {
+                        "component_name": "Begin",
+                        "params": {"mode": "Manual"},
+                        "input_form": {"query": {"type": "string"}}
+                    }
+                },
+                "answer": {"obj": {"component_name": "Answer"}}
+            }
+        })
+    }
+
+    #[test]
+    fn component_extractors_borrow_happy_path_values() {
+        let dsl = extractor_dsl();
+        assert_eq!(
+            extract_component_input_form(&dsl, "begin").unwrap()["query"]["type"],
+            "string"
+        );
+        assert_eq!(
+            extract_component_params(&dsl, "begin").unwrap().unwrap()["mode"],
+            "Manual"
+        );
+        assert_eq!(extract_component_params(&dsl, "answer").unwrap(), None);
+        assert_eq!(extract_component_name(&dsl, "begin").unwrap(), "Begin");
+        assert_eq!(find_begin_component_id(&dsl).unwrap(), "begin");
+    }
+
+    #[test]
+    fn component_extractors_preserve_error_categories() {
+        let dsl = extractor_dsl();
+        assert!(matches!(
+            extract_component_input_form(&dsl, "missing"),
+            Err(AgentDslError::ComponentNotFound(id)) if id == "missing"
+        ));
+        assert!(matches!(
+            extract_component_input_form(&dsl, "answer"),
+            Err(AgentDslError::MissingInputForm(id)) if id == "answer"
+        ));
+        assert!(matches!(
+            extract_component_input_form(&Value::Null, "begin"),
+            Err(AgentDslError::Malformed(_))
+        ));
+        assert!(matches!(
+            extract_component_input_form(&json!({"components": {"bare": {}}}), "bare"),
+            Err(AgentDslError::Malformed(_))
+        ));
+        assert!(matches!(
+            extract_component_input_form(
+                &json!({"components": {"bad": {
+                    "obj": {"component_name": "Begin", "input_form": []}
+                }}}),
+                "bad"
+            ),
+            Err(AgentDslError::Malformed(_))
+        ));
+        assert!(matches!(
+            extract_component_params(
+                &json!({"components": {"bad": {
+                    "obj": {"component_name": "Begin", "params": "wrong"}
+                }}}),
+                "bad"
+            ),
+            Err(AgentDslError::Malformed(_))
+        ));
+        assert!(matches!(
+            extract_component_name(&json!({"components": {"bad": {"obj": {}}}}), "bad"),
+            Err(AgentDslError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn component_input_form_prefers_static_and_synthesizes_dynamic_forms() {
+        let static_dsl = extractor_dsl();
+        assert!(matches!(
+            agent_component_input_form(&static_dsl, "begin").unwrap(),
+            Cow::Borrowed(_)
+        ));
+
+        for (name, expected) in [
+            (
+                "Browser",
+                json!({
+                    "prompts": {"type": "text", "name": "Prompts"},
+                    "upload_sources": {"type": "line", "name": "Upload sources"}
+                }),
+            ),
+            ("BGPT", json!({"query": {"name": "Query", "type": "line"}})),
+            ("ExeSQL", json!({"sql": {"name": "SQL", "type": "line"}})),
+            (
+                "YahooFinance",
+                json!({
+                    "stock_code": {
+                        "type": "line",
+                        "name": "Stock code/Company name"
+                    }
+                }),
+            ),
+        ] {
+            let dsl = json!({"components": {
+                "dynamic": {"obj": {"component_name": name, "params": {}}}
+            }});
+            let form = agent_component_input_form(&dsl, "dynamic").unwrap();
+            assert!(matches!(form, Cow::Owned(_)), "{name}");
+            assert_eq!(form.as_ref(), expected.as_object().unwrap(), "{name}");
+        }
+    }
+
+    #[test]
+    fn agent_dynamic_input_form_uses_prompt_refs_in_first_seen_order() {
+        let dsl = json!({"components": {
+            "agent": {"obj": {"component_name": "Agent", "params": {
+                "sys_prompt": "Use {sys.query} and {{env.region}}.",
+                "prompts": [
+                    {"role": "system", "content": "Again {{sys.query}}"},
+                    {"role": "user", "content": "Input {tool:0@result} / {item}"}
+                ],
+                "user_prompt": "ignored because prompts supplied"
+            }}},
+            "message": {"obj": {"component_name": "Message", "params": {}}}
+        }});
+        let form = agent_component_input_form(&dsl, "agent").unwrap();
+        assert_eq!(
+            form.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["sys.query", "env.region", "tool:0@result", "item"]
+        );
+        assert!(
+            form.values()
+                .all(|field| field["type"] == "line" && field["optional"] == false)
+        );
+        for component_name in ["Generate", "LLM"] {
+            let dsl = json!({"components": {
+                "dynamic": {"obj": {"component_name": component_name, "params": {
+                    "sys_prompt": "Region {{env.region}}",
+                    "prompts": "Question {sys.query}"
+                }}}
+            }});
+            let form = agent_component_input_form(&dsl, "dynamic").unwrap();
+            assert_eq!(
+                form.keys().map(String::as_str).collect::<Vec<_>>(),
+                ["env.region", "sys.query"],
+                "{component_name}"
+            );
+        }
+        assert!(matches!(
+            agent_component_input_form(&dsl, "message"),
+            Err(AgentDslError::MissingInputForm(id)) if id == "message"
+        ));
+    }
+
+    #[tokio::test]
+    async fn component_debug_is_isolated_passthrough_and_protects_tenant_state() {
+        let dsl = json!({"components": {
+            "begin": {
+                "obj": {"component_name": "Begin", "params": {}},
+                "downstream": []
+            },
+            "message": {
+                "obj": {
+                    "component_name": "Message",
+                    "params": {"content": ["tenant={{sys.tenant_id}}"]}
+                },
+                "downstream": []
+            },
+            "browser": {
+                "obj": {"component_name": "Browser", "params": {}},
+                "downstream": []
+            }
+        }});
+        let begin_inputs = Map::from_iter([
+            ("query".into(), json!("hello")),
+            ("user_id".into(), json!("user-1")),
+        ]);
+        assert_eq!(
+            debug_agent_component(
+                &dsl,
+                "begin",
+                &begin_inputs,
+                AgentComponentDebugContext {
+                    authenticated_user_id: "tenant-owner",
+                    llm: None,
+                    llm_resolver: None,
+                    retriever: None,
+                    fallback_kb_ids: &[],
+                }
+            )
+            .await
+            .unwrap(),
+            begin_inputs
+        );
+
+        let attack = Map::from_iter([("sys.tenant_id".into(), json!("attacker"))]);
+        assert_eq!(
+            debug_agent_component(
+                &dsl,
+                "message",
+                &attack,
+                AgentComponentDebugContext {
+                    authenticated_user_id: "tenant-owner",
+                    llm: None,
+                    llm_resolver: None,
+                    retriever: None,
+                    fallback_kb_ids: &[],
+                },
+            )
+            .await
+            .unwrap()["content"],
+            "tenant=tenant-owner"
+        );
+        assert!(matches!(
+            debug_agent_component(
+                &dsl,
+                "browser",
+                &Map::new(),
+                AgentComponentDebugContext {
+                    authenticated_user_id: "owner",
+                    llm: None,
+                    llm_resolver: None,
+                    retriever: None,
+                    fallback_kb_ids: &[],
+                },
+            )
+            .await,
+            Err(AgentComponentDebugError::UnsupportedComponent(name)) if name == "Browser"
+        ));
+    }
+
+    #[test]
+    fn message_params_are_validated_when_canvas_is_compiled() {
+        for params in [
+            json!({}),
+            json!({"content": []}),
+            json!({"content": [1]}),
+            json!({"content": ["ok"], "stream": "yes"}),
+        ] {
+            let dsl = json!({"components": {
+                "begin": {"obj": {"component_name": "Begin", "params": {}}, "downstream": ["message"], "upstream": []},
+                "message": {"obj": {"component_name": "Message", "params": params}, "downstream": [], "upstream": ["begin"]}
+            }});
+            assert!(AgentWorkflow::from_value(&dsl).is_err(), "{dsl}");
+        }
+
+        for params in [
+            json!({"content": [""]}),
+            json!({"content": "legacy"}),
+            json!({"text": "go-v2"}),
+        ] {
+            let dsl = json!({"components": {
+                "begin": {"obj": {"component_name": "Begin", "params": {}}, "downstream": ["message"], "upstream": []},
+                "message": {"obj": {"component_name": "Message", "params": params}, "downstream": [], "upstream": ["begin"]}
+            }});
+            assert!(AgentWorkflow::from_value(&dsl).is_ok(), "{dsl}");
+        }
+    }
+
+    #[test]
+    fn message_renders_sandboxed_jinja_and_fails_soft() {
+        let mut runtime = CanvasRuntime::default();
+        runtime.env.insert("enabled".into(), json!(true));
+        runtime.env.insert("name".into(), json!("Ada"));
+        runtime.env.insert("payload".into(), json!({"count": 2}));
+        let mut node = CanvasNode {
+            id: "message".into(),
+            component_name: "Message".into(),
+            params: Map::from_iter([(
+                "content".into(),
+                json!(["{% if env.enabled %}Hello {{env.name}} {env.payload}{% endif %}"]),
+            )]),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+        execute_message(&mut runtime, &node).unwrap();
+        assert_eq!(
+            runtime.outputs["message"]["content"],
+            r#"Hello Ada {"count":2}"#
+        );
+        assert_eq!(runtime.outputs["message"]["downloads"], json!([]));
+
+        node.params
+            .insert("content".into(), json!(["{% if %}fallback={env.name}"]));
+        execute_message(&mut runtime, &node).unwrap();
+        assert_eq!(
+            runtime.outputs["message"]["content"],
+            "{% if %}fallback=Ada"
+        );
+    }
+
+    #[test]
+    fn message_extracts_and_normalizes_download_descriptors_once_per_selector() {
+        let mut runtime = CanvasRuntime::default();
+        runtime.env.insert(
+            "file".into(),
+            json!({
+                "doc_id": "doc-1",
+                "filename": "report.csv",
+                "mime_type": "text/csv",
+                "url": "/downloads/doc-1",
+                "include_download_info_in_content": false
+            }),
+        );
+        let node = CanvasNode {
+            id: "message".into(),
+            component_name: "Message".into(),
+            params: Map::from_iter([(
+                "content".into(),
+                json!(["before={env.file}; repeated={env.file}"]),
+            )]),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+        execute_message(&mut runtime, &node).unwrap();
+        assert_eq!(runtime.outputs["message"]["content"], "before=; repeated=");
+        assert_eq!(
+            runtime.outputs["message"]["downloads"],
+            json!([{
+                "doc_id": "doc-1",
+                "filename": "report.csv",
+                "mime_type": "text/csv",
+                "url": "/downloads/doc-1"
+            }])
+        );
+
+        runtime.env.insert(
+            "file".into(),
+            Value::String(
+                json!({
+                    "doc_id": "doc-2",
+                    "filename": "visible.txt",
+                    "mime_type": "text/plain",
+                    "include_download_info_in_content": true
+                })
+                .to_string(),
+            ),
+        );
+        execute_message(&mut runtime, &node).unwrap();
+        assert_eq!(
+            runtime.outputs["message"]["content"],
+            concat!(
+                "before={\"doc_id\":\"doc-2\",\"filename\":\"visible.txt\",",
+                "\"mime_type\":\"text/plain\"}; repeated=",
+                "{\"doc_id\":\"doc-2\",\"filename\":\"visible.txt\",",
+                "\"mime_type\":\"text/plain\"}"
+            )
+        );
+        assert_eq!(
+            runtime.outputs["message"]["downloads"],
+            json!([{
+                "doc_id": "doc-2",
+                "filename": "visible.txt",
+                "mime_type": "text/plain"
+            }])
+        );
+    }
+
+    #[test]
+    fn begin_metadata_uses_component_name_and_fails_soft_per_field() {
+        let dsl = json!({"components": {
+            "sally:0": {
+                "obj": {
+                    "component_name": "Begin",
+                    "prologue": "hello",
+                    "mode": "Agent"
+                }
+            },
+            "malformed": [],
+            "jack:0": {"obj": {"component_name": "LLM"}}
+        }});
+        assert_eq!(find_begin_component_id(&dsl).unwrap(), "sally:0");
+        assert_eq!(extract_prologue(&dsl).unwrap(), "hello");
+        assert_eq!(extract_mode(&dsl).unwrap(), "Agent");
+
+        let absent_fields = json!({"components": {"custom": {"obj": {"component_name": "Begin"}}}});
+        assert_eq!(extract_prologue(&absent_fields).unwrap(), "");
+        assert_eq!(extract_mode(&absent_fields).unwrap(), "");
+        assert!(matches!(
+            find_begin_component_id(&json!({"components": {
+                "only": {"obj": {"component_name": "LLM"}}
+            }})),
+            Err(AgentDslError::ComponentNotFound(name)) if name == "Begin component"
+        ));
+        assert!(matches!(
+            find_begin_component_id(&Value::Null),
+            Err(AgentDslError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn canvas_normalizer_derives_a_sorted_graph_and_flat_component_view() {
+        let original = json!({"components": {
+            "z": {
+                "obj": {"component_name": "Message", "params": {"content": ["done"]}},
+                "downstream": []
+            },
+            "a": {
+                "obj": {"component_name": "Begin", "params": {}},
+                "downstream": ["z"],
+                "upstream": []
+            },
+            "bad": "skip"
+        }});
+        let normalized = normalize_agent_dsl_for_canvas(&original);
+        let nodes = normalized["graph"]["nodes"].as_array().unwrap();
+        assert_eq!(
+            nodes
+                .iter()
+                .map(|node| node["id"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["a", "z"]
+        );
+        assert_eq!(nodes[0]["position"], json!({"x": 50.0, "y": 200.0}));
+        assert_eq!(nodes[1]["position"], json!({"x": 400.0, "y": 200.0}));
+        assert_eq!(nodes[0]["type"], "beginNode");
+        assert_eq!(nodes[0]["data"]["form"], json!({}));
+        assert_eq!(
+            normalized["graph"]["edges"][0],
+            json!({
+                "id": "xy-edge__a-z",
+                "source": "a",
+                "target": "z",
+                "sourceHandle": "start",
+                "targetHandle": "end"
+            })
+        );
+        assert_eq!(normalized["components"]["a"]["name"], "Begin");
+        assert!(normalized["components"]["a"].get("obj").is_none());
+        assert_eq!(
+            original["components"]["a"]["obj"]["component_name"],
+            "Begin"
+        );
+        assert!(original.get("graph").is_none());
+    }
+
+    #[test]
+    fn canvas_normalizer_repairs_handles_and_parallel_leaks_without_aliasing_input() {
+        let original = json!({
+            "graph": {
+                "nodes": [{
+                    "id": "Iteration:abc",
+                    "type": "parallelNode",
+                    "data": {"label": "Parallel", "name": "Parallel"}
+                }],
+                "edges": [
+                    {"sourceHandle": "end", "targetHandle": "start"},
+                    {"sourceHandle": "tool-1", "targetHandle": "tool-1"}
+                ]
+            },
+            "components": {
+                "Iteration:abc": {
+                    "name": "Parallel",
+                    "obj": {"component_name": "Parallel", "params": {}}
+                }
+            }
+        });
+        let normalized = normalize_agent_dsl_for_canvas(&original);
+        assert_eq!(normalized["graph"]["edges"][0]["sourceHandle"], "start");
+        assert_eq!(normalized["graph"]["edges"][0]["targetHandle"], "end");
+        assert_eq!(normalized["graph"]["edges"][1]["sourceHandle"], "tool-1");
+        assert_eq!(
+            normalized["components"]["Iteration:abc"]["obj"]["component_name"],
+            "Iteration"
+        );
+        assert_eq!(
+            normalized["components"]["Iteration:abc"]["name"],
+            "Iteration"
+        );
+        assert_eq!(normalized["graph"]["nodes"][0]["type"], "iterationNode");
+        assert_eq!(
+            normalized["graph"]["nodes"][0]["data"],
+            json!({"label": "Iteration", "name": "Iteration"})
+        );
+        assert_eq!(original["graph"]["edges"][0]["sourceHandle"], "end");
+        assert_eq!(
+            original["components"]["Iteration:abc"]["obj"]["component_name"],
+            "Parallel"
+        );
+    }
+
+    #[test]
+    fn chunker_dsl_migration_rewrites_every_fixed_structural_surface() {
+        let original = json!({
+            "components": {
+                "Splitter:short": {
+                    "obj": {
+                        "component_name": "Splitter",
+                        "params": {
+                            "exact": "HierarchicalMerger:longer",
+                            "template": "before {{{ Splitter:short@chunks }}} after",
+                            "nested": [{"value": "{{PDFGenerator:pdf@file.name}}"}]
+                        }
+                    },
+                    "downstream": ["HierarchicalMerger:longer"],
+                    "upstream": ["Begin:0"],
+                    "parent_id": "PDFGenerator:pdf"
+                },
+                "HierarchicalMerger:longer": {
+                    "obj": {"component_name": "HierarchicalMerger", "params": {}},
+                    "downstream": ["PDFGenerator:pdf"],
+                    "upstream": ["Splitter:short"]
+                },
+                "PDFGenerator:pdf": {
+                    "obj": {"component_name": "PDFGenerator", "params": {}},
+                    "downstream": [],
+                    "upstream": ["HierarchicalMerger:longer"]
+                },
+                "Custom:1": {
+                    "obj": {"component_name": "Custom Splitter", "params": {}},
+                    "downstream": []
+                },
+                "Nameless:1": {"obj": {}, "downstream": []}
+            },
+            "path": ["Splitter:short", "HierarchicalMerger:longer", "PDFGenerator:pdf"],
+            "graph": {
+                "nodes": [
+                    {
+                        "id": "Splitter:short",
+                        "type": "splitterNode",
+                        "data": {
+                            "label": "Splitter",
+                            "name": "Splitter",
+                            "form": {"input": "{{ Splitter:short@chunks }}"}
+                        }
+                    },
+                    {
+                        "id": "HierarchicalMerger:longer",
+                        "parentId": "PDFGenerator:pdf",
+                        "type": "splitterNode",
+                        "data": {
+                            "label": "HierarchicalMerger",
+                            "name": "custom-name",
+                            "form": {}
+                        }
+                    },
+                    {
+                        "id": "PDFGenerator:pdf",
+                        "type": "ragNode",
+                        "data": {"label": "PDFGenerator", "name": "PDFGenerator"}
+                    }
+                ],
+                "edges": [{
+                    "id": "xy-edge__Splitter:short-HierarchicalMerger:longer-PDFGenerator:pdf",
+                    "source": "Splitter:short",
+                    "target": "HierarchicalMerger:longer"
+                }]
+            },
+            "history": [{"content": "{{Splitter:short@chunks}}"}],
+            "messages": ["PDFGenerator:pdf"],
+            "reference": {"value": "{{ HierarchicalMerger:longer@result }}"},
+            "unrelated": "Splitter:short"
+        });
+
+        let normalized = normalize_chunker_dsl(&original);
+        assert!(normalized["components"].get("Splitter:short").is_none());
+        assert!(
+            normalized["components"]
+                .get("HierarchicalMerger:longer")
+                .is_none()
+        );
+        assert!(normalized["components"].get("PDFGenerator:pdf").is_none());
+        assert_eq!(
+            normalized["components"]["TokenChunker:short"]["obj"]["component_name"],
+            "TokenChunker"
+        );
+        assert_eq!(
+            normalized["components"]["TokenChunker:short"]["obj"]["params"],
+            json!({
+                "exact": "TitleChunker:longer",
+                "template": "before {{{ TokenChunker:short@chunks }}} after",
+                "nested": [{"value": "{{DocGenerator:pdf@file.name}}"}]
+            })
+        );
+        assert_eq!(
+            normalized["components"]["TokenChunker:short"]["downstream"],
+            json!(["TitleChunker:longer"])
+        );
+        assert_eq!(
+            normalized["components"]["TokenChunker:short"]["upstream"],
+            json!(["Begin:0"])
+        );
+        assert_eq!(
+            normalized["components"]["TokenChunker:short"]["parent_id"],
+            "DocGenerator:pdf"
+        );
+        assert_eq!(
+            normalized["components"]["TitleChunker:longer"]["obj"]["component_name"],
+            "TitleChunker"
+        );
+        assert_eq!(
+            normalized["components"]["DocGenerator:pdf"]["obj"]["component_name"],
+            "DocGenerator"
+        );
+        assert_eq!(
+            normalized["components"]["Custom:1"]["obj"]["component_name"],
+            "Custom Splitter"
+        );
+        assert!(normalized["components"]["Nameless:1"]["obj"]["component_name"].is_null());
+        assert_eq!(
+            normalized["path"],
+            json!([
+                "TokenChunker:short",
+                "TitleChunker:longer",
+                "DocGenerator:pdf"
+            ])
+        );
+        assert_eq!(normalized["graph"]["nodes"][0]["id"], "TokenChunker:short");
+        assert_eq!(normalized["graph"]["nodes"][0]["type"], "chunkerNode");
+        assert_eq!(
+            normalized["graph"]["nodes"][0]["data"]["label"],
+            "TokenChunker"
+        );
+        assert_eq!(
+            normalized["graph"]["nodes"][0]["data"]["name"],
+            "TokenChunker"
+        );
+        assert_eq!(
+            normalized["graph"]["nodes"][0]["data"]["form"]["input"],
+            "{{ TokenChunker:short@chunks }}"
+        );
+        assert_eq!(
+            normalized["graph"]["nodes"][1]["parentId"],
+            "DocGenerator:pdf"
+        );
+        assert_eq!(
+            normalized["graph"]["nodes"][1]["data"]["name"],
+            "custom-name"
+        );
+        assert_eq!(
+            normalized["graph"]["edges"][0],
+            json!({
+                "id": "xy-edge__TokenChunker:short-TitleChunker:longer-DocGenerator:pdf",
+                "source": "TokenChunker:short",
+                "target": "TitleChunker:longer"
+            })
+        );
+        assert_eq!(
+            normalized["history"][0]["content"],
+            "{{TokenChunker:short@chunks}}"
+        );
+        assert_eq!(normalized["messages"][0], "DocGenerator:pdf");
+        assert_eq!(
+            normalized["reference"]["value"],
+            "{{ TitleChunker:longer@result }}"
+        );
+        assert_eq!(normalized["unrelated"], "Splitter:short");
+        assert_eq!(
+            original["components"]["Splitter:short"]["obj"]["component_name"],
+            "Splitter"
+        );
+        assert_eq!(normalize_chunker_dsl(&normalized), normalized);
+
+        let canvas = normalize_agent_dsl_for_canvas(&original);
+        let runtime = normalize_agent_dsl_for_run(&original);
+        assert!(canvas["components"].get("TokenChunker:short").is_some());
+        assert!(runtime["components"].get("TokenChunker:short").is_some());
+    }
+
+    #[test]
+    fn chunker_dsl_migration_requires_a_components_object_like_python() {
+        for input in [
+            Value::Null,
+            json!([]),
+            json!({"graph": {"nodes": [{"id": "Splitter:one", "type": "splitterNode"}]}}),
+            json!({"components": [], "history": ["{{Splitter:one@chunks}}"]}),
+        ] {
+            assert_eq!(normalize_chunker_dsl(&input), input);
+        }
+    }
+
+    #[test]
+    fn run_normalizer_folds_legacy_children_and_rewrites_iteration_aliases() {
+        let original = json!({
+            "graph": {
+                "nodes": [
+                    {
+                        "id": "Iteration:abc",
+                        "type": "iterationNode",
+                        "data": {"label": "Iteration", "name": "Iteration"}
+                    },
+                    {
+                        "id": "IterationItem:def",
+                        "type": "iterationStartNode",
+                        "parentId": "Iteration:abc"
+                    },
+                    {"id": "Body:1", "type": "messageNode"}
+                ],
+                "edges": []
+            },
+            "components": {
+                "Iteration:abc": {
+                    "obj": {
+                        "component_name": "Iteration",
+                        "params": {"items_ref": "sys.items"}
+                    },
+                    "downstream": ["IterationItem:def", "Done:1"]
+                },
+                "IterationItem:def": {
+                    "obj": {"component_name": "IterationItem", "params": {}},
+                    "downstream": ["Body:1", "Done:1"]
+                },
+                "Body:1": {
+                    "obj": {
+                        "component_name": "Message",
+                        "params": {
+                            "content": ["{IterationItem:def@index}: {iterationitem:def@result}"]
+                        }
+                    },
+                    "upstream": ["IterationItem:def"],
+                    "downstream": ["IterationItem:def"]
+                }
+            }
+        });
+        let normalized = normalize_agent_dsl_for_run(&original);
+        assert!(normalized["components"].get("IterationItem:def").is_none());
+        assert_eq!(
+            normalized["components"]["Iteration:abc"]["obj"]["component_name"],
+            "Parallel"
+        );
+        assert_eq!(
+            normalized["components"]["Iteration:abc"]["downstream"],
+            json!(["Done:1", "Body:1"])
+        );
+        assert_eq!(
+            normalized["components"]["Body:1"]["obj"]["params"]["content"][0],
+            "{index}: {item}"
+        );
+        assert_eq!(
+            normalized["components"]["Body:1"]["upstream"],
+            json!(["Iteration:abc"])
+        );
+        assert_eq!(
+            normalized["components"]["Body:1"]["downstream"],
+            json!(["Iteration:abc"])
+        );
+        assert_eq!(
+            normalized["graph"]["nodes"][0]["data"],
+            json!({"label": "Parallel", "name": "Parallel"})
+        );
+        assert_eq!(normalized["graph"]["nodes"][0]["type"], "parallelNode");
+        assert!(original["components"].get("IterationItem:def").is_some());
+    }
+
+    #[test]
+    fn normalizers_are_idempotent_and_tolerate_non_object_values() {
+        for input in [Value::Null, json!([]), json!("dsl")] {
+            assert_eq!(normalize_agent_dsl_for_canvas(&input), input);
+            assert_eq!(normalize_agent_dsl_for_run(&input), input);
+        }
+        let dsl = json!({
+            "graph": {"nodes": [{"id": "a"}], "edges": [null, "bad"]},
+            "components": {"a": null}
+        });
+        let once = normalize_agent_dsl_for_canvas(&dsl);
+        assert_eq!(normalize_agent_dsl_for_canvas(&once), once);
+    }
+
+    #[test]
+    fn canvas_decoder_accepts_import_topology_and_graph_parent_metadata() {
+        let dsl = json!({
+            "graph": {
+                "nodes": [
+                    {"id": "begin"},
+                    {"id": "message", "parentId": "begin"}
+                ],
+                "edges": []
+            },
+            "globals": {"env.region": "test"},
+            "components": {
+                "begin": {
+                    "obj": {
+                        "component_name": "Begin",
+                        "params": {},
+                        "downstream": ["message"]
+                    },
+                    "name": "WrongFlatName",
+                    "params": {"mode": "invalid"},
+                    "downstream": []
+                },
+                "message": {
+                    "obj": {
+                        "component_name": "Message",
+                        "params": {"content": ["decoded"]}
+                    },
+                    "upstream": ["begin"]
+                }
+            }
+        });
+
+        let workflow = AgentWorkflow::from_value(&dsl).unwrap().unwrap();
+        assert_eq!(workflow.begin_id, "begin");
+        assert_eq!(workflow.nodes["begin"].component_name, "Begin");
+        assert_eq!(workflow.nodes["begin"].downstream, ["message"]);
+        assert_eq!(workflow.nodes["message"].upstream, ["begin"]);
+        assert_eq!(
+            workflow.nodes["message"].parent_id.as_deref(),
+            Some("begin")
+        );
+        assert_eq!(workflow.initial_globals["env.region"], "test");
+    }
+
+    #[test]
+    fn component_timeout_resolution_matches_fixed_precedence_and_defaults() {
+        let resolve = |class: &str, values: &[(&str, &str)]| {
+            resolve_component_timeout_with(class, |name| {
+                values
+                    .iter()
+                    .find_map(|(key, value)| (*key == name).then(|| (*value).to_owned()))
+            })
+        };
+
+        assert_eq!(
+            resolve(
+                "Retrieval",
+                &[
+                    ("COMPONENT_EXEC_TIMEOUT_RETRIEVAL", "7"),
+                    ("COMPONENT_EXEC_TIMEOUT", "9")
+                ]
+            ),
+            Duration::from_secs(7)
+        );
+        assert_eq!(
+            resolve("Retrieval", &[("COMPONENT_EXEC_TIMEOUT", "9")]),
+            Duration::from_secs(60)
+        );
+        assert_eq!(
+            resolve(" retrieval ", &[("COMPONENT_EXEC_TIMEOUT", "9")]),
+            Duration::from_secs(60)
+        );
+        assert_eq!(
+            resolve("tavilysearch", &[("COMPONENT_EXEC_TIMEOUT", "99")]),
+            Duration::from_secs(12)
+        );
+        assert_eq!(
+            resolve("duckduckgo", &[("COMPONENT_EXEC_TIMEOUT", "99")]),
+            Duration::from_secs(12)
+        );
+        assert_eq!(
+            resolve("wikipedia", &[("COMPONENT_EXEC_TIMEOUT", "99")]),
+            Duration::from_secs(60)
+        );
+        assert_eq!(
+            resolve("googlescholar", &[("COMPONENT_EXEC_TIMEOUT", "99")]),
+            Duration::from_secs(12)
+        );
+        assert_eq!(
+            resolve("github", &[("COMPONENT_EXEC_TIMEOUT", "99")]),
+            Duration::from_secs(12)
+        );
+        assert_eq!(
+            resolve("YahooFinance", &[("COMPONENT_EXEC_TIMEOUT", "99")]),
+            Duration::from_secs(60)
+        );
+        assert_eq!(
+            resolve("Wikipedia", &[("COMPONENT_EXEC_TIMEOUT_WIKIPEDIA", "8")]),
+            Duration::from_secs(8)
+        );
+        assert_eq!(
+            resolve("tavilyextract", &[("COMPONENT_EXEC_TIMEOUT", "99")]),
+            Duration::from_secs(99)
+        );
+        assert_eq!(resolve("tavilyextract", &[]), Duration::from_secs(600));
+        assert_eq!(
+            resolve("Custom", &[("COMPONENT_EXEC_TIMEOUT", "9")]),
+            Duration::from_secs(9)
+        );
+        assert_eq!(
+            resolve(
+                "ExeSQL",
+                &[
+                    ("COMPONENT_EXEC_TIMEOUT_EXESQL", "invalid"),
+                    ("COMPONENT_EXEC_TIMEOUT", "99")
+                ]
+            ),
+            Duration::from_secs(3)
+        );
+        assert_eq!(resolve("Unknown", &[]), Duration::from_secs(600));
+        for invalid in ["", "0", "-1", "1.5", "9223372037"] {
+            assert_eq!(
+                resolve("Unknown", &[("COMPONENT_EXEC_TIMEOUT", invalid)]),
+                Duration::from_secs(600),
+                "{invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn fixed_ragflow_dsl_fixtures_normalize_without_legacy_runtime_names() {
+        let Some(repository) = std::env::var_os("RAGFLOW_FIXTURE_REPO") else {
+            return;
+        };
+        const COMMIT: &str = "cb93883f3f8c975eecb2fed81210effeb3bdb06f";
+        for name in [
+            "agent_msg.json",
+            "all.json",
+            "dfx_picture_parser.json",
+            "questions_category.json",
+            "resume.json",
+            "subaget.json",
+            "switch.json",
+        ] {
+            let path = format!("internal/agent/dsl/testdata/{name}");
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&repository)
+                .args(["show", &format!("{COMMIT}:{path}")])
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{name}: git show failed");
+            let fixture: Value = serde_json::from_slice(&output.stdout).unwrap();
+            let canvas = normalize_agent_dsl_for_canvas(&fixture);
+            let runtime = normalize_agent_dsl_for_run(&fixture);
+            assert!(canvas.is_object(), "{name}: canvas is not an object");
+            assert!(runtime.is_object(), "{name}: runtime is not an object");
+            for (component_id, component) in runtime
+                .get("components")
+                .and_then(Value::as_object)
+                .into_iter()
+                .flatten()
+            {
+                let Some(component) = component.as_object() else {
+                    continue;
+                };
+                assert!(
+                    !matches!(
+                        canvas_component_name(component),
+                        "LoopItem" | "IterationItem" | "Iteration"
+                    ),
+                    "{name}: {component_id} retained legacy runtime name"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn reset_agent_dsl_clears_run_state_restores_env_and_preserves_structure() {
+        let original = json!({
+            "components": [],
+            "graph": {"nodes": [{"id": "begin"}]},
+            "history": ["message"],
+            "retrieval": [{"id": "chunk"}],
+            "memory": ["memory"],
+            "path": ["begin"],
+            "variables": {
+                "configured": {"type": "string", "value": "default"},
+                "number": {"type": "number"},
+                "boolean": {"type": "boolean"},
+                "object": {"type": "object"},
+                "array": {"type": "array[string]"}
+            },
+            "globals": {
+                "sys.query": "question",
+                "sys.turns": 3,
+                "sys.score": 0.8,
+                "sys.ready": true,
+                "sys.items": [1, 2],
+                "sys.meta": {"x": 1},
+                "env.configured": "stale",
+                "env.number": 4,
+                "env.boolean": true,
+                "env.object": {"x": 1},
+                "env.array": ["x"],
+                "env.undeclared": "stale",
+                "user.keep": {"nested": [1, 2]}
+            }
+        });
+        let reset = reset_agent_dsl(&original);
+
+        for field in ["history", "retrieval", "memory", "path"] {
+            assert_eq!(reset[field], json!([]), "{field}");
+        }
+        assert_eq!(reset["globals"]["sys.query"], "");
+        assert_eq!(reset["globals"]["sys.turns"], 0);
+        assert_eq!(reset["globals"]["sys.score"], 0.0);
+        assert_eq!(reset["globals"]["sys.ready"], false);
+        assert_eq!(reset["globals"]["sys.items"], json!([]));
+        assert_eq!(reset["globals"]["sys.meta"], json!({}));
+        assert_eq!(reset["globals"]["env.configured"], "default");
+        assert_eq!(reset["globals"]["env.number"], 0);
+        assert_eq!(reset["globals"]["env.boolean"], false);
+        assert_eq!(reset["globals"]["env.object"], json!({}));
+        assert_eq!(reset["globals"]["env.array"], json!([]));
+        assert_eq!(reset["globals"]["env.undeclared"], "");
+        assert_eq!(reset["globals"]["user.keep"], json!({"nested": [1, 2]}));
+        assert_eq!(reset["graph"], original["graph"]);
+        assert_eq!(original["history"], json!(["message"]));
+        assert_eq!(original["globals"]["sys.query"], "question");
+
+        let no_globals = reset_agent_dsl(&json!({"components": []}));
+        assert!(no_globals.get("globals").is_none());
+        assert_eq!(reset_agent_dsl(&Value::Null), json!({}));
+    }
+
+    #[test]
+    fn canvas_state_json_round_trip_has_stable_checkpoint_shape() {
+        let mut state = CanvasRuntime {
+            sys: Map::from_iter([("query".into(), json!("hello"))]),
+            env: Map::from_iter([("counter".into(), json!(0))]),
+            path: vec!["begin".into(), "message".into()],
+            history: vec![ChatMessage::new("user", "hello")],
+            retrieval: Map::from_iter([("chunks".into(), json!([{"id": "chunk-1"}]))]),
+            globals: Map::from_iter([("__item__".into(), json!("row"))]),
+            cancel_flag: true,
+            run_id: "run-1".into(),
+            task_id: "task-1".into(),
+            last_message: Some("transient".into()),
+            provider_calls: 3,
+            references: vec![ChunkReference {
+                document_id: None,
+                document_name: None,
+                id: "chunk-1".into(),
+                kb_id: "kb-1".into(),
+                content: "body".into(),
+                similarity: None,
+                vector_similarity: None,
+                term_similarity: None,
+                document_metadata: None,
+            }],
+            ..CanvasRuntime::default()
+        };
+        state.outputs.insert(
+            "message".into(),
+            Map::from_iter([("content".into(), json!("hi world"))]),
+        );
+
+        let raw = serde_json::to_value(&state).unwrap();
+        assert_eq!(raw["sys"]["query"], "hello");
+        assert_eq!(raw["outputs"]["message"]["content"], "hi world");
+        assert_eq!(raw["cancel_flag"], true);
+        assert_eq!(raw["run_id"], "run-1");
+        assert_eq!(raw["task_id"], "task-1");
+        assert!(raw.get("last_message").is_none());
+        assert!(raw.get("provider_calls").is_none());
+        assert!(raw.get("references").is_none());
+
+        let restored: CanvasRuntime = serde_json::from_value(raw).unwrap();
+        assert_eq!(restored.sys["query"], "hello");
+        assert_eq!(restored.path, ["begin", "message"]);
+        assert!(restored.cancel_flag);
+        assert_eq!(restored.run_id, "run-1");
+        assert_eq!(restored.task_id, "task-1");
+        assert_eq!(restored.history.len(), 1);
+        assert!(restored.last_message.is_none());
+        assert!(restored.references.is_empty());
+    }
+
+    #[test]
+    fn canvas_state_serde_handles_empty_owned_restore_and_invalid_json() {
+        let empty = CanvasRuntime {
+            run_id: "run-empty".into(),
+            task_id: "task-empty".into(),
+            ..CanvasRuntime::default()
+        };
+        let bytes = serde_json::to_vec(&empty).unwrap();
+        assert!(!bytes.is_empty());
+        assert_eq!(
+            serde_json::from_slice::<Value>(&bytes).unwrap(),
+            json!({
+                "outputs": {},
+                "cancel_flag": false,
+                "run_id": "run-empty",
+                "task_id": "task-empty"
+            })
+        );
+
+        let mut restored = CanvasRuntime {
+            outputs: BTreeMap::from([(
+                "stale".into(),
+                Map::from_iter([("value".into(), json!("discard"))]),
+            )]),
+            run_id: "old".into(),
+            task_id: "old".into(),
+            cancel_flag: true,
+            ..CanvasRuntime::default()
+        };
+        let mut deserializer = serde_json::Deserializer::from_slice(&bytes);
+        <CanvasRuntime as Deserialize>::deserialize_in_place(&mut deserializer, &mut restored)
+            .unwrap();
+        assert!(restored.outputs.is_empty());
+        assert_eq!(restored.run_id, "run-empty");
+        assert_eq!(restored.task_id, "task-empty");
+        assert!(!restored.cancel_flag);
+        assert!(serde_json::from_slice::<CanvasRuntime>(br#"{"outputs":"bad"}"#).is_err());
+        assert!(serde_json::from_slice::<CanvasRuntime>(b"{").is_err());
+    }
+
+    #[test]
+    fn canvas_state_resolves_namespaces_json_paths_and_nested_writes() {
+        let mut state = CanvasRuntime {
+            sys: Map::from_iter([("query".into(), json!({"parts": ["a", "b"]}))]),
+            env: Map::from_iter([("encoded".into(), json!("{\"answer\":42}"))]),
+            globals: Map::from_iter([
+                ("env.legacy".into(), json!("kept")),
+                ("__item__".into(), json!("row")),
+            ]),
+            ..CanvasRuntime::default()
+        };
+        state.outputs.insert(
+            "node".into(),
+            Map::from_iter([("scalar".into(), json!("old"))]),
+        );
+
+        assert_eq!(
+            get_variable(&state, "sys.query.parts.1").unwrap(),
+            json!("b")
+        );
+        assert_eq!(
+            get_variable(&state, "env.encoded.answer").unwrap(),
+            json!(42)
+        );
+        assert_eq!(get_variable(&state, "env.legacy").unwrap(), "kept");
+        assert_eq!(get_variable(&state, "item").unwrap(), "row");
+
+        set_variable(&mut state, "sys.session.id", json!("s-1")).unwrap();
+        set_variable(&mut state, "node@scalar.deep", json!(7)).unwrap();
+        set_variable(&mut state, "env.legacy", json!("updated")).unwrap();
+        assert_eq!(
+            get_variable(&state, "sys.session.id").unwrap(),
+            json!("s-1")
+        );
+        assert_eq!(get_variable(&state, "node@scalar.deep").unwrap(), json!(7));
+        assert_eq!(state.globals["env.legacy"], "updated");
+    }
+
+    #[derive(Default)]
+    struct MockRetriever {
+        request: std::sync::Mutex<Option<WorkflowRetrievalRequest>>,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl WorkflowRetriever for MockRetriever {
+        async fn retrieve(
+            &self,
+            request: WorkflowRetrievalRequest,
+        ) -> Result<WorkflowRetrievalResult> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            *self.request.lock().unwrap() = Some(request);
+            Ok(WorkflowRetrievalResult {
+                formalized_content: "Reference 1 | Guide.md\nRust ownership guide".into(),
+                chunks: vec![json!({
+                    "chunk_id": "chunk-1",
+                    "kb_id": "fallback-kb",
+                    "content": "Rust ownership guide",
+                    "score": 0.91
+                })],
+                doc_aggs: vec![json!({"doc_name": "Guide.md", "count": 1})],
+                references: vec![ChunkReference {
+                    document_id: None,
+                    document_name: None,
+                    id: "chunk-1".into(),
+                    kb_id: "fallback-kb".into(),
+                    content: "Rust ownership guide".into(),
+                    similarity: Some(0.91),
+                    vector_similarity: Some(0.88),
+                    term_similarity: Some(0.73),
+                    document_metadata: None,
+                }],
+            })
+        }
+    }
+
+    #[derive(Default)]
+    struct MockTavily {
+        searches: std::sync::Mutex<Vec<(String, TavilySearchRequest)>>,
+        extracts: std::sync::Mutex<Vec<(String, TavilyExtractRequest)>>,
+        search_failures: std::sync::atomic::AtomicUsize,
+        extract_failures: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl TavilyProvider for MockTavily {
+        async fn search(&self, api_key: &str, request: &TavilySearchRequest) -> Result<Vec<Value>> {
+            self.searches
+                .lock()
+                .unwrap()
+                .push((api_key.into(), request.clone()));
+            if self
+                .search_failures
+                .fetch_update(
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::SeqCst,
+                    |remaining| remaining.checked_sub(1),
+                )
+                .is_ok()
+            {
+                bail!("temporary search failure");
+            }
+            Ok(vec![json!({
+                "url": "https://example.test/rust",
+                "title": "Rust\nGuide",
+                "content": "alpha ![img](data:image/png;base64,AAAA) beta",
+                "raw_content": null,
+                "score": 0.91
+            })])
+        }
+
+        async fn extract(
+            &self,
+            api_key: &str,
+            request: &TavilyExtractRequest,
+        ) -> Result<Vec<Value>> {
+            self.extracts
+                .lock()
+                .unwrap()
+                .push((api_key.into(), request.clone()));
+            if self
+                .extract_failures
+                .fetch_update(
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::SeqCst,
+                    |remaining| remaining.checked_sub(1),
+                )
+                .is_ok()
+            {
+                bail!("temporary extract failure");
+            }
+            Ok(vec![json!({
+                "url": "https://example.test/a",
+                "raw_content": "page body"
+            })])
+        }
+    }
+
+    #[derive(Default)]
+    struct MockWikipedia {
+        searches: std::sync::Mutex<Vec<WikipediaSearchRequest>>,
+        failures: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl WikipediaProvider for MockWikipedia {
+        async fn search(&self, request: &WikipediaSearchRequest) -> Result<Vec<WikipediaArticle>> {
+            self.searches.lock().unwrap().push(request.clone());
+            if self
+                .failures
+                .fetch_update(
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::SeqCst,
+                    |remaining| remaining.checked_sub(1),
+                )
+                .is_ok()
+            {
+                bail!("temporary Wikipedia failure");
+            }
+            Ok(vec![
+                WikipediaArticle {
+                    title: "Rust\nLanguage".into(),
+                    url: "https://en.wikipedia.org/wiki/Rust_(programming_language)".into(),
+                    summary: "alpha ![img](data:image/png;base64,AAAA) beta".into(),
+                    snippet: "<span>Rust</span> language".into(),
+                },
+                WikipediaArticle {
+                    title: "Empty".into(),
+                    url: "https://en.wikipedia.org/wiki/Empty".into(),
+                    summary: String::new(),
+                    snippet: "empty summary".into(),
+                },
+            ])
+        }
+    }
+
+    #[derive(Default)]
+    struct MockDuckDuckGo {
+        searches: std::sync::Mutex<Vec<DuckDuckGoSearchRequest>>,
+        failures: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl DuckDuckGoProvider for MockDuckDuckGo {
+        async fn search(&self, request: &DuckDuckGoSearchRequest) -> Result<Vec<Value>> {
+            self.searches.lock().unwrap().push(request.clone());
+            if self
+                .failures
+                .fetch_update(
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::SeqCst,
+                    |remaining| remaining.checked_sub(1),
+                )
+                .is_ok()
+            {
+                bail!("temporary DuckDuckGo failure");
+            }
+            let url_key = match request.channel {
+                DuckDuckGoChannel::Text => "href",
+                DuckDuckGoChannel::News => "url",
+            };
+            let mut result = serde_json::json!({
+                "title": "Rust\nSearch",
+                "body": "alpha ![img](data:image/png;base64,AAAA) beta"
+            });
+            result[url_key] = Value::String("https://example.test/rust".into());
+            Ok(vec![result])
+        }
+    }
+
+    #[derive(Default)]
+    struct MockGoogle {
+        searches: std::sync::Mutex<Vec<(String, GoogleSearchRequest)>>,
+        failures: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl GoogleProvider for MockGoogle {
+        async fn search(&self, api_key: &str, request: &GoogleSearchRequest) -> Result<Vec<Value>> {
+            self.searches
+                .lock()
+                .unwrap()
+                .push((api_key.into(), request.clone()));
+            if self
+                .failures
+                .fetch_update(
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::SeqCst,
+                    |remaining| remaining.checked_sub(1),
+                )
+                .is_ok()
+            {
+                bail!("temporary Google failure");
+            }
+            Ok(vec![
+                json!({
+                    "position": 1,
+                    "title": "Rust\nSearch",
+                    "link": "https://example.test/rust",
+                    "snippet": "fallback snippet",
+                    "about_this_result": {
+                        "source": {
+                            "description": "alpha ![img](data:image/png;base64,AAAA) beta"
+                        }
+                    }
+                }),
+                // Python skips a falsey description before reading title/link.
+                json!({
+                    "snippet": "not selected",
+                    "about_this_result": {"source": {"description": null}}
+                }),
+            ])
+        }
+    }
+
+    #[derive(Default)]
+    struct MockGoogleScholar {
+        searches: std::sync::Mutex<Vec<GoogleScholarSearchRequest>>,
+        failures: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl GoogleScholarProvider for MockGoogleScholar {
+        async fn search(
+            &self,
+            request: &GoogleScholarSearchRequest,
+        ) -> Result<Vec<GoogleScholarPublication>> {
+            self.searches.lock().unwrap().push(request.clone());
+            if self
+                .failures
+                .fetch_update(
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::SeqCst,
+                    |remaining| remaining.checked_sub(1),
+                )
+                .is_ok()
+            {
+                bail!("temporary Google Scholar failure");
+            }
+            Ok(vec![GoogleScholarPublication {
+                title: "Rust\nScholarship".into(),
+                authors: vec!["Alice".into(), "Bob".into()],
+                abstract_text: Some("alpha ![img](data:image/png;base64,AAAA) beta".into()),
+                pub_url: "https://example.test/rust-scholar".into(),
+                venue: "RustConf".into(),
+                year: "2026".into(),
+                gsrank: 1,
+            }])
+        }
+    }
+
+    #[derive(Default)]
+    struct MockGitHub {
+        searches: std::sync::Mutex<Vec<GitHubSearchRequest>>,
+        failures: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl GitHubProvider for MockGitHub {
+        async fn search(&self, request: &GitHubSearchRequest) -> Result<Vec<GitHubRepository>> {
+            self.searches.lock().unwrap().push(request.clone());
+            if self
+                .failures
+                .fetch_update(
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::SeqCst,
+                    |remaining| remaining.checked_sub(1),
+                )
+                .is_ok()
+            {
+                bail!("temporary GitHub failure");
+            }
+            let raw = json!({
+                "name": "rayrag",
+                "full_name": "example/rayrag",
+                "html_url": "https://github.com/example/rayrag",
+                "description": "alpha ![img](data:image/png;base64,AAAA) beta",
+                "watchers": 42,
+                "stargazers_count": 42,
+                "extra": "preserved"
+            });
+            Ok(vec![GitHubRepository {
+                name: "rayrag\nrepository".into(),
+                full_name: "example/rayrag".into(),
+                html_url: "https://github.com/example/rayrag".into(),
+                description: raw["description"].clone(),
+                watchers: raw["watchers"].clone(),
+                stargazers_count: 42,
+                raw,
+            }])
+        }
+    }
+
+    #[derive(Default)]
+    struct MockYahooFinance {
+        reports: std::sync::Mutex<Vec<YahooFinanceRequest>>,
+        failures: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl YahooFinanceProvider for MockYahooFinance {
+        async fn report(&self, request: &YahooFinanceRequest) -> Result<String> {
+            self.reports.lock().unwrap().push(request.clone());
+            if self
+                .failures
+                .fetch_update(
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::SeqCst,
+                    |remaining| remaining.checked_sub(1),
+                )
+                .is_ok()
+            {
+                bail!("temporary Yahoo Finance failure");
+            }
+            Ok(format!("# Information:\n{}", request.stock_code))
+        }
+    }
+
+    #[derive(Default)]
+    struct MockArxiv {
+        searches: std::sync::Mutex<Vec<ArxivSearchRequest>>,
+        failures: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl ArxivProvider for MockArxiv {
+        async fn search(&self, request: &ArxivSearchRequest) -> Result<Vec<ArxivPaper>> {
+            self.searches.lock().unwrap().push(request.clone());
+            if self
+                .failures
+                .fetch_update(
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::SeqCst,
+                    |remaining| remaining.checked_sub(1),
+                )
+                .is_ok()
+            {
+                bail!("temporary ArXiv failure");
+            }
+            Ok(vec![
+                ArxivPaper {
+                    title: "Rust\nRetrieval".into(),
+                    authors: vec!["Alice".into(), "Bob".into()],
+                    summary: "alpha ![img](data:image/png;base64,AAAA) beta".into(),
+                    pdf_url: Some("http://arxiv.org/pdf/2501.12345v1".into()),
+                    entry_id: "http://arxiv.org/abs/2501.12345v1".into(),
+                },
+                ArxivPaper {
+                    title: "Empty".into(),
+                    authors: vec!["Carol".into()],
+                    summary: String::new(),
+                    pdf_url: None,
+                    entry_id: "http://arxiv.org/abs/2409.99999v2".into(),
+                },
+            ])
+        }
+    }
+
+    #[derive(Default)]
+    struct MockPubMed {
+        searches: std::sync::Mutex<Vec<PubMedSearchRequest>>,
+        failures: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl PubMedProvider for MockPubMed {
+        async fn search(&self, request: &PubMedSearchRequest) -> Result<Vec<PubMedArticle>> {
+            self.searches.lock().unwrap().push(request.clone());
+            if self
+                .failures
+                .fetch_update(
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::SeqCst,
+                    |remaining| remaining.checked_sub(1),
+                )
+                .is_ok()
+            {
+                bail!("temporary PubMed failure");
+            }
+            Ok(vec![PubMedArticle {
+                pmid: "31415926".into(),
+                title: "Rust\nBiomedical Retrieval".into(),
+                authors: vec!["Alice Smith".into(), "Bob Jones".into()],
+                journal: "Journal of Rust Medicine".into(),
+                volume: "10".into(),
+                issue: "2".into(),
+                pages: "101-110".into(),
+                doi: Some("10.1000/rust.pubmed".into()),
+                abstract_text: "alpha ![img](data:image/png;base64,AAAA) beta".into(),
+                publication_date: "2024 Jan".into(),
+            }])
+        }
+    }
+
+    #[derive(Default)]
+    struct BlockingRetriever {
+        release: tokio::sync::Notify,
+    }
+
+    #[async_trait::async_trait]
+    impl WorkflowRetriever for BlockingRetriever {
+        async fn retrieve(
+            &self,
+            _request: WorkflowRetrievalRequest,
+        ) -> Result<WorkflowRetrievalResult> {
+            self.release.notified().await;
+            Ok(WorkflowRetrievalResult {
+                formalized_content: "live result".into(),
+                ..WorkflowRetrievalResult::default()
+            })
+        }
+    }
+
+    struct ChannelWorkflowObserver(tokio::sync::mpsc::UnboundedSender<WorkflowLifecycleEvent>);
+
+    impl WorkflowEventObserver for ChannelWorkflowObserver {
+        fn emit(&self, event: WorkflowLifecycleEvent) {
+            let _ = self.0.send(event);
+        }
+    }
+
+    #[derive(Default)]
+    struct ParallelConcurrencyRetriever {
+        active: std::sync::atomic::AtomicUsize,
+        maximum: std::sync::atomic::AtomicUsize,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl WorkflowRetriever for ParallelConcurrencyRetriever {
+        async fn retrieve(
+            &self,
+            request: WorkflowRetrievalRequest,
+        ) -> Result<WorkflowRetrievalResult> {
+            let active = self
+                .active
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                .saturating_add(1);
+            self.maximum
+                .fetch_max(active, std::sync::atomic::Ordering::SeqCst);
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let delay = match request.query.as_str() {
+                "a" => 45,
+                "b" => 5,
+                "c" => 25,
+                _ => 1,
+            };
+            tokio::time::sleep(Duration::from_millis(delay)).await;
+            self.active
+                .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+            if request.query == "error" {
+                bail!("synthetic item failure");
+            }
+            Ok(WorkflowRetrievalResult {
+                formalized_content: request.query,
+                ..WorkflowRetrievalResult::default()
+            })
+        }
+    }
+
+    fn branch_canvas() -> Value {
+        json!({
+            "components": {
+                "begin": {
+                    "obj": {"component_name": "Begin", "params": {}},
+                    "downstream": ["assign:0"], "upstream": []
+                },
+                "assign:0": {
+                    "obj": {"component_name": "VariableAssigner", "params": {"variables": [
+                        {"variable": "env.score", "operator": "+=", "parameter": 2}
+                    ]}},
+                    "downstream": ["switch:0"], "upstream": ["begin"]
+                },
+                "switch:0": {
+                    "obj": {"component_name": "Switch", "params": {
+                        "conditions": [{"logical_operator": "and", "items": [
+                            {"cpn_id": "env.score", "operator": "≥", "value": 3}
+                        ], "to": ["message:yes"]}],
+                        "end_cpn_ids": ["message:no"]
+                    }},
+                    "downstream": ["message:yes", "message:no"], "upstream": ["assign:0"]
+                },
+                "message:yes": {
+                    "obj": {"component_name": "Message", "params": {"content": ["score={env.score}; q={sys.query}"]}},
+                    "downstream": [], "upstream": ["switch:0"]
+                },
+                "message:no": {
+                    "obj": {"component_name": "Message", "params": {"content": ["no"]}},
+                    "downstream": [], "upstream": ["switch:0"]
+                }
+            },
+            "globals": {"env.score": 1}
+        })
+    }
+
+    fn counter_loop_canvas(initial: Value, threshold: i64, maximum: i64) -> Value {
+        json!({
+            "components": {
+                "begin": {
+                    "obj": {"component_name": "Begin", "params": {}},
+                    "downstream": ["loop"], "upstream": []
+                },
+                "loop": {
+                    "obj": {"component_name": "Loop", "params": {
+                        "loop_variables": [{
+                            "variable": "counter",
+                            "input_mode": "constant",
+                            "value": initial,
+                            "type": "number"
+                        }],
+                        "loop_termination_condition": [{
+                            "variable": "counter",
+                            "operator": "≥",
+                            "value": threshold,
+                            "input_mode": "constant"
+                        }],
+                        "logical_operator": "and",
+                        "maximum_loop_count": maximum
+                    }},
+                    "downstream": ["bump", "done"], "upstream": ["begin"]
+                },
+                "bump": {
+                    "obj": {"component_name": "VariableAssigner", "params": {
+                        "variables": [{
+                            "variable": "loop@counter",
+                            "operator": "+=",
+                            "parameter": 1
+                        }]
+                    }},
+                    "parent_id": "loop",
+                    "downstream": [], "upstream": ["loop"]
+                },
+                "done": {
+                    "obj": {"component_name": "Message", "params": {
+                        "content": ["counter={loop@counter}"]
+                    }},
+                    "downstream": [], "upstream": ["loop"]
+                }
+            }
+        })
+    }
+
+    fn parallel_string_canvas(max_concurrency: usize) -> Value {
+        json!({
+            "components": {
+                "begin": {
+                    "obj": {"component_name": "Begin", "params": {}},
+                    "downstream": ["parallel"], "upstream": []
+                },
+                "parallel": {
+                    "obj": {"component_name": "Parallel", "params": {
+                        "items_ref": "begin@items",
+                        "max_concurrency": max_concurrency,
+                        "outputs": {
+                            "lines": {"ref": "format@result", "type": "Array<string>"},
+                            "items": {"ref": "item", "type": "Array<unknown>"},
+                            "indices": {"ref": "index", "type": "Array<integer>"},
+                            "missing": {"ref": "format@absent", "type": "Array<unknown>"}
+                        }
+                    }},
+                    "downstream": ["done"], "upstream": ["begin"]
+                },
+                "assign": {
+                    "obj": {"component_name": "VariableAssigner", "params": {
+                        "variables": [{
+                            "variable": "env.parallel_item",
+                            "operator": "set",
+                            "parameter": "{item}"
+                        }]
+                    }},
+                    "parent_id": "parallel",
+                    "downstream": ["format"], "upstream": ["parallel"]
+                },
+                "format": {
+                    "obj": {"component_name": "StringTransform", "params": {
+                        "method": "merge",
+                        "script": "{index}:{env.parallel_item}",
+                        "delimiters": ["|"]
+                    }},
+                    "parent_id": "parallel",
+                    "downstream": [], "upstream": ["assign"]
+                },
+                "done": {
+                    "obj": {"component_name": "Message", "params": {
+                        "content": ["{parallel@lines}"]
+                    }},
+                    "downstream": [], "upstream": ["parallel"]
+                }
+            }
+        })
+    }
+
+    fn parallel_retrieval_canvas(max_concurrency: usize) -> Value {
+        json!({
+            "components": {
+                "begin": {
+                    "obj": {"component_name": "Begin", "params": {}},
+                    "downstream": ["parallel"], "upstream": []
+                },
+                "parallel": {
+                    "obj": {"component_name": "Parallel", "params": {
+                        "items_ref": "begin@items",
+                        "max_concurrency": max_concurrency,
+                        "outputs": {
+                            "results": {"ref": "retrieve@formalized_content"}
+                        }
+                    }},
+                    "downstream": ["done"], "upstream": ["begin"]
+                },
+                "retrieve": {
+                    "obj": {"component_name": "Retrieval", "params": {
+                        "query": "{item}",
+                        "kb_ids": []
+                    }},
+                    "parent_id": "parallel",
+                    "downstream": [], "upstream": ["parallel"]
+                },
+                "done": {
+                    "obj": {"component_name": "Message", "params": {
+                        "content": ["{parallel@results}"]
+                    }},
+                    "downstream": [], "upstream": ["parallel"]
+                }
+            }
+        })
+    }
+
+    fn run_list_operation(params: Value, items: Value) -> Result<Map<String, Value>> {
+        let mut runtime = CanvasRuntime::default();
+        runtime.globals.insert("sys.items".into(), items);
+        let node = CanvasNode {
+            id: "list".into(),
+            component_name: "ListOperations".into(),
+            params: params.as_object().cloned().unwrap(),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+        execute_list_operations(&mut runtime, &node)?;
+        Ok(runtime.outputs.remove("list").unwrap())
+    }
+
+    fn run_data_operation(
+        params: Value,
+        globals: impl IntoIterator<Item = (&'static str, Value)>,
+    ) -> Result<Value> {
+        let mut runtime = CanvasRuntime::default();
+        runtime.globals.extend(
+            globals
+                .into_iter()
+                .map(|(key, value)| (key.to_owned(), value)),
+        );
+        let node = CanvasNode {
+            id: "data".into(),
+            component_name: "DataOperations".into(),
+            params: params.as_object().cloned().unwrap(),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+        execute_data_operations(&mut runtime, &node)?;
+        Ok(runtime
+            .outputs
+            .remove("data")
+            .unwrap()
+            .remove("result")
+            .unwrap())
+    }
+
+    fn run_excel_operation(
+        params: Value,
+        globals: impl IntoIterator<Item = (&'static str, Value)>,
+    ) -> Result<Map<String, Value>> {
+        let mut runtime = CanvasRuntime::default();
+        runtime.globals.extend(
+            globals
+                .into_iter()
+                .map(|(key, value)| (key.to_owned(), value)),
+        );
+        let node = CanvasNode {
+            id: "excel".into(),
+            component_name: "ExcelProcessor".into(),
+            params: params.as_object().cloned().unwrap(),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+        validate_excel_processor_params(&node)?;
+        execute_excel_processor(&mut runtime, &node)?;
+        Ok(runtime.outputs.remove("excel").unwrap())
+    }
+
+    fn run_doc_generator(
+        component_name: &str,
+        params: Value,
+        globals: impl IntoIterator<Item = (&'static str, Value)>,
+    ) -> Result<Map<String, Value>> {
+        let mut runtime = CanvasRuntime::default();
+        runtime.globals.extend(
+            globals
+                .into_iter()
+                .map(|(key, value)| (key.to_owned(), value)),
+        );
+        let node = CanvasNode {
+            id: "docs".into(),
+            component_name: component_name.into(),
+            params: params.as_object().cloned().unwrap(),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+        validate_doc_generator_params(&node)?;
+        execute_doc_generator(&mut runtime, &node)?;
+        Ok(runtime.outputs.remove("docs").unwrap())
+    }
+
+    fn run_switch(
+        params: Value,
+        globals: impl IntoIterator<Item = (&'static str, Value)>,
+    ) -> Result<(Vec<String>, Map<String, Value>)> {
+        let mut runtime = CanvasRuntime::default();
+        runtime.globals.extend(
+            globals
+                .into_iter()
+                .map(|(key, value)| (key.to_owned(), value)),
+        );
+        let node = CanvasNode {
+            id: "switch".into(),
+            component_name: "Switch".into(),
+            params: params.as_object().cloned().unwrap(),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+        let next = execute_switch(&mut runtime, &node)?;
+        Ok((next, runtime.outputs.remove("switch").unwrap()))
+    }
+
+    #[tokio::test]
+    async fn core_canvas_executes_assignment_switch_and_message() {
+        let workflow = AgentWorkflow::from_value(&branch_canvas())
+            .unwrap()
+            .unwrap();
+        let result = workflow
+            .run(
+                None,
+                WorkflowRunInput {
+                    question: "hello",
+                    user_id: "user-1",
+                    inputs: &Map::new(),
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: None,
+                    fallback_kb_ids: &[],
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.answer, "score=3.0; q=hello");
+        assert_eq!(
+            result.path,
+            ["begin", "assign:0", "switch:0", "message:yes"]
+        );
+        assert_eq!(result.usage, None);
+    }
+
+    #[tokio::test]
+    async fn parallel_runs_isolated_items_and_collects_ordered_declared_outputs() {
+        let workflow = AgentWorkflow::from_value(&parallel_string_canvas(0))
+            .unwrap()
+            .unwrap();
+        assert!(workflow.unsupported_components().is_empty());
+        assert_eq!(workflow.execution_order, ["begin", "parallel", "done"]);
+        assert_eq!(
+            workflow.parallel_plans["parallel"].execution_order,
+            ["assign", "format"]
+        );
+        assert_eq!(
+            workflow.parallel_plans["parallel"].outer_downstream,
+            ["done"]
+        );
+
+        let inputs = Map::from_iter([("items".into(), json!(["alpha", "beta", "gamma"]))]);
+        let result = workflow
+            .run(
+                None,
+                WorkflowRunInput {
+                    question: "go",
+                    user_id: "user-1",
+                    inputs: &inputs,
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: None,
+                    fallback_kb_ids: &[],
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.answer, r#"["0:alpha","1:beta","2:gamma"]"#);
+        assert_eq!(result.path, ["begin", "parallel", "done"]);
+        let outputs = &result
+            .trace
+            .iter()
+            .find(|trace| trace.component_id == "parallel")
+            .unwrap()
+            .outputs;
+        assert_eq!(outputs["lines"], json!(["0:alpha", "1:beta", "2:gamma"]));
+        assert_eq!(outputs["items"], json!(["alpha", "beta", "gamma"]));
+        assert_eq!(outputs["indices"], json!([0, 1, 2]));
+        assert_eq!(outputs["missing"], json!([null, null, null]));
+        assert_eq!(outputs["_result"].as_array().unwrap().len(), 3);
+        assert_eq!(outputs["_result"][0]["item"], "alpha");
+        assert_eq!(outputs["_result"][1]["index"], 1);
+        assert_eq!(outputs["_result"][2]["format"]["result"], "2:gamma");
+        assert!(
+            result
+                .trace
+                .iter()
+                .all(|trace| !matches!(trace.component_id.as_str(), "assign" | "format"))
+        );
+    }
+
+    #[tokio::test]
+    async fn parallel_max_concurrency_is_bounded_and_keeps_input_order() {
+        let inputs = Map::from_iter([("items".into(), json!(["a", "b", "c", "d"]))]);
+
+        let concurrent = ParallelConcurrencyRetriever::default();
+        let result = AgentWorkflow::from_value(&parallel_retrieval_canvas(2))
+            .unwrap()
+            .unwrap()
+            .run(
+                None,
+                WorkflowRunInput {
+                    question: "go",
+                    user_id: "user-1",
+                    inputs: &inputs,
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: Some(&concurrent),
+                    fallback_kb_ids: &[],
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.answer, r#"["a","b","c","d"]"#);
+        assert_eq!(
+            concurrent.maximum.load(std::sync::atomic::Ordering::SeqCst),
+            2
+        );
+        assert_eq!(
+            concurrent.calls.load(std::sync::atomic::Ordering::SeqCst),
+            4
+        );
+
+        let sequential = ParallelConcurrencyRetriever::default();
+        AgentWorkflow::from_value(&parallel_retrieval_canvas(0))
+            .unwrap()
+            .unwrap()
+            .run(
+                None,
+                WorkflowRunInput {
+                    question: "go",
+                    user_id: "user-1",
+                    inputs: &inputs,
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: Some(&sequential),
+                    fallback_kb_ids: &[],
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            sequential.maximum.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn parallel_null_items_produce_an_empty_ordered_batch() {
+        let inputs = Map::from_iter([("items".into(), Value::Null)]);
+        let result = AgentWorkflow::from_value(&parallel_string_canvas(8))
+            .unwrap()
+            .unwrap()
+            .run(
+                None,
+                WorkflowRunInput {
+                    question: "go",
+                    user_id: "user-1",
+                    inputs: &inputs,
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: None,
+                    fallback_kb_ids: &[],
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.answer, "[]");
+        let outputs = &result
+            .trace
+            .iter()
+            .find(|trace| trace.component_id == "parallel")
+            .unwrap()
+            .outputs;
+        for field in ["_result", "lines", "items", "indices", "missing"] {
+            assert_eq!(outputs[field], json!([]), "{field}");
+        }
+    }
+
+    #[tokio::test]
+    async fn parallel_rejects_non_array_items_and_missing_items_ref() {
+        let missing = json!({"components": {
+            "begin": {
+                "obj": {"component_name": "Begin", "params": {}},
+                "downstream": ["parallel"], "upstream": []
+            },
+            "parallel": {
+                "obj": {"component_name": "Parallel", "params": {}},
+                "downstream": ["body"], "upstream": ["begin"]
+            },
+            "body": {
+                "obj": {"component_name": "Message", "params": {"content": ["body"]}},
+                "parent_id": "parallel",
+                "downstream": [], "upstream": ["parallel"]
+            }
+        }});
+        assert!(
+            AgentWorkflow::from_value(&missing)
+                .unwrap_err()
+                .to_string()
+                .contains("items_ref is required")
+        );
+
+        let inputs = Map::from_iter([("items".into(), json!("not-an-array"))]);
+        let error = AgentWorkflow::from_value(&parallel_string_canvas(4))
+            .unwrap()
+            .unwrap()
+            .run(
+                None,
+                WorkflowRunInput {
+                    question: "go",
+                    user_id: "user-1",
+                    inputs: &inputs,
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: None,
+                    fallback_kb_ids: &[],
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("expected array, got string"));
+    }
+
+    #[tokio::test]
+    async fn parallel_drains_remaining_items_before_returning_an_item_error() {
+        let retriever = ParallelConcurrencyRetriever::default();
+        let inputs = Map::from_iter([("items".into(), json!(["ok", "error", "after"]))]);
+        let error = AgentWorkflow::from_value(&parallel_retrieval_canvas(0))
+            .unwrap()
+            .unwrap()
+            .run(
+                None,
+                WorkflowRunInput {
+                    question: "go",
+                    user_id: "user-1",
+                    inputs: &inputs,
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: Some(&retriever),
+                    fallback_kb_ids: &[],
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("item 1"));
+        assert!(format!("{error:#}").contains("synthetic item failure"));
+        assert_eq!(retriever.calls.load(std::sync::atomic::Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn loop_runs_grouped_body_do_while_and_collapses_outer_trace() {
+        let workflow = AgentWorkflow::from_value(&counter_loop_canvas(json!(0), 3, 50))
+            .unwrap()
+            .unwrap();
+        assert_eq!(workflow.execution_order, ["begin", "loop", "done"]);
+        assert_eq!(workflow.loop_plans["loop"].execution_order, ["bump"]);
+        assert_eq!(workflow.loop_plans["loop"].outer_downstream, ["done"]);
+
+        let result = workflow
+            .run(
+                None,
+                WorkflowRunInput {
+                    question: "go",
+                    user_id: "user-1",
+                    inputs: &Map::new(),
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: None,
+                    fallback_kb_ids: &[],
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.answer, "counter=3.0");
+        assert_eq!(result.path, ["begin", "loop", "done"]);
+        assert_eq!(
+            result
+                .trace
+                .iter()
+                .find(|trace| trace.component_id == "loop")
+                .unwrap()
+                .outputs["counter"],
+            json!(3.0)
+        );
+        assert!(
+            result
+                .trace
+                .iter()
+                .all(|trace| trace.component_id != "bump")
+        );
+    }
+
+    #[tokio::test]
+    async fn loop_variable_mode_dereferences_live_state_once() {
+        let mut dsl = counter_loop_canvas(json!(0), 8, 50);
+        dsl["components"]["begin"]["downstream"] = json!(["seed"]);
+        dsl["components"]["seed"] = json!({
+            "obj": {"component_name": "VariableAssigner", "params": {
+                "variables": [{
+                    "variable": "seed@initial",
+                    "operator": "set",
+                    "parameter": 5
+                }]
+            }},
+            "downstream": ["loop"], "upstream": ["begin"]
+        });
+        dsl["components"]["loop"]["upstream"] = json!(["seed"]);
+        dsl["components"]["loop"]["obj"]["params"]["loop_variables"][0]["input_mode"] =
+            json!("variable");
+        dsl["components"]["loop"]["obj"]["params"]["loop_variables"][0]["value"] =
+            json!("seed@initial");
+
+        let result = AgentWorkflow::from_value(&dsl)
+            .unwrap()
+            .unwrap()
+            .run(
+                None,
+                WorkflowRunInput {
+                    question: "go",
+                    user_id: "user-1",
+                    inputs: &Map::new(),
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: None,
+                    fallback_kb_ids: &[],
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.answer, "counter=8.0");
+        assert_eq!(result.path, ["begin", "seed", "loop", "done"]);
+    }
+
+    #[tokio::test]
+    async fn loop_duplicate_variable_declarations_use_the_last_spec() {
+        let mut dsl = counter_loop_canvas(json!(0), 5, 2);
+        dsl["components"]["loop"]["obj"]["params"]["loop_variables"] = json!([
+            {
+                "variable": "counter",
+                "input_mode": "constant",
+                "value": 0,
+                "type": "number"
+            },
+            {
+                "variable": "counter",
+                "input_mode": "constant",
+                "value": 4,
+                "type": "number"
+            }
+        ]);
+        let result = AgentWorkflow::from_value(&dsl)
+            .unwrap()
+            .unwrap()
+            .run(
+                None,
+                WorkflowRunInput {
+                    question: "go",
+                    user_id: "user-1",
+                    inputs: &Map::new(),
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: None,
+                    fallback_kb_ids: &[],
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.answer, "counter=5.0");
+    }
+
+    #[tokio::test]
+    async fn loop_cap_error_preserves_completed_iteration_state() {
+        let workflow = AgentWorkflow::from_value(&counter_loop_canvas(json!(0), 100, 5))
+            .unwrap()
+            .unwrap();
+        let mut runtime = CanvasRuntime::default();
+        let inputs = Map::new();
+        let run_input = WorkflowRunInput {
+            question: "go",
+            user_id: "user-1",
+            inputs: &inputs,
+            history: &[],
+            generation: GenerationParamsPatch::default(),
+            llm_resolver: None,
+            retriever: None,
+            fallback_kb_ids: &[],
+        };
+        let error = execute_loop(
+            &mut runtime,
+            &workflow.nodes["loop"],
+            &workflow.loop_plans["loop"],
+            &workflow.nodes,
+            None,
+            &run_input,
+            None,
+        )
+        .await
+        .unwrap_err();
+        let cap = error.downcast_ref::<LoopMaxIterationsExceeded>().unwrap();
+        assert_eq!(cap.maximum, 5);
+        assert_eq!(runtime.outputs["loop"]["counter"], json!(5.0));
+    }
+
+    #[tokio::test]
+    async fn loop_body_branch_and_exitloop_terminal_do_not_bypass_predicate() {
+        let mut dsl = counter_loop_canvas(json!(0), 3, 10);
+        dsl["components"]["bump"]["downstream"] = json!(["switch"]);
+        dsl["components"]["switch"] = json!({
+            "obj": {"component_name": "Switch", "params": {
+                "conditions": [{
+                    "logical_operator": "and",
+                    "items": [{
+                        "cpn_id": "loop@counter",
+                        "operator": "≥",
+                        "value": 2
+                    }],
+                    "to": ["exit"]
+                }],
+                "end_cpn_ids": ["continue"]
+            }},
+            "parent_id": "loop",
+            "downstream": ["exit", "continue"], "upstream": ["bump"]
+        });
+        dsl["components"]["exit"] = json!({
+            "obj": {"component_name": "ExitLoop", "params": {}},
+            "parent_id": "loop",
+            "downstream": [], "upstream": ["switch"]
+        });
+        dsl["components"]["continue"] = json!({
+            "obj": {"component_name": "VariableAssigner", "params": {
+                "variables": [{
+                    "variable": "loop@route",
+                    "operator": "set",
+                    "parameter": "continue"
+                }]
+            }},
+            "parent_id": "loop",
+            "downstream": [], "upstream": ["switch"]
+        });
+
+        let workflow = AgentWorkflow::from_value(&dsl).unwrap().unwrap();
+        assert!(workflow.unsupported_components().is_empty());
+        let result = workflow
+            .run(
+                None,
+                WorkflowRunInput {
+                    question: "go",
+                    user_id: "user-1",
+                    inputs: &Map::new(),
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: None,
+                    fallback_kb_ids: &[],
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.answer, "counter=3.0");
+        let loop_outputs = &result
+            .trace
+            .iter()
+            .find(|trace| trace.component_id == "loop")
+            .unwrap()
+            .outputs;
+        assert_eq!(loop_outputs["counter"], json!(3.0));
+        assert_eq!(loop_outputs["route"], json!("continue"));
+    }
+
+    #[tokio::test]
+    async fn loop_ungrouped_fallback_absorbs_descendants_until_back_edge() {
+        let dsl = json!({"components": {
+            "begin": {
+                "obj": {"component_name": "Begin", "params": {}},
+                "downstream": ["loop"], "upstream": []
+            },
+            "loop": {
+                "obj": {"component_name": "Loop", "params": {
+                    "loop_variables": [],
+                    "loop_termination_condition": [{
+                        "variable": "sys.query",
+                        "operator": "is",
+                        "value": "stop",
+                        "input_mode": "constant"
+                    }],
+                    "maximum_loop_count": 5
+                }},
+                "downstream": ["body"], "upstream": ["begin"]
+            },
+            "body": {
+                "obj": {"component_name": "Message", "params": {
+                    "content": ["body"]
+                }},
+                "downstream": [], "upstream": ["loop"]
+            }
+        }});
+        let workflow = AgentWorkflow::from_value(&dsl).unwrap().unwrap();
+        assert_eq!(workflow.execution_order, ["begin", "loop"]);
+        assert_eq!(workflow.loop_plans["loop"].execution_order, ["body"]);
+        let result = workflow
+            .run(
+                None,
+                WorkflowRunInput {
+                    question: "stop",
+                    user_id: "user-1",
+                    inputs: &Map::new(),
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: None,
+                    fallback_kb_ids: &[],
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.answer, "body");
+        assert_eq!(result.path, ["begin", "loop"]);
+    }
+
+    #[test]
+    fn loop_condition_operator_dispatch_matches_fixed_go_port() {
+        for (left, operator, right, expected) in [
+            (json!("hello"), "contains", json!("ell"), true),
+            (json!("hello"), "not contains", json!("zzz"), true),
+            (json!("hello"), "start with", json!("he"), true),
+            (json!("hello"), "end with", json!("lo"), true),
+            (json!(true), "is", json!(true), true),
+            (json!(false), "empty", Value::Null, true),
+            (json!(5), "≥", json!(5), true),
+            (json!({}), "empty", Value::Null, true),
+            (json!([1, 2]), "contains", json!(2), true),
+            (Value::Null, "empty", Value::Null, true),
+            (Value::Null, "not empty", Value::Null, false),
+        ] {
+            assert_eq!(
+                evaluate_loop_condition_value(&left, operator, &right).unwrap(),
+                expected,
+                "{left:?} {operator} {right:?}"
+            );
+        }
+        assert!(
+            evaluate_loop_condition_value(&json!(1), "bogus", &json!(1))
+                .unwrap_err()
+                .to_string()
+                .contains("invalid operator")
+        );
+    }
+
+    #[test]
+    fn loop_zero_init_and_validation_follow_fixed_build_contract() {
+        for (kind, expected) in [
+            ("number", json!(0)),
+            ("string", json!("")),
+            ("boolean", json!(false)),
+            ("object<string>", json!({})),
+            ("array<string>", json!([])),
+            ("unknown", json!("")),
+        ] {
+            assert_eq!(zero_loop_value(Some(&json!(kind))), expected, "{kind}");
+        }
+
+        let mut dsl = counter_loop_canvas(json!(0), 1, 2);
+        dsl["components"]["loop"]["obj"]["params"]["loop_variables"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("value");
+        assert!(
+            AgentWorkflow::from_value(&dsl)
+                .unwrap_err()
+                .to_string()
+                .contains("missing 'value'")
+        );
+        let mut dsl = counter_loop_canvas(json!(0), 1, 2);
+        dsl["components"]["loop"]["obj"]["params"]["logical_operator"] = json!("xor");
+        assert!(
+            AgentWorkflow::from_value(&dsl)
+                .unwrap_err()
+                .to_string()
+                .contains("logical_operator")
+        );
+        assert_eq!(
+            loop_max_iterations(&Map::from_iter([("maximum_loop_count".into(), json!(0))])),
+            DEFAULT_LOOP_MAX_ITERATIONS
+        );
+        let runtime = CanvasRuntime::default();
+        assert_eq!(
+            get_loop_variable_or_null(&runtime, "missing@value").unwrap(),
+            Value::Null
+        );
+        assert!(get_loop_variable_or_null(&runtime, "").is_err());
+    }
+
+    #[tokio::test]
+    async fn concurrent_canvas_runs_own_isolated_runtime_state() {
+        let workflow = AgentWorkflow::from_value(&branch_canvas())
+            .unwrap()
+            .unwrap();
+        let first_inputs = Map::new();
+        let second_inputs = Map::new();
+        let first = workflow.run(
+            None,
+            WorkflowRunInput {
+                question: "first",
+                user_id: "user-1",
+                inputs: &first_inputs,
+                history: &[],
+                generation: GenerationParamsPatch::default(),
+                llm_resolver: None,
+                retriever: None,
+                fallback_kb_ids: &[],
+            },
+        );
+        let second = workflow.run(
+            None,
+            WorkflowRunInput {
+                question: "second",
+                user_id: "user-2",
+                inputs: &second_inputs,
+                history: &[],
+                generation: GenerationParamsPatch::default(),
+                llm_resolver: None,
+                retriever: None,
+                fallback_kb_ids: &[],
+            },
+        );
+
+        let (first, second) = tokio::join!(first, second);
+        assert_eq!(first.unwrap().answer, "score=3.0; q=first");
+        assert_eq!(second.unwrap().answer, "score=3.0; q=second");
+    }
+
+    #[test]
+    fn switch_legacy_python_dialect_matches_routing_and_nil_semantics() {
+        let params = json!({
+            "conditions": [
+                {
+                    "logical_operator": "and",
+                    "items": [{"cpn_id": "", "operator": "=", "value": "wrong"}],
+                    "to": ["wrong"]
+                },
+                {
+                    "logical_operator": "and",
+                    "items": [{"cpn_id": "sys.answer", "operator": "contains", "value": null}],
+                    "to": ["matched"]
+                }
+            ],
+            "end_cpn_ids": ["fallback"]
+        });
+        let (next, outputs) =
+            run_switch(params, [("sys.answer", Value::String("foobar".into()))]).unwrap();
+        assert_eq!(next, ["matched"]);
+        assert_eq!(outputs["_next"], json!(["matched"]));
+        assert_eq!(outputs["next"], json!(["matched"]));
+
+        let params = json!({
+            "conditions": [{
+                "logical_operator": "and",
+                "items": [{"cpn_id": "sys.answer", "operator": "contains", "value": "foo"}],
+                "to": ["wrong"]
+            }],
+            "end_cpn_ids": ["fallback"]
+        });
+        let (next, outputs) = run_switch(params, [("sys.answer", Value::Null)]).unwrap();
+        assert_eq!(next, ["fallback"]);
+        assert_eq!(outputs["next"], json!(["fallback"]));
+    }
+
+    #[test]
+    fn switch_legacy_python_dialect_coerces_numeric_operands_and_uses_or_fallback() {
+        let params = json!({
+            "conditions": [{
+                "logical_operator": "xor",
+                "items": [
+                    {"cpn_id": "sys.score", "operator": "=", "value": "3.0"},
+                    {"cpn_id": "sys.score", "operator": ">", "value": "9"}
+                ],
+                "to": ["numeric"]
+            }],
+            "end_cpn_ids": ["fallback"]
+        });
+        let (next, _) = run_switch(params, [("sys.score", json!(3))]).unwrap();
+        assert_eq!(next, ["numeric"]);
+
+        let params = json!({
+            "conditions": [{
+                "logical_operator": "and",
+                "items": [],
+                "to": ["wrong"]
+            }],
+            "end_cpn_ids": ["fallback"]
+        });
+        let (next, _) = run_switch(params, std::iter::empty::<(&'static str, Value)>()).unwrap();
+        assert_eq!(next, ["fallback"]);
+    }
+
+    #[test]
+    fn switch_modern_go_dialect_supports_clauses_defaults_and_matched_targets() {
+        let params = json!({
+            "conditions": [
+                {
+                    "op": "and",
+                    "clauses": [{"left": "{{sys.flag}}", "op": "==", "right": "YES"}],
+                    "to": ["first", "also-first"]
+                }
+            ],
+            "default": "fallback"
+        });
+        let (next, outputs) =
+            run_switch(params, [("sys.flag", Value::String("yes".into()))]).unwrap();
+        assert_eq!(next, ["first", "also-first"]);
+        assert_eq!(outputs, Map::from_iter([("_next".into(), json!(next))]));
+
+        let params = json!({
+            "conditions": [{
+                "op": "and",
+                "clauses": [{"left": "{{sys.score}}", "op": ">=", "right": 5}]
+            }],
+            "default": "fallback"
+        });
+        let (next, _) = run_switch(params, [("sys.score", json!(5))]).unwrap();
+        assert_eq!(next, ["matched_0"]);
+
+        let params = json!({
+            "conditions": [{
+                "logical_operator": "and",
+                "items": [{"cpn_id": "sys.flag", "operator": "=", "value": "YES"}],
+                "to": "normalized-legacy"
+            }],
+            "default": "fallback"
+        });
+        let (next, _) = run_switch(params, [("sys.flag", Value::String("yes".into()))]).unwrap();
+        assert_eq!(next, ["normalized-legacy"]);
+    }
+
+    #[test]
+    fn switch_modern_go_dialect_matches_nil_empty_and_unresolved_reference_edges() {
+        let params = json!({
+            "conditions": [
+                {
+                    "op": "and",
+                    "clauses": [{"left": "{{sys.answer}}", "op": "start with", "right": null}],
+                    "to": "nil-match"
+                }
+            ],
+            "default": "fallback"
+        });
+        let (next, _) = run_switch(params, [("sys.answer", Value::Null)]).unwrap();
+        assert_eq!(next, ["nil-match"]);
+
+        let params = json!({
+            "conditions": [{
+                "op": "and",
+                "clauses": [{"left": "{{sys.absent}}", "op": "not empty"}],
+                "to": "raw-reference"
+            }],
+            "default": "fallback"
+        });
+        let (next, _) = run_switch(params, std::iter::empty::<(&'static str, Value)>()).unwrap();
+        assert_eq!(next, ["raw-reference"]);
+        assert!(!modern_switch_empty(&Value::Bool(false)));
+        assert!(!modern_switch_empty(&json!(0)));
+
+        let params = json!({
+            "conditions": [{
+                "logical_operator": "and",
+                "items": [{"cpn_id": "sys.flag", "operator": "empty"}],
+                "to": "wrong"
+            }],
+            "default": "fallback"
+        });
+        let (next, _) = run_switch(params, [("sys.flag", Value::Bool(false))]).unwrap();
+        assert_eq!(next, ["fallback"]);
+    }
+
+    #[tokio::test]
+    async fn switch_executes_every_selected_declared_branch_without_fallback() {
+        let dsl = json!({"components": {
+            "begin": {
+                "obj": {"component_name": "Begin", "params": {}},
+                "downstream": ["switch"], "upstream": []
+            },
+            "switch": {
+                "obj": {"component_name": "Switch", "params": {
+                    "conditions": [{
+                        "op": "and",
+                        "clauses": [{
+                            "left": "{{sys.query}}",
+                            "op": "contains",
+                            "right": "multi"
+                        }],
+                        "to": ["left", "right"]
+                    }],
+                    "default": "fallback"
+                }},
+                "downstream": ["left", "right", "fallback"], "upstream": ["begin"]
+            },
+            "left": {
+                "obj": {"component_name": "Message", "params": {"content": ["left"]}},
+                "downstream": [], "upstream": ["switch"]
+            },
+            "right": {
+                "obj": {"component_name": "Message", "params": {"content": ["right"]}},
+                "downstream": [], "upstream": ["switch"]
+            },
+            "fallback": {
+                "obj": {"component_name": "Message", "params": {"content": ["fallback"]}},
+                "downstream": [], "upstream": ["switch"]
+            }
+        }});
+        let result = AgentWorkflow::from_value(&dsl)
+            .unwrap()
+            .unwrap()
+            .run(
+                None,
+                WorkflowRunInput {
+                    question: "take the multi branch",
+                    user_id: "user-1",
+                    inputs: &Map::new(),
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: None,
+                    fallback_kb_ids: &[],
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.path, ["begin", "switch", "left", "right"]);
+        assert_eq!(result.answer, "right");
+        assert_eq!(
+            result
+                .trace
+                .iter()
+                .map(|entry| entry.component_id.as_str())
+                .collect::<Vec<_>>(),
+            ["begin", "switch", "left", "right"]
+        );
+        assert!(
+            result
+                .trace
+                .iter()
+                .all(|entry| entry.component_id != "fallback")
+        );
+    }
+
+    #[tokio::test]
+    async fn scheduler_waits_for_uneven_diamond_and_executes_the_join_once() {
+        let dsl = json!({"components": {
+            "begin": {
+                "obj": {"component_name": "Begin", "params": {}},
+                "downstream": ["short", "long"], "upstream": []
+            },
+            "short": {
+                "obj": {"component_name": "Message", "params": {"content": ["short"]}},
+                "downstream": ["join"], "upstream": ["begin"]
+            },
+            "long": {
+                "obj": {"component_name": "Message", "params": {"content": ["long"]}},
+                "downstream": ["middle"], "upstream": ["begin"]
+            },
+            "middle": {
+                "obj": {"component_name": "Message", "params": {"content": ["middle"]}},
+                "downstream": ["join"], "upstream": ["long"]
+            },
+            "join": {
+                "obj": {"component_name": "Message", "params": {"content": ["joined"]}},
+                "downstream": [], "upstream": ["short", "middle"]
+            }
+        }});
+        let result = AgentWorkflow::from_value(&dsl)
+            .unwrap()
+            .unwrap()
+            .run(
+                None,
+                WorkflowRunInput {
+                    question: "run",
+                    user_id: "user-1",
+                    inputs: &Map::new(),
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: None,
+                    fallback_kb_ids: &[],
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.path, ["begin", "short", "long", "middle", "join"]);
+        assert_eq!(result.answer, "joined");
+        assert_eq!(
+            result
+                .trace
+                .iter()
+                .filter(|entry| entry.component_id == "join")
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn string_transform_and_aggregator_keep_native_values() {
+        let dsl = json!({"components": {
+            "begin": {"obj": {"component_name": "Begin", "params": {}}, "downstream": ["split"], "upstream": []},
+            "split": {"obj": {"component_name": "StringTransform", "params": {"method": "split", "split_ref": "sys.query", "delimiters": [","]}}, "downstream": ["aggregate"], "upstream": ["begin"]},
+            "aggregate": {"obj": {"component_name": "VariableAggregator", "params": {"groups": [{"group_name": "picked", "variables": [{"value": "split@result"}]}]}}, "downstream": ["message"], "upstream": ["split"]},
+            "message": {"obj": {"component_name": "Message", "params": {"content": ["{aggregate@picked.1}"]}}, "downstream": [], "upstream": ["aggregate"]}
+        }});
+        let result = AgentWorkflow::from_value(&dsl)
+            .unwrap()
+            .unwrap()
+            .run(
+                None,
+                WorkflowRunInput {
+                    question: "a,b,c",
+                    user_id: "user-1",
+                    inputs: &Map::new(),
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: None,
+                    fallback_kb_ids: &[],
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.answer, "b");
+    }
+
+    #[tokio::test]
+    async fn begin_maps_question_to_a_single_declared_input() {
+        let dsl = json!({"components": {
+            "begin": {"obj": {"component_name": "Begin", "params": {
+                "mode": "task",
+                "inputs": {"customer_review": {"type": "line", "value": ""}}
+            }}, "downstream": ["message"], "upstream": []},
+            "message": {"obj": {"component_name": "Message", "params": {
+                "content": ["review={begin@customer_review}"]
+            }}, "downstream": [], "upstream": ["begin"]}
+        }});
+        let result = AgentWorkflow::from_value(&dsl)
+            .unwrap()
+            .unwrap()
+            .run(
+                None,
+                WorkflowRunInput {
+                    question: "excellent service",
+                    user_id: "user-1",
+                    inputs: &Map::new(),
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: None,
+                    fallback_kb_ids: &[],
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.answer, "review=excellent service");
+        assert_eq!(
+            result.trace[0].outputs["customer_review"],
+            "excellent service"
+        );
+    }
+
+    #[tokio::test]
+    async fn begin_decodes_object_descriptors_and_rejects_file_inputs() {
+        let dsl = json!({"components": {
+            "begin": {"obj": {"component_name": "Begin", "params": {
+                "mode": "Webhook",
+                "inputs": {"payload": {"type": "object", "value": ""}}
+            }}, "downstream": ["message"], "upstream": []},
+            "message": {"obj": {"component_name": "Message", "params": {
+                "content": ["name={begin@payload.name}"]
+            }}, "downstream": [], "upstream": ["begin"]}
+        }});
+        let workflow = AgentWorkflow::from_value(&dsl).unwrap().unwrap();
+        let inputs = Map::from_iter([(
+            "payload".into(),
+            json!({"type": "object", "value": "{\"name\":\"Ada\"}"}),
+        )]);
+        let result = workflow
+            .run(
+                None,
+                WorkflowRunInput {
+                    question: "ignored",
+                    user_id: "user-1",
+                    inputs: &inputs,
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: None,
+                    fallback_kb_ids: &[],
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.answer, "name=Ada");
+
+        let error = resolve_begin_input(
+            &workflow.nodes["begin"],
+            "attachment",
+            json!({"type": "file", "value": "file-id"}),
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("requires the file parsing service")
+        );
+        assert_eq!(
+            resolve_begin_input(
+                &workflow.nodes["begin"],
+                "attachment",
+                json!({"type": "file", "optional": true, "value": null}),
+            )
+            .unwrap(),
+            Value::Null
+        );
+    }
+
+    #[test]
+    fn begin_params_are_validated_when_canvas_is_compiled() {
+        for params in [
+            json!({"mode": "invalid"}),
+            json!({"mode": 1}),
+            json!({"inputs": []}),
+        ] {
+            let dsl = json!({"components": {
+                "begin": {"obj": {"component_name": "Begin", "params": params}, "downstream": [], "upstream": []}
+            }});
+            assert!(AgentWorkflow::from_value(&dsl).is_err(), "{dsl}");
+        }
+    }
+
+    #[test]
+    fn llm_params_are_normalized_and_validated_when_canvas_is_compiled() {
+        let canvas = |params: Value| {
+            json!({"components": {
+                "begin": {"obj": {"component_name": "Begin", "params": {}}, "downstream": ["llm"], "upstream": []},
+                "llm": {"obj": {"component_name": "LLM", "params": params}, "downstream": ["message"], "upstream": ["begin"]},
+                "message": {"obj": {"component_name": "Message", "params": {"content": ["{llm@content}"]}}, "downstream": [], "upstream": ["llm"]}
+            }})
+        };
+        AgentWorkflow::from_value(&canvas(json!({
+            "llm_id": "deepseek-chat",
+            "max_tokens": 0,
+            "maxTokensEnabled": true
+        })))
+        .unwrap()
+        .unwrap();
+        for params in [
+            json!({"prompts": []}),
+            json!({"prompts": [1]}),
+            json!({"prompts": [{"role": "user", "content": 1}]}),
+            json!({"message_history_window_size": -1}),
+            json!({"max_retries": 1.5}),
+            json!({"delay_after_error": -1}),
+            json!({"temperature": 1.1}),
+            json!({"topPEnabled": "yes"}),
+            json!({"max_tokens": 128001}),
+        ] {
+            assert!(
+                AgentWorkflow::from_value(&canvas(params.clone())).is_err(),
+                "{params}"
+            );
+        }
+    }
+
+    #[test]
+    fn agent_tool_dsl_is_validated_and_indexed_like_the_fixed_python_component() {
+        let canvas = |params: Value| {
+            json!({"components": {
+                "begin": {"obj": {"component_name": "Begin", "params": {}}, "downstream": ["agent"], "upstream": []},
+                "agent": {"obj": {"component_name": "Agent", "params": params}, "downstream": [], "upstream": ["begin"]}
+            }})
+        };
+        let dsl = canvas(json!({
+            "llm_id": "deepseek-chat",
+            "max_rounds": 2,
+            "mcp": [],
+            "tools": [
+                {
+                    "component_name": "Retrieval",
+                    "name": "Knowledge Search",
+                    "params": {"dataset_ids": ["kb-1"]}
+                },
+                {
+                    "component_name": "TavilySearch",
+                    "name": "Web Search",
+                    "params": {"api_key": "configured", "search_depth": "advanced"}
+                },
+                {
+                    "component_name": "TavilyExtract",
+                    "name": "Web Extract",
+                    "params": {"api_key": "configured", "format": "text"}
+                },
+                {
+                    "component_name": "DuckDuckGo",
+                    "name": "Privacy Search",
+                    "params": {"channel": "text", "top_n": 6}
+                },
+                {
+                    "component_name": "Wikipedia",
+                    "name": "Encyclopedia",
+                    "params": {"language": "zh", "top_n": 5}
+                },
+                {
+                    "component_name": "GoogleScholar",
+                    "name": "Scholar Search",
+                    "params": {"sort_by": "date", "year_low": 2020, "year_high": 2026, "patents": false, "top_n": 6}
+                },
+                {
+                    "component_name": "ArXiv",
+                    "name": "Paper Search",
+                    "params": {"sort_by": "relevance", "top_n": 7}
+                },
+                {
+                    "component_name": "PubMed",
+                    "name": "Biomedical Search",
+                    "params": {"email": "reader@example.test", "top_n": 8}
+                },
+                {
+                    "component_name": "GitHub",
+                    "name": "Repository Search",
+                    "params": {"top_n": 5}
+                },
+                {
+                    "component_name": "YahooFinance",
+                    "name": "Market Data",
+                    "params": {"info": false, "balance_sheet": true, "news": false}
+                }
+            ]
+        }));
+        let workflow = AgentWorkflow::from_value(&dsl).unwrap().unwrap();
+        let tools = load_canvas_agent_tools(&workflow.nodes["agent"]).unwrap();
+        assert_eq!(tools.len(), 10);
+        assert_eq!(tools[0].function_name, "search_my_dateset_0");
+        assert_eq!(tools[0].child_id, "agent-->Knowledge_Search");
+        assert_eq!(
+            tools[0].definition["function"]["parameters"]["required"],
+            json!(["query"])
+        );
+        assert_eq!(tools[1].function_name, "tavily_search_1");
+        assert_eq!(tools[1].child_id, "agent-->Web_Search");
+        assert!(
+            tools[1].definition["function"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("Number of keywords in query should be less than 5")
+        );
+        assert_eq!(
+            tools[1].definition["function"]["parameters"]["properties"]["topic"]["enum"],
+            json!(["general", "news"])
+        );
+        assert_eq!(tools[2].function_name, "tavily_extract_2");
+        assert!(
+            tools[2].definition["function"]["parameters"]["properties"]["extract_depth"]
+                ["description"]
+                .as_str()
+                .unwrap()
+                .contains("2 credits per 5 successful URL extractions")
+        );
+        assert_eq!(
+            tools[2].definition["function"]["parameters"]["required"],
+            json!(["urls"])
+        );
+        assert_eq!(tools[3].function_name, "duckduckgo_search_3");
+        assert_eq!(tools[3].child_id, "agent-->Privacy_Search");
+        assert_eq!(
+            tools[3].definition["function"]["parameters"]["properties"]["channel"]["enum"],
+            json!(["general", "news"])
+        );
+        assert_eq!(
+            tools[3].definition["function"]["parameters"]["required"],
+            json!(["query"])
+        );
+        assert!(
+            tools[3].definition["function"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("focused on privacy")
+        );
+        assert_eq!(tools[4].function_name, "wikipedia_search_4");
+        assert_eq!(tools[4].child_id, "agent-->Encyclopedia");
+        assert_eq!(
+            tools[4].definition["function"]["parameters"]["required"],
+            json!(["query"])
+        );
+        assert_eq!(
+            tools[4].definition["function"]["parameters"]["properties"]["query"]["description"],
+            "The search keyword to execute with wikipedia. The keyword MUST be a specific subject that can match the title."
+        );
+        assert!(
+            tools[4].definition["function"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("world's largest reference website")
+        );
+        assert_eq!(tools[5].function_name, "google_scholar_search_5");
+        assert_eq!(tools[5].child_id, "agent-->Scholar_Search");
+        assert_eq!(
+            tools[5].definition["function"]["parameters"]["required"],
+            json!(["query"])
+        );
+        assert_eq!(
+            tools[5].definition["function"]["parameters"]["properties"]["query"]["description"],
+            "The search keyword to execute with Google Scholar. The keywords should be the most important words/terms(includes synonyms) from the original request."
+        );
+        assert!(
+            tools[5].definition["function"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("broadly search for scholarly literature")
+        );
+        assert_eq!(tools[6].function_name, "arxiv_search_6");
+        assert_eq!(tools[6].child_id, "agent-->Paper_Search");
+        assert_eq!(
+            tools[6].definition["function"]["parameters"]["required"],
+            json!(["query"])
+        );
+        assert_eq!(
+            tools[6].definition["function"]["parameters"]["properties"]["query"]["description"],
+            "The search keywords to execute with arXiv. The keywords should be the most important words/terms(includes synonyms) from the original request."
+        );
+        assert!(
+            tools[6].definition["function"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("not peer-reviewed by arXiv")
+        );
+        assert_eq!(tools[7].function_name, "pubmed_search_7");
+        assert_eq!(tools[7].child_id, "agent-->Biomedical_Search");
+        assert_eq!(
+            tools[7].definition["function"]["parameters"]["required"],
+            json!(["query"])
+        );
+        assert_eq!(
+            tools[7].definition["function"]["parameters"]["properties"]["query"]["description"],
+            "The search keywords to execute with PubMed. The keywords should be the most important words/terms(includes synonyms) from the original request."
+        );
+        assert!(
+            tools[7].definition["function"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("MEDLINE database")
+        );
+        assert_eq!(tools[8].function_name, "github_search_8");
+        assert_eq!(tools[8].child_id, "agent-->Repository_Search");
+        assert_eq!(
+            tools[8].definition["function"]["parameters"]["required"],
+            json!(["query"])
+        );
+        assert_eq!(
+            tools[8].definition["function"]["parameters"]["properties"]["query"]["description"],
+            "The search keywords to execute with GitHub. The keywords should be the most important words/terms(includes synonyms) from the original request."
+        );
+        assert!(
+            tools[8].definition["function"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("find specific repositories")
+        );
+        assert_eq!(tools[9].function_name, "yahoo_finance_9");
+        assert_eq!(tools[9].child_id, "agent-->Market_Data");
+        assert_eq!(
+            tools[9].definition["function"]["parameters"]["required"],
+            json!(["stock_code"])
+        );
+        assert_eq!(
+            tools[9].definition["function"]["parameters"]["properties"]["stock_code"]["description"],
+            "The stock code or company name."
+        );
+        assert!(
+            tools[9].definition["function"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("real-time and historical stock market data")
+        );
+
+        for params in [
+            json!({"max_rounds": -1}),
+            json!({"tools": {}}),
+            json!({"tools": [1]}),
+            json!({"tools": [{"component_name": "Retrieval", "params": []}]}),
+            json!({"tools": [{"component_name": "TavilySearch", "params": {"topic": "academic"}}]}),
+            json!({"tools": [{"component_name": "TavilyExtract", "params": {"format": "html"}}]}),
+            json!({"tools": [{"component_name": "DuckDuckGo", "params": {"channel": "images"}}]}),
+            json!({"tools": [{"component_name": "Wikipedia", "params": {"language": "xx"}}]}),
+            json!({"tools": [{"component_name": "GoogleScholar", "params": {"sort_by": "newest"}}]}),
+            json!({"tools": [{"component_name": "GitHub", "params": {"top_n": 0}}]}),
+            json!({"tools": [{"component_name": "YahooFinance", "params": {"news": "yes"}}]}),
+            json!({"tools": [{"component_name": "ArXiv", "params": {"sort_by": "newest"}}]}),
+            json!({"tools": [{"component_name": "PubMed", "params": {"email": 1}}]}),
+            json!({"tools": [{"component_name": "Google", "params": {}}]}),
+            json!({"mcp": [{"mcp_id": "server", "tools": {}}]}),
+        ] {
+            assert!(
+                AgentWorkflow::from_value(&canvas(params.clone())).is_err(),
+                "{params}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn agent_tool_dispatch_returns_protocol_errors_for_unknown_or_non_object_calls() {
+        let node = CanvasNode {
+            id: "agent".into(),
+            component_name: "Agent".into(),
+            params: serde_json::from_value(json!({
+                "tools": [{
+                    "component_name": "Retrieval",
+                    "name": "Search",
+                    "params": {"dataset_ids": ["kb"]}
+                }]
+            }))
+            .unwrap(),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+        let tools = load_canvas_agent_tools(&node).unwrap();
+        let retriever = MockRetriever::default();
+        let inputs = Map::new();
+        let run_input = WorkflowRunInput {
+            question: "q",
+            user_id: "owner",
+            inputs: &inputs,
+            history: &[],
+            generation: GenerationParamsPatch::default(),
+            llm_resolver: None,
+            retriever: Some(&retriever),
+            fallback_kb_ids: &[],
+        };
+        let call = |name: &str, arguments: &str| ToolCall {
+            id: "call".into(),
+            kind: "function".into(),
+            function: crate::llm::ToolFunctionCall {
+                name: name.into(),
+                arguments: arguments.into(),
+            },
+        };
+        let mut runtime = CanvasRuntime::default();
+        let unknown = execute_canvas_agent_tool(
+            &mut runtime,
+            &node,
+            &tools,
+            &call("hallucinated", "{}"),
+            &run_input,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(unknown.to_string(), "LLM tool hallucinated does not exist");
+        let malformed = execute_canvas_agent_tool(
+            &mut runtime,
+            &node,
+            &tools,
+            &call("search_my_dateset_0", "[]"),
+            &run_input,
+        )
+        .await
+        .unwrap_err();
+        assert!(malformed.to_string().contains("must be a JSON object"));
+        assert_eq!(retriever.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn tavily_search_retries_forces_bounded_fields_and_adds_web_references() {
+        let node = CanvasNode {
+            id: "search".into(),
+            component_name: "TavilySearch".into(),
+            params: serde_json::from_value(json!({
+                "api_key": "static-key",
+                "query": "sys.query",
+                "search_depth": "advanced",
+                "topic": "news",
+                "max_results": 3,
+                "days": 7,
+                "include_answer": true,
+                "include_raw_content": true,
+                "include_images": true,
+                "include_image_descriptions": true,
+                "include_domains": ["rust-lang.org", {"value": "docs.rs"}],
+                "exclude_domains": ["spam.test"],
+                "max_retries": 1,
+                "delay_after_error": 0
+            }))
+            .unwrap(),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+        validate_tavily_search_params(&node).unwrap();
+        let provider = MockTavily::default();
+        provider
+            .search_failures
+            .store(1, std::sync::atomic::Ordering::SeqCst);
+        let mut runtime = CanvasRuntime {
+            sys: Map::from_iter([("query".into(), json!("rust rag"))]),
+            ..CanvasRuntime::default()
+        };
+        execute_tavily_search_with_provider(&mut runtime, &node, &provider)
+            .await
+            .unwrap();
+
+        let searches = provider.searches.lock().unwrap();
+        assert_eq!(searches.len(), 2);
+        assert_eq!(searches[0].0, "static-key");
+        let request = &searches[0].1;
+        assert_eq!(request.query, "rust rag");
+        assert_eq!(request.include_domains, ["rust-lang.org", "docs.rs"]);
+        assert!(request.include_answer);
+        assert!(request.include_image_descriptions);
+        assert!(!request.include_raw_content);
+        assert!(!request.include_images);
+        drop(searches);
+
+        let outputs = &runtime.outputs["search"];
+        assert_eq!(outputs["json"][0]["title"], "Rust\nGuide");
+        assert_eq!(runtime.retrieval["chunks"][0]["content"], "alpha  beta");
+        assert!(
+            outputs["formalized_content"]
+                .as_str()
+                .unwrap()
+                .contains("├── Title: Rust Guide")
+        );
+        assert_eq!(runtime.references.len(), 1);
+        assert_eq!(
+            runtime.references[0].id,
+            runtime.retrieval["chunks"][0]["chunk_id"].as_str().unwrap()
+        );
+        assert_eq!(runtime.references[0].kb_id, runtime.references[0].id);
+    }
+
+    #[tokio::test]
+    async fn tavily_extract_agent_dispatch_accepts_csv_urls_and_returns_raw_results() {
+        let agent = CanvasNode {
+            id: "agent".into(),
+            component_name: "Agent".into(),
+            params: serde_json::from_value(json!({
+                "tools": [{
+                    "component_name": "TavilyExtract",
+                    "name": "Open Pages",
+                    "params": {
+                        "api_key": "static-key",
+                        "extract_depth": "advanced",
+                        "format": "text",
+                        "max_retries": 1
+                    }
+                }]
+            }))
+            .unwrap(),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+        let tools = load_canvas_agent_tools(&agent).unwrap();
+        let provider = MockTavily::default();
+        provider
+            .extract_failures
+            .store(1, std::sync::atomic::Ordering::SeqCst);
+        let inputs = Map::new();
+        let run_input = WorkflowRunInput {
+            question: "q",
+            user_id: "owner",
+            inputs: &inputs,
+            history: &[],
+            generation: GenerationParamsPatch::default(),
+            llm_resolver: None,
+            retriever: None,
+            fallback_kb_ids: &[],
+        };
+        let call = ToolCall {
+            id: "call-extract".into(),
+            kind: "function".into(),
+            function: crate::llm::ToolFunctionCall {
+                name: "tavily_extract_0".into(),
+                arguments: json!({
+                    "urls": "https://example.test/a, https://example.test/b"
+                })
+                .to_string(),
+            },
+        };
+        let mut runtime = CanvasRuntime::default();
+        let response = execute_canvas_agent_tool_with_tavily(
+            &mut runtime,
+            &agent,
+            &tools,
+            &call,
+            &run_input,
+            &provider,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&response).unwrap(),
+            json!([{"url": "https://example.test/a", "raw_content": "page body"}])
+        );
+        let extracts = provider.extracts.lock().unwrap();
+        assert_eq!(extracts.len(), 2);
+        assert_eq!(
+            extracts[0].1.urls,
+            ["https://example.test/a", " https://example.test/b"]
+        );
+        assert_eq!(extracts[0].1.extract_depth, "advanced");
+        assert_eq!(extracts[0].1.format, "text");
+        assert!(!extracts[0].1.include_images);
+        assert_eq!(
+            runtime.outputs["agent-->Open_Pages"]["json"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn duckduckgo_search_retries_honors_topic_alias_and_adds_references() {
+        let node = CanvasNode {
+            id: "duck".into(),
+            component_name: "DuckDuckGo".into(),
+            params: serde_json::from_value(json!({
+                "query": "sys.query",
+                "channel": "text",
+                "topic": "news",
+                "top_n": 3,
+                "max_retries": 1,
+                "delay_after_error": 0
+            }))
+            .unwrap(),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+        validate_duckduckgo_params(&node).unwrap();
+        let provider = MockDuckDuckGo::default();
+        provider
+            .failures
+            .store(1, std::sync::atomic::Ordering::SeqCst);
+        let mut runtime = CanvasRuntime {
+            sys: Map::from_iter([("query".into(), json!("rust search"))]),
+            ..CanvasRuntime::default()
+        };
+        execute_duckduckgo_search_with_provider(&mut runtime, &node, &provider)
+            .await
+            .unwrap();
+
+        {
+            let searches = provider.searches.lock().unwrap();
+            assert_eq!(searches.len(), 2);
+            assert_eq!(searches[0].query, "rust search");
+            assert_eq!(searches[0].channel, DuckDuckGoChannel::News);
+            assert_eq!(searches[0].top_n, 3);
+        }
+        let outputs = &runtime.outputs["duck"];
+        assert_eq!(outputs["json"][0]["title"], "Rust\nSearch");
+        assert_eq!(outputs["json"][0]["url"], "https://example.test/rust");
+        assert_eq!(runtime.retrieval["chunks"][0]["content"], "alpha  beta");
+        assert_eq!(runtime.retrieval["chunks"][0]["similarity"], 1);
+        assert!(
+            outputs["formalized_content"]
+                .as_str()
+                .unwrap()
+                .contains("├── Title: Rust Search")
+        );
+        assert_eq!(runtime.references.len(), 1);
+        assert_eq!(runtime.references[0].similarity, Some(1.0));
+
+        let empty = CanvasNode {
+            id: "empty-duck".into(),
+            params: Map::from_iter([("query".into(), json!(""))]),
+            ..node
+        };
+        execute_duckduckgo_search_with_provider(&mut runtime, &empty, &provider)
+            .await
+            .unwrap();
+        assert_eq!(runtime.outputs["empty-duck"]["formalized_content"], "");
+        assert_eq!(provider.searches.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn duckduckgo_agent_dispatch_maps_general_news_and_preserves_error_prefix() {
+        let agent = CanvasNode {
+            id: "agent".into(),
+            component_name: "Agent".into(),
+            params: serde_json::from_value(json!({
+                "tools": [{
+                    "component_name": "DuckDuckGo",
+                    "name": "Privacy Search",
+                    "params": {
+                        "channel": "text",
+                        "top_n": 4,
+                        "max_retries": 0,
+                        "delay_after_error": 0
+                    }
+                }]
+            }))
+            .unwrap(),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+        let tools = load_canvas_agent_tools(&agent).unwrap();
+        let tavily = MockTavily::default();
+        let wikipedia = MockWikipedia::default();
+        let duckduckgo = MockDuckDuckGo::default();
+        let google = GoogleClient::default();
+        let google_scholar = GoogleScholarClient::default();
+        let arxiv = ArxivClient::default();
+        let pubmed = PubMedClient::default();
+        let inputs = Map::new();
+        let run_input = WorkflowRunInput {
+            question: "ignored",
+            user_id: "owner",
+            inputs: &inputs,
+            history: &[],
+            generation: GenerationParamsPatch::default(),
+            llm_resolver: None,
+            retriever: None,
+            fallback_kb_ids: &[],
+        };
+        let call = ToolCall {
+            id: "call-duck".into(),
+            kind: "function".into(),
+            function: crate::llm::ToolFunctionCall {
+                name: "duckduckgo_search_0".into(),
+                arguments: json!({"query": "Rust", "channel": "news"}).to_string(),
+            },
+        };
+        let mut runtime = CanvasRuntime::default();
+        let response = execute_canvas_agent_tool_with_providers(
+            &mut runtime,
+            &agent,
+            &tools,
+            &call,
+            &run_input,
+            CanvasAgentToolProviders {
+                tavily: &tavily,
+                wikipedia: &wikipedia,
+                duckduckgo: &duckduckgo,
+                google: &google,
+                google_scholar: &google_scholar,
+                github: &GitHubClient::default(),
+                arxiv: &arxiv,
+                pubmed: &pubmed,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(response.contains("├── Title: Rust Search"));
+        {
+            let searches = duckduckgo.searches.lock().unwrap();
+            assert_eq!(searches[0].query, "Rust");
+            assert_eq!(searches[0].channel, DuckDuckGoChannel::News);
+            assert_eq!(searches[0].top_n, 4);
+        }
+
+        duckduckgo
+            .failures
+            .store(1, std::sync::atomic::Ordering::SeqCst);
+        let response = execute_canvas_agent_tool_with_providers(
+            &mut runtime,
+            &agent,
+            &tools,
+            &call,
+            &run_input,
+            CanvasAgentToolProviders {
+                tavily: &tavily,
+                wikipedia: &wikipedia,
+                duckduckgo: &duckduckgo,
+                google: &google,
+                google_scholar: &google_scholar,
+                github: &GitHubClient::default(),
+                arxiv: &arxiv,
+                pubmed: &pubmed,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(response, "DuckDuckGo error: temporary DuckDuckGo failure");
+    }
+
+    #[tokio::test]
+    async fn wikipedia_search_retries_and_publishes_python_chunks_plus_go_json() {
+        let node = CanvasNode {
+            id: "wiki".into(),
+            component_name: "Wikipedia".into(),
+            params: serde_json::from_value(json!({
+                "query": "sys.query",
+                "language": "zh",
+                "top_n": 2,
+                "max_retries": 1,
+                "delay_after_error": 0
+            }))
+            .unwrap(),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+        validate_wikipedia_params(&node).unwrap();
+        let provider = MockWikipedia::default();
+        provider
+            .failures
+            .store(1, std::sync::atomic::Ordering::SeqCst);
+        let mut runtime = CanvasRuntime {
+            sys: Map::from_iter([("query".into(), json!("rust language"))]),
+            ..CanvasRuntime::default()
+        };
+        execute_wikipedia_search_with_provider(&mut runtime, &node, &provider)
+            .await
+            .unwrap();
+
+        {
+            let searches = provider.searches.lock().unwrap();
+            assert_eq!(searches.len(), 2);
+            assert_eq!(searches[0].query, "rust language");
+            assert_eq!(searches[0].language, "zh");
+            assert_eq!(searches[0].top_n, 2);
+        }
+        let outputs = &runtime.outputs["wiki"];
+        assert_eq!(outputs["json"]["results"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            outputs["json"]["results"][0],
+            json!({
+                "title": "Rust\nLanguage",
+                "snippet": "<span>Rust</span> language",
+                "url": "https://en.wikipedia.org/wiki/Rust_(programming_language)"
+            })
+        );
+        assert_eq!(runtime.retrieval["chunks"].as_array().unwrap().len(), 1);
+        assert_eq!(runtime.retrieval["chunks"][0]["content"], "alpha  beta");
+        assert_eq!(runtime.retrieval["chunks"][0]["similarity"], 1);
+        assert!(
+            outputs["formalized_content"]
+                .as_str()
+                .unwrap()
+                .contains("├── Title: Rust Language")
+        );
+        assert_eq!(runtime.references.len(), 1);
+        assert_eq!(runtime.references[0].similarity, Some(1.0));
+
+        let empty = CanvasNode {
+            id: "empty-wiki".into(),
+            params: Map::from_iter([("query".into(), json!(""))]),
+            ..node
+        };
+        execute_wikipedia_search_with_provider(&mut runtime, &empty, &provider)
+            .await
+            .unwrap();
+        assert_eq!(runtime.outputs["empty-wiki"]["formalized_content"], "");
+        assert_eq!(provider.searches.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn wikipedia_agent_dispatch_uses_child_params_and_preserves_error_prefix() {
+        let agent = CanvasNode {
+            id: "agent".into(),
+            component_name: "Agent".into(),
+            params: serde_json::from_value(json!({
+                "tools": [{
+                    "component_name": "Wikipedia",
+                    "name": "Encyclopedia",
+                    "params": {
+                        "language": "fr",
+                        "top_n": 4,
+                        "max_retries": 0,
+                        "delay_after_error": 0
+                    }
+                }]
+            }))
+            .unwrap(),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+        let tools = load_canvas_agent_tools(&agent).unwrap();
+        let tavily = MockTavily::default();
+        let wikipedia = MockWikipedia::default();
+        let duckduckgo = MockDuckDuckGo::default();
+        let google = GoogleClient::default();
+        let google_scholar = GoogleScholarClient::default();
+        let arxiv = ArxivClient::default();
+        let pubmed = PubMedClient::default();
+        let inputs = Map::new();
+        let run_input = WorkflowRunInput {
+            question: "ignored",
+            user_id: "owner",
+            inputs: &inputs,
+            history: &[],
+            generation: GenerationParamsPatch::default(),
+            llm_resolver: None,
+            retriever: None,
+            fallback_kb_ids: &[],
+        };
+        let call = ToolCall {
+            id: "call-wikipedia".into(),
+            kind: "function".into(),
+            function: crate::llm::ToolFunctionCall {
+                name: "wikipedia_search_0".into(),
+                arguments: json!({"query": "Paris"}).to_string(),
+            },
+        };
+        let mut runtime = CanvasRuntime::default();
+        let response = execute_canvas_agent_tool_with_providers(
+            &mut runtime,
+            &agent,
+            &tools,
+            &call,
+            &run_input,
+            CanvasAgentToolProviders {
+                tavily: &tavily,
+                wikipedia: &wikipedia,
+                duckduckgo: &duckduckgo,
+                google: &google,
+                google_scholar: &google_scholar,
+                github: &GitHubClient::default(),
+                arxiv: &arxiv,
+                pubmed: &pubmed,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(response.contains("├── Title: Rust Language"));
+        {
+            let searches = wikipedia.searches.lock().unwrap();
+            assert_eq!(searches[0].query, "Paris");
+            assert_eq!(searches[0].language, "fr");
+            assert_eq!(searches[0].top_n, 4);
+        }
+
+        wikipedia
+            .failures
+            .store(1, std::sync::atomic::Ordering::SeqCst);
+        let response = execute_canvas_agent_tool_with_providers(
+            &mut runtime,
+            &agent,
+            &tools,
+            &call,
+            &run_input,
+            CanvasAgentToolProviders {
+                tavily: &tavily,
+                wikipedia: &wikipedia,
+                duckduckgo: &duckduckgo,
+                google: &google,
+                google_scholar: &google_scholar,
+                github: &GitHubClient::default(),
+                arxiv: &arxiv,
+                pubmed: &pubmed,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(response, "Wikipedia error: temporary Wikipedia failure");
+    }
+
+    #[tokio::test]
+    async fn google_search_retries_and_publishes_python_chunks_and_raw_json() {
+        let node = CanvasNode {
+            id: "google".into(),
+            component_name: "Google".into(),
+            params: serde_json::from_value(json!({
+                "q": "sys.query",
+                "start": 20,
+                "num": 12,
+                "api_key": "serp-secret",
+                "country": "us",
+                "language": "en",
+                "max_retries": 1,
+                "delay_after_error": 0
+            }))
+            .unwrap(),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+        validate_google_params(&node).unwrap();
+        let provider = MockGoogle::default();
+        provider
+            .failures
+            .store(1, std::sync::atomic::Ordering::SeqCst);
+        let mut runtime = CanvasRuntime {
+            sys: Map::from_iter([("query".into(), json!("rust google"))]),
+            ..CanvasRuntime::default()
+        };
+        execute_google_search_with_provider(&mut runtime, &node, &provider)
+            .await
+            .unwrap();
+
+        {
+            let searches = provider.searches.lock().unwrap();
+            assert_eq!(searches.len(), 2);
+            assert_eq!(searches[0].0, "serp-secret");
+            assert_eq!(searches[0].1.query, "rust google");
+            assert_eq!(searches[0].1.country, "us");
+            assert_eq!(searches[0].1.language, "en");
+        }
+        let outputs = &runtime.outputs["google"];
+        assert_eq!(outputs["json"][0]["position"], 1);
+        assert_eq!(runtime.retrieval["chunks"].as_array().unwrap().len(), 1);
+        assert_eq!(runtime.retrieval["chunks"][0]["content"], "alpha  beta");
+        assert!(
+            outputs["formalized_content"]
+                .as_str()
+                .unwrap()
+                .contains("├── Title: Rust Search")
+        );
+        assert_eq!(runtime.references.len(), 1);
+
+        let empty = CanvasNode {
+            id: "empty-google".into(),
+            params: Map::from_iter([
+                ("q".into(), json!("")),
+                ("api_key".into(), json!("serp-secret")),
+            ]),
+            ..node
+        };
+        execute_google_search_with_provider(&mut runtime, &empty, &provider)
+            .await
+            .unwrap();
+        assert_eq!(runtime.outputs["empty-google"]["formalized_content"], "");
+        assert!(runtime.outputs["empty-google"].get("json").is_none());
+        assert_eq!(provider.searches.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn google_agent_metadata_dispatch_and_error_prefix_match_python_tool() {
+        let agent = CanvasNode {
+            id: "agent".into(),
+            component_name: "Agent".into(),
+            params: serde_json::from_value(json!({
+                "tools": [{
+                    "component_name": "Google",
+                    "name": "Web Search",
+                    "params": {
+                        "api_key": "agent-secret",
+                        "country": "gb",
+                        "language": "en",
+                        "max_retries": 0,
+                        "delay_after_error": 0
+                    }
+                }]
+            }))
+            .unwrap(),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+        let tools = load_canvas_agent_tools(&agent).unwrap();
+        assert_eq!(tools[0].function_name, "google_search_0");
+        assert_eq!(
+            tools[0].definition["function"]["parameters"]["required"],
+            json!(["q"])
+        );
+        assert_eq!(
+            tools[0].definition["function"]["parameters"]["properties"]["start"]["type"],
+            "integer"
+        );
+
+        let tavily = MockTavily::default();
+        let wikipedia = MockWikipedia::default();
+        let duckduckgo = MockDuckDuckGo::default();
+        let google = MockGoogle::default();
+        let google_scholar = GoogleScholarClient::default();
+        let github = GitHubClient::default();
+        let arxiv = ArxivClient::default();
+        let pubmed = PubMedClient::default();
+        let inputs = Map::new();
+        let run_input = WorkflowRunInput {
+            question: "ignored",
+            user_id: "owner",
+            inputs: &inputs,
+            history: &[],
+            generation: GenerationParamsPatch::default(),
+            llm_resolver: None,
+            retriever: None,
+            fallback_kb_ids: &[],
+        };
+        let call = ToolCall {
+            id: "call-google".into(),
+            kind: "function".into(),
+            function: crate::llm::ToolFunctionCall {
+                name: "google_search_0".into(),
+                arguments: json!({"q": "RAG", "start": 40, "num": 100}).to_string(),
+            },
+        };
+        let providers = CanvasAgentToolProviders {
+            tavily: &tavily,
+            wikipedia: &wikipedia,
+            duckduckgo: &duckduckgo,
+            google: &google,
+            google_scholar: &google_scholar,
+            github: &github,
+            arxiv: &arxiv,
+            pubmed: &pubmed,
+        };
+        let mut runtime = CanvasRuntime::default();
+        let response = execute_canvas_agent_tool_with_providers(
+            &mut runtime,
+            &agent,
+            &tools,
+            &call,
+            &run_input,
+            providers,
+        )
+        .await
+        .unwrap();
+        assert!(response.contains("├── Title: Rust Search"));
+        {
+            let searches = google.searches.lock().unwrap();
+            assert_eq!(searches[0].0, "agent-secret");
+            assert_eq!(searches[0].1.query, "RAG");
+            assert_eq!(searches[0].1.country, "gb");
+        }
+
+        google
+            .failures
+            .store(1, std::sync::atomic::Ordering::SeqCst);
+        let response = execute_canvas_agent_tool_with_providers(
+            &mut runtime,
+            &agent,
+            &tools,
+            &call,
+            &run_input,
+            providers,
+        )
+        .await
+        .unwrap();
+        assert_eq!(response, "Google error: temporary Google failure");
+    }
+
+    #[tokio::test]
+    async fn google_scholar_search_retries_and_publishes_python_chunks_and_json() {
+        let node = CanvasNode {
+            id: "scholar".into(),
+            component_name: "GoogleScholar".into(),
+            params: serde_json::from_value(json!({
+                "query": "sys.query",
+                "top_n": 3,
+                "sort_by": "date",
+                "year_low": 2020,
+                "year_high": 2026,
+                "patents": false,
+                "max_retries": 1,
+                "delay_after_error": 0
+            }))
+            .unwrap(),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+        validate_google_scholar_params(&node).unwrap();
+        let provider = MockGoogleScholar::default();
+        provider
+            .failures
+            .store(1, std::sync::atomic::Ordering::SeqCst);
+        let mut runtime = CanvasRuntime {
+            sys: Map::from_iter([("query".into(), json!("rust scholar"))]),
+            ..CanvasRuntime::default()
+        };
+        execute_google_scholar_search_with_provider(&mut runtime, &node, &provider)
+            .await
+            .unwrap();
+
+        {
+            let searches = provider.searches.lock().unwrap();
+            assert_eq!(searches.len(), 2);
+            assert_eq!(searches[0].query, "rust scholar");
+            assert_eq!(searches[0].top_n, 3);
+            assert_eq!(searches[0].sort_by, GoogleScholarSortBy::Date);
+            assert_eq!(searches[0].year_low, Some(2020));
+            assert_eq!(searches[0].year_high, Some(2026));
+            assert!(!searches[0].patents);
+        }
+        let outputs = &runtime.outputs["scholar"];
+        assert_eq!(outputs["json"].as_array().unwrap().len(), 1);
+        assert_eq!(outputs["json"][0]["source"], "PUBLICATION_SEARCH_SNIPPET");
+        assert_eq!(outputs["json"][0]["bib"]["author"], json!(["Alice", "Bob"]));
+        assert_eq!(runtime.retrieval["chunks"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            runtime.retrieval["chunks"][0]["content"],
+            "\n author: Alice,Bob\n Abstract: alpha  beta"
+        );
+        assert!(
+            outputs["formalized_content"]
+                .as_str()
+                .unwrap()
+                .contains("├── Title: Rust Scholarship")
+        );
+        assert_eq!(runtime.references.len(), 1);
+
+        let empty = CanvasNode {
+            id: "empty-scholar".into(),
+            params: Map::from_iter([("query".into(), json!(""))]),
+            ..node
+        };
+        execute_google_scholar_search_with_provider(&mut runtime, &empty, &provider)
+            .await
+            .unwrap();
+        assert_eq!(runtime.outputs["empty-scholar"]["formalized_content"], "");
+        assert_eq!(runtime.outputs["empty-scholar"]["json"], json!([]));
+        assert_eq!(provider.searches.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn google_scholar_agent_dispatch_uses_child_params_and_error_prefix() {
+        let agent = CanvasNode {
+            id: "agent".into(),
+            component_name: "Agent".into(),
+            params: serde_json::from_value(json!({
+                "tools": [{
+                    "component_name": "GoogleScholar",
+                    "name": "Scholar Search",
+                    "params": {
+                        "sort_by": "relevance",
+                        "year_low": 2021,
+                        "year_high": null,
+                        "patents": true,
+                        "top_n": 4,
+                        "max_retries": 0,
+                        "delay_after_error": 0
+                    }
+                }]
+            }))
+            .unwrap(),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+        let tools = load_canvas_agent_tools(&agent).unwrap();
+        let tavily = MockTavily::default();
+        let wikipedia = MockWikipedia::default();
+        let duckduckgo = MockDuckDuckGo::default();
+        let google = GoogleClient::default();
+        let google_scholar = MockGoogleScholar::default();
+        let arxiv = ArxivClient::default();
+        let pubmed = PubMedClient::default();
+        let inputs = Map::new();
+        let run_input = WorkflowRunInput {
+            question: "ignored",
+            user_id: "owner",
+            inputs: &inputs,
+            history: &[],
+            generation: GenerationParamsPatch::default(),
+            llm_resolver: None,
+            retriever: None,
+            fallback_kb_ids: &[],
+        };
+        let call = ToolCall {
+            id: "call-scholar".into(),
+            kind: "function".into(),
+            function: crate::llm::ToolFunctionCall {
+                name: "google_scholar_search_0".into(),
+                arguments: json!({"query": "RAG"}).to_string(),
+            },
+        };
+        let mut runtime = CanvasRuntime::default();
+        let response = execute_canvas_agent_tool_with_providers(
+            &mut runtime,
+            &agent,
+            &tools,
+            &call,
+            &run_input,
+            CanvasAgentToolProviders {
+                tavily: &tavily,
+                wikipedia: &wikipedia,
+                duckduckgo: &duckduckgo,
+                google: &google,
+                google_scholar: &google_scholar,
+                github: &GitHubClient::default(),
+                arxiv: &arxiv,
+                pubmed: &pubmed,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(response.contains("├── Title: Rust Scholarship"));
+        {
+            let searches = google_scholar.searches.lock().unwrap();
+            assert_eq!(searches[0].query, "RAG");
+            assert_eq!(searches[0].top_n, 4);
+            assert_eq!(searches[0].sort_by, GoogleScholarSortBy::Relevance);
+            assert_eq!(searches[0].year_low, Some(2021));
+            assert_eq!(searches[0].year_high, None);
+            assert!(searches[0].patents);
+        }
+
+        google_scholar
+            .failures
+            .store(1, std::sync::atomic::Ordering::SeqCst);
+        let response = execute_canvas_agent_tool_with_providers(
+            &mut runtime,
+            &agent,
+            &tools,
+            &call,
+            &run_input,
+            CanvasAgentToolProviders {
+                tavily: &tavily,
+                wikipedia: &wikipedia,
+                duckduckgo: &duckduckgo,
+                google: &google,
+                google_scholar: &google_scholar,
+                github: &GitHubClient::default(),
+                arxiv: &arxiv,
+                pubmed: &pubmed,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            response,
+            "GoogleScholar error: temporary Google Scholar failure"
+        );
+    }
+
+    #[tokio::test]
+    async fn github_search_retries_and_publishes_python_chunks_and_raw_items() {
+        let node = CanvasNode {
+            id: "github".into(),
+            component_name: "GitHub".into(),
+            params: serde_json::from_value(json!({
+                "query": "sys.query",
+                "top_n": 5,
+                "max_retries": 1,
+                "delay_after_error": 0
+            }))
+            .unwrap(),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+        validate_github_params(&node).unwrap();
+        let provider = MockGitHub::default();
+        provider
+            .failures
+            .store(1, std::sync::atomic::Ordering::SeqCst);
+        let mut runtime = CanvasRuntime {
+            sys: Map::from_iter([("query".into(), json!("rust rag"))]),
+            ..CanvasRuntime::default()
+        };
+        execute_github_search_with_provider(&mut runtime, &node, &provider)
+            .await
+            .unwrap();
+
+        {
+            let searches = provider.searches.lock().unwrap();
+            assert_eq!(searches.len(), 2);
+            assert_eq!(searches[0].query, "rust rag");
+            assert_eq!(searches[0].top_n, 5);
+        }
+        let outputs = &runtime.outputs["github"];
+        assert_eq!(outputs["json"][0]["extra"], "preserved");
+        assert_eq!(runtime.retrieval["chunks"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            runtime.retrieval["chunks"][0]["content"],
+            "alpha  beta\n stars:42"
+        );
+        assert!(
+            outputs["formalized_content"]
+                .as_str()
+                .unwrap()
+                .contains("├── Title: rayrag repository")
+        );
+        assert_eq!(runtime.references.len(), 1);
+
+        let empty = CanvasNode {
+            id: "empty-github".into(),
+            params: Map::from_iter([("query".into(), json!(""))]),
+            ..node
+        };
+        execute_github_search_with_provider(&mut runtime, &empty, &provider)
+            .await
+            .unwrap();
+        assert_eq!(runtime.outputs["empty-github"]["formalized_content"], "");
+        assert!(runtime.outputs["empty-github"].get("json").is_none());
+        assert_eq!(provider.searches.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn yahoo_finance_retries_resolves_stock_code_and_preserves_hidden_flags() {
+        let node = CanvasNode {
+            id: "yahoo".into(),
+            component_name: "YahooFinance".into(),
+            params: serde_json::from_value(json!({
+                "stock_code": "sys.query",
+                "info": false,
+                "history": true,
+                "count": true,
+                "financials": true,
+                "income_stmt": true,
+                "balance_sheet": true,
+                "cash_flow_statement": true,
+                "news": false,
+                "max_retries": 1,
+                "delay_after_error": 0
+            }))
+            .unwrap(),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+        validate_yahoo_finance_params(&node).unwrap();
+        let provider = MockYahooFinance::default();
+        provider
+            .failures
+            .store(1, std::sync::atomic::Ordering::SeqCst);
+        let mut runtime = CanvasRuntime {
+            sys: Map::from_iter([("query".into(), json!("0005.HK"))]),
+            ..CanvasRuntime::default()
+        };
+        execute_yahoo_finance_with_provider(&mut runtime, &node, &provider)
+            .await
+            .unwrap();
+
+        {
+            let reports = provider.reports.lock().unwrap();
+            assert_eq!(reports.len(), 2);
+            assert_eq!(reports[0].stock_code, "0005.HK");
+            assert!(!reports[0].info);
+            assert!(reports[0].history);
+            assert!(reports[0].count);
+            assert!(reports[0].financials);
+            assert!(reports[0].income_stmt);
+            assert!(reports[0].balance_sheet);
+            assert!(reports[0].cash_flow_statement);
+            assert!(!reports[0].news);
+        }
+        assert_eq!(
+            runtime.outputs["yahoo"]["report"],
+            "# Information:\n0005.HK"
+        );
+
+        let empty = CanvasNode {
+            id: "empty-yahoo".into(),
+            params: Map::from_iter([("stock_code".into(), json!(""))]),
+            ..node
+        };
+        execute_yahoo_finance_with_provider(&mut runtime, &empty, &provider)
+            .await
+            .unwrap();
+        assert_eq!(runtime.outputs["empty-yahoo"]["report"], "");
+        assert_eq!(provider.reports.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn github_agent_dispatch_uses_frontend_limit_and_error_prefix() {
+        let agent = CanvasNode {
+            id: "agent".into(),
+            component_name: "Agent".into(),
+            params: serde_json::from_value(json!({
+                "tools": [{
+                    "component_name": "GitHub",
+                    "name": "Repository Search",
+                    "params": {
+                        "top_n": 5,
+                        "max_retries": 0,
+                        "delay_after_error": 0
+                    }
+                }]
+            }))
+            .unwrap(),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+        let tools = load_canvas_agent_tools(&agent).unwrap();
+        let tavily = MockTavily::default();
+        let wikipedia = MockWikipedia::default();
+        let duckduckgo = MockDuckDuckGo::default();
+        let google = GoogleClient::default();
+        let google_scholar = GoogleScholarClient::default();
+        let github = MockGitHub::default();
+        let arxiv = ArxivClient::default();
+        let pubmed = PubMedClient::default();
+        let inputs = Map::new();
+        let run_input = WorkflowRunInput {
+            question: "ignored",
+            user_id: "owner",
+            inputs: &inputs,
+            history: &[],
+            generation: GenerationParamsPatch::default(),
+            llm_resolver: None,
+            retriever: None,
+            fallback_kb_ids: &[],
+        };
+        let call = ToolCall {
+            id: "call-github".into(),
+            kind: "function".into(),
+            function: crate::llm::ToolFunctionCall {
+                name: "github_search_0".into(),
+                arguments: json!({"query": "RayRAG"}).to_string(),
+            },
+        };
+        let mut runtime = CanvasRuntime::default();
+        let providers = CanvasAgentToolProviders {
+            tavily: &tavily,
+            wikipedia: &wikipedia,
+            duckduckgo: &duckduckgo,
+            google: &google,
+            google_scholar: &google_scholar,
+            github: &github,
+            arxiv: &arxiv,
+            pubmed: &pubmed,
+        };
+        let response = execute_canvas_agent_tool_with_providers(
+            &mut runtime,
+            &agent,
+            &tools,
+            &call,
+            &run_input,
+            providers,
+        )
+        .await
+        .unwrap();
+        assert!(response.contains("├── Title: rayrag repository"));
+        {
+            let searches = github.searches.lock().unwrap();
+            assert_eq!(searches[0].query, "RayRAG");
+            assert_eq!(searches[0].top_n, 5);
+        }
+
+        github
+            .failures
+            .store(1, std::sync::atomic::Ordering::SeqCst);
+        let response = execute_canvas_agent_tool_with_providers(
+            &mut runtime,
+            &agent,
+            &tools,
+            &call,
+            &run_input,
+            providers,
+        )
+        .await
+        .unwrap();
+        assert_eq!(response, "GitHub error: temporary GitHub failure");
+    }
+
+    #[tokio::test]
+    async fn arxiv_search_retries_and_publishes_python_chunks_plus_go_json() {
+        let node = CanvasNode {
+            id: "arxiv".into(),
+            component_name: "ArXiv".into(),
+            params: serde_json::from_value(json!({
+                "query": "sys.query",
+                "top_n": 3,
+                "sort_by": "lastUpdatedDate",
+                "max_retries": 1,
+                "delay_after_error": 0
+            }))
+            .unwrap(),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+        validate_arxiv_params(&node).unwrap();
+        let provider = MockArxiv::default();
+        provider
+            .failures
+            .store(1, std::sync::atomic::Ordering::SeqCst);
+        let mut runtime = CanvasRuntime {
+            sys: Map::from_iter([("query".into(), json!("rust retrieval"))]),
+            ..CanvasRuntime::default()
+        };
+        execute_arxiv_search_with_provider(&mut runtime, &node, &provider)
+            .await
+            .unwrap();
+
+        {
+            let searches = provider.searches.lock().unwrap();
+            assert_eq!(searches.len(), 2);
+            assert_eq!(searches[0].query, "rust retrieval");
+            assert_eq!(searches[0].top_n, 3);
+            assert_eq!(searches[0].sort_by, ArxivSortBy::LastUpdatedDate);
+        }
+        let outputs = &runtime.outputs["arxiv"];
+        assert_eq!(outputs["json"]["results"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            outputs["json"]["results"][0]["authors"],
+            json!(["Alice", "Bob"])
+        );
+        assert_eq!(
+            outputs["json"]["results"][1]["pdf_url"],
+            "http://arxiv.org/pdf/2409.99999v2"
+        );
+        assert_eq!(runtime.retrieval["chunks"].as_array().unwrap().len(), 1);
+        assert_eq!(runtime.retrieval["chunks"][0]["content"], "alpha  beta");
+        assert_eq!(runtime.retrieval["chunks"][0]["similarity"], 1);
+        assert!(
+            outputs["formalized_content"]
+                .as_str()
+                .unwrap()
+                .contains("├── Title: Rust Retrieval")
+        );
+        assert_eq!(runtime.references.len(), 1);
+        assert_eq!(runtime.references[0].similarity, Some(1.0));
+
+        let empty = CanvasNode {
+            id: "empty-arxiv".into(),
+            params: Map::from_iter([("query".into(), json!(""))]),
+            ..node
+        };
+        execute_arxiv_search_with_provider(&mut runtime, &empty, &provider)
+            .await
+            .unwrap();
+        assert_eq!(runtime.outputs["empty-arxiv"]["formalized_content"], "");
+        assert_eq!(provider.searches.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn arxiv_agent_dispatch_uses_child_params_and_preserves_error_prefix() {
+        let agent = CanvasNode {
+            id: "agent".into(),
+            component_name: "Agent".into(),
+            params: serde_json::from_value(json!({
+                "tools": [{
+                    "component_name": "ArXiv",
+                    "name": "Paper Search",
+                    "params": {
+                        "sort_by": "relevance",
+                        "top_n": 4,
+                        "max_retries": 0,
+                        "delay_after_error": 0
+                    }
+                }]
+            }))
+            .unwrap(),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+        let tools = load_canvas_agent_tools(&agent).unwrap();
+        let tavily = MockTavily::default();
+        let wikipedia = MockWikipedia::default();
+        let duckduckgo = MockDuckDuckGo::default();
+        let google = GoogleClient::default();
+        let google_scholar = GoogleScholarClient::default();
+        let arxiv = MockArxiv::default();
+        let pubmed = PubMedClient::default();
+        let inputs = Map::new();
+        let run_input = WorkflowRunInput {
+            question: "ignored",
+            user_id: "owner",
+            inputs: &inputs,
+            history: &[],
+            generation: GenerationParamsPatch::default(),
+            llm_resolver: None,
+            retriever: None,
+            fallback_kb_ids: &[],
+        };
+        let call = ToolCall {
+            id: "call-arxiv".into(),
+            kind: "function".into(),
+            function: crate::llm::ToolFunctionCall {
+                name: "arxiv_search_0".into(),
+                arguments: json!({"query": "RAG"}).to_string(),
+            },
+        };
+        let mut runtime = CanvasRuntime::default();
+        let response = execute_canvas_agent_tool_with_providers(
+            &mut runtime,
+            &agent,
+            &tools,
+            &call,
+            &run_input,
+            CanvasAgentToolProviders {
+                tavily: &tavily,
+                wikipedia: &wikipedia,
+                duckduckgo: &duckduckgo,
+                google: &google,
+                google_scholar: &google_scholar,
+                github: &GitHubClient::default(),
+                arxiv: &arxiv,
+                pubmed: &pubmed,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(response.contains("├── Title: Rust Retrieval"));
+        {
+            let searches = arxiv.searches.lock().unwrap();
+            assert_eq!(searches[0].query, "RAG");
+            assert_eq!(searches[0].top_n, 4);
+            assert_eq!(searches[0].sort_by, ArxivSortBy::Relevance);
+        }
+
+        arxiv.failures.store(1, std::sync::atomic::Ordering::SeqCst);
+        let response = execute_canvas_agent_tool_with_providers(
+            &mut runtime,
+            &agent,
+            &tools,
+            &call,
+            &run_input,
+            CanvasAgentToolProviders {
+                tavily: &tavily,
+                wikipedia: &wikipedia,
+                duckduckgo: &duckduckgo,
+                google: &google,
+                google_scholar: &google_scholar,
+                github: &GitHubClient::default(),
+                arxiv: &arxiv,
+                pubmed: &pubmed,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(response, "ArXiv error: temporary ArXiv failure");
+    }
+
+    #[tokio::test]
+    async fn pubmed_search_retries_and_publishes_python_chunks_plus_go_json() {
+        let node = CanvasNode {
+            id: "pubmed".into(),
+            component_name: "PubMed".into(),
+            params: serde_json::from_value(json!({
+                "query": "sys.query",
+                "top_n": 3,
+                "email": "reader@example.test",
+                "max_retries": 1,
+                "delay_after_error": 0
+            }))
+            .unwrap(),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+        validate_pubmed_params(&node).unwrap();
+        let provider = MockPubMed::default();
+        provider
+            .failures
+            .store(1, std::sync::atomic::Ordering::SeqCst);
+        let mut runtime = CanvasRuntime {
+            sys: Map::from_iter([("query".into(), json!("rust medicine"))]),
+            ..CanvasRuntime::default()
+        };
+        execute_pubmed_search_with_provider(&mut runtime, &node, &provider)
+            .await
+            .unwrap();
+
+        {
+            let searches = provider.searches.lock().unwrap();
+            assert_eq!(searches.len(), 2);
+            assert_eq!(searches[0].query, "rust medicine");
+            assert_eq!(searches[0].top_n, 3);
+            assert_eq!(searches[0].email, "reader@example.test");
+        }
+        let outputs = &runtime.outputs["pubmed"];
+        assert_eq!(outputs["json"]["results"][0]["pmid"], "31415926");
+        assert_eq!(outputs["json"]["results"][0]["year"], "2024");
+        assert_eq!(
+            outputs["json"]["results"][0]["authors"],
+            "Alice Smith, Bob Jones"
+        );
+        assert_eq!(runtime.retrieval["chunks"].as_array().unwrap().len(), 1);
+        assert_eq!(runtime.retrieval["chunks"][0]["similarity"], 1);
+        assert!(
+            runtime.retrieval["chunks"][0]["content"]
+                .as_str()
+                .unwrap()
+                .contains("Abstract: alpha  beta")
+        );
+        assert!(
+            outputs["formalized_content"]
+                .as_str()
+                .unwrap()
+                .contains("├── Title: Rust Biomedical Retrieval")
+        );
+        assert_eq!(runtime.references.len(), 1);
+
+        let empty = CanvasNode {
+            id: "empty-pubmed".into(),
+            params: Map::from_iter([("query".into(), json!(""))]),
+            ..node
+        };
+        execute_pubmed_search_with_provider(&mut runtime, &empty, &provider)
+            .await
+            .unwrap();
+        assert_eq!(runtime.outputs["empty-pubmed"]["formalized_content"], "");
+        assert_eq!(provider.searches.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn pubmed_agent_dispatch_uses_child_params_and_preserves_error_prefix() {
+        let agent = CanvasNode {
+            id: "agent".into(),
+            component_name: "Agent".into(),
+            params: serde_json::from_value(json!({
+                "tools": [{
+                    "component_name": "PubMed",
+                    "name": "Biomedical Search",
+                    "params": {
+                        "email": "agent@example.test",
+                        "top_n": 4,
+                        "max_retries": 0,
+                        "delay_after_error": 0
+                    }
+                }]
+            }))
+            .unwrap(),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+        let tools = load_canvas_agent_tools(&agent).unwrap();
+        let tavily = MockTavily::default();
+        let wikipedia = MockWikipedia::default();
+        let duckduckgo = MockDuckDuckGo::default();
+        let google = GoogleClient::default();
+        let google_scholar = GoogleScholarClient::default();
+        let arxiv = MockArxiv::default();
+        let pubmed = MockPubMed::default();
+        let inputs = Map::new();
+        let run_input = WorkflowRunInput {
+            question: "ignored",
+            user_id: "owner",
+            inputs: &inputs,
+            history: &[],
+            generation: GenerationParamsPatch::default(),
+            llm_resolver: None,
+            retriever: None,
+            fallback_kb_ids: &[],
+        };
+        let call = ToolCall {
+            id: "call-pubmed".into(),
+            kind: "function".into(),
+            function: crate::llm::ToolFunctionCall {
+                name: "pubmed_search_0".into(),
+                arguments: json!({"query": "RAG medicine"}).to_string(),
+            },
+        };
+        let mut runtime = CanvasRuntime::default();
+        let response = execute_canvas_agent_tool_with_providers(
+            &mut runtime,
+            &agent,
+            &tools,
+            &call,
+            &run_input,
+            CanvasAgentToolProviders {
+                tavily: &tavily,
+                wikipedia: &wikipedia,
+                duckduckgo: &duckduckgo,
+                google: &google,
+                google_scholar: &google_scholar,
+                github: &GitHubClient::default(),
+                arxiv: &arxiv,
+                pubmed: &pubmed,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(response.contains("├── Title: Rust Biomedical Retrieval"));
+        {
+            let searches = pubmed.searches.lock().unwrap();
+            assert_eq!(searches[0].query, "RAG medicine");
+            assert_eq!(searches[0].top_n, 4);
+            assert_eq!(searches[0].email, "agent@example.test");
+        }
+
+        pubmed
+            .failures
+            .store(1, std::sync::atomic::Ordering::SeqCst);
+        let response = execute_canvas_agent_tool_with_providers(
+            &mut runtime,
+            &agent,
+            &tools,
+            &call,
+            &run_input,
+            CanvasAgentToolProviders {
+                tavily: &tavily,
+                wikipedia: &wikipedia,
+                duckduckgo: &duckduckgo,
+                google: &google,
+                google_scholar: &google_scholar,
+                github: &GitHubClient::default(),
+                arxiv: &arxiv,
+                pubmed: &pubmed,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(response, "PubMed error: temporary PubMed failure");
+    }
+
+    #[test]
+    fn web_tool_hash_and_validation_match_fixed_python_boundaries() {
+        assert_eq!(hash_str2int("abc", 100_000_000), 66_479_517);
+        assert_eq!(hash_str2int("123456", 500), 319);
+        for (component_name, params) in [
+            ("TavilySearch", json!({"max_results": 0})),
+            ("TavilySearch", json!({"days": 1.5})),
+            ("TavilySearch", json!({"include_domains": [1]})),
+            ("TavilyExtract", json!({"urls": {}})),
+            ("TavilyExtract", json!({"extract_depth": "deep"})),
+            ("DuckDuckGo", json!({"top_n": 0})),
+            ("DuckDuckGo", json!({"top_n": 1.5})),
+            ("DuckDuckGo", json!({"channel": "images"})),
+            ("DuckDuckGo", json!({"topic": "academic"})),
+            ("DuckDuckGo", json!({"max_retries": -1})),
+            ("DuckDuckGo", json!({"delay_after_error": -1})),
+            ("Wikipedia", json!({"top_n": 0})),
+            ("Wikipedia", json!({"top_n": 1.5})),
+            ("Wikipedia", json!({"language": "xx"})),
+            ("Wikipedia", json!({"max_retries": -1})),
+            ("Wikipedia", json!({"delay_after_error": -1})),
+            ("GoogleScholar", json!({"top_n": 0})),
+            ("GoogleScholar", json!({"top_n": 1.5})),
+            ("GoogleScholar", json!({"sort_by": "newest"})),
+            ("GoogleScholar", json!({"year_low": 2020.5})),
+            ("GoogleScholar", json!({"patents": "yes"})),
+            ("GoogleScholar", json!({"max_retries": -1})),
+            ("GoogleScholar", json!({"delay_after_error": -1})),
+            ("GitHub", json!({"top_n": 0})),
+            ("GitHub", json!({"top_n": 1.5})),
+            ("GitHub", json!({"query": 1})),
+            ("GitHub", json!({"max_retries": -1})),
+            ("GitHub", json!({"delay_after_error": -1})),
+            ("YahooFinance", json!({"stock_code": 1})),
+            ("YahooFinance", json!({"info": "yes"})),
+            ("YahooFinance", json!({"count": 1})),
+            ("YahooFinance", json!({"income_stmt": null})),
+            ("YahooFinance", json!({"max_retries": -1})),
+            ("YahooFinance", json!({"delay_after_error": -1})),
+            ("ArXiv", json!({"top_n": 0})),
+            ("ArXiv", json!({"top_n": 1.5})),
+            ("ArXiv", json!({"sort_by": "newest"})),
+            ("ArXiv", json!({"max_retries": -1})),
+            ("ArXiv", json!({"delay_after_error": -1})),
+            ("PubMed", json!({"top_n": 0})),
+            ("PubMed", json!({"top_n": 1.5})),
+            ("PubMed", json!({"email": 1})),
+            ("PubMed", json!({"max_retries": -1})),
+            ("PubMed", json!({"delay_after_error": -1})),
+        ] {
+            let dsl = json!({"components": {
+                "begin": {"obj": {"component_name": "Begin", "params": {}}, "downstream": ["tool"], "upstream": []},
+                "tool": {"obj": {"component_name": component_name, "params": params}, "downstream": [], "upstream": ["begin"]}
+            }});
+            assert!(AgentWorkflow::from_value(&dsl).is_err(), "{dsl}");
+        }
+    }
+
+    #[test]
+    fn llm_prompt_history_and_generation_flags_follow_fixed_component_contract() {
+        let mut runtime = CanvasRuntime::default();
+        runtime
+            .sys
+            .insert("query".into(), Value::String("current question".into()));
+        let node = CanvasNode {
+            id: "llm".into(),
+            component_name: "LLM".into(),
+            params: Map::from_iter([
+                ("sys_prompt".into(), json!("system for {sys.query}")),
+                ("message_history_window_size".into(), json!(1)),
+                ("temperature".into(), json!(0.9)),
+                ("temperatureEnabled".into(), json!(false)),
+                ("top_p".into(), json!(0.7)),
+                ("max_tokens".into(), json!(0)),
+                ("maxTokensEnabled".into(), json!(true)),
+            ]),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+        let history = vec![
+            ChatMessage::new("assistant", "discarded"),
+            ChatMessage::new("assistant", "recent reply"),
+            ChatMessage::new("user", "current history placeholder"),
+        ];
+        let messages = llm_messages(&runtime, &node, &history).unwrap();
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].role, "system");
+        assert_eq!(messages[0].content, "system for current question");
+        assert_eq!(messages[1].content, "recent reply");
+        assert_eq!(messages[2].role, "user");
+        assert_eq!(messages[2].content, "current question");
+
+        let component = llm_component_generation_patch(&node).unwrap();
+        assert_eq!(component.temperature, None);
+        assert_eq!(component.top_p, Some(0.7));
+        assert_eq!(component.max_tokens, None);
+        let merged = merge_generation_patch(
+            GenerationParamsPatch {
+                temperature: Some(0.4),
+                max_tokens: Some(2048),
+                ..GenerationParamsPatch::default()
+            },
+            component,
+        );
+        assert_eq!(merged.temperature, Some(0.4));
+        assert_eq!(merged.top_p, Some(0.7));
+        assert_eq!(merged.max_tokens, Some(2048));
+    }
+
+    #[test]
+    fn structured_content_strips_thinking_and_json_fences() {
+        assert_eq!(
+            parse_structured_content(
+                "<think>private reasoning</think>\n```json\n{\"name\":\"Ada\"}\n```"
+            ),
+            Some(json!({"name": "Ada"}))
+        );
+        assert_eq!(
+            parse_structured_content("prefix without a closing think block"),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn llm_structured_output_retries_and_publishes_fixed_output_key() {
+        use axum::{Json, Router, routing::post};
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let requests = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let app = Router::new().route(
+            "/chat/completions",
+            post({
+                let calls = calls.clone();
+                let requests = requests.clone();
+                move |Json(request): Json<Value>| {
+                    let calls = calls.clone();
+                    let requests = requests.clone();
+                    async move {
+                        requests.lock().unwrap().push(request);
+                        let call = calls.fetch_add(1, AtomicOrdering::SeqCst);
+                        let content = if call == 0 {
+                            "not json".to_owned()
+                        } else {
+                            "<think>hidden</think>```json\n{\"name\":\"Ada\"}\n```".to_owned()
+                        };
+                        Json(json!({
+                            "choices": [{"message": {"content": content}}],
+                            "usage": {"prompt_tokens": 4, "completion_tokens": 2, "total_tokens": 6}
+                        }))
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let llm = LlmClient::new(crate::llm::LlmConfig {
+            api_base: format!("http://{address}"),
+            api_key: "test".into(),
+            model: "test".into(),
+            ..crate::llm::LlmConfig::default()
+        });
+        let dsl = json!({"components": {
+            "llm": {"obj": {"component_name": "LLM", "params": {
+                "llm_id": "test",
+                "sys_prompt": "Return a person.",
+                "prompts": [{"role": "user", "content": "{sys.query}"}],
+                "max_retries": 1,
+                "temperature": 0.9,
+                "temperatureEnabled": false,
+                "top_p": 0.7,
+                "topPEnabled": true,
+                "outputs": {"structured": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}},
+                    "required": ["name"]
+                }}
+            }}}
+        }});
+        let node = CanvasNode {
+            id: "llm".into(),
+            component_name: "LLM".into(),
+            params: extract_component_params(&dsl, "llm")
+                .unwrap()
+                .unwrap()
+                .clone(),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+        let mut runtime = CanvasRuntime::default();
+        runtime
+            .sys
+            .insert("query".into(), Value::String("Who?".into()));
+        let inputs = Map::new();
+        let run_input = WorkflowRunInput {
+            question: "Who?",
+            user_id: "owner",
+            inputs: &inputs,
+            history: &[],
+            generation: GenerationParamsPatch::default(),
+            llm_resolver: None,
+            retriever: None,
+            fallback_kb_ids: &[],
+        };
+        execute_node(&mut runtime, &node, Some(&llm), &run_input)
+            .await
+            .unwrap();
+        let output = runtime.outputs.remove("llm").unwrap();
+        server.abort();
+
+        assert_eq!(calls.load(AtomicOrdering::SeqCst), 2);
+        assert_eq!(runtime.provider_calls, 2);
+        assert_eq!(runtime.usage.total_tokens, 12);
+        assert_eq!(output["structured"], json!({"name": "Ada"}));
+        assert!(!output.contains_key("structured_content"));
+        assert!(!output.contains_key("content"));
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0]["messages"].as_array().unwrap().len(), 2);
+        assert_eq!(requests[0]["messages"][1]["content"], "Who?");
+        assert!(
+            requests[0]["messages"][0]["content"]
+                .as_str()
+                .unwrap()
+                .contains("Here is the JSON schema:")
+        );
+        assert!((requests[0]["temperature"].as_f64().unwrap() - 0.1).abs() < 1e-6);
+        assert!((requests[0]["top_p"].as_f64().unwrap() - 0.7).abs() < 1e-6);
+    }
+
+    #[tokio::test]
+    async fn agent_react_loop_dispatches_retrieval_and_preserves_openai_history() {
+        use axum::{Json, Router, routing::post};
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let requests = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let app = Router::new().route(
+            "/chat/completions",
+            post({
+                let calls = calls.clone();
+                let requests = requests.clone();
+                move |Json(request): Json<Value>| {
+                    let calls = calls.clone();
+                    let requests = requests.clone();
+                    async move {
+                        requests.lock().unwrap().push(request);
+                        let call = calls.fetch_add(1, AtomicOrdering::SeqCst);
+                        if call == 0 {
+                            Json(json!({
+                                "choices": [{"message": {
+                                    "content": null,
+                                    "tool_calls": [{
+                                        "id": "call_search",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "search_my_dateset_0",
+                                            "arguments": "{\"query\":\"rust ownership\"}"
+                                        }
+                                    }]
+                                }}],
+                                "usage": {"prompt_tokens": 4, "completion_tokens": 2, "total_tokens": 6}
+                            }))
+                        } else {
+                            Json(json!({
+                                "choices": [{"message": {"content": "Use the ownership guide."}}],
+                                "usage": {"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6}
+                            }))
+                        }
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let llm = LlmClient::new(crate::llm::LlmConfig {
+            api_base: format!("http://{address}"),
+            api_key: "test".into(),
+            model: "tool-model".into(),
+            ..crate::llm::LlmConfig::default()
+        });
+        let node = CanvasNode {
+            id: "agent".into(),
+            component_name: "Agent".into(),
+            params: serde_json::from_value(json!({
+                "sys_prompt": "Use tools when useful.",
+                "prompts": [{"role": "user", "content": "{sys.query}"}],
+                "max_rounds": 2,
+                "tools": [{
+                    "component_name": "Retrieval",
+                    "name": "Knowledge Search",
+                    "params": {"dataset_ids": []}
+                }],
+                "mcp": []
+            }))
+            .unwrap(),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+        let retriever = MockRetriever::default();
+        let mut runtime = CanvasRuntime::default();
+        runtime
+            .sys
+            .insert("query".into(), json!("Explain Rust ownership"));
+        let inputs = Map::new();
+        let fallback_kb_ids = vec!["fallback-kb".to_owned()];
+        let run_input = WorkflowRunInput {
+            question: "Explain Rust ownership",
+            user_id: "owner",
+            inputs: &inputs,
+            history: &[],
+            generation: GenerationParamsPatch::default(),
+            llm_resolver: None,
+            retriever: Some(&retriever),
+            fallback_kb_ids: &fallback_kb_ids,
+        };
+        execute_node(&mut runtime, &node, Some(&llm), &run_input)
+            .await
+            .unwrap();
+        server.abort();
+
+        assert_eq!(calls.load(AtomicOrdering::SeqCst), 2);
+        assert_eq!(retriever.calls.load(AtomicOrdering::SeqCst), 1);
+        let retrieval_request = retriever.request.lock().unwrap().clone().unwrap();
+        assert_eq!(retrieval_request.query, "rust ownership");
+        assert_eq!(retrieval_request.kb_ids, ["fallback-kb"]);
+        assert_eq!(runtime.usage.total_tokens, 12);
+        assert_eq!(runtime.provider_calls, 2);
+        assert_eq!(
+            runtime.outputs["agent"]["content"],
+            "Use the ownership guide."
+        );
+        assert_eq!(
+            runtime.outputs["agent"]["tool_calls"][0]["name"],
+            "search_my_dateset_0"
+        );
+        // `tool_use_callback` parity: the executed tool lands in the node
+        // outputs as a trace record (`merge_tool_use_trace` folds exactly these
+        // into the run's ITraceData array).
+        let tool_trace = runtime.outputs["agent"]["tool_trace"]
+            .as_array()
+            .expect("tool trace recorded");
+        assert_eq!(tool_trace.len(), 1);
+        assert_eq!(tool_trace[0]["tool_name"], "search_my_dateset_0");
+        assert_eq!(tool_trace[0]["path"], "agent-->search_my_dateset_0");
+        assert_eq!(tool_trace[0]["arguments"]["query"], "rust ownership");
+        assert!(
+            tool_trace[0]["result"]
+                .as_str()
+                .unwrap()
+                .contains("Rust ownership guide")
+        );
+        assert!(tool_trace[0]["elapsed_time"].as_f64().unwrap() >= 0.0);
+        assert_eq!(runtime.references.len(), 1);
+
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests[0]["tool_choice"], "auto");
+        assert_eq!(
+            requests[0]["tools"][0]["function"]["name"],
+            "search_my_dateset_0"
+        );
+        assert_eq!(
+            requests[0]["tools"][0]["function"]["parameters"]["required"],
+            json!(["query"])
+        );
+        let second_messages = requests[1]["messages"].as_array().unwrap();
+        assert_eq!(second_messages.len(), 4);
+        assert_eq!(second_messages[2]["role"], "assistant");
+        assert!(second_messages[2].get("content").is_none());
+        assert_eq!(second_messages[2]["tool_calls"][0]["id"], "call_search");
+        assert_eq!(second_messages[3]["role"], "tool");
+        assert_eq!(second_messages[3]["tool_call_id"], "call_search");
+        assert!(
+            second_messages[3]["content"]
+                .as_str()
+                .unwrap()
+                .contains("Rust ownership guide")
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_react_max_rounds_adds_notice_and_uses_tool_free_fallback() {
+        use axum::{Json, Router, routing::post};
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let requests = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let app = Router::new().route(
+            "/chat/completions",
+            post({
+                let calls = calls.clone();
+                let requests = requests.clone();
+                move |Json(request): Json<Value>| {
+                    let calls = calls.clone();
+                    let requests = requests.clone();
+                    async move {
+                        requests.lock().unwrap().push(request);
+                        let call = calls.fetch_add(1, AtomicOrdering::SeqCst);
+                        if call == 0 {
+                            Json(json!({
+                                "choices": [{"message": {
+                                    "content": null,
+                                    "tool_calls": [{
+                                        "id": "call_loop",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "search_my_dateset_0",
+                                            "arguments": "{\"query\":\"loop query\"}"
+                                        }
+                                    }]
+                                }}],
+                                "usage": {"total_tokens": 3}
+                            }))
+                        } else {
+                            Json(json!({
+                                "choices": [{"message": {"content": "bounded fallback"}}],
+                                "usage": {"total_tokens": 4}
+                            }))
+                        }
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let llm = LlmClient::new(crate::llm::LlmConfig {
+            api_base: format!("http://{address}"),
+            api_key: "test".into(),
+            model: "tool-model".into(),
+            ..crate::llm::LlmConfig::default()
+        });
+        let node = CanvasNode {
+            id: "agent".into(),
+            component_name: "Agent".into(),
+            params: serde_json::from_value(json!({
+                "prompts": [{"role": "user", "content": "{sys.query}"}],
+                "max_rounds": 0,
+                "tools": [{
+                    "component_name": "Retrieval",
+                    "name": "Search",
+                    "params": {"dataset_ids": ["kb"]}
+                }]
+            }))
+            .unwrap(),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+        let retriever = MockRetriever::default();
+        let mut runtime = CanvasRuntime::default();
+        runtime.sys.insert("query".into(), json!("question"));
+        let inputs = Map::new();
+        let run_input = WorkflowRunInput {
+            question: "question",
+            user_id: "owner",
+            inputs: &inputs,
+            history: &[],
+            generation: GenerationParamsPatch::default(),
+            llm_resolver: None,
+            retriever: Some(&retriever),
+            fallback_kb_ids: &[],
+        };
+        execute_node(&mut runtime, &node, Some(&llm), &run_input)
+            .await
+            .unwrap();
+        server.abort();
+
+        assert_eq!(runtime.outputs["agent"]["content"], "bounded fallback");
+        assert_eq!(runtime.usage.total_tokens, 7);
+        assert_eq!(calls.load(AtomicOrdering::SeqCst), 2);
+        let requests = requests.lock().unwrap();
+        assert!(requests[0].get("tools").is_some());
+        assert!(requests[1].get("tools").is_none());
+        assert!(requests[1].get("tool_choice").is_none());
+        assert_eq!(
+            requests[1]["messages"].as_array().unwrap().last().unwrap(),
+            &json!({"role": "user", "content": "Exceed max rounds: 0"})
+        );
+    }
+
+    #[test]
+    fn template_fast_path_matches_reference_forms_and_extracts_unique_refs() {
+        let mut runtime = CanvasRuntime::default();
+        runtime.outputs.insert(
+            "llm_0".into(),
+            Map::from_iter([("content".into(), json!("hello world"))]),
+        );
+        runtime
+            .globals
+            .insert("sys.query".into(), json!("what is ragflow"));
+        runtime.globals.insert("env.max_tokens".into(), json!(1024));
+        runtime.globals.insert("__item__".into(), json!("alpha"));
+        runtime.globals.insert("__index__".into(), json!(3));
+
+        for (template, expected) in [
+            ("{{llm_0@content}}", "hello world"),
+            ("{{{llm_0@content}}}", "hello world"),
+            ("{llm_0@content}", "hello world"),
+            (
+                "{{sys.query}} :: {{llm_0@content}} :: {{env.max_tokens}}",
+                "what is ragflow :: hello world :: 1024",
+            ),
+            ("{{item}}/{{index}}", "alpha/3"),
+            ("{{garbage}}", "{{garbage}}"),
+            ("", ""),
+        ] {
+            assert_eq!(resolve_template(&runtime, template).unwrap(), expected);
+        }
+        assert_eq!(
+            extract_template_refs("{{llm_0@content}} {{sys.query}} {{llm_0@content}} {{item}}"),
+            ["llm_0@content", "sys.query", "item"]
+        );
+    }
+
+    #[test]
+    fn template_loud_and_display_paths_share_partial_resolution() {
+        let mut runtime = CanvasRuntime::default();
+        runtime
+            .globals
+            .insert("sys.query".into(), json!("resolved"));
+        runtime.outputs.insert(
+            "null_node".into(),
+            Map::from_iter([("value".into(), Value::Null)]),
+        );
+        let template =
+            "x={{missing@thing}}; q={{sys.query}}; n={{null_node@value}}; z={{env.nope}}";
+        let (partial, error) = resolve_template_with_partial(&runtime, template);
+        assert_eq!(partial, "x=; q=resolved; n=; z=");
+        let error = error.unwrap().to_string();
+        assert!(error.contains("missing@thing"), "{error}");
+        assert!(resolve_template(&runtime, template).is_err());
+        assert_eq!(resolve_template_for_display(&runtime, template), partial);
+    }
+
+    #[tokio::test]
+    async fn message_uses_display_template_soft_fail_semantics() {
+        let dsl = json!({"components": {
+            "begin": {"obj": {"component_name": "Begin", "params": {}}, "downstream": ["message"], "upstream": []},
+            "message": {"obj": {"component_name": "Message", "params": {
+                "content": ["hello {{missing@content}}/{{sys.query}}"]
+            }}, "downstream": [], "upstream": ["begin"]}
+        }});
+        let result = AgentWorkflow::from_value(&dsl)
+            .unwrap()
+            .unwrap()
+            .run(
+                None,
+                WorkflowRunInput {
+                    question: "question",
+                    user_id: "user",
+                    inputs: &Map::new(),
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: None,
+                    fallback_kb_ids: &[],
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.answer, "hello /question");
+    }
+
+    #[tokio::test]
+    async fn canvas_runs_record_success_and_error_metrics() {
+        use crate::metrics::{CanvasRunOutcome, canvas_run_count};
+
+        let success_before = canvas_run_count(CanvasRunOutcome::Success);
+        let error_before = canvas_run_count(CanvasRunOutcome::Error);
+        let success = json!({"components": {
+            "begin": {"obj": {"component_name": "Begin", "params": {}}, "downstream": ["message"], "upstream": []},
+            "message": {"obj": {"component_name": "Message", "params": {"content": ["ok"]}}, "downstream": [], "upstream": ["begin"]}
+        }});
+        AgentWorkflow::from_value(&success)
+            .unwrap()
+            .unwrap()
+            .run(
+                None,
+                WorkflowRunInput {
+                    question: "question",
+                    user_id: "user",
+                    inputs: &Map::new(),
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: None,
+                    fallback_kb_ids: &[],
+                },
+            )
+            .await
+            .unwrap();
+
+        let unsupported = json!({"components": {
+            "begin": {"obj": {"component_name": "Begin", "params": {}}, "downstream": ["browser"], "upstream": []},
+            "browser": {"obj": {"component_name": "Browser", "params": {}}, "downstream": [], "upstream": ["begin"]}
+        }});
+        assert!(
+            AgentWorkflow::from_value(&unsupported)
+                .unwrap()
+                .unwrap()
+                .run(
+                    None,
+                    WorkflowRunInput {
+                        question: "question",
+                        user_id: "user",
+                        inputs: &Map::new(),
+                        history: &[],
+                        generation: GenerationParamsPatch::default(),
+                        llm_resolver: None,
+                        retriever: None,
+                        fallback_kb_ids: &[],
+                    },
+                )
+                .await
+                .is_err()
+        );
+
+        assert!(canvas_run_count(CanvasRunOutcome::Success) >= success_before + 1.0);
+        assert!(canvas_run_count(CanvasRunOutcome::Error) >= error_before + 1.0);
+    }
+
+    #[test]
+    fn string_transform_matches_split_type_and_empty_segment_semantics() {
+        let mut runtime = CanvasRuntime::default();
+        runtime
+            .globals
+            .insert("sys.source".into(), Value::String(",a;b,".into()));
+        let node = CanvasNode {
+            id: "split".into(),
+            component_name: "StringTransform".into(),
+            params: Map::from_iter([
+                ("method".into(), json!("split")),
+                ("split_ref".into(), json!("sys.source")),
+                ("delimiters".into(), json!([",", ";"])),
+            ]),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+
+        execute_string_transform(&mut runtime, &node).unwrap();
+        assert_eq!(
+            runtime.outputs["split"]["result"],
+            json!(["", "a", "b", ""])
+        );
+
+        runtime
+            .globals
+            .insert("sys.source".into(), Value::Number(Number::from(7)));
+        assert!(
+            execute_string_transform(&mut runtime, &node)
+                .unwrap_err()
+                .to_string()
+                .contains("split input is not a string: number")
+        );
+
+        runtime
+            .globals
+            .insert("sys.source".into(), Value::Bool(false));
+        execute_string_transform(&mut runtime, &node).unwrap();
+        assert_eq!(runtime.outputs["split"]["result"], json!([""]));
+    }
+
+    #[test]
+    fn string_transform_merge_joins_arrays_and_blanks_missing_references() {
+        let mut runtime = CanvasRuntime::default();
+        runtime.outputs.insert(
+            "split".into(),
+            Map::from_iter([("result".into(), json!(["alpha", "beta"]))]),
+        );
+        let node = CanvasNode {
+            id: "merge".into(),
+            component_name: "StringTransform".into(),
+            params: Map::from_iter([
+                ("method".into(), json!("merge")),
+                ("script".into(), json!("{split@result}/{missing@result}")),
+                ("delimiters".into(), json!(["|"])),
+            ]),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+
+        execute_string_transform(&mut runtime, &node).unwrap();
+        assert_eq!(runtime.outputs["merge"]["result"], "alpha|beta/");
+    }
+
+    #[test]
+    fn string_transform_merge_renders_jinja_filters_conditionals_and_nested_values() {
+        let mut runtime = CanvasRuntime::default();
+        runtime.outputs.insert(
+            "begin_0".into(),
+            Map::from_iter([
+                ("content".into(), json!("<hello>")),
+                ("enabled".into(), json!(true)),
+                ("user".into(), json!({"name": "alice"})),
+            ]),
+        );
+        let node = CanvasNode {
+            id: "merge".into(),
+            component_name: "StringTransform".into(),
+            params: Map::from_iter([
+                ("method".into(), json!("merge")),
+                (
+                    "script".into(),
+                    json!(
+                        "{% if begin_0.enabled %}{{ begin_0.content | upper }} / {{ begin_0.user.name }}{% else %}no{% endif %}"
+                    ),
+                ),
+                ("delimiters".into(), json!([","])),
+            ]),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+
+        execute_string_transform(&mut runtime, &node).unwrap();
+        assert_eq!(
+            runtime.outputs["merge"]["result"], "<HELLO> / alice",
+            "StringTransform text output must not be HTML escaped"
+        );
+    }
+
+    #[test]
+    fn string_transform_merge_renders_loops_comments_globals_and_missing_values() {
+        let mut runtime = CanvasRuntime::default();
+        runtime.outputs.insert(
+            "begin_0".into(),
+            Map::from_iter([("items".into(), json!(["a", "b", "c"]))]),
+        );
+        runtime.globals.insert("env.enabled".into(), json!(true));
+        runtime.globals.insert("sys.suffix".into(), json!("done"));
+        let node = CanvasNode {
+            id: "merge".into(),
+            component_name: "StringTransform".into(),
+            params: Map::from_iter([
+                ("method".into(), json!("merge")),
+                (
+                    "script".into(),
+                    json!(
+                        "{# hidden #}{% if env.enabled %}{% for item in begin_0.items %}{{ item }}{% if not loop.last %}|{% endif %}{% endfor %}/{{ sys.suffix }}/{{ missing.deep }}{% endif %}"
+                    ),
+                ),
+                ("delimiters".into(), json!([","])),
+            ]),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+
+        execute_string_transform(&mut runtime, &node).unwrap();
+        assert_eq!(runtime.outputs["merge"]["result"], "a|b|c/done/");
+    }
+
+    #[test]
+    fn string_transform_merge_normalizes_selectors_around_jinja_statements() {
+        let mut runtime = CanvasRuntime::default();
+        runtime.outputs.insert(
+            "split:0".into(),
+            Map::from_iter([("result".into(), json!(["alpha", "beta"]))]),
+        );
+        runtime
+            .globals
+            .insert("sys.query".into(), json!("question"));
+        let node = CanvasNode {
+            id: "merge".into(),
+            component_name: "StringTransform".into(),
+            params: Map::from_iter([
+                ("method".into(), json!("merge")),
+                (
+                    "script".into(),
+                    json!("{% if true %}{split:0@result}/{{sys.query}}{% endif %}"),
+                ),
+                ("delimiters".into(), json!(["|"])),
+            ]),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+
+        execute_string_transform(&mut runtime, &node).unwrap();
+        assert_eq!(runtime.outputs["merge"]["result"], "alpha|beta/question");
+    }
+
+    #[test]
+    fn string_transform_accepts_upstream_line_and_merge_inputs() {
+        let mut runtime = CanvasRuntime::default();
+        runtime.outputs.insert(
+            "begin".into(),
+            Map::from_iter([
+                ("line".into(), json!("a,b")),
+                ("x".into(), json!("foo")),
+                ("y".into(), json!("bar")),
+            ]),
+        );
+        let split = CanvasNode {
+            id: "split".into(),
+            component_name: "StringTransform".into(),
+            params: Map::from_iter([
+                ("method".into(), json!("split")),
+                ("split_ref".into(), json!("missing@line")),
+                ("delimiters".into(), json!([","])),
+            ]),
+            downstream: Vec::new(),
+            upstream: vec!["begin".into()],
+            parent_id: None,
+        };
+        execute_string_transform(&mut runtime, &split).unwrap();
+        assert_eq!(runtime.outputs["split"]["result"], json!(["a", "b"]));
+
+        let merge = CanvasNode {
+            id: "merge".into(),
+            component_name: "StringTransform".into(),
+            params: Map::from_iter([
+                ("method".into(), json!("merge")),
+                ("script".into(), json!("{{x}} and {{y}}")),
+                ("delimiters".into(), json!([","])),
+            ]),
+            downstream: Vec::new(),
+            upstream: vec!["begin".into()],
+            parent_id: None,
+        };
+        execute_string_transform(&mut runtime, &merge).unwrap();
+        assert_eq!(runtime.outputs["merge"]["result"], "foo and bar");
+    }
+
+    #[test]
+    fn string_transform_resolves_iteration_aliases() {
+        let mut runtime = CanvasRuntime::default();
+        runtime.globals.insert("__item__".into(), json!("beta"));
+        runtime.globals.insert("__index__".into(), json!(1));
+        runtime
+            .globals
+            .insert("__result__".into(), json!(["a", "b"]));
+
+        assert_eq!(
+            resolve_string_transform_template(&runtime, "{index}: {item}/{result}", "|"),
+            "1: beta/a|b"
+        );
+    }
+
+    #[test]
+    fn string_transform_jinja_is_detected_and_parse_errors_fail_soft() {
+        for template in [
+            "{{ name }}",
+            "{% if value %}yes{% endif %}",
+            "{# comment #}",
+            "{{ value | upper }}",
+        ] {
+            assert!(contains_jinja_syntax(template), "{template}");
+        }
+        assert!(!contains_jinja_syntax("{begin@content}"));
+
+        let mut runtime = CanvasRuntime::default();
+        runtime.outputs.insert(
+            "begin".into(),
+            Map::from_iter([("content".into(), json!("resolved"))]),
+        );
+        assert!(render_sandboxed_jinja("{% invalid %}", Map::new()).is_err());
+        assert_eq!(
+            resolve_string_transform_template(&runtime, "{% invalid %}{begin@content}", ","),
+            "{% invalid %}resolved"
+        );
+    }
+
+    #[test]
+    fn string_transform_jinja_fuel_exhaustion_fails_soft() {
+        let template = "{% for item in begin_0.items %}x{% endfor %}";
+        let mut runtime = CanvasRuntime::default();
+        runtime.outputs.insert(
+            "begin_0".into(),
+            Map::from_iter([("items".into(), Value::Array(vec![Value::Null; 100_000]))]),
+        );
+
+        assert_eq!(
+            resolve_string_transform_template(&runtime, template, ","),
+            template
+        );
+    }
+
+    #[test]
+    fn string_transform_params_are_validated_when_canvas_is_compiled() {
+        for params in [
+            json!({"method": "unknown", "delimiters": [","]}),
+            json!({"method": "merge", "delimiters": []}),
+            json!({"method": "split", "delimiters": [1]}),
+            json!({"method": "merge", "script": 42}),
+        ] {
+            let dsl = json!({"components": {
+                "begin": {"obj": {"component_name": "Begin", "params": {}}, "downstream": ["transform"], "upstream": []},
+                "transform": {"obj": {"component_name": "StringTransform", "params": params}, "downstream": [], "upstream": ["begin"]}
+            }});
+            assert!(AgentWorkflow::from_value(&dsl).is_err(), "{dsl}");
+        }
+    }
+
+    #[tokio::test]
+    async fn data_operations_runs_frontend_query_shape_in_a_canvas() {
+        let dsl = json!({
+            "components": {
+                "begin": {"obj": {"component_name": "Begin", "params": {}}, "downstream": ["data"], "upstream": []},
+                "data": {"obj": {"component_name": "DataOperations", "params": {
+                    "query": [{"input": "env.items"}],
+                    "operations": "select_keys",
+                    "select_keys": [{"name": "name"}]
+                }}, "downstream": ["message"], "upstream": ["begin"]},
+                "message": {"obj": {"component_name": "Message", "params": {
+                    "content": ["{data@result}"]
+                }}, "downstream": [], "upstream": ["data"]}
+            },
+            "globals": {"env.items": [
+                {"name": "alpha", "secret": "hidden"},
+                {"name": "beta", "secret": "hidden"}
+            ]}
+        });
+        let result = AgentWorkflow::from_value(&dsl)
+            .unwrap()
+            .unwrap()
+            .run(
+                None,
+                WorkflowRunInput {
+                    question: "ignored",
+                    user_id: "user-1",
+                    inputs: &Map::new(),
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: None,
+                    fallback_kb_ids: &[],
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.answer, r#"[{"name":"alpha"},{"name":"beta"}]"#);
+        assert_eq!(
+            result.trace[1].outputs["result"],
+            json!([{"name": "alpha"}, {"name": "beta"}])
+        );
+    }
+
+    #[test]
+    fn data_operations_select_remove_and_rename_keys() {
+        let items = json!([
+            {"name": "alpha", "secret": "s1", "old": 1},
+            {"name": "beta", "secret": "s2", "old": 2}
+        ]);
+        let selected = run_data_operation(
+            json!({
+                "query": "sys.items",
+                "operations": "select_keys",
+                "select_keys": "name, old"
+            }),
+            [("sys.items", items.clone())],
+        )
+        .unwrap();
+        assert_eq!(
+            selected,
+            json!([{"name": "alpha", "old": 1}, {"name": "beta", "old": 2}])
+        );
+
+        let removed = run_data_operation(
+            json!({
+                "query": ["sys.items"],
+                "operations": "remove_keys",
+                "remove_keys": [{"name": "secret"}]
+            }),
+            [("sys.items", items.clone())],
+        )
+        .unwrap();
+        assert_eq!(
+            removed,
+            json!([
+                {"name": "alpha", "old": 1},
+                {"name": "beta", "old": 2}
+            ])
+        );
+
+        let renamed = run_data_operation(
+            json!({
+                "query": ["sys.items"],
+                "operations": "rename_keys",
+                "rename_keys": [
+                    {"old_key": "old", "new_key": "key"},
+                    {"old_key": "", "new_key": "ignored"}
+                ]
+            }),
+            [("sys.items", items)],
+        )
+        .unwrap();
+        assert_eq!(
+            renamed,
+            json!([
+                {"name": "alpha", "secret": "s1", "key": 1},
+                {"name": "beta", "secret": "s2", "key": 2}
+            ])
+        );
+    }
+
+    #[test]
+    fn data_operations_literal_eval_walks_json_shaped_values() {
+        let result = run_data_operation(
+            json!({"query": ["sys.items"], "operations": "literal_eval"}),
+            [(
+                "sys.items",
+                json!([{
+                    "plain": "hello",
+                    "object": "{\"key\":1,\"nested\":[2,3]}",
+                    "list": "[true, null, 3]",
+                    "number": "42",
+                    "bool": "true",
+                    "python_bool": "False",
+                    "python_none": "None",
+                    "leading_decimal": ".5",
+                    "invalid": "{broken"
+                }]),
+            )],
+        )
+        .unwrap();
+        assert_eq!(
+            result,
+            json!([{
+                "plain": "hello",
+                "object": {"key": 1, "nested": [2, 3]},
+                "list": [true, null, 3],
+                "number": 42,
+                "bool": true,
+                "python_bool": false,
+                "python_none": null,
+                "leading_decimal": 0.5,
+                "invalid": "{broken"
+            }])
+        );
+    }
+
+    #[test]
+    fn data_operations_combine_flattens_conflicting_arrays() {
+        let result = run_data_operation(
+            json!({
+                "query": ["sys.first", "sys.second", "sys.third"],
+                "operations": "combine"
+            }),
+            [
+                ("sys.first", json!({"key": "first", "list": [1]})),
+                ("sys.second", json!({"key": [2, 3], "list": 2})),
+                ("sys.third", json!({"key": 4, "list": [3, 4]})),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            result,
+            json!({"key": ["first", 2, 3, 4], "list": [1, 2, 3, 4]})
+        );
+    }
+
+    #[test]
+    fn data_operations_filter_and_update_resolve_canvas_values() {
+        let items = json!([
+            {"name": "alpha-tenant-7", "score": 1},
+            {"name": "beta", "score": 2}
+        ]);
+        let filtered = run_data_operation(
+            json!({
+                "query": ["sys.items"],
+                "operations": "filter_values",
+                "filter_values": [
+                    {"key": "name", "operator": "contains", "value": "{{sys.user_id}}"}
+                ]
+            }),
+            [
+                ("sys.items", items.clone()),
+                ("sys.user_id", json!("tenant-7")),
+            ],
+        )
+        .unwrap();
+        assert_eq!(filtered, json!([{"name": "alpha-tenant-7", "score": 1}]));
+
+        let updated = run_data_operation(
+            json!({
+                "query": ["sys.items"],
+                "operations": "append_or_update",
+                "updates": [
+                    {"key": "owner", "value": "sys.user_id"},
+                    {"key": "label", "value": "owner={{sys.user_id}}"},
+                    {"key": "", "value": "ignored"}
+                ]
+            }),
+            [("sys.items", items), ("sys.user_id", json!("tenant-7"))],
+        )
+        .unwrap();
+        assert_eq!(updated[0]["owner"], "tenant-7");
+        assert_eq!(updated[0]["label"], "owner=tenant-7");
+        assert_eq!(updated[1]["owner"], "tenant-7");
+    }
+
+    #[test]
+    fn data_operations_collects_only_objects_and_rejects_malformed_params() {
+        let result = run_data_operation(
+            json!({
+                "query": ["sys.object", "sys.values", "sys.scalar"],
+                "operations": ""
+            }),
+            [
+                ("sys.object", json!({"value": "1"})),
+                ("sys.values", json!([{"value": "2"}, 3, null])),
+                ("sys.scalar", json!("ignored")),
+            ],
+        )
+        .unwrap();
+        assert_eq!(result, json!([{"value": 1}, {"value": 2}]));
+
+        for params in [
+            json!({"query": [], "operations": "bogus"}),
+            json!({"query": [{"missing": "input"}]}),
+            json!({"query": [1]}),
+            json!({"select_keys": [1]}),
+            json!({"filter_values": {}}),
+            json!({"updates": [1]}),
+        ] {
+            let dsl = json!({"components": {
+                "begin": {"obj": {"component_name": "Begin", "params": {}}, "downstream": ["data"], "upstream": []},
+                "data": {"obj": {"component_name": "DataOperations", "params": params}, "downstream": [], "upstream": ["begin"]}
+            }});
+            assert!(AgentWorkflow::from_value(&dsl).is_err(), "{dsl}");
+        }
+    }
+
+    #[test]
+    fn excel_processor_write_then_read_matches_go_round_trip_contract() {
+        let written = run_excel_operation(
+            json!({
+                "operation": "write",
+                "output_data": [["a", "b"], [1, 2]]
+            }),
+            [],
+        )
+        .unwrap();
+        let encoded = written["bytes"].as_str().unwrap();
+        let bytes = BASE64_STANDARD.decode(encoded).unwrap();
+        assert_eq!(&bytes[..4], b"PK\x03\x04");
+        assert_eq!(written["size"], bytes.len());
+        assert_eq!(written["sheet_names"], json!(["Sheet1"]));
+
+        let read = run_excel_operation(json!({"operation": "read", "bytes": encoded}), []).unwrap();
+        assert_eq!(read["rows"], json!([["a", "b"], ["1", "2"]]));
+        assert_eq!(read["sheet_names"], json!(["Sheet1"]));
+        assert_eq!(read["size"], 2);
+    }
+
+    #[test]
+    fn excel_processor_output_reads_selected_multi_sheet_records() {
+        let output = run_excel_operation(
+            json!({
+                "operation": "output",
+                "transform_data": "sys.tables",
+                "output_filename": "report"
+            }),
+            [(
+                "sys.tables",
+                json!({
+                    "Alpha": [{"name": "Ada", "score": 9}],
+                    "Beta": [{"name": "Lin", "score": 8}]
+                }),
+            )],
+        )
+        .unwrap();
+        assert_eq!(output["sheet_names"], json!(["Alpha", "Beta"]));
+        assert_eq!(output["attachment"]["file_name"], "report.xlsx");
+        assert!(output["attachment"].get("doc_id").is_none());
+
+        let read = run_excel_operation(
+            json!({
+                "operation": "read",
+                "input_files": [{
+                    "input": "sys.workbook",
+                    "name": "report.xlsx"
+                }],
+                "sheet_selection": "Beta"
+            }),
+            [("sys.workbook", output["bytes"].clone())],
+        )
+        .unwrap();
+        assert_eq!(read["sheet_names"], json!(["Alpha", "Beta"]));
+        assert_eq!(
+            read["data"]["report.xlsx"],
+            json!([{"name": "Lin", "score": "8"}])
+        );
+        assert!(read["markdown"].as_str().unwrap().contains("Lin"));
+    }
+
+    #[tokio::test]
+    async fn excel_processor_runs_frontend_csv_shape_in_a_canvas() {
+        let csv = BASE64_STANDARD.encode(b"name,score\nAda,9\nLin,8\n");
+        let dsl = json!({
+            "components": {
+                "begin": {"obj": {"component_name": "Begin", "params": {}}, "downstream": ["excel"], "upstream": []},
+                "excel": {"obj": {"component_name": "ExcelProcessor", "params": {
+                    "operation": "read",
+                    "input_files": [{"input": "env.csv", "name": "scores.csv"}],
+                    "sheet_selection": "all"
+                }}, "downstream": ["message"], "upstream": ["begin"]},
+                "message": {"obj": {"component_name": "Message", "params": {
+                    "content": ["{excel@summary}"]
+                }}, "downstream": [], "upstream": ["excel"]}
+            },
+            "globals": {"env.csv": csv}
+        });
+        let result = AgentWorkflow::from_value(&dsl)
+            .unwrap()
+            .unwrap()
+            .run(
+                None,
+                WorkflowRunInput {
+                    question: "ignored",
+                    user_id: "user-1",
+                    inputs: &Map::new(),
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: None,
+                    fallback_kb_ids: &[],
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.path, ["begin", "excel", "message"]);
+        assert!(result.answer.contains("2 rows, 2 columns"));
+        assert_eq!(
+            result.trace[1].outputs["data"]["scores.csv"],
+            json!([
+                {"name": "Ada", "score": "9"},
+                {"name": "Lin", "score": "8"}
+            ])
+        );
+    }
+
+    #[test]
+    fn excel_processor_merges_workbooks_and_transforms_native_records() {
+        let first = run_excel_operation(
+            json!({"operation": "write", "output_data": [["id", "left"], [1, "a"]]}),
+            [],
+        )
+        .unwrap();
+        let second = run_excel_operation(
+            json!({"operation": "write", "output_data": [["id", "right"], [1, "b"], [2, "c"]]}),
+            [],
+        )
+        .unwrap();
+        let merged = run_excel_operation(
+            json!({
+                "operation": "merge",
+                "file_refs": [first["bytes"].clone(), second["bytes"].clone()],
+                "merge_strategy": "join",
+                "join_on": "id"
+            }),
+            [],
+        )
+        .unwrap();
+        assert_eq!(merged["size"], 5);
+        assert_eq!(
+            merged["data"]["merged"],
+            json!([
+                {"id": "1", "left": "a", "right": "b"},
+                {"id": "2", "right": "c"}
+            ])
+        );
+
+        let transformed = run_excel_operation(
+            json!({"operation": "transform", "transform_data": "sys.records"}),
+            [("sys.records", json!([{"name": "Ada", "active": true}]))],
+        )
+        .unwrap();
+        assert_eq!(
+            transformed["data"],
+            json!([{"name": "Ada", "active": true}])
+        );
+        assert!(transformed["markdown"].as_str().unwrap().contains("Ada"));
+    }
+
+    #[test]
+    fn excel_processor_empty_and_invalid_inputs_are_explicit() {
+        let written =
+            run_excel_operation(json!({"operation": "write", "output_data": []}), []).unwrap();
+        assert_eq!(written["rows"], json!([]));
+        let read = run_excel_operation(
+            json!({"operation": "read", "file_ref": written["bytes"].clone()}),
+            [],
+        )
+        .unwrap();
+        assert_eq!(read["rows"], json!([]));
+        assert_eq!(read["sheet_names"], json!(["Sheet1"]));
+
+        assert!(run_excel_operation(json!({"operation": "read"}), []).is_err());
+        assert!(
+            run_excel_operation(json!({"operation": "read", "file_ref": "not-base64"}), [])
+                .unwrap_err()
+                .to_string()
+                .contains("not valid base64")
+        );
+        assert!(
+            run_excel_operation(
+                json!({"operation": "read", "file_ref": {"id": "external-only"}}),
+                []
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("external file service")
+        );
+        for params in [
+            json!({"operation": "bogus"}),
+            json!({"operation": "read", "input_files": {}}),
+            json!({"operation": "output", "output_format": "pdf"}),
+            json!({"operation": "merge", "merge_strategy": "zip"}),
+        ] {
+            let dsl = json!({"components": {
+                "begin": {"obj": {"component_name": "Begin", "params": {}}, "downstream": ["excel"], "upstream": []},
+                "excel": {"obj": {"component_name": "ExcelProcessor", "params": params}, "downstream": [], "upstream": ["begin"]}
+            }});
+            assert!(AgentWorkflow::from_value(&dsl).is_err(), "{dsl}");
+        }
+    }
+
+    #[test]
+    fn doc_generator_writes_all_fixed_formats_and_both_component_names() {
+        for (component_name, format, mime, magic) in [
+            (
+                "DocGenerator",
+                "pdf",
+                "application/pdf",
+                b"%PDF-".as_slice(),
+            ),
+            (
+                "DocsGenerator",
+                "docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                b"PK\x03\x04".as_slice(),
+            ),
+            (
+                "DocGenerator",
+                "txt",
+                "text/plain",
+                b"Generated:".as_slice(),
+            ),
+            (
+                "DocsGenerator",
+                "markdown",
+                "text/markdown",
+                b"<!-- generated:".as_slice(),
+            ),
+            (
+                "DocGenerator",
+                "html",
+                "text/html",
+                b"<!DOCTYPE html>".as_slice(),
+            ),
+        ] {
+            let output = run_doc_generator(
+                component_name,
+                json!({
+                    "content": "<think>secret</think>Report {env.name}",
+                    "filename": " bad/name.old ",
+                    "output_format": format,
+                    "add_page_numbers": true,
+                    "add_timestamp": true,
+                    "font_size": 12
+                }),
+                [("env.name", json!("中文"))],
+            )
+            .unwrap();
+            assert_eq!(output["mime_type"], mime, "{format}");
+            assert_eq!(
+                output["filename"],
+                format!(
+                    "bad name.{}",
+                    if format == "markdown" { "md" } else { format }
+                )
+            );
+            let bytes = BASE64_STANDARD
+                .decode(output["bytes"].as_str().unwrap())
+                .unwrap();
+            assert!(
+                bytes.starts_with(magic),
+                "{format}: {:x?}",
+                &bytes[..bytes.len().min(16)]
+            );
+            assert_eq!(output["size"], bytes.len(), "{format}");
+            assert!(
+                !String::from_utf8_lossy(&bytes).contains("secret"),
+                "{format}"
+            );
+            let download: Value =
+                serde_json::from_str(output["download"].as_str().unwrap()).unwrap();
+            assert_eq!(download["filename"], output["filename"], "{format}");
+            assert_eq!(download["base64"], output["bytes"], "{format}");
+        }
+    }
+
+    #[tokio::test]
+    async fn doc_generator_runs_in_canvas_and_message_consumes_download_descriptor() {
+        let dsl = json!({
+            "components": {
+                "begin": {"obj": {"component_name": "Begin", "params": {}}, "downstream": ["docs"], "upstream": []},
+                "docs": {"obj": {"component_name": "DocGenerator", "params": {
+                    "content": "Hello {env.name}",
+                    "filename": "greeting.txt",
+                    "output_format": "txt",
+                    "add_page_numbers": false,
+                    "add_timestamp": false,
+                    "include_download_info_in_content": true,
+                    "font_size": 12
+                }}, "downstream": ["message"], "upstream": ["begin"]},
+                "message": {"obj": {"component_name": "Message", "params": {
+                    "content": ["{docs@download}"]
+                }}, "downstream": [], "upstream": ["docs"]}
+            },
+            "globals": {"env.name": "RayRAG"}
+        });
+        let result = AgentWorkflow::from_value(&dsl)
+            .unwrap()
+            .unwrap()
+            .run(
+                None,
+                WorkflowRunInput {
+                    question: "ignored",
+                    user_id: "user-1",
+                    inputs: &Map::new(),
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: None,
+                    fallback_kb_ids: &[],
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.path, ["begin", "docs", "message"]);
+        let answer: Value = serde_json::from_str(&result.answer).unwrap();
+        assert_eq!(answer["filename"], "greeting.txt");
+        assert_eq!(answer["mime_type"], "text/plain");
+        assert!(
+            answer["base64"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+        );
+        assert!(answer.get("include_download_info_in_content").is_none());
+        let bytes = BASE64_STANDARD
+            .decode(result.trace[1].outputs["bytes"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(bytes, b"\nHello RayRAG");
+    }
+
+    #[test]
+    fn doc_generator_rejects_invalid_static_params() {
+        for params in [
+            json!({}),
+            json!({"content": ""}),
+            json!({"content": 1}),
+            json!({"content": "x", "output_format": "xlsx"}),
+            json!({"content": "x", "font_size": 11}),
+            json!({"content": "x", "add_timestamp": "yes"}),
+        ] {
+            let dsl = json!({"components": {
+                "begin": {"obj": {"component_name": "Begin", "params": {}}, "downstream": ["docs"], "upstream": []},
+                "docs": {"obj": {"component_name": "DocGenerator", "params": params}, "downstream": [], "upstream": ["begin"]}
+            }});
+            assert!(AgentWorkflow::from_value(&dsl).is_err(), "{dsl}");
+        }
+    }
+
+    #[tokio::test]
+    async fn list_operations_runs_in_a_canvas_and_preserves_native_outputs() {
+        let dsl = json!({
+            "components": {
+                "begin": {"obj": {"component_name": "Begin", "params": {}}, "downstream": ["list"], "upstream": []},
+                "list": {"obj": {"component_name": "ListOperations", "params": {
+                    "query": "env.items", "operations": "topN", "n": "2"
+                }}, "downstream": ["message"], "upstream": ["begin"]},
+                "message": {"obj": {"component_name": "Message", "params": {
+                    "content": ["{list@first}/{list@last}"]
+                }}, "downstream": [], "upstream": ["list"]}
+            },
+            "globals": {"env.items": ["alpha", "beta", "gamma"]}
+        });
+        let result = AgentWorkflow::from_value(&dsl)
+            .unwrap()
+            .unwrap()
+            .run(
+                None,
+                WorkflowRunInput {
+                    question: "ignored",
+                    user_id: "user-1",
+                    inputs: &Map::new(),
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: None,
+                    fallback_kb_ids: &[],
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.answer, "alpha/beta");
+        assert_eq!(result.trace[1].outputs["result"], json!(["alpha", "beta"]));
+    }
+
+    #[test]
+    fn list_operations_match_nth_head_tail_and_strict_ranges() {
+        let items = json!(["a", "b", "c", "d", "e"]);
+        let nth = run_list_operation(
+            json!({"query": "sys.items", "operations": "nth", "n": -1}),
+            items.clone(),
+        )
+        .unwrap();
+        assert_eq!(nth["result"], json!(["e"]));
+        assert_eq!(nth["first"], "e");
+        assert_eq!(nth["last"], "e");
+
+        let head = run_list_operation(
+            json!({"query": "sys.items", "operations": "topN", "n": true}),
+            items.clone(),
+        )
+        .unwrap();
+        assert_eq!(head["result"], json!(["a"]));
+
+        let tail = run_list_operation(
+            json!({"query": "sys.items", "operations": "tail", "n": 99}),
+            items.clone(),
+        )
+        .unwrap();
+        assert_eq!(tail["result"], items);
+
+        let error = run_list_operation(
+            json!({"query": "sys.items", "operations": "nth", "n": 0, "strict": "YES"}),
+            json!([1, 2, 3]),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("nth requires n"));
+    }
+
+    #[test]
+    fn list_operations_filter_sort_and_deduplicate_match_upstream_contract() {
+        let filtered = run_list_operation(
+            json!({
+                "query": "sys.items",
+                "operations": "filter",
+                "filter": {"operator": "=", "value": "True"}
+            }),
+            json!([true, false, true, "True"]),
+        )
+        .unwrap();
+        assert_eq!(filtered["result"], json!([true, true, "True"]));
+
+        let sorted = run_list_operation(
+            json!({
+                "query": "sys.items",
+                "operations": "sort",
+                "sort_method": "desc",
+                "sort_by": "score,title"
+            }),
+            json!([
+                {"id": 3, "score": 0.76, "title": "Gamma"},
+                {"id": 2, "score": 0.88, "title": "Beta"},
+                {"id": 1, "score": 0.91, "title": "Alpha"}
+            ]),
+        )
+        .unwrap();
+        assert_eq!(sorted["first"]["id"], 1);
+        assert_eq!(sorted["last"]["id"], 3);
+
+        let legacy_sorted = run_list_operation(
+            json!({"query": "sys.items", "operations": "sort", "sort_method": "desc"}),
+            json!([
+                {"id": 1, "score": 0.91},
+                {"id": 3, "score": 0.76},
+                {"id": 2, "score": 0.88}
+            ]),
+        )
+        .unwrap();
+        assert_eq!(legacy_sorted["result"][0]["id"], 3);
+
+        let mut first = Map::new();
+        first.insert("b".into(), json!([2, 3]));
+        first.insert("a".into(), json!(1));
+        let mut same = Map::new();
+        same.insert("a".into(), json!(1));
+        same.insert("b".into(), json!([2, 3]));
+        let deduplicated = run_list_operation(
+            json!({"query": "sys.items", "operations": "drop_duplicates"}),
+            Value::Array(vec![Value::Object(first.clone()), Value::Object(same)]),
+        )
+        .unwrap();
+        assert_eq!(
+            deduplicated["result"],
+            Value::Array(vec![Value::Object(first)])
+        );
+    }
+
+    #[test]
+    fn list_operations_reject_invalid_params_and_non_array_inputs() {
+        for params in [
+            json!({"operations": "head", "n": 1}),
+            json!({"query": "sys.items", "operations": "reverse"}),
+            json!({"query": "sys.items", "sort_by": ["score", 1]}),
+            json!({"query": "sys.items", "filter": []}),
+        ] {
+            let dsl = json!({"components": {
+                "begin": {"obj": {"component_name": "Begin", "params": {}}, "downstream": ["list"], "upstream": []},
+                "list": {"obj": {"component_name": "ListOperations", "params": params}, "downstream": [], "upstream": ["begin"]}
+            }});
+            assert!(AgentWorkflow::from_value(&dsl).is_err(), "{dsl}");
+        }
+
+        let error = run_list_operation(
+            json!({"query": "sys.items", "operations": "head", "n": 1}),
+            json!("not-an-array"),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("input should be an array"));
+    }
+
+    #[test]
+    fn variable_aggregator_rejects_empty_groups_and_empty_candidates() {
+        let mut runtime = CanvasRuntime::default();
+        let empty_groups = CanvasNode {
+            id: "aggregate".into(),
+            component_name: "VariableAggregator".into(),
+            params: Map::from_iter([("groups".into(), json!([]))]),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+        assert!(
+            execute_variable_aggregator(&mut runtime, &empty_groups)
+                .unwrap_err()
+                .to_string()
+                .contains("groups cannot be empty")
+        );
+
+        let empty_candidates = CanvasNode {
+            params: Map::from_iter([(
+                "groups".into(),
+                json!([{"group_name": "answer", "variables": []}]),
+            )]),
+            ..empty_groups
+        };
+        assert!(
+            execute_variable_aggregator(&mut runtime, &empty_candidates)
+                .unwrap_err()
+                .to_string()
+                .contains("variables of group 'answer' cannot be empty")
+        );
+    }
+
+    #[test]
+    fn variable_assigner_matches_selector_type_and_error_semantics() {
+        let mut runtime = CanvasRuntime {
+            globals: Map::from_iter([
+                ("source".into(), json!([2, 3])),
+                ("target".into(), json!([1])),
+                ("text".into(), json!("old")),
+                ("env.number".into(), json!(8)),
+                ("flag".into(), json!(true)),
+            ]),
+            ..CanvasRuntime::default()
+        };
+        let node = CanvasNode {
+            id: "assign".into(),
+            component_name: "VariableAssigner".into(),
+            params: Map::from_iter([(
+                "variables".into(),
+                json!([
+                    {"variable": "target", "operator": "extend", "parameter": "source"},
+                    {"variable": "text", "operator": "set", "parameter": "value={env.number}"},
+                    {"variable": "env.number", "operator": "/=", "parameter": 0},
+                    {"variable": "flag", "operator": "+=", "parameter": 1}
+                ]),
+            )]),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+
+        execute_variable_assigner(&mut runtime, &node).unwrap();
+        assert_eq!(runtime.globals["target"], json!([1, 2, 3]));
+        assert_eq!(runtime.globals["text"], json!("value=8"));
+        assert_eq!(runtime.globals["env.number"], json!("ERROR:DIVIDE_BY_ZERO"));
+        assert_eq!(
+            runtime.globals["flag"],
+            json!("ERROR:VARIABLE_NOT_NUMBER or PARAMETER_NOT_NUMBER")
+        );
+    }
+
+    #[test]
+    fn variable_assigner_requires_parameters_except_for_parameterless_operators() {
+        let mut runtime = CanvasRuntime {
+            globals: Map::from_iter([("items".into(), json!([1, 2]))]),
+            ..CanvasRuntime::default()
+        };
+        let incomplete = CanvasNode {
+            id: "assign".into(),
+            component_name: "VariableAssigner".into(),
+            params: Map::from_iter([(
+                "variables".into(),
+                json!([{"variable": "items", "operator": "append"}]),
+            )]),
+            downstream: Vec::new(),
+            upstream: Vec::new(),
+            parent_id: None,
+        };
+        assert!(
+            execute_variable_assigner(&mut runtime, &incomplete)
+                .unwrap_err()
+                .to_string()
+                .contains("variable is not complete")
+        );
+
+        let remove = CanvasNode {
+            params: Map::from_iter([(
+                "variables".into(),
+                json!([{"variable": "items", "operator": "remove_last"}]),
+            )]),
+            ..incomplete
+        };
+        execute_variable_assigner(&mut runtime, &remove).unwrap();
+        assert_eq!(runtime.globals["items"], json!([1]));
+    }
+
+    #[tokio::test]
+    async fn retrieval_uses_backend_fallback_kb_and_returns_references() {
+        let dsl = json!({"components": {
+            "begin": {"obj": {"component_name": "Begin", "params": {}}, "downstream": ["retrieval"], "upstream": []},
+            "retrieval": {"obj": {"component_name": "Retrieval", "params": {
+                "query": "sys.query",
+                "similarity_threshold": 0.3,
+                "keywords_similarity_weight": 0.7,
+                "top_n": 3,
+                "top_k": 20
+            }}, "downstream": ["message"], "upstream": ["begin"]},
+            "message": {"obj": {"component_name": "Message", "params": {
+                "content": ["{retrieval@formalized_content}"]
+            }}, "downstream": [], "upstream": ["retrieval"]}
+        }});
+        let retriever = MockRetriever::default();
+        let fallback_kb_ids = vec!["fallback-kb".to_string()];
+        let result = AgentWorkflow::from_value(&dsl)
+            .unwrap()
+            .unwrap()
+            .run(
+                None,
+                WorkflowRunInput {
+                    question: "USER: How does Rust ownership work?",
+                    user_id: "user-1",
+                    inputs: &Map::new(),
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: Some(&retriever),
+                    fallback_kb_ids: &fallback_kb_ids,
+                },
+            )
+            .await
+            .unwrap();
+        let request = retriever.request.lock().unwrap().clone().unwrap();
+        assert_eq!(request.query, "How does Rust ownership work?");
+        assert_eq!(request.kb_ids, fallback_kb_ids);
+        assert_eq!(request.top_n, 3);
+        assert_eq!(request.top_k, 20);
+        assert_eq!(
+            result.answer,
+            "Reference 1 | Guide.md\nRust ownership guide"
+        );
+        assert_eq!(result.references.len(), 1);
+        assert_eq!(result.references[0].id, "chunk-1");
+    }
+
+    #[tokio::test]
+    async fn workflow_observer_emits_node_start_before_async_component_finishes() {
+        let dsl = json!({"components": {
+            "begin": {
+                "obj": {"component_name": "Begin", "params": {}},
+                "downstream": ["retrieval"], "upstream": []
+            },
+            "retrieval": {
+                "obj": {"component_name": "Retrieval", "params": {
+                    "query": "sys.query",
+                    "kb_ids": ["kb-1"]
+                }},
+                "downstream": ["message"], "upstream": ["begin"]
+            },
+            "message": {
+                "obj": {"component_name": "Message", "params": {
+                    "content": ["{retrieval@formalized_content}"]
+                }},
+                "downstream": [], "upstream": ["retrieval"]
+            }
+        }});
+        let workflow = AgentWorkflow::from_value(&dsl).unwrap().unwrap();
+        let retriever = BlockingRetriever::default();
+        let (events, mut received) = tokio::sync::mpsc::unbounded_channel();
+        let observer = ChannelWorkflowObserver(events);
+        let inputs = Map::new();
+        let fallback_kb_ids = Vec::new();
+        let run = workflow.run_interactive_observed(
+            None,
+            WorkflowRunInput {
+                question: "live query",
+                user_id: "user-1",
+                inputs: &inputs,
+                history: &[],
+                generation: GenerationParamsPatch::default(),
+                llm_resolver: None,
+                retriever: Some(&retriever),
+                fallback_kb_ids: &fallback_kb_ids,
+            },
+            &observer,
+        );
+        tokio::pin!(run);
+
+        loop {
+            tokio::select! {
+                event = received.recv() => {
+                    let event = event.unwrap();
+                    if event.event == "node_started"
+                        && event.data["component_id"] == "retrieval"
+                    {
+                        assert_eq!(event.data["component_name"], "Retrieval");
+                        assert_eq!(event.data["inputs"]["query"], "live query");
+                        break;
+                    }
+                }
+                result = &mut run => {
+                    panic!("workflow completed before blocked Retrieval start: {result:?}");
+                }
+            }
+        }
+
+        retriever.release.notify_one();
+        let result = run.await.unwrap();
+        assert!(matches!(
+            result,
+            WorkflowRunOutcome::Completed(WorkflowRunResult { answer, .. })
+                if answer == "live result"
+        ));
+        let remaining: Vec<_> = std::iter::from_fn(|| received.try_recv().ok()).collect();
+        assert!(remaining.iter().any(|event| {
+            event.event == "node_finished" && event.data["component_id"] == "retrieval"
+        }));
+    }
+
+    #[tokio::test]
+    async fn categorize_routes_to_the_llm_selected_destination() {
+        use axum::{Json, Router, routing::post};
+
+        let app = Router::new().route(
+            "/chat/completions",
+            post(|| async {
+                Json(json!({
+                    "choices": [{"message": {"content": "product"}}],
+                    "usage": {"prompt_tokens": 10, "completion_tokens": 1, "total_tokens": 11}
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let llm = LlmClient::new(crate::llm::LlmConfig {
+            api_base: format!("http://{address}"),
+            api_key: "test".into(),
+            model: "test".into(),
+            ..crate::llm::LlmConfig::default()
+        });
+        let dsl = json!({"components": {
+            "begin": {"obj": {"component_name": "Begin", "params": {}}, "downstream": ["categorize"], "upstream": []},
+            "categorize": {"obj": {"component_name": "Categorize", "params": {
+                "query": "sys.query",
+                "category_description": {
+                    "other": {"description": "anything else", "to": ["message-other"]},
+                    "product": {"description": "product questions", "examples": ["What is RayRAG?"], "to": ["message-product"]}
+                }
+            }}, "downstream": ["message-other", "message-product"], "upstream": ["begin"]},
+            "message-other": {"obj": {"component_name": "Message", "params": {"content": ["other"]}}, "downstream": [], "upstream": ["categorize"]},
+            "message-product": {"obj": {"component_name": "Message", "params": {"content": ["product"]}}, "downstream": [], "upstream": ["categorize"]}
+        }});
+        let result = AgentWorkflow::from_value(&dsl)
+            .unwrap()
+            .unwrap()
+            .run(
+                Some(&llm),
+                WorkflowRunInput {
+                    question: "Tell me about RayRAG",
+                    user_id: "user-1",
+                    inputs: &Map::new(),
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: None,
+                    fallback_kb_ids: &[],
+                },
+            )
+            .await
+            .unwrap();
+        server.abort();
+        assert_eq!(result.answer, "product");
+        assert_eq!(result.path, ["begin", "categorize", "message-product"]);
+        assert_eq!(result.usage.unwrap().total_tokens, 11);
+    }
+
+    #[tokio::test]
+    async fn llm_and_categorize_nodes_resolve_their_own_tenant_models() {
+        use axum::{Json, Router, routing::post};
+
+        let requested_models = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let app = Router::new().route(
+            "/chat/completions",
+            post({
+                let requested_models = requested_models.clone();
+                move |Json(request): Json<Value>| {
+                    let requested_models = requested_models.clone();
+                    async move {
+                        let model = request["model"].as_str().unwrap().to_owned();
+                        requested_models.lock().unwrap().push(model.clone());
+                        let content = match model.as_str() {
+                            "category-model" => "product",
+                            "answer-model" => "node-specific answer",
+                            _ => "default model was used",
+                        };
+                        Json(json!({
+                            "choices": [{"message": {"content": content}}],
+                            "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3}
+                        }))
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let api_base = format!("http://{address}");
+        let default_llm = LlmClient::new(crate::llm::LlmConfig {
+            api_base: api_base.clone(),
+            api_key: "default-secret".into(),
+            model: "default-model".into(),
+            ..crate::llm::LlmConfig::default()
+        });
+        let resolved_selectors = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let resolver = RecordingLlmResolver {
+            api_base,
+            selectors: resolved_selectors.clone(),
+        };
+        let dsl = json!({"components": {
+            "begin": {"obj": {"component_name": "Begin", "params": {}}, "downstream": ["categorize"], "upstream": []},
+            "categorize": {"obj": {"component_name": "Categorize", "params": {
+                "llm_id": "category-model@default@TestProvider",
+                "category_description": {
+                    "other": {"description": "anything else", "to": ["message-other"]},
+                    "product": {"description": "product questions", "to": ["llm"]}
+                }
+            }}, "downstream": ["message-other", "llm"], "upstream": ["begin"]},
+            "llm": {"obj": {"component_name": "LLM", "params": {
+                "llm_id": "answer-model@default@TestProvider",
+                "prompts": [{"role": "user", "content": "{sys.query}"}]
+            }}, "downstream": ["message-answer"], "upstream": ["categorize"]},
+            "message-other": {"obj": {"component_name": "Message", "params": {"content": ["other"]}}, "downstream": [], "upstream": ["categorize"]},
+            "message-answer": {"obj": {"component_name": "Message", "params": {"content": ["{llm@content}"]}}, "downstream": [], "upstream": ["llm"]}
+        }});
+        let result = AgentWorkflow::from_value(&dsl)
+            .unwrap()
+            .unwrap()
+            .run(
+                Some(&default_llm),
+                WorkflowRunInput {
+                    question: "Tell me about RayRAG",
+                    user_id: "tenant-a",
+                    inputs: &Map::new(),
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: Some(&resolver),
+                    retriever: None,
+                    fallback_kb_ids: &[],
+                },
+            )
+            .await
+            .unwrap();
+        server.abort();
+
+        assert_eq!(result.answer, "node-specific answer");
+        assert_eq!(
+            *resolved_selectors.lock().unwrap(),
+            [
+                "category-model@default@TestProvider",
+                "answer-model@default@TestProvider"
+            ]
+        );
+        assert_eq!(
+            *requested_models.lock().unwrap(),
+            ["category-model", "answer-model"]
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires opt-in GPU model endpoints"]
+    async fn gpu_model_endpoints_execute_categorize_embedding_and_reranking() {
+        use crate::embed::{Embedder, OpenAIEmbedder};
+        use crate::rerank::{RemoteReranker, Reranker};
+
+        let llm_base = std::env::var("RAYRAG_TEST_LLM_BASE").unwrap();
+        let embedding_base = std::env::var("RAYRAG_TEST_EMBEDDING_BASE").unwrap();
+        let embedding_model = std::env::var("RAYRAG_TEST_EMBEDDING_MODEL").unwrap();
+        let reranker_base = std::env::var("RAYRAG_TEST_RERANKER_BASE").unwrap();
+
+        let embeddings = OpenAIEmbedder::new(&embedding_base, "test", &embedding_model)
+            .embed(&["Rust ownership", "Bananas are yellow"])
+            .await
+            .unwrap();
+        assert_eq!(embeddings.len(), 2);
+        assert!(!embeddings[0].is_empty());
+        assert_eq!(embeddings[0].len(), embeddings[1].len());
+        assert!(embeddings.iter().flatten().all(|value| value.is_finite()));
+
+        let mut reranker = RemoteReranker::new(&reranker_base);
+        if let Some(key) = std::env::var("RAYRAG_TEST_RERANKER_KEY")
+            .ok()
+            .map(|key| key.trim().to_string())
+            .filter(|key| !key.is_empty())
+        {
+            reranker = reranker.with_api_key(&key);
+        }
+        let ranked = reranker
+            .rerank(
+                "什么是RAGFlow",
+                &[
+                    "RAGFlow是一个开源的RAG引擎".into(),
+                    "这是一段与查询无关的文本".into(),
+                ],
+                2,
+            )
+            .await
+            .unwrap();
+        assert_eq!(ranked.len(), 2);
+        // mxbai-rerank-large-v2 puts the RAGFlow-related document first.
+        assert_eq!(ranked[0].0, 0);
+
+        let llm = LlmClient::new(crate::llm::LlmConfig {
+            api_base: llm_base,
+            api_key: "test".into(),
+            model: std::env::var("RAYRAG_TEST_LLM_MODEL").unwrap_or_else(|_| "default".into()),
+            ..crate::llm::LlmConfig::default()
+        });
+        let dsl = json!({"components": {
+            "begin": {"obj": {"component_name": "Begin", "params": {}}, "downstream": ["categorize"], "upstream": []},
+            "categorize": {"obj": {"component_name": "Categorize", "params": {
+                "category_description": {
+                    "rust": {"description": "questions about the Rust programming language", "examples": ["Explain Rust borrowing"], "to": ["message-rust"]},
+                    "weather": {"description": "weather forecasts", "to": ["message-weather"]},
+                    "other": {"description": "anything else", "to": ["message-other"]}
+                }
+            }}, "downstream": ["message-rust", "message-weather", "message-other"], "upstream": ["begin"]},
+            "message-rust": {"obj": {"component_name": "Message", "params": {"content": ["rust"]}}, "downstream": [], "upstream": ["categorize"]},
+            "message-weather": {"obj": {"component_name": "Message", "params": {"content": ["weather"]}}, "downstream": [], "upstream": ["categorize"]},
+            "message-other": {"obj": {"component_name": "Message", "params": {"content": ["other"]}}, "downstream": [], "upstream": ["categorize"]}
+        }});
+        let result = AgentWorkflow::from_value(&dsl)
+            .unwrap()
+            .unwrap()
+            .run(
+                Some(&llm),
+                WorkflowRunInput {
+                    question: "How does ownership prevent memory bugs in Rust?",
+                    user_id: "gpu-test",
+                    inputs: &Map::new(),
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: None,
+                    fallback_kb_ids: &[],
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.answer, "rust");
+        assert_eq!(result.path, ["begin", "categorize", "message-rust"]);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires opt-in GPU vision endpoint"]
+    async fn gpu_vision_endpoint_describes_image_with_prompt() {
+        use crate::vision::{VisionClient, VisionConfig};
+
+        let vision_base = std::env::var("RAYRAG_TEST_VISION_BASE").unwrap();
+        let vision_model =
+            std::env::var("RAYRAG_TEST_VISION_MODEL").unwrap_or_else(|_| "default".into());
+
+        // A tiny white image with a black rectangle, generated in pure Rust
+        // as an RGB PNG (llama.cpp vision accepts PNG/JPEG, not PPM).
+        fn encode_png(width: u32, height: u32, pixels: &[u8]) -> Vec<u8> {
+            use flate2::Compression;
+            use flate2::write::ZlibEncoder;
+            use std::io::Write;
+            let mut raw = Vec::with_capacity((width * height * 3 + height) as usize);
+            for y in 0..height {
+                raw.push(0); // filter: none
+                for x in 0..width {
+                    let i = ((y * width + x) * 3) as usize;
+                    raw.extend_from_slice(&pixels[i..i + 3]);
+                }
+            }
+            let mut z = ZlibEncoder::new(Vec::new(), Compression::default());
+            z.write_all(&raw).unwrap();
+            let idat = z.finish().unwrap();
+            fn chunk(tag: &[u8; 4], data: &[u8]) -> Vec<u8> {
+                // PNG chunk CRC-32 (IEEE 802.3, poly 0xEDB88320), no external crate.
+                fn crc32(bytes: &[u8]) -> u32 {
+                    let mut table = [0u32; 256];
+                    for (i, entry) in table.iter_mut().enumerate() {
+                        let mut c = i as u32;
+                        for _ in 0..8 {
+                            c = if c & 1 != 0 {
+                                0xEDB8_8320 ^ (c >> 1)
+                            } else {
+                                c >> 1
+                            };
+                        }
+                        *entry = c;
+                    }
+                    let mut crc = 0xFFFF_FFFFu32;
+                    for &b in bytes {
+                        crc = table[((crc ^ b as u32) & 0xFF) as usize] ^ (crc >> 8);
+                    }
+                    crc ^ 0xFFFF_FFFF
+                }
+                let mut out = Vec::new();
+                out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+                out.extend_from_slice(tag);
+                out.extend_from_slice(data);
+                out.extend_from_slice(&crc32(&[tag, data].concat()).to_be_bytes());
+                out
+            }
+            let mut png = Vec::new();
+            png.extend_from_slice(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+            let mut ihdr = Vec::new();
+            ihdr.extend_from_slice(&width.to_be_bytes());
+            ihdr.extend_from_slice(&height.to_be_bytes());
+            ihdr.extend_from_slice(&[8, 2, 0, 0, 0]); // 8-bit, RGB, deflate, adaptive, none
+            png.extend_from_slice(&chunk(b"IHDR", &ihdr));
+            png.extend_from_slice(&chunk(b"IDAT", &idat));
+            png.extend_from_slice(&chunk(b"IEND", &[]));
+            png
+        }
+
+        let (w, h) = (64u32, 24u32);
+        let mut pixels = vec![255u8; (w * h * 3) as usize];
+        for y in 8..16 {
+            for x in 8..56 {
+                let i = ((y * w + x) * 3) as usize;
+                pixels[i] = 0;
+                pixels[i + 1] = 0;
+                pixels[i + 2] = 0;
+            }
+        }
+        let data_url = VisionClient::normalize_image(&encode_png(w, h, &pixels), "image/png");
+
+        let client = VisionClient::new(VisionConfig {
+            api_base: vision_base,
+            api_key: String::new(),
+            model: vision_model,
+            lang: "Chinese".into(),
+        });
+        let out = client
+            .describe_with_prompt(
+                &data_url,
+                "What color is the rectangle? Answer in one word.",
+            )
+            .await
+            .unwrap();
+        assert!(!out.content.is_empty());
+        // The black rectangle on white should be described as black/dark.
+        assert!(
+            out.content.to_ascii_lowercase().contains("black")
+                || out.content.to_ascii_lowercase().contains("dark")
+                || out.content.contains("黑")
+        );
+    }
+
+    #[test]
+    fn malformed_edges_and_switch_destinations_are_rejected() {
+        let mut dsl = branch_canvas();
+        dsl["components"]["begin"]["downstream"] = json!(["missing"]);
+        assert!(
+            AgentWorkflow::from_value(&dsl)
+                .unwrap_err()
+                .to_string()
+                .contains("missing component")
+        );
+
+        let mut dsl = branch_canvas();
+        dsl["components"]["switch:0"]["obj"]["params"]["conditions"][0]["to"] = json!(["missing"]);
+        assert!(
+            AgentWorkflow::from_value(&dsl)
+                .unwrap_err()
+                .to_string()
+                .contains("missing destination")
+        );
+
+        let mut dsl = branch_canvas();
+        dsl["components"]["switch:0"]["obj"]["params"]["conditions"][0]["to"] = json!(["assign:0"]);
+        assert!(
+            AgentWorkflow::from_value(&dsl)
+                .unwrap_err()
+                .to_string()
+                .contains("not a declared downstream")
+        );
+
+        let mut dsl = branch_canvas();
+        dsl["components"]["message:yes"]["downstream"] = json!(["assign:0"]);
+        assert!(
+            AgentWorkflow::from_value(&dsl)
+                .unwrap_err()
+                .to_string()
+                .contains("contains a cycle")
+        );
+    }
+
+    #[test]
+    fn switch_dialects_validate_required_and_inferred_destinations() {
+        let mut dsl = branch_canvas();
+        dsl["components"]["switch:0"]["obj"]["params"]["conditions"] = json!([]);
+        assert!(
+            AgentWorkflow::from_value(&dsl)
+                .unwrap_err()
+                .to_string()
+                .contains("conditions cannot be empty")
+        );
+
+        let mut dsl = branch_canvas();
+        dsl["components"]["switch:0"]["obj"]["params"]["conditions"][0]["to"] = json!([]);
+        assert!(
+            AgentWorkflow::from_value(&dsl)
+                .unwrap_err()
+                .to_string()
+                .contains("condition.to cannot be empty")
+        );
+
+        let mut dsl = branch_canvas();
+        dsl["components"]["switch:0"]["obj"]["params"] = json!({
+            "conditions": [{
+                "op": "and",
+                "clauses": [{"left": "{{env.score}}", "op": ">=", "right": 3}],
+                "to": "message:yes"
+            }],
+            "default": "message:no"
+        });
+        AgentWorkflow::from_value(&dsl).unwrap().unwrap();
+
+        dsl["components"]["switch:0"]["obj"]["params"]["default"] = json!("missing");
+        assert!(
+            AgentWorkflow::from_value(&dsl)
+                .unwrap_err()
+                .to_string()
+                .contains("missing destination")
+        );
+    }
+
+    #[test]
+    fn retrieval_rejects_unimplemented_ragflow_branches_during_validation() {
+        let dsl = json!({"components": {
+            "begin": {"obj": {"component_name": "Begin", "params": {}}, "downstream": ["retrieval"], "upstream": []},
+            "retrieval": {"obj": {"component_name": "Retrieval", "params": {
+                "retrieval_from": "memory", "memory_ids": ["memory-1"]
+            }}, "downstream": [], "upstream": ["begin"]}
+        }});
+        assert!(
+            AgentWorkflow::from_value(&dsl)
+                .unwrap_err()
+                .to_string()
+                .contains("only dataset retrieval is implemented")
+        );
+    }
+
+    #[test]
+    fn legacy_prompt_only_dsl_remains_compatible() {
+        assert!(AgentWorkflow::from_value(&json!({})).unwrap().is_none());
+        assert!(
+            AgentWorkflow::from_value(&json!({"components": []}))
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn user_fill_up_consumes_one_initial_scalar_without_interrupting() {
+        let dsl = json!({"components": {
+            "begin": {
+                "obj": {"component_name": "Begin", "params": {}},
+                "downstream": ["fill"], "upstream": []
+            },
+            "fill": {
+                "obj": {"component_name": "UserFillUp", "params": {
+                    "inputs": {"answer": {"type": "line"}},
+                    "tips": "Answer the question"
+                }},
+                "downstream": ["done"], "upstream": ["begin"]
+            },
+            "done": {
+                "obj": {"component_name": "Message", "params": {
+                    "content": ["answer={fill@answer}"]
+                }},
+                "downstream": [], "upstream": ["fill"]
+            }
+        }});
+        let workflow = AgentWorkflow::from_value(&dsl).unwrap().unwrap();
+        let outcome = workflow
+            .run_interactive(
+                None,
+                WorkflowRunInput {
+                    question: "forty-two",
+                    user_id: "user-1",
+                    inputs: &Map::new(),
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: None,
+                    fallback_kb_ids: &[],
+                },
+            )
+            .await
+            .unwrap();
+        let WorkflowRunOutcome::Completed(result) = outcome else {
+            panic!("single declared field should consume the initial query");
+        };
+        assert_eq!(result.answer, "answer=forty-two");
+        assert_eq!(result.path, ["begin", "fill", "done"]);
+        assert_eq!(result.trace[1].outputs["user_input"], "forty-two");
+        assert_eq!(result.trace[1].outputs["answer"], "forty-two");
+    }
+
+    #[tokio::test]
+    async fn user_fill_up_checkpoint_roundtrip_resumes_at_the_exact_cursor() {
+        let dsl = json!({"components": {
+            "begin": {
+                "obj": {"component_name": "Begin", "params": {}},
+                "downstream": ["fill"], "upstream": []
+            },
+            "fill": {
+                "obj": {"component_name": "UserFillUp", "params": {
+                    "enable_tips": true,
+                    "inputs": {
+                        "age": {"type": "line"},
+                        "name": {"type": "line"}
+                    },
+                    "tips": "Complete the form"
+                }},
+                "downstream": ["done"], "upstream": ["begin"]
+            },
+            "done": {
+                "obj": {"component_name": "Message", "params": {
+                    "content": ["{fill@name}:{fill@age}"]
+                }},
+                "downstream": [], "upstream": ["fill"]
+            }
+        }});
+        let workflow = AgentWorkflow::from_value(&dsl).unwrap().unwrap();
+        let first = workflow
+            .run_interactive(
+                None,
+                WorkflowRunInput {
+                    question: "not a structured form",
+                    user_id: "user-1",
+                    inputs: &Map::new(),
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: None,
+                    fallback_kb_ids: &[],
+                },
+            )
+            .await
+            .unwrap();
+        let WorkflowRunOutcome::WaitingForUser(waiting) = first else {
+            panic!("two fields require an interrupt for scalar initial input");
+        };
+        assert_eq!(waiting.component_id, "fill");
+        assert_eq!(waiting.tips.as_deref(), Some("Complete the form"));
+        assert_eq!(waiting.path, ["begin"]);
+        assert_eq!(
+            waiting
+                .inputs
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["age", "name"]
+        );
+        let checkpoint: AgentWorkflowCheckpoint =
+            serde_json::from_slice(&serde_json::to_vec(&waiting.checkpoint).unwrap()).unwrap();
+        let resumed = workflow
+            .resume_interactive(
+                None,
+                WorkflowRunInput {
+                    question: "form response",
+                    user_id: "user-1",
+                    inputs: &Map::new(),
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: None,
+                    fallback_kb_ids: &[],
+                },
+                checkpoint,
+                json!({"name": "Ada", "age": "37"}),
+            )
+            .await
+            .unwrap();
+        let WorkflowRunOutcome::Completed(result) = resumed else {
+            panic!("one resume payload should complete this workflow");
+        };
+        assert_eq!(result.answer, "Ada:37");
+        assert_eq!(result.path, ["begin", "fill", "done"]);
+        assert_eq!(result.trace[1].outputs["name"], "Ada");
+        assert_eq!(result.trace[1].outputs["age"], "37");
+    }
+
+    #[tokio::test]
+    async fn user_fill_up_resume_does_not_rerun_upstream_retrieval() {
+        let dsl = json!({"components": {
+            "begin": {
+                "obj": {"component_name": "Begin", "params": {}},
+                "downstream": ["retrieve"], "upstream": []
+            },
+            "retrieve": {
+                "obj": {"component_name": "Retrieval", "params": {
+                    "query": "sys.query", "kb_ids": []
+                }},
+                "downstream": ["fill"], "upstream": ["begin"]
+            },
+            "fill": {
+                "obj": {"component_name": "UserFillUp", "params": {
+                    "inputs": {
+                        "answer": {"type": "line"},
+                        "reason": {"type": "line"}
+                    }
+                }},
+                "downstream": ["done"], "upstream": ["retrieve"]
+            },
+            "done": {
+                "obj": {"component_name": "Message", "params": {
+                    "content": ["{retrieve@formalized_content}|{fill@answer}"]
+                }},
+                "downstream": [], "upstream": ["fill"]
+            }
+        }});
+        let workflow = AgentWorkflow::from_value(&dsl).unwrap().unwrap();
+        let retriever = MockRetriever::default();
+        let first = workflow
+            .run_interactive(
+                None,
+                WorkflowRunInput {
+                    question: "Rust ownership",
+                    user_id: "user-1",
+                    inputs: &Map::new(),
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: Some(&retriever),
+                    fallback_kb_ids: &["kb-1".into()],
+                },
+            )
+            .await
+            .unwrap();
+        let WorkflowRunOutcome::WaitingForUser(waiting) = first else {
+            panic!("form should interrupt");
+        };
+        assert_eq!(retriever.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let resumed = workflow
+            .resume_interactive(
+                None,
+                WorkflowRunInput {
+                    question: "resume",
+                    user_id: "user-1",
+                    inputs: &Map::new(),
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: Some(&retriever),
+                    fallback_kb_ids: &["kb-1".into()],
+                },
+                waiting.checkpoint,
+                json!({"answer": "yes", "reason": "evidence"}),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(resumed, WorkflowRunOutcome::Completed(_)));
+        assert_eq!(retriever.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn begin_and_user_fill_up_share_the_initial_query_consumption_flag() {
+        let dsl = json!({"components": {
+            "begin": {
+                "obj": {"component_name": "Begin", "params": {
+                    "inputs": {"seed": {"type": "line"}}
+                }},
+                "downstream": ["fill"], "upstream": []
+            },
+            "fill": {
+                "obj": {"component_name": "UserFillUp", "params": {
+                    "inputs": {"answer": {"type": "line"}}
+                }},
+                "downstream": ["done"], "upstream": ["begin"]
+            },
+            "done": {
+                "obj": {"component_name": "Message", "params": {
+                    "content": ["{fill@answer}"]
+                }},
+                "downstream": [], "upstream": ["fill"]
+            }
+        }});
+        let workflow = AgentWorkflow::from_value(&dsl).unwrap().unwrap();
+        let outcome = workflow
+            .run_interactive(
+                None,
+                WorkflowRunInput {
+                    question: "consume once",
+                    user_id: "user-1",
+                    inputs: &Map::new(),
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: None,
+                    fallback_kb_ids: &[],
+                },
+            )
+            .await
+            .unwrap();
+        let WorkflowRunOutcome::WaitingForUser(waiting) = outcome else {
+            panic!("UserFillUp must not consume the Begin input a second time");
+        };
+        assert_eq!(waiting.path, ["begin"]);
+        assert_eq!(
+            waiting
+                .checkpoint
+                .runtime
+                .sys
+                .get("__initial_user_input_consumed__"),
+            Some(&Value::Bool(true))
+        );
+    }
+
+    #[tokio::test]
+    async fn user_fill_up_file_service_gap_fails_closed() {
+        let dsl = json!({"components": {
+            "begin": {
+                "obj": {"component_name": "Begin", "params": {}},
+                "downstream": ["fill"], "upstream": []
+            },
+            "fill": {
+                "obj": {"component_name": "UserFillUp", "params": {
+                    "inputs": {"upload": {"type": "file", "optional": false}}
+                }},
+                "downstream": ["done"], "upstream": ["begin"]
+            },
+            "done": {
+                "obj": {"component_name": "Message", "params": {
+                    "content": ["done"]
+                }},
+                "downstream": [], "upstream": ["fill"]
+            }
+        }});
+        let workflow = AgentWorkflow::from_value(&dsl).unwrap().unwrap();
+        let outcome = workflow
+            .run_interactive(
+                None,
+                WorkflowRunInput {
+                    question: "",
+                    user_id: "user-1",
+                    inputs: &Map::new(),
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: None,
+                    fallback_kb_ids: &[],
+                },
+            )
+            .await
+            .unwrap();
+        let WorkflowRunOutcome::WaitingForUser(waiting) = outcome else {
+            panic!("empty initial query should interrupt");
+        };
+        let error = workflow
+            .resume_interactive(
+                None,
+                WorkflowRunInput {
+                    question: "file",
+                    user_id: "user-1",
+                    inputs: &Map::new(),
+                    history: &[],
+                    generation: GenerationParamsPatch::default(),
+                    llm_resolver: None,
+                    retriever: None,
+                    fallback_kb_ids: &[],
+                },
+                waiting.checkpoint,
+                json!({"upload": {
+                    "type": "file", "optional": false, "value": "file-id"
+                }}),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("file parsing service"));
+    }
+
+    #[tokio::test]
+    async fn loop_user_fill_up_resumes_the_same_iteration_across_restart() {
+        let dsl = json!({"components": {
+            "begin": {
+                "obj": {"component_name": "Begin", "params": {}},
+                "downstream": ["loop"], "upstream": []
+            },
+            "loop": {
+                "obj": {"component_name": "Loop", "params": {
+                    "loop_variables": [{
+                        "variable": "counter",
+                        "input_mode": "constant",
+                        "value": 0,
+                        "type": "number"
+                    }],
+                    "loop_termination_condition": [{
+                        "variable": "counter",
+                        "operator": "≥",
+                        "value": 2,
+                        "input_mode": "constant"
+                    }],
+                    "maximum_loop_count": 5
+                }},
+                "downstream": ["bump", "done"], "upstream": ["begin"]
+            },
+            "bump": {
+                "obj": {"component_name": "VariableAssigner", "params": {
+                    "variables": [{
+                        "variable": "loop@counter",
+                        "operator": "+=",
+                        "parameter": 1
+                    }]
+                }},
+                "parent_id": "loop",
+                "downstream": ["fill"], "upstream": ["loop"]
+            },
+            "fill": {
+                "obj": {"component_name": "UserFillUp", "params": {
+                    "enable_tips": true,
+                    "tips": "iteration {loop@counter}",
+                    "inputs": {"answer": {"type": "line", "optional": false}}
+                }},
+                "parent_id": "loop",
+                "downstream": [], "upstream": ["bump"]
+            },
+            "done": {
+                "obj": {"component_name": "Message", "params": {
+                    "content": ["{fill@answer}:{loop@counter}"]
+                }},
+                "downstream": [], "upstream": ["loop"]
+            }
+        }});
+        let workflow = AgentWorkflow::from_value(&dsl).unwrap().unwrap();
+        let inputs = Map::new();
+        let input = || WorkflowRunInput {
+            question: "",
+            user_id: "user-1",
+            inputs: &inputs,
+            history: &[],
+            generation: GenerationParamsPatch::default(),
+            llm_resolver: None,
+            retriever: None,
+            fallback_kb_ids: &[],
+        };
+
+        let first = workflow.run_interactive(None, input()).await.unwrap();
+        let WorkflowRunOutcome::WaitingForUser(first) = first else {
+            panic!("first loop iteration should interrupt");
+        };
+        assert_eq!(first.component_id, "fill");
+        assert_eq!(first.interrupt_id, "loop:loop:1:fill");
+        assert_eq!(first.tips.as_deref(), Some("iteration 1.0"));
+        assert_eq!(first.path, ["begin"]);
+        assert_eq!(first.checkpoint.runtime.outputs["loop"]["counter"], 1.0);
+        let checkpoint: AgentWorkflowCheckpoint =
+            serde_json::from_value(serde_json::to_value(first.checkpoint).unwrap()).unwrap();
+
+        let second = workflow
+            .resume_interactive(None, input(), checkpoint, json!("first"))
+            .await
+            .unwrap();
+        let WorkflowRunOutcome::WaitingForUser(second) = second else {
+            panic!("second loop iteration should interrupt");
+        };
+        assert_eq!(second.interrupt_id, "loop:loop:2:fill");
+        assert_eq!(second.tips.as_deref(), Some("iteration 2.0"));
+        assert_eq!(second.path, ["begin"]);
+        assert_eq!(second.checkpoint.runtime.outputs["loop"]["counter"], 2.0);
+        assert_eq!(second.checkpoint.runtime.outputs["fill"]["answer"], "first");
+        let checkpoint: AgentWorkflowCheckpoint =
+            serde_json::from_value(serde_json::to_value(second.checkpoint).unwrap()).unwrap();
+
+        let completed = workflow
+            .resume_interactive(None, input(), checkpoint, json!("second"))
+            .await
+            .unwrap();
+        let WorkflowRunOutcome::Completed(completed) = completed else {
+            panic!("loop should complete after the second response");
+        };
+        assert_eq!(completed.answer, "second:2.0");
+        assert_eq!(completed.path, ["begin", "loop", "done"]);
+    }
+
+    #[tokio::test]
+    async fn parallel_user_fill_up_snapshots_all_items_and_resumes_each_once() {
+        let dsl = json!({"components": {
+            "begin": {
+                "obj": {"component_name": "Begin", "params": {}},
+                "downstream": ["parallel"], "upstream": []
+            },
+            "parallel": {
+                "obj": {"component_name": "Parallel", "params": {
+                    "items_ref": "begin@items",
+                    "max_concurrency": 3,
+                    "outputs": {
+                        "answers": {"ref": "fill@answer"},
+                        "items": {"ref": "item"}
+                    }
+                }},
+                "downstream": ["done"], "upstream": ["begin"]
+            },
+            "fill": {
+                "obj": {"component_name": "UserFillUp", "params": {
+                    "inputs": {"answer": {"type": "line", "optional": false}}
+                }},
+                "parent_id": "parallel",
+                "downstream": [], "upstream": ["parallel"]
+            },
+            "done": {
+                "obj": {"component_name": "Message", "params": {
+                    "content": ["{parallel@answers}"]
+                }},
+                "downstream": [], "upstream": ["parallel"]
+            }
+        }});
+        let workflow = AgentWorkflow::from_value(&dsl).unwrap().unwrap();
+        let inputs = Map::from_iter([("items".into(), json!(["one", "two", "three"]))]);
+        let input = || WorkflowRunInput {
+            question: "",
+            user_id: "user-1",
+            inputs: &inputs,
+            history: &[],
+            generation: GenerationParamsPatch::default(),
+            llm_resolver: None,
+            retriever: None,
+            fallback_kb_ids: &[],
+        };
+
+        let mut outcome = workflow.run_interactive(None, input()).await.unwrap();
+        for (index, answer) in ["alpha", "beta", "gamma"].into_iter().enumerate() {
+            let WorkflowRunOutcome::WaitingForUser(waiting) = outcome else {
+                panic!("parallel item {index} should be waiting");
+            };
+            assert_eq!(waiting.component_id, "fill");
+            assert_eq!(
+                waiting.interrupt_id,
+                format!("parallel:parallel:{index}:fill")
+            );
+            assert_eq!(waiting.path, ["begin"]);
+            let Some(CompositeCheckpoint::Parallel(state)) = waiting.checkpoint.composite.as_ref()
+            else {
+                panic!("parallel wait must persist composite state");
+            };
+            assert_eq!(state.active_index, index);
+            assert_eq!(state.completed_items.len(), index);
+            assert_eq!(state.pending_items.len(), 3 - index);
+            assert_eq!(
+                Value::Array(state.original_items.clone()),
+                json!(["one", "two", "three"])
+            );
+            if index == 0 {
+                let mut malformed = waiting.checkpoint.clone();
+                malformed.waiting_component_id = "done".into();
+                let error = workflow
+                    .resume_interactive(None, input(), malformed, json!("wrong"))
+                    .await
+                    .unwrap_err();
+                assert!(
+                    error
+                        .to_string()
+                        .contains("composite checkpoint leaf does not match")
+                );
+            }
+            let checkpoint: AgentWorkflowCheckpoint =
+                serde_json::from_value(serde_json::to_value(waiting.checkpoint).unwrap()).unwrap();
+            outcome = workflow
+                .resume_interactive(None, input(), checkpoint, json!(answer))
+                .await
+                .unwrap();
+        }
+        let WorkflowRunOutcome::Completed(completed) = outcome else {
+            panic!("parallel should complete after one response per item");
+        };
+        assert_eq!(completed.answer, r#"["alpha","beta","gamma"]"#);
+        assert_eq!(completed.path, ["begin", "parallel", "done"]);
+        let parallel = completed
+            .trace
+            .iter()
+            .find(|trace| trace.component_id == "parallel")
+            .unwrap();
+        assert_eq!(parallel.outputs["items"], json!(["one", "two", "three"]));
+        assert_eq!(
+            parallel.outputs["answers"],
+            json!(["alpha", "beta", "gamma"])
+        );
+    }
+
+    #[derive(Default)]
+    struct StubInvokeNetwork {
+        addresses: std::sync::Mutex<BTreeMap<String, Vec<IpAddr>>>,
+        outcomes:
+            std::sync::Mutex<std::collections::VecDeque<std::result::Result<Vec<u8>, String>>>,
+        resolves: std::sync::Mutex<Vec<(String, u16)>>,
+        requests: std::sync::Mutex<Vec<InvokeHttpRequest>>,
+    }
+
+    impl StubInvokeNetwork {
+        fn with_outcomes(
+            outcomes: impl IntoIterator<Item = std::result::Result<Vec<u8>, String>>,
+        ) -> Self {
+            Self {
+                outcomes: std::sync::Mutex::new(outcomes.into_iter().collect()),
+                ..Self::default()
+            }
+        }
+
+        fn resolve_to(&self, hostname: &str, addresses: Vec<IpAddr>) {
+            self.addresses
+                .lock()
+                .unwrap()
+                .insert(hostname.to_owned(), addresses);
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl InvokeNetwork for StubInvokeNetwork {
+        async fn resolve(&self, hostname: &str, port: u16) -> Result<Vec<IpAddr>> {
+            self.resolves
+                .lock()
+                .unwrap()
+                .push((hostname.to_owned(), port));
+            Ok(self
+                .addresses
+                .lock()
+                .unwrap()
+                .get(hostname)
+                .cloned()
+                .unwrap_or_else(|| vec![IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34))]))
+        }
+
+        async fn send(&self, request: InvokeHttpRequest) -> Result<Vec<u8>> {
+            self.requests.lock().unwrap().push(request);
+            match self.outcomes.lock().unwrap().pop_front() {
+                Some(Ok(body)) => Ok(body),
+                Some(Err(error)) => Err(anyhow!(error)),
+                None => Ok(b"ok".to_vec()),
+            }
+        }
+    }
+
+    fn invoke_canvas(params: Value) -> Value {
+        json!({"components": {
+            "begin": {
+                "obj": {"component_name": "Begin", "params": {}},
+                "downstream": ["invoke"],
+                "upstream": []
+            },
+            "invoke": {
+                "obj": {"component_name": "Invoke", "params": params},
+                "downstream": [],
+                "upstream": ["begin"]
+            }
+        }})
+    }
+
+    fn invoke_node(params: Value) -> CanvasNode {
+        CanvasNode {
+            id: "invoke".into(),
+            component_name: "Invoke".into(),
+            params: params.as_object().cloned().unwrap(),
+            downstream: Vec::new(),
+            upstream: vec!["begin".into()],
+            parent_id: None,
+        }
+    }
+
+    fn invoke_run_input(inputs: &Map<String, Value>) -> WorkflowRunInput<'_> {
+        WorkflowRunInput {
+            question: "",
+            user_id: "user",
+            inputs,
+            history: &[],
+            generation: GenerationParamsPatch::default(),
+            llm_resolver: None,
+            retriever: None,
+            fallback_kb_ids: &[],
+        }
+    }
+
+    #[test]
+    fn invoke_compile_validation_matches_the_fixed_python_param_contract() {
+        let valid = json!({
+            "url": "api.example.test/{{sys.user}}",
+            "method": "PUT",
+            "timeout": 60,
+            "headers": "{}",
+            "proxy": "",
+            "clean_html": false,
+            "datatype": "formdata",
+            "variables": [{"key": "q", "ref": "sys.query", "value": "fallback"}],
+            "max_retries": 2,
+            "delay_after_error": 0.25
+        });
+        let workflow = AgentWorkflow::from_value(&invoke_canvas(valid.clone()))
+            .unwrap()
+            .unwrap();
+        assert!(workflow.unsupported_components().is_empty());
+
+        for (field, value, message) in [
+            (
+                "method",
+                json!("DELETE"),
+                "method must be GET, POST, or PUT",
+            ),
+            ("url", json!(""), "url cannot be empty"),
+            ("timeout", json!(0), "timeout must be a positive integer"),
+            ("timeout", json!(1.5), "timeout must be a positive integer"),
+            ("clean_html", json!("false"), "clean_html must be a boolean"),
+            (
+                "datatype",
+                json!("text"),
+                "datatype must be 'json' or 'formdata'",
+            ),
+            ("variables", json!({}), "variables must be an array"),
+            (
+                "max_retries",
+                json!(-1),
+                "max_retries must be a non-negative integer",
+            ),
+        ] {
+            let mut params = valid.clone();
+            params[field] = value;
+            let error = AgentWorkflow::from_value(&invoke_canvas(params)).unwrap_err();
+            assert!(error.to_string().contains(message), "{field}: {error}");
+        }
+    }
+
+    #[tokio::test]
+    async fn invoke_resolves_templates_headers_and_json_arguments_without_live_network() {
+        let node = invoke_node(json!({
+            "url": "api.example.test/v1/{{sys.user}}",
+            "method": "GET",
+            "timeout": 15,
+            "headers": r#"{
+                "Authorization":"Bearer {token}",
+                "X-Environment":"{env.api_key}",
+                "X-Missing":"prefix-{missing}"
+            }"#,
+            "clean_html": true,
+            "datatype": "json",
+            "variables": [
+                {"key":"payload", "ref":"begin@payload", "value":"fallback"},
+                {"key":"count", "value":"{{sys.count}}"},
+                {"key":"fallback", "ref":"missing@value", "value":"user={sys.user}"}
+            ]
+        }));
+        let network = StubInvokeNetwork::with_outcomes([Ok(
+            b"<h1>Hello</h1>\n<script>bad()</script><p>World</p>".to_vec(),
+        )]);
+        let mut runtime = CanvasRuntime::default();
+        runtime.sys.insert("user".into(), json!("alice"));
+        runtime.sys.insert("count".into(), json!(3));
+        runtime.env.insert("api_key".into(), json!("env-secret"));
+        runtime.outputs.insert(
+            "begin".into(),
+            Map::from_iter([("payload".into(), json!(r#"{"ok":true}"#))]),
+        );
+        let inputs = Map::from_iter([("token".into(), json!("request-token"))]);
+
+        execute_invoke_with_network(&mut runtime, &node, &invoke_run_input(&inputs), &network)
+            .await
+            .unwrap();
+
+        // RAGFlow html_parser semantics: h1 gets a markdown # prefix,
+        // <script> is stripped, <p> text is kept.
+        assert_eq!(runtime.outputs["invoke"]["result"], "# Hello\nWorld");
+        let requests = network.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        let request = &requests[0];
+        assert_eq!(request.method, "get");
+        assert_eq!(request.url.as_str(), "http://api.example.test/v1/alice");
+        assert_eq!(request.timeout, Duration::from_secs(15));
+        assert_eq!(
+            request.target,
+            InvokeEndpointPin {
+                hostname: "api.example.test".into(),
+                ip: IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34))
+            }
+        );
+        assert_eq!(request.headers["Authorization"], "Bearer request-token");
+        assert_eq!(request.headers["X-Environment"], "env-secret");
+        assert_eq!(request.headers["X-Missing"], "prefix-");
+        assert_eq!(request.arguments["payload"], json!({"ok": true}));
+        assert_eq!(request.arguments["count"], json!(3));
+        assert_eq!(request.arguments["fallback"], "user=alice");
+    }
+
+    #[tokio::test]
+    async fn invoke_retries_form_requests_and_records_terminal_transport_errors() {
+        let node = invoke_node(json!({
+            "url": "https://8.8.8.8/submit",
+            "method": "POST",
+            "datatype": "formdata",
+            "variables": [{"key":"tag", "value":["a", "b"]}],
+            "max_retries": 1,
+            "delay_after_error": 0
+        }));
+        let network = StubInvokeNetwork::with_outcomes([
+            Err("temporary failure".into()),
+            Ok(b"accepted".to_vec()),
+        ]);
+        let mut runtime = CanvasRuntime::default();
+        let inputs = Map::new();
+        execute_invoke_with_network(&mut runtime, &node, &invoke_run_input(&inputs), &network)
+            .await
+            .unwrap();
+        assert_eq!(runtime.outputs["invoke"]["result"], "accepted");
+        {
+            let requests = network.requests.lock().unwrap();
+            assert_eq!(requests.len(), 2);
+            assert!(requests.iter().all(|request| {
+                request.method == "post" && request.datatype == InvokeDataType::FormData
+            }));
+            assert_eq!(
+                invoke_form_pairs(&requests[0].arguments),
+                [("tag".into(), "a".into()), ("tag".into(), "b".into())]
+            );
+        }
+
+        let terminal = StubInvokeNetwork::with_outcomes([Err("connection refused".into())]);
+        let mut terminal_runtime = CanvasRuntime::default();
+        let mut terminal_node = node.clone();
+        terminal_node.params.insert("max_retries".into(), json!(0));
+        execute_invoke_with_network(
+            &mut terminal_runtime,
+            &terminal_node,
+            &invoke_run_input(&inputs),
+            &terminal,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            terminal_runtime.outputs["invoke"]["_ERROR"],
+            "connection refused"
+        );
+    }
+
+    #[tokio::test]
+    async fn invoke_ssrf_guard_checks_every_address_and_both_proxy_hops() {
+        let inputs = Map::new();
+        for url in [
+            "http://127.0.0.1:9380/private",
+            "169.254.169.254/latest/meta-data/",
+            "http://[::ffff:127.0.0.1]/private",
+        ] {
+            let network = StubInvokeNetwork::default();
+            let node = invoke_node(json!({"url": url}));
+            let mut runtime = CanvasRuntime::default();
+            execute_invoke_with_network(&mut runtime, &node, &invoke_run_input(&inputs), &network)
+                .await
+                .unwrap();
+            assert_eq!(runtime.outputs["invoke"]["_ERROR"], "URL not valid");
+            assert!(network.requests.lock().unwrap().is_empty());
+        }
+
+        let mixed_dns = StubInvokeNetwork::default();
+        mixed_dns.resolve_to(
+            "mixed.example.test",
+            vec![
+                IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34)),
+                IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            ],
+        );
+        let mut runtime = CanvasRuntime::default();
+        execute_invoke_with_network(
+            &mut runtime,
+            &invoke_node(json!({"url":"https://mixed.example.test"})),
+            &invoke_run_input(&inputs),
+            &mixed_dns,
+        )
+        .await
+        .unwrap();
+        assert_eq!(runtime.outputs["invoke"]["_ERROR"], "URL not valid");
+        assert!(mixed_dns.requests.lock().unwrap().is_empty());
+
+        let unsafe_proxy = StubInvokeNetwork::default();
+        let mut runtime = CanvasRuntime::default();
+        execute_invoke_with_network(
+            &mut runtime,
+            &invoke_node(json!({
+                "url":"https://8.8.8.8/api",
+                "proxy":"http://127.0.0.1:8080"
+            })),
+            &invoke_run_input(&inputs),
+            &unsafe_proxy,
+        )
+        .await
+        .unwrap();
+        assert_eq!(runtime.outputs["invoke"]["_ERROR"], "URL not valid");
+        assert!(unsafe_proxy.requests.lock().unwrap().is_empty());
+
+        let hostname_through_proxy = StubInvokeNetwork::default();
+        let mut runtime = CanvasRuntime::default();
+        execute_invoke_with_network(
+            &mut runtime,
+            &invoke_node(json!({
+                "url":"https://api.example.test/data",
+                "proxy":"proxy.example.test:8080"
+            })),
+            &invoke_run_input(&inputs),
+            &hostname_through_proxy,
+        )
+        .await
+        .unwrap();
+        assert_eq!(runtime.outputs["invoke"]["_ERROR"], "URL not valid");
+        assert!(hostname_through_proxy.requests.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn invoke_rejects_malformed_headers_before_network_and_caps_response() {
+        let inputs = Map::new();
+        let network = StubInvokeNetwork::default();
+        let mut runtime = CanvasRuntime::default();
+        execute_invoke_with_network(
+            &mut runtime,
+            &invoke_node(json!({"url":"https://8.8.8.8", "headers":"[]"})),
+            &invoke_run_input(&inputs),
+            &network,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            runtime.outputs["invoke"]["_ERROR"],
+            "Invoke headers must be a JSON object."
+        );
+        assert!(network.requests.lock().unwrap().is_empty());
+
+        let oversized =
+            StubInvokeNetwork::with_outcomes([Ok(vec![b'x'; MAX_INVOKE_RESPONSE_BODY + 32])]);
+        let mut capped_runtime = CanvasRuntime::default();
+        execute_invoke_with_network(
+            &mut capped_runtime,
+            &invoke_node(json!({"url":"https://8.8.8.8"})),
+            &invoke_run_input(&inputs),
+            &oversized,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            capped_runtime.outputs["invoke"]["result"]
+                .as_str()
+                .unwrap()
+                .len(),
+            MAX_INVOKE_RESPONSE_BODY
+        );
+    }
+
+    #[test]
+    fn invoke_public_address_allowlist_blocks_special_purpose_ranges() {
+        for address in [
+            "0.1.2.3",
+            "10.0.0.1",
+            "100.64.0.1",
+            "127.0.0.1",
+            "169.254.169.254",
+            "172.16.0.1",
+            "192.168.1.1",
+            "198.51.100.1",
+            "224.0.0.1",
+            "255.255.255.255",
+            "::1",
+            "::ffff:127.0.0.1",
+            "2001:db8::1",
+            "fc00::1",
+            "fe80::1",
+        ] {
+            assert!(
+                !invoke_ip_is_public(address.parse().unwrap()),
+                "{address} must not be reachable by Invoke"
+            );
+        }
+        for address in ["8.8.8.8", "93.184.216.34", "2606:4700:4700::1111"] {
+            assert!(invoke_ip_is_public(address.parse().unwrap()), "{address}");
+        }
+    }
+
+    #[test]
+    fn unsupported_components_are_reported_before_execution() {
+        let dsl = json!({"components": {
+            "begin": {"obj": {"component_name": "Begin", "params": {}}, "downstream": ["browser"], "upstream": []},
+            "browser": {"obj": {"component_name": "Browser", "params": {}}, "downstream": [], "upstream": ["begin"]}
+        }});
+        let workflow = AgentWorkflow::from_value(&dsl).unwrap().unwrap();
+        assert_eq!(workflow.unsupported_components(), ["browser (Browser)"]);
+
+        let dsl = json!({"components": {
+            "begin": {"obj": {"component_name": "Begin", "params": {}}, "downstream": ["fill"], "upstream": []},
+            "fill": {"obj": {"component_name": "UserFillUp", "params": {
+                "inputs": {"answer": {"type": "line"}},
+                "tips": "answer required"
+            }}, "downstream": [], "upstream": ["begin"]}
+        }});
+        let workflow = AgentWorkflow::from_value(&dsl).unwrap().unwrap();
+        assert!(workflow.unsupported_components().is_empty());
+
+        let dsl = json!({"components": {
+            "begin": {"obj": {"component_name": "Begin", "params": {}}, "downstream": ["loop"], "upstream": []},
+            "loop": {"obj": {"component_name": "Loop", "params": {
+                "loop_variables": [{
+                    "variable": "counter",
+                    "input_mode": "constant",
+                    "value": 0,
+                    "type": "number"
+                }],
+                "loop_termination_condition": [{
+                    "variable": "counter",
+                    "operator": "≥",
+                    "value": 3,
+                    "input_mode": "constant"
+                }],
+                "maximum_loop_count": 10
+            }}, "downstream": [], "upstream": ["begin"]}
+        }});
+        let workflow = AgentWorkflow::from_value(&dsl).unwrap().unwrap();
+        assert!(workflow.unsupported_components().is_empty());
+
+        let dsl = json!({"components": {
+            "begin": {"obj": {"component_name": "Begin", "params": {}}, "downstream": ["parallel"], "upstream": []},
+            "parallel": {"obj": {"component_name": "Parallel", "params": {
+                "items_ref": "sys.items",
+                "max_concurrency": 4,
+                "outputs": {"values": {"ref": "body@result"}}
+            }}, "downstream": [], "upstream": ["begin"]},
+            "body": {"obj": {"component_name": "StringTransform", "params": {
+                "method": "merge",
+                "script": "{item}",
+                "delimiters": ["|"]
+            }}, "parent_id": "parallel", "downstream": [], "upstream": ["parallel"]}
+        }});
+        let workflow = AgentWorkflow::from_value(&dsl).unwrap().unwrap();
+        assert!(workflow.unsupported_components().is_empty());
+    }
+}
 
 // ---------------------------------------------------------------------------
 // canvas.py remaining semantics (appended; pure helpers, no runtime changes).
@@ -15836,4 +23843,169 @@ pub fn clean_tts_text(text: &str) -> String {
     }
 }
 
+#[cfg(test)]
+mod canvas_semantics_tests {
+    use super::*;
+    use serde_json::json;
 
+    fn map_of(entries: &[(&str, Value)]) -> Map<String, Value> {
+        entries
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn reset_globals_restores_sys_types_and_env_variable_defaults() {
+        let mut globals = map_of(&[
+            ("sys.query", json!("hello")),
+            ("sys.conversation_turns", json!(3)),
+            ("sys.files", json!(["f1"])),
+            ("sys.history", json!(["user: hi"])),
+            ("env.api_key", json!("old")),
+            ("env.limit", json!(42)),
+            ("env.debug", json!(true)),
+            ("env.profile", json!({"a": 1})),
+            ("env.tags", json!(["x"])),
+            ("env.missing_src", json!("v")),
+        ]);
+        let variables = map_of(&[
+            ("api_key", json!({"type": "string", "value": "new-key"})),
+            ("limit", json!({"type": "number"})),
+            ("debug", json!({"type": "boolean"})),
+            ("profile", json!({"type": "object"})),
+            ("tags", json!({"type": "array<string>"})),
+            ("missing_src", json!({"type": "string"})),
+        ]);
+        reset_sys_globals(&mut globals);
+        assert_eq!(globals["sys.query"], json!(""));
+        assert_eq!(globals["sys.conversation_turns"], json!(0));
+        assert_eq!(globals["sys.files"], json!([]));
+        assert_eq!(globals["sys.history"], json!([]));
+        // A boolean sys.* global resets to 0 (bool is an int in Python).
+        assert_eq!(globals["sys.conversation_turns"], json!(0));
+
+        reset_env_globals(&mut globals, &variables);
+        // Declared value wins.
+        assert_eq!(globals["env.api_key"], json!("new-key"));
+        // Type-based defaults when no value is declared.
+        assert_eq!(globals["env.limit"], json!(0));
+        assert_eq!(globals["env.debug"], json!(false));
+        assert_eq!(globals["env.profile"], json!({}));
+        assert_eq!(globals["env.tags"], json!([]));
+        assert_eq!(globals["env.missing_src"], json!(""));
+        // Unknown variable name → "".
+        globals.insert("env.ghost".to_owned(), json!("x"));
+        reset_env_globals(&mut globals, &variables);
+        assert_eq!(globals["env.ghost"], json!(""));
+    }
+
+    #[test]
+    fn history_windowing_and_reference_checks_match_canvas() {
+        let history: Vec<(String, Value)> = vec![
+            ("user".into(), json!("q1")),
+            ("assistant".into(), json!({"content": "a1"})),
+            ("user".into(), json!("q2")),
+            ("assistant".into(), json!("a2")),
+        ];
+        // window_size 0 → empty.
+        assert!(get_history_window(&history, 0).is_empty());
+        // window_size 1 → last 2 entries.
+        let window = get_history_window(&history, 1);
+        assert_eq!(window.len(), 2);
+        assert_eq!(window[0], json!({"role": "user", "content": "q2"}));
+        assert_eq!(window[1], json!({"role": "assistant", "content": "a2"}));
+        // window_size larger than history → everything, dict content extracted.
+        let window = get_history_window(&history, 10);
+        assert_eq!(window.len(), 4);
+        assert_eq!(window[1], json!({"role": "assistant", "content": "a1"}));
+
+        let globals = map_of(&[("sys.query", json!("q"))]);
+        let ids: BTreeSet<String> = ["begin".to_owned(), "retrieval_0".to_owned()]
+            .into_iter()
+            .collect();
+        assert!(is_canvas_reference("{{sys.query}}", &globals, &ids));
+        assert!(is_canvas_reference("retrieval_0@content", &globals, &ids));
+        assert!(!is_canvas_reference("retrieval_0@a@b", &globals, &ids));
+        assert!(!is_canvas_reference("missing@content", &globals, &ids));
+        assert!(!is_canvas_reference("sys.nope", &globals, &ids));
+    }
+
+    #[test]
+    fn reference_accumulation_dedupes_and_builds_message_end() {
+        let mut retrieval: Vec<Map<String, Value>> = vec![];
+        let chunks = vec![
+            json!({"id": "chunk-1", "content": "c1"}),
+            json!({"id": "chunk-1", "content": "c1-dup"}),
+            json!({"id": "chunk-2", "content": "c2"}),
+        ];
+        let docs = vec![
+            json!({"doc_name": "doc-a", "count": 1}),
+            json!({"doc_name": "doc-a", "count": 2}),
+        ];
+        add_retrieval_reference(&mut retrieval, &chunks, &docs);
+        let slot = retrieval.last().unwrap();
+        let chunks_map = slot["chunks"].as_object().unwrap();
+        assert_eq!(chunks_map.len(), 2, "duplicate chunk id collapses");
+        let cid1 = hash_str2int("chunk-1", 500).to_string();
+        let cid2 = hash_str2int("chunk-2", 500).to_string();
+        assert!(chunks_map.contains_key(&cid1));
+        assert!(chunks_map.contains_key(&cid2));
+        assert_eq!(chunks_map[&cid1]["content"], json!("c1"));
+        let doc_aggs = slot["doc_aggs"].as_object().unwrap();
+        assert_eq!(doc_aggs.len(), 1, "doc aggs dedupe by doc_name");
+        assert_eq!(doc_aggs["doc-a"]["count"], json!(1));
+        assert!(retrieval_has_reference(&retrieval));
+
+        let end = build_message_end(Some("finished"), Some(&json!({"type": "pdf"})), &retrieval);
+        assert_eq!(end["status"], json!("finished"));
+        assert_eq!(end["attachment"], json!({"type": "pdf"}));
+        assert!(end.contains_key("reference"));
+        assert!(end["reference"].is_object());
+
+        let end = build_message_end(None, Some(&json!("plain-text")), &[]);
+        assert!(!end.contains_key("status"));
+        assert!(
+            !end.contains_key("attachment"),
+            "non-object attachment skipped"
+        );
+        assert!(
+            !end.contains_key("reference"),
+            "no retrieval → no reference"
+        );
+    }
+
+    #[test]
+    fn tool_trace_merge_and_tts_cleaning_follow_python() {
+        let trace = |name: &str| ToolUseTrace {
+            path: format!("Agent-->{name}"),
+            tool_name: name.to_owned(),
+            arguments: json!({"q": "x"}),
+            result: json!("ok"),
+            elapsed_time: Some(0.5),
+        };
+        let mut logs: Vec<Value> = vec![];
+        merge_tool_use_trace(&mut logs, "agent_0", &trace("retrieval"));
+        merge_tool_use_trace(&mut logs, "agent_0", &trace("generate"));
+        // Same component → same entry, two traces.
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0]["component_id"], json!("agent_0"));
+        assert_eq!(logs[0]["trace"].as_array().unwrap().len(), 2);
+        // Different component → new entry.
+        merge_tool_use_trace(&mut logs, "agent_1", &trace("search"));
+        assert_eq!(logs.len(), 2);
+        assert_eq!(logs[1]["component_id"], json!("agent_1"));
+        assert_eq!(logs[1]["trace"][0]["tool_name"], json!("search"));
+
+        assert_eq!(clean_tts_text(""), "");
+        assert_eq!(clean_tts_text("plain text"), "plain text");
+        assert_eq!(clean_tts_text("a\u{0007}b\u{007f}c"), "abc");
+        assert_eq!(clean_tts_text("hi 😀 there 🚀"), "hi there");
+        assert_eq!(
+            clean_tts_text("  multi \n  line \t text "),
+            "multi line text"
+        );
+        let long = "x".repeat(600);
+        assert_eq!(clean_tts_text(&long).chars().count(), 500);
+    }
+}

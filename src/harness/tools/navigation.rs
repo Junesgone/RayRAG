@@ -1735,8 +1735,535 @@ pub async fn expand_related_via_structure(
     out
 }
 
+#[cfg(test)]
+mod structure_tests {
+    use super::*;
+    use async_trait::async_trait;
 
+    struct MockChat {
+        reply: String,
+    }
+    #[async_trait]
+    impl HarnessChat for MockChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            _history: &[Value],
+            _gen: &Value,
+        ) -> Result<String, String> {
+            Ok(self.reply.clone())
+        }
+        fn max_length(&self) -> usize {
+            8192
+        }
+    }
 
+    struct MockStructureHost {
+        entities: Vec<Value>,
+        relations: Vec<Value>,
+        with_vectors: Vec<Value>,
+        qvec: Option<Vec<f64>>,
+        hits: Vec<(String, f64)>,
+        chunks: Vec<Value>,
+    }
+    #[async_trait]
+    impl NavStructureHost for MockStructureHost {
+        async fn embed_query(&self, _query: &str) -> Option<Vec<f64>> {
+            self.qvec.clone()
+        }
+        async fn load_entities_with_vectors(
+            &self,
+            _doc_id: &str,
+            _kinds: &[String],
+            _vec_field: &str,
+        ) -> Vec<Value> {
+            self.with_vectors.clone()
+        }
+        async fn load_compiled_structure(
+            &self,
+            _doc_id: &str,
+            _kinds: &[String],
+        ) -> (Vec<Value>, Vec<Value>) {
+            (self.entities.clone(), self.relations.clone())
+        }
+        async fn recall_chunk_ids_in_doc(
+            &self,
+            _query: &str,
+            _doc_id: &str,
+            _top_n: usize,
+        ) -> Vec<(String, f64)> {
+            self.hits.clone()
+        }
+        async fn load_chunks_for_ids(&self, _chunk_ids: &[String]) -> Vec<Value> {
+            self.chunks.clone()
+        }
+    }
 
+    fn entity(name: &str, description: &str, chunks: &[&str]) -> Value {
+        json!({
+            "name": name,
+            "type": "tree_node",
+            "description": description,
+            "source_chunk_ids": chunks,
+        })
+    }
 
+    #[test]
+    fn kinds_and_tree_maps() {
+        assert_eq!(structure_kinds_for("mindmap"), vec!["mindmap", "mind_map"]);
+        assert!(structure_kinds_for("graph").contains(&"entity".to_string()));
+        assert_eq!(
+            structure_kinds_for(""),
+            vec!["tree", "timeline", "raptor", "page_index", "pageindex"]
+        );
 
+        let entities = vec![entity("Root", "r", &["c1"]), entity("Child", "c", &["c2"])];
+        let relations = vec![json!({"from": "Root", "to": "Child", "type": "tree"})];
+        let tree = build_toc_tree(&entities, &relations);
+        assert_eq!(tree.roots, vec!["Root"]);
+        assert_eq!(tree.parents.get("Child").map(String::as_str), Some("Root"));
+        assert_eq!(
+            tree.children.get("Root").cloned().unwrap_or_default(),
+            vec!["Child"]
+        );
+    }
+
+    #[test]
+    fn drill_uses_vectors_then_keywords() {
+        let entities = vec![
+            entity("Alpha topic", "about alpha", &["c1"]),
+            entity("Beta", "unrelated", &["c2"]),
+        ];
+        let qvec = vec![1.0, 0.0];
+        let mut with_vectors = entities.clone();
+        with_vectors[0]["_vec"] = json!([1.0, 0.0]);
+        with_vectors[1]["_vec"] = json!([0.0, 1.0]);
+        let (kept, _parents, order, best) = drill_kept_nodes(&[], Some(&qvec), &with_vectors, &[]);
+        assert!(order.contains(&"Alpha topic".to_string()));
+        assert!(!order.contains(&"Beta".to_string()));
+        assert!((best - 1.0).abs() < 1e-9);
+        assert_eq!(kept.len(), 1);
+
+        // Keyword fallback without vectors.
+        let terms = query_terms("alpha");
+        let (_kept2, _p2, order2, best2) = drill_kept_nodes(&terms, None, &entities, &[]);
+        assert!(order2.contains(&"Alpha topic".to_string()));
+        assert!(best2 >= 1.0);
+    }
+
+    #[tokio::test]
+    async fn drilldown_renders_paths_and_chunks() {
+        let entities = vec![
+            entity("Root", "root desc", &["c1"]),
+            entity("Child", "child desc", &["c2"]),
+        ];
+        let relations = vec![json!({"from": "Root", "to": "Child", "type": "tree"})];
+        let host = MockStructureHost {
+            entities: entities.clone(),
+            relations: relations.clone(),
+            with_vectors: vec![],
+            qvec: None,
+            hits: vec![],
+            chunks: vec![json!({"chunk_id": "c2", "content_with_weight": "child chunk text"})],
+        };
+        let selected = vec!["Child".to_string()];
+        let (outline, stats, paths) = render_toc_drilldown(
+            &host,
+            "child",
+            None,
+            &entities,
+            &relations,
+            None,
+            Some(&selected),
+        )
+        .await;
+        assert!(outline.contains("- Child (tree_node): child desc"));
+        assert!(outline.contains("  - Child") || outline.contains("- Child"));
+        assert_eq!(stats["selector"], json!("llm_toc"));
+        assert_eq!(paths.get("c2").map(String::as_str), Some("Root -> Child"));
+        assert!(outline.contains("[chunk c2]"));
+    }
+
+    #[tokio::test]
+    async fn navigate_impls_emit_xml_and_reasons() {
+        struct Router;
+        #[async_trait]
+        impl NavRouterHost for Router {
+            async fn list_nav_clusters(&self, _kb: &str, _tenant: &str) -> Vec<Value> {
+                vec![]
+            }
+            async fn list_nav_children(&self, _kb: &str, _tenant: &str, _name: &str) -> Vec<Value> {
+                vec![]
+            }
+            async fn content_recall(&self, _query: &str, _doc_scope: &[String]) -> Vec<Value> {
+                vec![]
+            }
+            async fn search_layers(
+                &self,
+                _kb: &str,
+                _tenant: &str,
+                _query: &str,
+                _doc_scope: &[String],
+            ) -> Vec<Value> {
+                vec![json!({"doc_id": "d1", "score": 0.5, "_nav": {"description": "doc summary"}})]
+            }
+        }
+        let chat = MockChat {
+            reply: "{}".to_string(),
+        };
+        let result = navigate_tree_impl(
+            &Router,
+            &[("kb1".to_string(), "t1".to_string())],
+            "q",
+            "",
+            None,
+        )
+        .await;
+        assert!(result.text.contains("<tree_navigation count=\"1\""));
+        assert!(result.text.contains("<summary>doc summary</summary>"));
+        assert_eq!(result.doc_ids, vec!["d1".to_string()]);
+
+        let empty = navigate_tree_impl(
+            &Router,
+            &[("kb1".to_string(), "t1".to_string())],
+            "  ",
+            "",
+            None,
+        )
+        .await;
+        assert_eq!(empty.empty_reason, "bad_args");
+
+        let host = MockStructureHost {
+            entities: vec![entity("Root", "r", &["c1"])],
+            relations: vec![],
+            with_vectors: vec![],
+            qvec: None,
+            hits: vec![],
+            chunks: vec![],
+        };
+        let result = navigate_structure_impl(
+            &host,
+            &Router,
+            &chat,
+            &[("kb1".to_string(), "t1".to_string())],
+            "q",
+            "",
+            "catalog",
+            "",
+            None,
+        )
+        .await;
+        assert!(result.text.contains("<structure_navigation count=\"1\""));
+        assert_eq!(result.entities, 1);
+
+        let empty_host = MockStructureHost {
+            entities: vec![],
+            relations: vec![],
+            with_vectors: vec![],
+            qvec: None,
+            hits: vec![],
+            chunks: vec![],
+        };
+        let result = navigate_structure_impl(
+            &empty_host,
+            &Router,
+            &chat,
+            &[("kb1".to_string(), "t1".to_string())],
+            "q",
+            "",
+            "catalog",
+            "",
+            None,
+        )
+        .await;
+        assert_eq!(result.empty_reason, "no_structure");
+    }
+
+    #[tokio::test]
+    async fn related_expansion_skips_excluded() {
+        let entities = vec![entity("Alpha", "alpha desc", &["c1", "c2"])];
+        let host = MockStructureHost {
+            entities: entities.clone(),
+            relations: vec![],
+            with_vectors: entities.clone(),
+            qvec: Some(vec![1.0, 0.0]),
+            hits: vec![],
+            chunks: vec![
+                json!({"chunk_id": "c1", "content_with_weight": "alpha one"}),
+                json!({"chunk_id": "c2", "content_with_weight": "alpha two"}),
+            ],
+        };
+        let mut exclude: std::collections::HashSet<String> =
+            ["c1".to_string()].into_iter().collect();
+        let out =
+            expand_related_via_structure(&host, "alpha", &["d1".to_string()], &mut exclude, 4)
+                .await;
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0]["chunk_id"], json!("c2"));
+        assert_eq!(out[0]["related_via_structure"], json!(true));
+    }
+}
+
+#[cfg(test)]
+mod router_tests {
+    use super::*;
+    use async_trait::async_trait;
+
+    struct MockChat {
+        reply: String,
+    }
+
+    #[async_trait]
+    impl HarnessChat for MockChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            _history: &[Value],
+            _gen: &Value,
+        ) -> Result<String, String> {
+            Ok(self.reply.clone())
+        }
+        fn max_length(&self) -> usize {
+            8192
+        }
+    }
+
+    struct MockHost {
+        clusters: Vec<Value>,
+        children: std::collections::HashMap<String, Vec<Value>>,
+        recall: Vec<Value>,
+        layers: Vec<Value>,
+    }
+
+    #[async_trait]
+    impl NavRouterHost for MockHost {
+        async fn list_nav_clusters(&self, _kb: &str, _tenant: &str) -> Vec<Value> {
+            self.clusters.clone()
+        }
+        async fn list_nav_children(&self, _kb: &str, _tenant: &str, name: &str) -> Vec<Value> {
+            self.children.get(name).cloned().unwrap_or_default()
+        }
+        async fn content_recall(&self, _query: &str, _doc_scope: &[String]) -> Vec<Value> {
+            self.recall.clone()
+        }
+        async fn search_layers(
+            &self,
+            _kb: &str,
+            _tenant: &str,
+            _query: &str,
+            _doc_scope: &[String],
+        ) -> Vec<Value> {
+            self.layers.clone()
+        }
+    }
+
+    #[tokio::test]
+    async fn nav_select_parses_indices_and_renders_list() {
+        let items = vec![
+            json!({"name": "Cluster A", "description": "alpha stuff", "doc_count": 3}),
+            json!({"name": "Cluster B", "description": "beta stuff"}),
+        ];
+        let chat = MockChat {
+            reply: "{\"relevant\": [1, 0, 0, 9, \"x\"]}".to_string(),
+        };
+        let selected = ask_nav_select(&chat, "q", &items, "clusters", 500).await;
+        assert_eq!(selected.len(), 2);
+        assert_eq!(selected[0]["name"], json!("Cluster B"));
+        assert_eq!(selected[1]["name"], json!("Cluster A"));
+
+        let chat = MockChat {
+            reply: "no json here".to_string(),
+        };
+        assert!(
+            ask_nav_select(&chat, "q", &items, "clusters", 500)
+                .await
+                .is_empty()
+        );
+        assert!(
+            ask_nav_select(&chat, "q", &[], "clusters", 500)
+                .await
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn leaves_bfs_respects_scope_and_caps() {
+        let mut children = std::collections::HashMap::new();
+        children.insert(
+            "top".to_string(),
+            vec![
+                json!({"type": "doc", "doc_id": "d1"}),
+                json!({"type": "cluster", "name": "sub"}),
+                json!({"type": "doc", "doc_id": "d9"}),
+            ],
+        );
+        children.insert(
+            "sub".to_string(),
+            vec![json!({"type": "doc", "doc_id": "d2"})],
+        );
+        let host = MockHost {
+            clusters: vec![],
+            children,
+            recall: vec![],
+            layers: vec![],
+        };
+        let scope = vec!["d1".to_string(), "d2".to_string()];
+        let leaves = collect_nav_leaves(
+            &host,
+            &[json!({"name": "top", "kb_id": "kb1", "tenant_id": "t1"})],
+            Some(&scope),
+        )
+        .await;
+        let ids: Vec<String> = leaves
+            .iter()
+            .map(|leaf| leaf["doc_id"].as_str().unwrap_or("").to_string())
+            .collect();
+        assert_eq!(ids, vec!["d1".to_string(), "d2".to_string()]);
+        assert_eq!(nav_cluster_names(&[json!({"name": "top"})]), "top");
+        assert_eq!(nav_cluster_names(&[]), "none");
+    }
+
+    #[tokio::test]
+    async fn tree_route_and_fallbacks() {
+        let mut children = std::collections::HashMap::new();
+        children.insert(
+            "top".to_string(),
+            vec![json!({"type": "doc", "doc_id": "d1"})],
+        );
+        let host = MockHost {
+            clusters: vec![json!({"type": "cluster", "name": "top"})],
+            children,
+            recall: vec![json!({"doc_id": "d7"}), json!({"doc_id": "d1"})],
+            layers: vec![],
+        };
+        let chat = MockChat {
+            reply: "{\"relevant\": [0]}".to_string(),
+        };
+        let routed = dataset_navigation_by_tree(
+            &host,
+            &chat,
+            &[("kb1".to_string(), "t1".to_string())],
+            "q",
+            "",
+            None,
+        )
+        .await;
+        assert_eq!(routed, vec!["d1".to_string(), "d7".to_string()]);
+
+        // No clusters -> content-recall fallback.
+        let host = MockHost {
+            clusters: vec![],
+            children: std::collections::HashMap::new(),
+            recall: vec![json!({"doc_id": "d3"})],
+            layers: vec![],
+        };
+        let routed = dataset_navigation_by_tree(
+            &host,
+            &chat,
+            &[("kb1".to_string(), "t1".to_string())],
+            "q",
+            "",
+            None,
+        )
+        .await;
+        assert_eq!(routed, vec!["d3".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn nav_search_filters_scores_and_keeps_best() {
+        let host = MockHost {
+            clusters: vec![],
+            children: std::collections::HashMap::new(),
+            recall: vec![],
+            layers: vec![
+                json!({"doc_id": "d1", "score": 0.4, "_nav": {"description": "first summary"}}),
+                json!({"doc_id": "d2", "score": 0.1, "_nav": {"name": "too low"}}),
+                json!({"doc_id": "d1", "score": 0.7, "_nav": {"description": "better summary"}}),
+            ],
+        };
+        let routed = nav_search_titled(
+            &host,
+            &[("kb1".to_string(), "t1".to_string())],
+            "q",
+            "",
+            None,
+        )
+        .await;
+        assert_eq!(routed.len(), 1);
+        assert_eq!(routed[0].0, "d1");
+        assert_eq!(routed[0].1, "better summary");
+        assert_eq!(
+            dataset_navigation_search(
+                &host,
+                &[("kb1".to_string(), "t1".to_string())],
+                "q",
+                "",
+                None
+            )
+            .await,
+            vec!["d1".to_string()]
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    struct Store {
+        rows: Vec<Value>,
+        last: Mutex<Option<Vec<String>>>,
+    }
+
+    #[async_trait]
+    impl NavigationStore for Store {
+        async fn chunks_by_ids(
+            &self,
+            _doc_id: &str,
+            chunk_ids: &[String],
+        ) -> Result<Vec<Value>, String> {
+            *self.last.lock().unwrap() = Some(chunk_ids.to_vec());
+            Ok(self
+                .rows
+                .iter()
+                .filter(|row| {
+                    row.get("id")
+                        .and_then(Value::as_str)
+                        .map(|id| chunk_ids.iter().any(|wanted| wanted == id))
+                        .unwrap_or(false)
+                })
+                .cloned()
+                .collect())
+        }
+    }
+
+    #[test]
+    fn kind_normalization_matches_api() {
+        assert_eq!(normalize_kind(&json!("Page-Index")), "timeline");
+        assert_eq!(normalize_kind(&json!("KNOWLEDGE_GRAPH")), "timeline");
+        assert_eq!(normalize_kind(&json!("mindmap")), "mindmap");
+        assert_eq!(normalize_kind(&json!(42)), "");
+    }
+
+    #[tokio::test]
+    async fn chunk_loading_caps_and_maps() {
+        let store = Store {
+            rows: vec![
+                json!({"id": "c1", "content_with_weight": "alpha", "docnm_kwd": "Doc A"}),
+                json!({"id": "c2", "content_with_weight": "beta", "docnm_kwd": "Doc A"}),
+            ],
+            last: Mutex::new(None),
+        };
+        let chunks = load_chunks_by_ids(&store, "d1", &["c1".to_string(), "c9".to_string()]).await;
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0]["chunk_id"], json!("c1"));
+        assert_eq!(chunks[0]["doc_id"], json!("d1"));
+        assert!(load_chunks_by_ids(&store, "d1", &[]).await.is_empty());
+
+        let aggs = doc_aggs(&chunks);
+        assert_eq!(aggs.len(), 1);
+        assert_eq!(aggs[0]["doc_id"], json!("d1"));
+        assert_eq!(aggs[0]["doc_name"], json!("Doc A"));
+    }
+}

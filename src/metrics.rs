@@ -92,7 +92,13 @@ pub fn encode_prometheus_metrics() -> anyhow::Result<String> {
     canvas_metrics().encode()
 }
 
-
+#[cfg(test)]
+pub(crate) fn canvas_run_count(outcome: CanvasRunOutcome) -> f64 {
+    canvas_metrics()
+        .runs_total
+        .with_label_values(&[RUNTIME_RUST, outcome.label()])
+        .get()
+}
 
 pub struct CanvasRunMetricGuard {
     started_at: Instant,
@@ -124,4 +130,36 @@ impl Drop for CanvasRunMetricGuard {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn local_metrics_keep_labels_closed_and_skip_zero_duration() {
+        let metrics = CanvasMetrics::new().unwrap();
+        metrics.observe(CanvasRunOutcome::Success, Duration::from_millis(250));
+        metrics.observe(CanvasRunOutcome::Success, Duration::from_millis(500));
+        metrics.observe(CanvasRunOutcome::Error, Duration::ZERO);
+        let encoded = metrics.encode().unwrap();
+
+        assert!(
+            encoded.contains("ragflow_canvas_runs_total{outcome=\"success\",runtime=\"rust\"} 2")
+        );
+        assert!(
+            encoded.contains("ragflow_canvas_runs_total{outcome=\"error\",runtime=\"rust\"} 1")
+        );
+        assert!(encoded.contains("ragflow_canvas_run_duration_seconds_count{runtime=\"rust\"} 2"));
+        assert!(!encoded.contains("runtime=\"python\""));
+    }
+
+    #[test]
+    fn unfinished_guard_records_cancellation() {
+        let before = encode_prometheus_metrics().unwrap();
+        {
+            let _guard = CanvasRunMetricGuard::start();
+        }
+        let after = encode_prometheus_metrics().unwrap();
+        assert_ne!(before, after);
+        assert!(after.contains("outcome=\"cancelled\",runtime=\"rust\""));
+    }
+}

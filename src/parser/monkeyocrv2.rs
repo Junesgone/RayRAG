@@ -458,4 +458,259 @@ fn float_like(value: &Value) -> Option<f64> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        Router,
+        body::Body,
+        extract::Multipart,
+        http::{StatusCode, header},
+        response::{IntoResponse, Response},
+        routing::{get, post},
+    };
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
 
+    fn build_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        for (name, bytes) in entries {
+            writer.start_file(*name, options).unwrap();
+            writer.write_all(bytes).unwrap();
+        }
+        writer.finish().unwrap().into_inner()
+    }
+
+    fn layout(content: &str, label: &str, page: Value, bbox: Value) -> Value {
+        serde_json::json!({
+            "content": content,
+            "label": label,
+            "page_num": page,
+            "bbox": bbox,
+        })
+    }
+
+    #[test]
+    fn config_requires_http_server_url() {
+        assert!(MonkeyOcrV2Config::new("").is_err());
+        assert!(MonkeyOcrV2Config::new("ftp://example.com").is_err());
+        let config = MonkeyOcrV2Config::new("http://127.0.0.1:8081/").unwrap();
+        assert_eq!(config.server_url(), "http://127.0.0.1:8081");
+        assert_eq!(config.request_timeout(), Duration::from_secs(1800));
+        assert_eq!(
+            MonkeyOcrV2Config::new("https://ocr.example.com")
+                .unwrap()
+                .with_request_timeout(60)
+                .request_timeout(),
+            Duration::from_secs(60)
+        );
+    }
+
+    #[test]
+    fn converts_canonical_root_records_into_marker_content() {
+        let records = serde_json::json!({
+            "layouts": [
+                layout("Hello world", "text", serde_json::json!(1), serde_json::json!([1, 2, 3, 4])),
+                layout("| a |", "table", serde_json::json!(2), serde_json::json!([5, 6, 7, 8])),
+                layout("![diagram](doc/images/fig.png)", "picture", serde_json::json!(2), serde_json::json!([9, 10, 11, 12])),
+                layout("dropped", "text", serde_json::json!(3), serde_json::json!([1, 2])),
+            ]
+        });
+        let zip = build_zip(&[
+            ("doc/doc.json", records.to_string().as_bytes()),
+            ("doc/images/fig.png", b"not-a-real-png"),
+        ]);
+        let output = convert_zip(&zip).unwrap();
+        assert!(output.content.contains("Hello world@@1\t1\t3\t2\t4##"));
+        assert!(
+            output
+                .content
+                .contains("<!--TABLE_START-->\n| a |@@2\t5\t7\t6\t8##\n<!--TABLE_END-->")
+        );
+        assert!(
+            output
+                .content
+                .contains("<!--IMAGE_START-->\ndiagram@@2\t9\t11\t10\t12##\n<!--IMAGE_END-->")
+        );
+        assert!(!output.content.contains("dropped"));
+        assert_eq!(output.block_count, 3);
+        assert_eq!(output.page_count, 2);
+        assert!(output.structured);
+    }
+
+    #[test]
+    fn picture_without_image_is_skipped() {
+        let records = serde_json::json!({
+            "layouts": [
+                layout("![diagram](doc/images/missing.png)", "figure", serde_json::json!(1), serde_json::json!([1, 2, 3, 4])),
+            ]
+        });
+        let zip = build_zip(&[("doc/doc.json", records.to_string().as_bytes())]);
+        assert!(convert_zip(&zip).is_err());
+    }
+
+    #[test]
+    fn string_page_numbers_and_jsons_fallback_are_supported() {
+        let first = serde_json::json!({
+            "layouts": [
+                layout("from jsons", "text", serde_json::json!("3"), serde_json::json!([1.5, 2, 3, 4])),
+            ]
+        });
+        let second = serde_json::json!({
+            "layouts": [
+                layout("second doc", "text", serde_json::json!(1), serde_json::json!([0, 0, 0, 0])),
+            ]
+        });
+        let zip = build_zip(&[
+            ("a/jsons/one.json", first.to_string().as_bytes()),
+            ("a/jsons/two.json", second.to_string().as_bytes()),
+        ]);
+        let output = convert_zip(&zip).unwrap();
+        assert!(output.content.contains("from jsons@@3\t1.5\t3\t2\t4##"));
+        assert!(output.content.contains("second doc@@1\t0\t0\t0\t0##"));
+        assert_eq!(output.page_count, 2);
+    }
+
+    #[test]
+    fn all_results_fallback_accepts_summary_dict_and_broken_json() {
+        let summary = serde_json::json!({
+            "layouts": [
+                layout("summary text", "text", serde_json::json!(1), serde_json::json!([1, 1, 2, 2])),
+            ]
+        });
+        let zip = build_zip(&[
+            ("b/broken.json", b"{not json"),
+            ("b/all_results.json", summary.to_string().as_bytes()),
+        ]);
+        let output = convert_zip(&zip).unwrap();
+        assert!(output.content.contains("summary text@@1\t1\t2\t1\t2##"));
+    }
+
+    #[test]
+    fn rejects_invalid_zip_and_empty_layouts() {
+        let error = convert_zip(b"definitely not a zip")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("Invalid MonkeyOCRv2 ZIP"), "{error}");
+        let empty = serde_json::json!({"layouts": []});
+        let zip = build_zip(&[("doc/doc.json", empty.to_string().as_bytes())]);
+        let error = convert_zip(&zip).unwrap_err().to_string();
+        assert!(error.contains("no usable blocks"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn client_parses_zip_from_mock_service() {
+        let records = serde_json::json!({
+            "layouts": [
+                layout("Mocked text", "text", serde_json::json!(1), serde_json::json!([1, 1, 2, 2])),
+            ]
+        });
+        let archive = build_zip(&[("doc/doc.json", records.to_string().as_bytes())]);
+        let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+        let state = seen.clone();
+        let app = Router::new()
+            .route("/health", get(|| async { StatusCode::OK }))
+            .route(
+                "/parse",
+                post(move |mut multipart: Multipart| {
+                    let state = state.clone();
+                    async move {
+                        while let Some(field) = multipart.next_field().await.unwrap() {
+                            let name = field.name().unwrap_or_default().to_owned();
+                            let value = field.text().await.unwrap_or_default();
+                            state.lock().unwrap().push(format!("{name}={value}"));
+                        }
+                        Response::builder()
+                            .status(StatusCode::OK)
+                            .header(header::CONTENT_TYPE, "application/zip")
+                            .body(Body::from(archive))
+                            .unwrap()
+                            .into_response()
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let client =
+            MonkeyOcrV2Client::new(MonkeyOcrV2Config::new(&format!("http://{address}")).unwrap())
+                .unwrap();
+        assert!(client.check_installation().await.unwrap());
+        let output = client
+            .parse_pdf("sample.pdf", b"%PDF-1.4 mock", 0, 99999)
+            .await
+            .unwrap();
+        server.abort();
+        assert!(output.content.contains("Mocked text@@1\t1\t2\t1\t2##"));
+        let fields = seen.lock().unwrap().clone();
+        assert!(fields.iter().any(|field| field == "start_page_id=0"));
+        assert!(fields.iter().any(|field| field == "end_page_id=99999"));
+        // The multipart file field carries its filename as a separate part.
+        assert!(
+            fields.iter().any(|field| field == "files=")
+                || fields.iter().any(|field| field.starts_with("files=")),
+            "{fields:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn client_rejects_json_response() {
+        let app = Router::new()
+            .route("/health", get(|| async { StatusCode::OK }))
+            .route(
+                "/parse",
+                post(|| async {
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(r#"{"detail":"nope"}"#))
+                        .unwrap()
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client =
+            MonkeyOcrV2Client::new(MonkeyOcrV2Config::new(&format!("http://{address}")).unwrap())
+                .unwrap();
+        let error = client
+            .parse_pdf("sample.pdf", b"%PDF", 0, 99999)
+            .await
+            .unwrap_err()
+            .to_string();
+        server.abort();
+        assert!(error.contains("did not return a ZIP archive"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn client_reports_http_errors_with_body_snippet() {
+        let app = Router::new()
+            .route("/health", get(|| async { StatusCode::OK }))
+            .route(
+                "/parse",
+                post(|| async {
+                    Response::builder()
+                        .status(StatusCode::BAD_GATEWAY)
+                        .body(Body::from("upstream exploded"))
+                        .unwrap()
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client =
+            MonkeyOcrV2Client::new(MonkeyOcrV2Config::new(&format!("http://{address}")).unwrap())
+                .unwrap();
+        let error = client
+            .parse_pdf("sample.pdf", b"%PDF", 0, 99999)
+            .await
+            .unwrap_err()
+            .to_string();
+        server.abort();
+        assert!(error.contains("502"), "{error}");
+        assert!(error.contains("upstream exploded"), "{error}");
+    }
+}

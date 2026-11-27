@@ -449,4 +449,111 @@ impl McpClient {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
 
+    #[test]
+    fn initialize_request_carries_protocol_version_and_client_info() {
+        let request = build_initialize_request(7);
+        assert_eq!(request.jsonrpc, "2.0");
+        assert_eq!(request.id, 7);
+        assert_eq!(request.method, "initialize");
+        let params = request.params.unwrap();
+        assert_eq!(params["protocolVersion"], PROTOCOL_VERSION);
+        assert_eq!(params["clientInfo"]["name"], "rayrag-mcp-client");
+        assert!(params["capabilities"].is_object());
+    }
+
+    #[test]
+    fn stdio_framing_round_trips_and_skips_notifications() {
+        // Notifications carry no id and must not be returned as responses.
+        let notification = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
+        let response = r#"{"jsonrpc":"2.0","id":3,"result":{"protocolVersion":"2025-03-26","capabilities":{"tools":{}},"serverInfo":{"name":"srv","version":"1.0"}}}"#;
+
+        let request = build_tools_list_request(3);
+        let encoded = encode_stdio_message(&request);
+        assert!(encoded.ends_with('\n'));
+        let decoded: JsonRpcRequest = serde_json::from_str(encoded.trim_end()).unwrap();
+        assert_eq!(decoded.method, method::TOOLS_LIST);
+        assert_eq!(decoded.id, 3);
+
+        let parsed_notification = parse_stdio_line(notification).unwrap();
+        assert!(parsed_notification.id.is_none());
+        let parsed = parse_stdio_line(response).unwrap();
+        assert_eq!(parsed.id, Some(json!(3)));
+        let result = parsed.result.unwrap();
+        let init = parse_initialize_result(&result).unwrap();
+        assert_eq!(init.protocol_version, "2025-03-26");
+        assert_eq!(init.server_info["name"], "srv");
+    }
+
+    #[test]
+    fn tools_list_and_call_results_parse() {
+        let tools_result = json!({
+            "tools": [
+                {"name": "ragflow_retrieval", "description": "Retrieve chunks",
+                 "inputSchema": {"type": "object", "properties": {"question": {"type": "string"}}}},
+                {"name": "web_search", "description": "", "inputSchema": {"type": "object"}}
+            ]
+        });
+        let tools = parse_tools_result(&tools_result).unwrap();
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[0].name, "ragflow_retrieval");
+        assert_eq!(
+            tools[0].input_schema["properties"]["question"]["type"],
+            "string"
+        );
+        assert!(tools[1].description.is_empty());
+
+        let call_result = json!({
+            "content": [
+                {"type": "text", "text": "chunk one"},
+                {"type": "text", "text": "chunk two"}
+            ],
+            "isError": false
+        });
+        let parsed = parse_call_tool_result(&call_result).unwrap();
+        assert!(!parsed.is_error);
+        assert_eq!(call_result_text(&parsed), "chunk one\nchunk two");
+    }
+
+    #[test]
+    fn streamable_http_sse_payload_extraction() {
+        // A real Streamable HTTP SSE frame.
+        let event =
+            "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[]}}\n\n";
+        let payload = parse_sse_event(event).unwrap();
+        let response = parse_stdio_line(payload).unwrap();
+        assert_eq!(response.id, Some(json!(1)));
+        assert!(
+            parse_tools_result(&response.result.unwrap())
+                .unwrap()
+                .is_empty()
+        );
+
+        // Ping events carry no data and must be ignored.
+        assert!(parse_sse_event("event: ping\ndata: {}\n\n").is_none());
+        // A malformed frame surfaces as a parse error, not a panic.
+        assert!(parse_stdio_line("not json at all").is_err());
+    }
+
+    #[test]
+    fn jsonrpc_errors_surface_with_code_and_message() {
+        let response = JsonRpcResponse {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(9)),
+            result: None,
+            error: Some(JsonRpcError {
+                code: -32602,
+                message: "Invalid params: unknown tool `nope`".into(),
+                data: None,
+            }),
+        };
+        let err = McpClient::response_or_error(response).unwrap_err();
+        let text = err.to_string();
+        assert!(text.contains("-32602"));
+        assert!(text.contains("unknown tool"));
+    }
+}

@@ -476,4 +476,234 @@ impl ChunkDoc {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Chunk;
+    use uuid::Uuid;
 
+    fn sample_chunk() -> Chunk {
+        let mut chunk = Chunk {
+            id: "doc_0".into(),
+            content: "Some chunk text".into(),
+            content_type: "text".into(),
+            doc_id: Uuid::new_v4(),
+            position: 0,
+            token_count: 4,
+            embedding: None,
+            metadata: HashMap::new(),
+        };
+        chunk.metadata.insert("file_name".into(), "cv.pdf".into());
+        chunk
+            .metadata
+            .insert("important_kwd".into(), "rust rag pipeline".into());
+        chunk
+            .metadata
+            .insert("tag_kwd".into(), r#"["好公司","行业好公司"]"#.into());
+        chunk
+            .metadata
+            .insert("position_int".into(), "[[1,1,3,2,4],[2,2,4,3,5]]".into());
+        chunk.metadata.insert("available_int".into(), "1".into());
+        chunk
+    }
+
+    #[test]
+    fn from_upstream_check_payloads_mirrors_python_validator() {
+        // output_format=chunks with a present (even empty) chunks list is valid.
+        let chunks_ok = FromUpstream {
+            output_format: Some(OutputFormat::Chunks),
+            chunks: Some(vec![]),
+            ..FromUpstream::default()
+        };
+        assert!(chunks_ok.check_payloads().is_ok());
+
+        // markdown requires the markdown payload.
+        let markdown_missing = FromUpstream {
+            output_format: Some(OutputFormat::Markdown),
+            ..FromUpstream::default()
+        };
+        let err = markdown_missing.check_payloads().unwrap_err().to_string();
+        assert!(err.contains("output_format=markdown requires a markdown payload"));
+        let markdown_ok = FromUpstream {
+            output_format: Some(OutputFormat::Markdown),
+            markdown_result: Some("# t".into()),
+            ..FromUpstream::default()
+        };
+        assert!(markdown_ok.check_payloads().is_ok());
+
+        // text requires the text payload; html reuses the same message.
+        let text_err = FromUpstream {
+            output_format: Some(OutputFormat::Text),
+            ..FromUpstream::default()
+        }
+        .check_payloads()
+        .unwrap_err()
+        .to_string();
+        assert!(text_err.contains("output_format=text requires a text payload"));
+        let html_err = FromUpstream {
+            output_format: Some(OutputFormat::Html),
+            ..FromUpstream::default()
+        }
+        .check_payloads()
+        .unwrap_err()
+        .to_string();
+        assert!(html_err.contains("requires a html payload"));
+
+        // No chunks and no json payload → error, even with a text result set.
+        let json_missing = FromUpstream {
+            text_result: Some("hello".into()),
+            ..FromUpstream::default()
+        };
+        let err = json_missing.check_payloads().unwrap_err().to_string();
+        assert!(err.contains("JSON list payload is required"));
+
+        // json payload present → ok.
+        let json_ok = FromUpstream {
+            json_result: Some(vec![json!({"content": "c"})]),
+            ..FromUpstream::default()
+        };
+        assert!(json_ok.check_payloads().is_ok());
+    }
+
+    #[test]
+    fn from_upstream_accepts_underscore_aliases_on_deserialize_and_serializes_by_alias() {
+        // pydantic populate_by_name: `_created_time` and `json` wire names.
+        let parsed: FromUpstream = serde_json::from_str(
+            r#"{"_created_time": 1.5, "_elapsed_time": 0.25, "name": "a.pdf", "json": [{"content":"x"}]}"#,
+        )
+        .expect("aliases accepted");
+        assert_eq!(parsed.created_time, Some(1.5));
+        assert_eq!(parsed.elapsed_time, Some(0.25));
+        assert_eq!(parsed.name, "a.pdf");
+        assert!(parsed.json_result.is_some());
+        assert!(parsed.check_payloads().is_ok());
+
+        // Serialization emits the by-alias wire names.
+        let value = serde_json::to_value(&parsed).expect("serialize");
+        assert_eq!(value["_created_time"], 1.5);
+        assert_eq!(value["_elapsed_time"], 0.25);
+        assert_eq!(value["json"][0]["content"], "x");
+    }
+
+    #[test]
+    fn component_output_tracks_created_elapsed_and_error_keys() {
+        let mut out = ComponentOutput::begin();
+        out.set_output("name", json!("resume.pdf"));
+        assert!(out.error().is_none());
+        out.set_error("boom");
+        assert_eq!(out.error(), Some("boom"));
+        out.finish();
+
+        let map = out.into_map();
+        assert!(map.contains_key(CREATED_TIME_KEY));
+        assert!(map.contains_key(ELAPSED_TIME_KEY));
+        assert_eq!(map[ERROR_KEY], "boom");
+        assert_eq!(map["name"], "resume.pdf");
+    }
+
+    #[test]
+    fn file_outputs_emits_name_and_optional_file() {
+        let with_file = file_outputs("a.pdf", Some(json!({"id": "f1", "name": "a.pdf"})));
+        let map = with_file.into_map();
+        assert_eq!(map["name"], "a.pdf");
+        assert_eq!(map["file"]["id"], "f1");
+
+        // Bound-doc mode: only name.
+        let without = file_outputs("b.pdf", None).into_map();
+        assert_eq!(without["name"], "b.pdf");
+        assert!(!without.contains_key("file"));
+    }
+
+    #[test]
+    fn flow_log_accumulates_traces_and_computes_overall_progress() {
+        let mut log = FlowLog::default();
+        log.append("Begin", 1.0, "File fetched.");
+        log.append("Begin", 1.0, "File fetched again.");
+        log.append("Chunk", 0.5, "Half chunked.");
+        log.append("END", 1.0, "{}");
+
+        // Same component id appends to its own trace.
+        assert_eq!(log.components.len(), 3);
+        assert_eq!(log.components[0].component_id, "Begin");
+        assert_eq!(log.components[0].trace.len(), 2);
+        assert_eq!(log.components[0].trace[1].message, "File fetched again.");
+        assert!(log.components[0].trace[1].elapsed_time >= 0.0);
+
+        // 3 components: (1.0 + 0.5 + 1.0) / 3.
+        let progress = log.overall_progress(3);
+        assert!((progress - 5.0 / 6.0).abs() < 1e-9);
+
+        // A canceled component short-circuits to -1 (pipeline.py:84-87).
+        let mut canceled = FlowLog::default();
+        canceled.append("A", -1.0, "[CANCEL]");
+        canceled.append("B", 1.0, "done");
+        assert_eq!(canceled.overall_progress(2), -1.0);
+
+        // Zero components → 0.
+        assert_eq!(FlowLog::default().overall_progress(4), 0.0);
+    }
+
+    #[test]
+    fn chunk_doc_converts_from_pipeline_chunk_contract() {
+        let chunk = sample_chunk();
+        let doc = ChunkDoc::from(&chunk);
+
+        assert_eq!(doc.id, "doc_0");
+        assert_eq!(doc.content, "Some chunk text");
+        assert_eq!(doc.document_id, chunk.doc_id.to_string());
+        // docnm_kwd falls back to file_name.
+        assert_eq!(doc.docnm_kwd, "cv.pdf");
+        assert_eq!(doc.important_keywords, vec!["rust", "rag", "pipeline"]);
+        assert_eq!(doc.tag_kwd, vec!["好公司", "行业好公司"]);
+        assert!(doc.available);
+        assert_eq!(
+            doc.positions,
+            vec![vec![1, 1, 3, 2, 4], vec![2, 2, 4, 3, 5]]
+        );
+        doc.validate_positions().expect("all positions length 5");
+
+        // available_int = "0" hides the chunk from retrieval.
+        let mut hidden = chunk.clone();
+        hidden.metadata.insert("available_int".into(), "0".into());
+        assert!(!ChunkDoc::from(&hidden).available);
+
+        // Invalid positions are filtered at conversion and rejected by the
+        // REST validator.
+        let mut bad = chunk.clone();
+        bad.metadata
+            .insert("position_int".into(), "[[1,2,3]]".into());
+        let doc = ChunkDoc::from(&bad);
+        assert!(doc.positions.is_empty());
+        assert!(doc.validate_positions().is_ok()); // nothing left to reject
+        let mut manual = doc;
+        manual.positions.push(vec![1, 2, 3]);
+        assert!(manual.validate_positions().is_err());
+    }
+
+    #[test]
+    fn resume_corp_entity_resources_align_with_ner_semantics() {
+        // CorporationEntity normalization — corporations.py corpNorm:
+        // 腾讯科技有限公司 → suffix-stripped 腾讯 (early return < 5 chars).
+        assert_eq!(crate::resume::corp_norm("腾讯科技有限公司", false), "腾讯");
+        // 阿里巴巴集团 → CORP_TKS ("集团") dropped during token filtering.
+        assert_eq!(crate::resume::corp_norm("阿里巴巴集团", false), "阿里巴巴");
+        // rmNoise strips parenthetical content.
+        assert_eq!(crate::resume::rm_noise("蚂蚁集团（杭州）"), "蚂蚁集团");
+
+        // good_corp.json: 蚂蚁集团 is a normalized member of the corpus.
+        assert!(crate::resume::corp_is_good("蚂蚁集团"));
+        // 外派 always disqualifies (corporations.py:104-105).
+        assert!(!crate::resume::corp_is_good("蚂蚁集团外派"));
+        assert!(!crate::resume::corp_is_good("某不知名小公司"));
+
+        // corp_tag.json exact-match on alphanumeric keys (2k games).
+        assert_eq!(
+            crate::resume::corp_tag("2k games"),
+            vec!["好游戏", "行业好公司"]
+        );
+
+        // corp_baike_len.csv: cid 376 → len 155.
+        assert_eq!(crate::resume::baike("376", 0), 155);
+        assert_eq!(crate::resume::baike("99999999", 7), 7);
+    }
+}

@@ -489,4 +489,75 @@ pub(crate) fn reference_entries(
         .collect()
 }
 
+#[cfg(test)]
+mod extra_body_tests {
+    use super::*;
 
+    fn reference() -> crate::llm::ChunkReference {
+        let mut meta = serde_json::Map::new();
+        meta.insert("author".into(), serde_json::json!("bob"));
+        meta.insert("year".into(), serde_json::json!("2023"));
+        meta.insert("source".into(), serde_json::json!("internal"));
+        crate::llm::ChunkReference {
+            document_id: None,
+            document_name: None,
+            id: "chunk-1".into(),
+            kb_id: "kb-1".into(),
+            content: "Some retrieved text".into(),
+            similarity: Some(0.5),
+            vector_similarity: None,
+            term_similarity: None,
+            document_metadata: Some(meta),
+        }
+    }
+
+    /// `fields` omitted means "all keys", and an empty list means "none" - the guide states both.
+    #[test]
+    fn reference_metadata_fields_is_an_allowlist_with_two_edges() {
+        let refs = vec![reference()];
+        let all = reference_entries(&refs, None);
+        assert_eq!(all[0]["document_metadata"]["author"], "bob");
+        assert_eq!(all[0]["document_metadata"]["source"], "internal");
+
+        let allow = vec!["author".to_string(), "year".to_string()];
+        let some = reference_entries(&refs, Some(&allow));
+        assert_eq!(some[0]["document_metadata"]["author"], "bob");
+        assert_eq!(some[0]["document_metadata"]["year"], "2023");
+        assert!(
+            some[0]["document_metadata"].get("source").is_none(),
+            "a key outside the allowlist must not leak: {}",
+            some[0]
+        );
+
+        let none: Vec<String> = Vec::new();
+        let empty = reference_entries(&refs, Some(&none));
+        assert_eq!(
+            empty[0]["document_metadata"],
+            serde_json::json!({}),
+            "an empty allowlist asks for no metadata at all"
+        );
+    }
+
+    /// A `metadata_condition` must be a condition the shared filter understands, not a free-form
+    /// object that silently matches everything.
+    #[test]
+    fn metadata_condition_converts_to_real_filters() {
+        let condition = serde_json::json!({
+            "logic": "and",
+            "conditions": [{"name": "author", "comparison_operator": "is", "value": "bob"}]
+        });
+        let filters = crate::metadata_filter::convert_conditions(Some(&condition));
+        assert_eq!(filters.len(), 1, "{filters:?}");
+        assert_eq!(
+            crate::metadata_filter::canonical_operator("is"),
+            filters[0].op,
+            "the operator must be canonicalised, not kept as written"
+        );
+        let mut values = std::collections::BTreeMap::new();
+        values.insert("bob".to_string(), vec!["doc-1".to_string()]);
+        let mut metas = std::collections::BTreeMap::new();
+        metas.insert("author".to_string(), values);
+        let allowed = crate::metadata_filter::meta_filter(&metas, &filters, "and");
+        assert_eq!(allowed, vec!["doc-1".to_string()]);
+    }
+}

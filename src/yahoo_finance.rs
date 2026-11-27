@@ -112,7 +112,20 @@ impl YahooEndpoints {
         })
     }
 
-    
+    #[cfg(test)]
+    fn local(base: &str) -> Result<Self> {
+        let base = base.trim_end_matches('/');
+        Ok(Self {
+            fc: format!("{base}/fc").parse()?,
+            crumb: format!("{base}/crumb").parse()?,
+            quote_summary: format!("{base}/quoteSummary/").parse()?,
+            quote: format!("{base}/quote").parse()?,
+            chart: format!("{base}/chart/").parse()?,
+            timeseries_query1: format!("{base}/timeseries1/").parse()?,
+            timeseries_query2: format!("{base}/timeseries2/").parse()?,
+            news: format!("{base}/news?queryRef=latestNews&serviceKey=ncp_fin").parse()?,
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -149,7 +162,10 @@ impl YahooFinanceClient {
         })
     }
 
-    
+    #[cfg(test)]
+    pub(crate) fn new_with_base(base: &str) -> Result<Self> {
+        Self::new(YahooEndpoints::local(base)?)
+    }
 
     async fn session(&self) -> Result<YahooSession> {
         let mut cached = self.session.lock().await;
@@ -1244,4 +1260,292 @@ const CASH_FLOW_KEYS: &[&str] = &[
     "ReceiptsfromCustomers",
 ];
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::Router;
+    use axum::body::Bytes;
+    use axum::extract::State;
+    use axum::http::{HeaderMap, Method, StatusCode, Uri, header};
+    use axum::response::{IntoResponse, Response};
+    use axum::routing::any;
+    use std::sync::{Arc, Mutex as StdMutex};
 
+    #[derive(Debug, Clone)]
+    struct RecordedRequest {
+        method: Method,
+        uri: Uri,
+        headers: HeaderMap,
+        body: Bytes,
+    }
+
+    #[derive(Clone, Default)]
+    struct Recorded(Arc<StdMutex<Vec<RecordedRequest>>>);
+
+    async fn yahoo_handler(
+        State(recorded): State<Recorded>,
+        method: Method,
+        uri: Uri,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
+        recorded.0.lock().unwrap().push(RecordedRequest {
+            method,
+            uri: uri.clone(),
+            headers,
+            body,
+        });
+        let path = uri.path();
+        if path == "/fc" {
+            return (
+                StatusCode::NOT_FOUND,
+                [(header::SET_COOKIE, "A3=session-cookie; Path=/; Secure")],
+                "",
+            )
+                .into_response();
+        }
+        if path == "/crumb" {
+            return "test-crumb".into_response();
+        }
+        let query = uri.query().unwrap_or_default();
+        let payload = match path {
+            path if path.starts_with("/quoteSummary/") && query.contains("calendarEvents") => {
+                json!({"quoteSummary":{"result":[{"calendarEvents":{
+                    "dividendDate": 1767225600_i64,
+                    "earnings":{"earningsDate":[1769904000_i64],"earningsHigh":{"raw":2.5},"revenueAverage":{"raw":1000}}
+                }}]}})
+            }
+            path if path.starts_with("/quoteSummary/") => json!({"quoteSummary":{"result":[{
+                "assetProfile":{"longBusinessSummary":"Rust\u{a0}systems","maxAge":1},
+                "summaryDetail":{"marketCap":{"raw":1234,"fmt":"1.23K"}},
+                "quoteType":{"exchange":"NMS"}
+            }]}}),
+            "/quote" => json!({"quoteResponse":{"result":[{
+                "symbol":"AAPL","regularMarketPrice":189.5,"currency":"USD",
+                "regularMarketChangePercent":null,"regularMarketTime":{"raw":1767225600,"fmt":"2026-01-01 12:00PM EST"}
+            }]}}),
+            path if path.starts_with("/timeseries1/") => {
+                json!({"timeseries":{"error":null,"result":[{
+                    "trailingPegRatio":[{"asOfDate":"2026-01-01","reportedValue":{"raw":2.25}}]
+                }]}})
+            }
+            path if path.starts_with("/chart/") => json!({"chart":{"result":[{
+                "meta":{"gmtoffset":0},"timestamp":[1767225600_i64],
+                "indicators":{"quote":[{"open":[188.0],"high":[190.0],"low":[187.0],"close":[189.5],"volume":[100]}],"adjclose":[{"adjclose":[180.0]}]},
+                "events":{"dividends":{"1767225600":{"amount":0.25}}}
+            }]}}),
+            path if path.starts_with("/timeseries2/") => {
+                let entries = if query.contains("CapitalExpenditure") {
+                    json!([
+                        {"meta":{},"timestamp":[1767139200_i64],"annualFreeCashFlow":[{"asOfDate":"2025-12-31","reportedValue":{"raw":500.0}}]},
+                        {"meta":{},"timestamp":[1767139200_i64],"quarterlyFreeCashFlow":[{"asOfDate":"2025-12-31","reportedValue":{"raw":125.0}}]}
+                    ])
+                } else {
+                    json!([
+                        {"meta":{},"timestamp":[1767139200_i64],"annualTotalAssets":[{"asOfDate":"2025-12-31","reportedValue":{"raw":9000.0}}]},
+                        {"meta":{},"timestamp":[1767139200_i64],"quarterlyTotalAssets":[{"asOfDate":"2025-12-31","reportedValue":{"raw":9100.0}}]}
+                    ])
+                };
+                json!({"timeseries":{"result":entries}})
+            }
+            "/news" => json!({"data":{"tickerStream":{"stream":[
+                {"title":"Rust earnings","publisher":"Wire","ad":[]},
+                {"title":"Sponsored","ad":[{"id":"paid"}]}
+            ]}}}),
+            _ => return (StatusCode::NOT_FOUND, "missing fixture").into_response(),
+        };
+        axum::Json(payload).into_response()
+    }
+
+    async fn server() -> (YahooFinanceClient, Recorded, tokio::task::JoinHandle<()>) {
+        let recorded = Recorded::default();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let app = Router::new()
+            .fallback(any(yahoo_handler))
+            .with_state(recorded.clone());
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (
+            YahooFinanceClient::new_with_base(&base).unwrap(),
+            recorded,
+            handle,
+        )
+    }
+
+    #[tokio::test]
+    async fn python_contract_uses_cookie_crumb_all_sections_and_upstream_order() {
+        let (client, recorded, handle) = server().await;
+        let report = client
+            .report(&YahooFinanceRequest {
+                stock_code: "AAPL".into(),
+                info: true,
+                history: true,
+                count: true,
+                financials: true,
+                income_stmt: true,
+                balance_sheet: true,
+                cash_flow_statement: true,
+                news: true,
+            })
+            .await
+            .unwrap();
+        handle.abort();
+
+        let headings = [
+            "# Information:",
+            "# History:",
+            "# Calendar:",
+            "# Balance sheet:",
+            "# Quarterly balance sheet:",
+            "# Cash flow statement:",
+            "# Quarterly cash flow statement:",
+            "# News:",
+        ];
+        let positions = headings
+            .iter()
+            .map(|heading| report.find(heading).unwrap())
+            .collect::<Vec<_>>();
+        assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(report.contains("Rust systems"));
+        assert!(report.contains("marketCap"));
+        assert!(report.contains("1234"));
+        assert!(report.contains("86400"));
+        assert!(report.contains("2026-01-01 12:00PM EST"));
+        assert!(report.contains("trailingPegRatio"));
+        assert!(report.contains("180"));
+        assert!(report.contains("TotalAssets"));
+        assert!(report.contains("FreeCashFlow"));
+        assert!(report.contains("Rust earnings"));
+        assert!(!report.contains("Sponsored"));
+        assert!(!report.contains("# Count"));
+        assert!(!report.contains("# Income"));
+
+        let requests = recorded.0.lock().unwrap();
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.uri.path() == "/fc")
+                .count(),
+            1
+        );
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.uri.path() == "/crumb")
+                .count(),
+            1
+        );
+        for request in requests
+            .iter()
+            .filter(|request| !matches!(request.uri.path(), "/fc" | "/crumb" | "/quote"))
+        {
+            assert!(
+                request
+                    .uri
+                    .query()
+                    .unwrap_or_default()
+                    .contains("crumb=test-crumb")
+            );
+            assert_eq!(request.headers[header::COOKIE], "A3=session-cookie");
+        }
+        let news = requests
+            .iter()
+            .find(|request| request.uri.path() == "/news")
+            .unwrap();
+        assert_eq!(news.method, Method::POST);
+        let news_body: Value = serde_json::from_slice(&news.body).unwrap();
+        assert_eq!(news_body["serviceConfig"]["snippetCount"], 10);
+        assert_eq!(news_body["serviceConfig"]["s"], json!(["AAPL"]));
+    }
+
+    #[tokio::test]
+    async fn go_contract_preserves_query_headers_and_zero_values_for_nulls() {
+        let (client, recorded, handle) = server().await;
+        let envelope = client
+            .quote_go(
+                &["AAPL".into(), "MSFT".into(), "0005.HK".into()],
+                &["symbol".into(), "regularMarketPrice".into()],
+            )
+            .await
+            .unwrap();
+        handle.abort();
+
+        assert_eq!(envelope.results.len(), 1);
+        assert_eq!(envelope.results[0].symbol, "AAPL");
+        assert_eq!(envelope.results[0].regular_market_price, 189.5);
+        assert_eq!(envelope.results[0].regular_market_change_percent, 0.0);
+        {
+            let requests = recorded.0.lock().unwrap();
+            assert_eq!(requests.len(), 1);
+            let request = &requests[0];
+            let query: BTreeMap<_, _> =
+                reqwest::Url::parse(&format!("http://local{}", request.uri))
+                    .unwrap()
+                    .query_pairs()
+                    .into_owned()
+                    .collect();
+            assert_eq!(query["symbols"], "AAPL,MSFT,0005.HK");
+            assert_eq!(query["fields"], "symbol,regularMarketPrice");
+            assert_eq!(request.headers[USER_AGENT], GO_USER_AGENT);
+            assert_eq!(request.headers[ACCEPT], "application/json");
+            assert!(!request.uri.query().unwrap().contains("crumb"));
+        }
+
+        let error = client.quote_go(&[], &[]).await.unwrap_err();
+        assert!(error.to_string().contains("symbols"));
+    }
+
+    #[tokio::test]
+    async fn empty_symbol_short_circuits_and_cookie_bootstrap_fails_closed() {
+        let (client, recorded, handle) = server().await;
+        let report = client
+            .report(&YahooFinanceRequest::python_defaults(""))
+            .await
+            .unwrap();
+        assert!(report.is_empty());
+        assert!(recorded.0.lock().unwrap().is_empty());
+        handle.abort();
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let app = Router::new().fallback(any(|| async { "no cookie" }));
+        let server_handle = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = YahooFinanceClient::new_with_base(&base).unwrap();
+        let error = client
+            .report(&YahooFinanceRequest::python_defaults("AAPL"))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("no cookies"));
+        server_handle.abort();
+    }
+
+    #[test]
+    fn full_yfinance_key_sets_and_nullable_go_scalars_are_preserved() {
+        assert_eq!(BALANCE_SHEET_KEYS.len(), 145);
+        assert_eq!(CASH_FLOW_KEYS.len(), 123);
+        let quote: YahooFinanceQuote = serde_json::from_value(json!({
+            "symbol": null,
+            "regularMarketPrice": null,
+            "currency": null,
+            "regularMarketChangePercent": null
+        }))
+        .unwrap();
+        assert_eq!(quote.symbol, "");
+        assert_eq!(quote.currency, "");
+        assert_eq!(quote.regular_market_price, 0.0);
+        assert_eq!(quote.regular_market_change_percent, 0.0);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live Yahoo Finance access; anti-bot or egress limits may return HTTP 403/429"]
+    async fn live_yahoo_finance_default_report() {
+        let report = YahooFinanceClient::default()
+            .report(&YahooFinanceRequest::python_defaults("AAPL"))
+            .await
+            .unwrap();
+        assert!(report.contains("# Information:"));
+        assert!(report.contains("# News:"));
+    }
+}

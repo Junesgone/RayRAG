@@ -762,4 +762,186 @@ fn chunk_index(state: &AppState) -> impl Fn(&str) -> Option<ChunkIdentity> + use
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::llm::ChatMessage;
 
+    fn session(id: &str, owner: &str, created_at: u64, updated_at: u64) -> Conversation {
+        let mut user = ChatMessage::new("user", "what is ragflow?");
+        user.created_at = created_at;
+        let mut assistant = ChatMessage::new("assistant", "a retrieval engine");
+        assistant.created_at = created_at;
+        assistant.thumbup = Some(true);
+        assistant.references = vec![ChunkReference {
+            document_id: None,
+            document_name: None,
+            id: "chunk-1".into(),
+            kb_id: "kb-1".into(),
+            content: "retrieval augmented generation".into(),
+            similarity: Some(0.9),
+            vector_similarity: None,
+            term_similarity: None,
+            document_metadata: None,
+        }];
+        Conversation {
+            id: id.into(),
+            name: "session".into(),
+            owner_id: owner.into(),
+            tenant_id: owner.into(),
+            source: "agent".into(),
+            canvas_id: Some("canvas-1".into()),
+            app_id: None,
+            kb_ids: Vec::new(),
+            chat_model: None,
+            embedding_model: None,
+            messages: vec![user, assistant],
+            duration_ms: 1500,
+            dsl: Some(serde_json::json!({"components": {}})),
+            errors: None,
+            version_title: Some("v1".into()),
+            created_at,
+            updated_at,
+        }
+    }
+
+    #[test]
+    fn query_defaults_match_upstream_argument_defaults() {
+        let query = SessionQuery::parse(&HashMap::new()).unwrap();
+        assert_eq!(query.page, 1);
+        assert_eq!(query.page_size, 30);
+        assert_eq!(query.orderby, "update_time");
+        assert!(query.desc);
+        assert!(query.include_dsl);
+        assert!(query.keywords.is_empty());
+    }
+
+    #[test]
+    fn query_reads_upstream_flags_and_rejects_oversize_pages() {
+        let params = HashMap::from([
+            ("page".to_string(), "3".to_string()),
+            ("page_size".to_string(), "50".to_string()),
+            ("orderby".to_string(), "create_date".to_string()),
+            ("desc".to_string(), "false".to_string()),
+            ("dsl".to_string(), "False".to_string()),
+            ("keywords".to_string(), "rag".to_string()),
+        ]);
+        let query = SessionQuery::parse(&params).unwrap();
+        assert_eq!(query.page, 3);
+        assert_eq!(query.page_size, 50);
+        assert_eq!(query.orderby, "create_date");
+        assert!(!query.desc);
+        assert!(!query.include_dsl);
+        assert_eq!(query.keywords, "rag");
+
+        let oversize = HashMap::from([("page_size".to_string(), "101".to_string())]);
+        assert_eq!(
+            SessionQuery::parse(&oversize).unwrap_err(),
+            "page_size must be less than or equal to 100"
+        );
+    }
+
+    #[test]
+    fn local_datetimes_parse_back_as_ragflow_wall_clock() {
+        let rendered = format_local_datetime(1_700_086_400_000);
+        assert_eq!(rendered.len(), 19);
+        assert!(
+            chrono::NaiveDateTime::parse_from_str(&rendered, "%Y-%m-%d %H:%M:%S").is_ok(),
+            "{rendered}"
+        );
+        // The rendering is the server-local wall clock, i.e. the UTC instant
+        // shifted by the process offset.
+        let offset = chrono::Local::now().offset().local_minus_utc();
+        let expected = chrono::DateTime::<chrono::Utc>::from_timestamp(1_700_086_400, 0)
+            .unwrap()
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        assert_eq!(rendered, expected);
+        let _ = offset;
+    }
+
+    #[test]
+    fn normalize_query_date_widens_bare_days_and_iso_values() {
+        assert_eq!(
+            normalize_query_date("2026-07-18", false),
+            "2026-07-18 00:00:00"
+        );
+        assert_eq!(
+            normalize_query_date("2026-07-18", true),
+            "2026-07-18 23:59:59"
+        );
+        assert_eq!(
+            normalize_query_date("2026-07-18 10:00:00", false),
+            "2026-07-18 10:00:00"
+        );
+        let iso = normalize_query_date("2026-07-18T10:00:00+00:00", false);
+        assert!(iso.starts_with("2026-07-18 "), "{iso}");
+    }
+
+    #[test]
+    fn filters_keywords_dates_and_orders_like_get_list() {
+        let sessions = vec![
+            session("a", "alice", 1_700_000_000_000, 1_700_000_100_000),
+            session("b", "bob", 1_700_086_400_000, 1_700_086_500_000),
+        ];
+        let identity = |_: &str| None;
+        let mut query = SessionQuery::default();
+        query.orderby = "create_time".into();
+        query.desc = false;
+        let (total, page) = select_sessions(sessions.clone(), &query);
+        assert_eq!(total, 2);
+        assert_eq!(page[0].id, "a");
+        assert_eq!(page[1].id, "b");
+
+        query.desc = true;
+        let (_, page) = select_sessions(sessions.clone(), &query);
+        assert_eq!(page[0].id, "b");
+
+        query.keywords = "RAGFLOW".into();
+        let (total, _) = select_sessions(sessions.clone(), &query);
+        assert_eq!(total, 2);
+        query.keywords = "missing".into();
+        let (total, _) = select_sessions(sessions.clone(), &query);
+        assert_eq!(total, 0);
+
+        // The range is expressed in the same server-local clock the rows use,
+        // so the assertion holds in every process timezone.
+        let exact = format_local_datetime(1_700_086_400_000);
+        let mut dated = SessionQuery::default();
+        dated.orderby = "create_date".into();
+        dated.from_date = exact.clone();
+        dated.to_date = exact;
+        let (total, page) = select_sessions(sessions.clone(), &dated);
+        assert_eq!(total, 1);
+        assert_eq!(page[0].id, "b");
+
+        let mut by_user = SessionQuery::default();
+        by_user.user_id = "alice".into();
+        let (total, _) = select_sessions(sessions.clone(), &by_user);
+        assert_eq!(total, 1);
+
+        let mut paged = SessionQuery::default();
+        paged.page = 2;
+        paged.page_size = 1;
+        let (total, page) = select_sessions(sessions, &paged);
+        assert_eq!(total, 2);
+        assert_eq!(page.len(), 1);
+
+        let row = normalize_agent_session(&page[0], &paged, &identity);
+        assert_eq!(row["agent_id"], "canvas-1");
+        assert!(row.get("dsl").is_some());
+        assert_eq!(row["round"], 1);
+        assert_eq!(row["thumb_up"], 1);
+        assert_eq!(
+            row["message"][1]["reference"][0]["content"],
+            "retrieval augmented generation"
+        );
+        assert_eq!(row["message"][1]["reference"][0]["dataset_id"], "kb-1");
+        assert!(row["create_date"].as_str().unwrap().len() == 19);
+
+        paged.include_dsl = false;
+        let row = normalize_agent_session(&page[0], &paged, &identity);
+        assert!(row.get("dsl").is_none());
+    }
+}

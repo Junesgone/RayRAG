@@ -98,4 +98,75 @@ fn fine_grained_tokenize(tokens: &[String]) -> Vec<String> {
     tokens.to_vec()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn presentation_detection_matches_extensions() {
+        assert!(is_presentation("slides.pptx"));
+        assert!(is_presentation("old.ppt"));
+        assert!(is_presentation("DECK.PPTX"));
+        assert!(!is_presentation("notes.pdf"));
+        assert!(!is_presentation("data.xlsx"));
+    }
+
+    #[test]
+    fn title_strips_extension_case_insensitively() {
+        assert_eq!(title_without_extension("report.pptx"), "report");
+        assert_eq!(title_without_extension("REPORT.PPT"), "REPORT");
+        assert_eq!(title_without_extension("report.pdf"), "report.pdf");
+        assert_eq!(title_without_extension("noext"), "noext");
+    }
+
+    #[test]
+    fn chunk_pptx_emits_image_docs_with_page_metadata() {
+        // Build a minimal pptx: [Content_Types].xml + one slide.
+        let content_types = r#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/></Types>"#;
+        let slide1 = r#"<p:sld><p:sp><p:txBody><a:p><a:r><a:t>Hello slide one</a:t></a:r></a:p></p:txBody></p:sp></p:sld>"#;
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        zip.start_file("[Content_Types].xml", options).unwrap();
+        std::io::Write::write_all(&mut zip, content_types.as_bytes()).unwrap();
+        zip.start_file("ppt/slides/slide1.xml", options).unwrap();
+        std::io::Write::write_all(&mut zip, slide1.as_bytes()).unwrap();
+        let bytes = zip.finish().unwrap().into_inner();
+
+        let chunks = chunk_pptx("deck.pptx", &bytes, 0, 100, "Chinese").unwrap();
+        assert_eq!(chunks.len(), 1);
+        let d = &chunks[0];
+        assert_eq!(d.docnm_kwd, "deck.pptx");
+        assert_eq!(d.doc_type_kwd.as_deref(), Some("image"));
+        assert_eq!(d.page_num_int.as_deref(), Some([1i64].as_slice()));
+        assert_eq!(d.top_int.as_deref(), Some([0i64].as_slice()));
+        assert_eq!(
+            d.position_int.as_deref(),
+            Some([(1i64, 0i64, 0i64, 0i64, 0i64)].as_slice())
+        );
+        assert!(d.content_with_weight.contains("Hello slide one"));
+        assert!(d.title_tks.contains(&"deck".to_string()));
+    }
+
+    #[test]
+    fn chunk_pptx_respects_page_bounds() {
+        // Two slides, request only slide 2 (from_page=1).
+        let content_types = r#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/><Override PartName="/ppt/slides/slide2.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/></Types>"#;
+        let slide1 = r#"<p:sld><p:sp><p:txBody><a:p><a:r><a:t>First</a:t></a:r></a:p></p:txBody></p:sp></p:sld>"#;
+        let slide2 = r#"<p:sld><p:sp><p:txBody><a:p><a:r><a:t>Second</a:t></a:r></a:p></p:txBody></p:sp></p:sld>"#;
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        zip.start_file("[Content_Types].xml", options).unwrap();
+        std::io::Write::write_all(&mut zip, content_types.as_bytes()).unwrap();
+        for (name, xml) in [("slide1", slide1), ("slide2", slide2)] {
+            zip.start_file(&format!("ppt/slides/{name}.xml"), options)
+                .unwrap();
+            std::io::Write::write_all(&mut zip, xml.as_bytes()).unwrap();
+        }
+        let bytes = zip.finish().unwrap().into_inner();
+
+        let chunks = chunk_pptx("deck.pptx", &bytes, 1, 100, "Chinese").unwrap();
+        assert_eq!(chunks.len(), 1);
+        assert!(chunks[0].content_with_weight.contains("Second"));
+        assert_eq!(chunks[0].page_num_int.as_deref(), Some([2i64].as_slice()));
+    }
+}

@@ -357,4 +357,96 @@ impl Default for Extractor {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
 
+    fn chunk(content: &str) -> Chunk {
+        Chunk {
+            id: "c".into(),
+            content: content.into(),
+            content_type: "text".into(),
+            doc_id: Uuid::new_v4(),
+            position: 0,
+            token_count: 0,
+            embedding: None,
+            metadata: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn extract_key_terms_ranks_frequent_terms_first() {
+        // "database" dominates the text → must be the top term.
+        let text = "The database design keeps the database fast and the \
+                    database scalable; this database also stays consistent.";
+        let terms = extract_key_terms(text);
+        assert!(!terms.is_empty());
+        assert_eq!(terms[0], "database");
+        // 结果不超上限且不含停用词。
+        assert!(terms.len() <= 10);
+        assert!(!terms.iter().any(|t| t == "the" || t == "and"));
+    }
+
+    #[test]
+    fn extract_key_terms_boosts_early_terms_and_noun_like_terms() {
+        // "Retrieval" appears once, at the very start, and is capitalized
+        // (proper-noun proxy). A stop word is excluded and digits dropped.
+        let text = "Retrieval augmented generation; retrieval quality matters.";
+        let terms = extract_key_terms(text);
+        assert!(terms.contains(&"retrieval".to_string()));
+        for term in &terms {
+            assert_ne!(term, "the");
+            assert_ne!(term, "and");
+            assert!(!term.chars().all(|c| c.is_ascii_digit()));
+        }
+    }
+
+    #[test]
+    fn extract_key_terms_handles_cjk_text() {
+        let text = "机器学习是人工智能的重要分支。深度学习也是机器学习的重要分支。";
+        let terms = extract_key_terms(text);
+        assert!(!terms.is_empty());
+        // 机器学习 appears twice and is a full-run CJK phrase → top term.
+        assert_eq!(terms[0], "机器学习");
+        eprintln!("CJK_TERMS {:?}", terms.iter().take(15).collect::<Vec<_>>());
+        // 2 字片段与 4 字短语都进入前排（重要/分支 tf=2，排名确定）。
+        assert!(terms.iter().take(5).any(|t| t == "学习"));
+        assert!(
+            terms
+                .iter()
+                .take(12)
+                .any(|t| t.contains("重要") && t.contains("分支"))
+        );
+        // 4 字短语（人工智能）也能被提取（用大 top_n 避免默认截断遮蔽）。
+        let wide = extract_key_terms_with_top_n(text, 60);
+        assert!(wide.iter().any(|t| t.contains("人工智能")));
+        // CJK 片段不会拼出带空格的噪音二元组。
+        assert!(!terms.iter().any(|t| t.contains(' ')));
+    }
+
+    #[test]
+    fn extract_chunks_annotates_important_kwd_metadata() {
+        let text = "Vector search indexes vectors; vector search over vectors is fast.";
+        let mut chunks = vec![chunk(text)];
+        Extractor::with_top_n(3).extract_chunks(&mut chunks);
+        let keywords = chunks[0]
+            .metadata
+            .get("important_kwd")
+            .expect("important_kwd metadata set");
+        assert!(keywords.contains("vector"));
+        assert!(keywords.contains("search"));
+        // top_n=3 个词条；keywords 是同一组词条的空格拼接（短语含内部空格）。
+        let terms = extract_key_terms_with_top_n(text, 3);
+        assert_eq!(terms.len(), 3);
+        assert_eq!(keywords.as_str(), terms.join(" "));
+    }
+
+    #[test]
+    fn extractor_skips_empty_chunks() {
+        let mut chunks = vec![chunk("   \n  "), chunk("alpha beta alpha")];
+        Extractor::with_top_n(5).extract_chunks(&mut chunks);
+        assert!(chunks[0].metadata.get("important_kwd").is_none());
+        assert!(chunks[1].metadata.get("important_kwd").is_some());
+    }
+}

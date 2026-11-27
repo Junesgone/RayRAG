@@ -636,4 +636,451 @@ fn float_like(value: &Value) -> Option<f64> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        Router,
+        body::Body,
+        extract::{Multipart, State},
+        http::{StatusCode, header},
+        response::{IntoResponse, Response},
+        routing::{get, post},
+    };
+    use std::sync::{Arc, Mutex};
 
+    #[derive(Clone, Default)]
+    struct Capture {
+        requests: Arc<Mutex<Vec<Value>>>,
+        deletes: Arc<Mutex<usize>>,
+    }
+
+    fn mock_response(pages: Value) -> Response {
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json!({"pages": pages}).to_string()))
+            .unwrap()
+    }
+
+    fn ocr_pages() -> Value {
+        json!([
+            {
+                "index": 0,
+                "dimensions": {"width": 600, "height": 800},
+                "blocks": [
+                    {
+                        "type": "text",
+                        "content": "Hello Mistral",
+                        "top_left_x": 1,
+                        "top_left_y": 2,
+                        "bottom_right_x": 3,
+                        "bottom_right_y": 4
+                    },
+                    {
+                        "type": "table",
+                        "content": "<table><tr><td>ok</td></tr></table>",
+                        "top_left_x": 5,
+                        "top_left_y": 6,
+                        "bottom_right_x": 7,
+                        "bottom_right_y": 8
+                    },
+                    {
+                        "type": "image",
+                        "content": "diagram",
+                        "top_left_x": 9,
+                        "top_left_y": 10,
+                        "bottom_right_x": 11,
+                        "bottom_right_y": 12
+                    },
+                    {"type": "header", "content": "page header"}
+                ]
+            },
+            {
+                "index": 1,
+                "dimensions": {"width": 600, "height": 800},
+                "blocks": [
+                    {"type": "title", "content": "Second page"}
+                ]
+            }
+        ])
+    }
+
+    #[test]
+    fn config_defaults_and_provider_key_parsing() {
+        let config = MistralOcrConfig::from_ragflow_key("", None).unwrap();
+        assert_eq!(config.base_url(), DEFAULT_BASE_URL);
+        assert_eq!(config.model(), DEFAULT_MODEL);
+        assert_eq!(config.table_format(), "html");
+        assert!(!config.keep_header_footer());
+        assert_eq!(config.request_timeout(), Duration::from_secs(600));
+        assert_eq!(config.inline_max_bytes(), 20 * 1024 * 1024);
+        assert!(config.api_key().is_empty());
+
+        let flat = MistralOcrConfig::from_ragflow_key(
+            r#"{"mistral_ocr_base_url":"http://127.0.0.1:9000","api_key":"sk-flat","mistral_ocr_table_format":"markdown","mistral_ocr_keep_header_footer":1}"#,
+            None,
+        )
+        .unwrap();
+        assert_eq!(flat.base_url(), "http://127.0.0.1:9000");
+        assert_eq!(flat.api_key(), "sk-flat");
+        assert_eq!(flat.table_format(), "markdown");
+        assert!(flat.keep_header_footer());
+
+        let nested = MistralOcrConfig::from_ragflow_key(
+            r#"{"api_key":{"api_key":"sk-nested","mistral_ocr_model":"custom-ocr"}}"#,
+            Some("http://fallback:1234"),
+        )
+        .unwrap();
+        assert_eq!(nested.api_key(), "sk-nested");
+        assert_eq!(nested.model(), "custom-ocr");
+        assert_eq!(nested.base_url(), "http://fallback:1234");
+
+        let secret = MistralOcrConfig::from_ragflow_key("sk-plain", None).unwrap();
+        assert_eq!(secret.api_key(), "sk-plain");
+    }
+
+    #[test]
+    fn config_validation_rejects_bad_values() {
+        assert!(MistralOcrConfig::new("", "k", "m", "html", false).is_err());
+        assert!(MistralOcrConfig::new("ftp://x", "k", "m", "html", false).is_err());
+        assert!(MistralOcrConfig::new("http://x", "k", "  ", "html", false).is_err());
+        assert!(MistralOcrConfig::new("http://x", "k", "m", " ", false).is_err());
+    }
+
+    #[test]
+    fn convert_renders_markers_tags_and_header_switch() {
+        let response = json!({"pages": ocr_pages()});
+        let output = convert_response(&response, false).unwrap();
+        assert!(
+            output
+                .content
+                .contains("Hello Mistral@@1\t1.0\t3.0\t2.0\t4.0##")
+        );
+        assert!(output.content.contains(
+            "<!--TABLE_START-->\n<table><tr><td>ok</td></tr></table>@@1\t5.0\t7.0\t6.0\t8.0##\n<!--TABLE_END-->"
+        ));
+        assert!(
+            output.content.contains(
+                "<!--IMAGE_START-->\ndiagram@@1\t9.0\t11.0\t10.0\t12.0##\n<!--IMAGE_END-->"
+            )
+        );
+        assert!(!output.content.contains("page header"));
+        assert!(
+            output
+                .content
+                .contains("Second page@@2\t0.0\t0.0\t0.0\t0.0##")
+        );
+        assert_eq!(output.block_count, 4);
+        assert_eq!(output.page_count, 2);
+
+        let kept = convert_response(&response, true).unwrap();
+        assert!(
+            kept.content
+                .contains("page header@@1\t0.0\t0.0\t0.0\t0.0##")
+        );
+        assert_eq!(kept.block_count, 5);
+    }
+
+    #[test]
+    fn convert_rescales_bboxes_to_pdf_page_boxes() {
+        let response = json!({
+            "pages": [{
+                "index": 0,
+                "dimensions": {"width": 600, "height": 800},
+                "blocks": [{
+                    "type": "text",
+                    "content": "Scaled",
+                    "top_left_x": 1,
+                    "top_left_y": 2,
+                    "bottom_right_x": 3,
+                    "bottom_right_y": 4
+                }]
+            }]
+        });
+        let output =
+            convert_response_with_sizes(&response, false, &[Some((612.0, 792.0))]).unwrap();
+        assert!(
+            output.content.contains("Scaled@@1\t1.0\t3.1\t2.0\t4.0##"),
+            "{}",
+            output.content
+        );
+    }
+
+    #[test]
+    fn convert_skips_geometry_less_images_and_empty_results() {
+        let response = json!({
+            "pages": [{
+                "index": 0,
+                "blocks": [{"type": "image", "content": "no geometry"}]
+            }]
+        });
+        let error = convert_response(&response, false).unwrap_err().to_string();
+        assert!(error.contains("no usable blocks"), "{error}");
+
+        let empty = json!({});
+        assert!(convert_response(&empty, false).is_err());
+    }
+
+    async fn spawn_ok_service(capture: Capture) -> (String, tokio::task::JoinHandle<()>) {
+        let capture_ocr = capture.clone();
+        let capture_models = capture.clone();
+        let app = Router::new()
+            .route(
+                "/models",
+                get(move || {
+                    let capture = capture_models.clone();
+                    async move {
+                        capture
+                            .requests
+                            .lock()
+                            .unwrap()
+                            .push(json!({"path": "/models"}));
+                        StatusCode::OK
+                    }
+                }),
+            )
+            .route(
+                "/ocr",
+                post(
+                    move |State(capture): State<Capture>, body: String| async move {
+                        let payload: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+                        capture.requests.lock().unwrap().push(payload);
+                        mock_response(ocr_pages())
+                    },
+                ),
+            )
+            .with_state(capture_ocr);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{address}"), server)
+    }
+
+    #[tokio::test]
+    async fn client_sends_inline_document_and_renders_output() {
+        let capture = Capture::default();
+        let (base, server) = spawn_ok_service(capture.clone()).await;
+        let client = MistralOcrClient::new(
+            MistralOcrConfig::new(&base, "sk-test", "mistral-ocr-latest", "html", false).unwrap(),
+        )
+        .unwrap();
+        client.check_installation().await.unwrap();
+        let output = client
+            .parse_pdf("sample.pdf", b"%PDF-1.4 mock", 0, MAXIMUM_PAGE_NUMBER)
+            .await
+            .unwrap();
+        server.abort();
+
+        assert!(
+            output
+                .content
+                .contains("Hello Mistral@@1\t1.0\t3.0\t2.0\t4.0##")
+        );
+        let requests = capture.requests.lock().unwrap();
+        let ocr = requests
+            .iter()
+            .find(|request| request.get("model").is_some())
+            .expect("ocr payload captured");
+        assert_eq!(ocr["model"], "mistral-ocr-latest");
+        assert_eq!(ocr["include_blocks"], true);
+        assert_eq!(ocr["table_format"], "html");
+        assert_eq!(ocr["include_image_base64"], false);
+        assert_eq!(ocr["document"]["type"], "document_url");
+        let document_url = ocr["document"]["document_url"].as_str().unwrap();
+        assert!(document_url.starts_with("data:application/pdf;base64,"));
+        assert!(ocr.get("pages").is_none());
+    }
+
+    #[tokio::test]
+    async fn parse_pdf_rescales_positions_to_real_page_boxes() {
+        let data = include_bytes!("../../tests/fixtures/parsing/rayrag-text.pdf");
+        let sizes = pdf_page_sizes(data);
+        let (page_width, page_height) = sizes.first().copied().flatten().expect("fixture page box");
+        assert!(page_width > 0.0 && page_height > 0.0);
+        let capture = Capture::default();
+        let (base, server) = spawn_ok_service(capture.clone()).await;
+        let client = MistralOcrClient::new(
+            MistralOcrConfig::new(&base, "sk-test", "mistral-ocr-latest", "html", false).unwrap(),
+        )
+        .unwrap();
+        let output = client
+            .parse_pdf("sample.pdf", data, 0, MAXIMUM_PAGE_NUMBER)
+            .await
+            .unwrap();
+        server.abort();
+        let expected = format!(
+            "Hello Mistral@@1\t{:.1}\t{:.1}\t{:.1}\t{:.1}##",
+            1.0 / 600.0 * page_width,
+            3.0 / 600.0 * page_width,
+            2.0 / 800.0 * page_height,
+            4.0 / 800.0 * page_height
+        );
+        assert!(output.content.contains(&expected), "{}", output.content);
+    }
+
+    #[tokio::test]
+    async fn client_sends_page_selector_and_uses_upload_for_large_files() {
+        let capture = Capture::default();
+        let capture_files = capture.clone();
+        let capture_url = capture.clone();
+        let capture_delete = capture.clone();
+        let capture_ocr = capture.clone();
+        let app = Router::new()
+            .route("/models", get(|| async { StatusCode::OK }))
+            .route(
+                "/files",
+                post(move |mut multipart: Multipart| {
+                    let capture = capture_files.clone();
+                    async move {
+                        while let Some(field) = multipart.next_field().await.unwrap() {
+                            let name = field.name().unwrap_or_default().to_owned();
+                            let _ = field.bytes().await;
+                            capture.requests.lock().unwrap().push(json!({"part": name}));
+                        }
+                        axum::Json(json!({"id": "file-123"}))
+                    }
+                }),
+            )
+            .route(
+                "/files/file-123/url",
+                get(move || {
+                    let capture = capture_url.clone();
+                    async move {
+                        capture
+                            .requests
+                            .lock()
+                            .unwrap()
+                            .push(json!({"path": "signed-url"}));
+                        axum::Json(json!({"url": "https://signed.example/ocr.pdf"}))
+                    }
+                }),
+            )
+            .route(
+                "/files/file-123",
+                axum::routing::delete(move || {
+                    let capture = capture_delete.clone();
+                    async move {
+                        *capture.deletes.lock().unwrap() += 1;
+                        StatusCode::NO_CONTENT
+                    }
+                }),
+            )
+            .route(
+                "/ocr",
+                post(move |capture: State<Capture>, body: String| async move {
+                    let payload: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+                    capture.requests.lock().unwrap().push(payload);
+                    mock_response(ocr_pages())
+                })
+                .with_state(capture_ocr),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let client = MistralOcrClient::new(
+            MistralOcrConfig::new(
+                &format!("http://{address}"),
+                "sk",
+                "mistral-ocr-latest",
+                "html",
+                false,
+            )
+            .unwrap()
+            .with_inline_max_bytes(1),
+        )
+        .unwrap();
+        let output = client
+            .parse_pdf("sample.pdf", b"%PDF larger", 1, 3)
+            .await
+            .unwrap();
+        server.abort();
+
+        assert!(output.content.contains("Hello Mistral"));
+        let requests = capture.requests.lock().unwrap();
+        let ocr = requests
+            .iter()
+            .find(|request| request.get("document").is_some())
+            .expect("ocr payload captured");
+        assert_eq!(
+            ocr["document"]["document_url"],
+            "https://signed.example/ocr.pdf"
+        );
+        assert_eq!(ocr["pages"], json!([1, 2]));
+        assert!(
+            requests
+                .iter()
+                .any(|request| request.get("part").and_then(Value::as_str) == Some("file")),
+            "upload multipart captured: {requests:?}"
+        );
+        drop(requests);
+        assert_eq!(*capture.deletes.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn check_installation_rejects_missing_key_and_http_errors() {
+        let app = Router::new().route(
+            "/models",
+            get(|| async {
+                Response::builder()
+                    .status(StatusCode::FORBIDDEN)
+                    .body(Body::from("forbidden"))
+                    .unwrap()
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let no_key = MistralOcrClient::new(
+            MistralOcrConfig::new(&format!("http://{address}"), "", "m", "html", false).unwrap(),
+        )
+        .unwrap();
+        let error = no_key.check_installation().await.unwrap_err().to_string();
+        assert!(error.contains("API key is not configured"), "{error}");
+
+        let forbidden = MistralOcrClient::new(
+            MistralOcrConfig::new(&format!("http://{address}"), "sk", "m", "html", false).unwrap(),
+        )
+        .unwrap();
+        let error = forbidden
+            .check_installation()
+            .await
+            .unwrap_err()
+            .to_string();
+        server.abort();
+        assert!(error.contains("HTTP 403"), "{error}");
+        assert!(error.contains("forbidden"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn post_ocr_surfaces_status_and_body() {
+        let app = Router::new()
+            .route("/models", get(|| async { StatusCode::OK }))
+            .route(
+                "/ocr",
+                post(|| async {
+                    Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .body(Body::from("boom"))
+                        .unwrap()
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = MistralOcrClient::new(
+            MistralOcrConfig::new(&format!("http://{address}"), "sk", "m", "html", false).unwrap(),
+        )
+        .unwrap();
+        let error = client
+            .parse_pdf("sample.pdf", b"%PDF", 0, MAXIMUM_PAGE_NUMBER)
+            .await
+            .unwrap_err()
+            .to_string();
+        server.abort();
+        assert!(error.contains("500"), "{error}");
+        assert!(error.contains("boom"), "{error}");
+    }
+}

@@ -207,4 +207,95 @@ pub async fn ask_structure(
     (answer, relevant)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
 
+    #[test]
+    fn renders_outline_with_caps_and_skips() {
+        let entities = vec![
+            json!({"name": "Alpha", "type": "Person", "description": "first   entity"}),
+            json!({"name": "  ", "type": "X"}),
+            json!({"name": "Beta"}),
+        ];
+        let relations = vec![
+            json!({"from": "Alpha", "to": "Beta", "type": "knows"}),
+            json!({"from": "", "to": "Beta"}),
+        ];
+        let rendered = render_structure(&entities, &relations);
+        assert!(rendered.starts_with("Entities:\n- Alpha (Person): first entity\n- Beta (other)"));
+        assert!(rendered.contains("\nRelations:\n- Alpha -[knows]-> Beta"));
+        assert!(!rendered.contains("  "));
+
+        let prompt = build_user_prompt("Who?", &entities, &relations, "document catalog");
+        assert!(prompt.starts_with("Question:\nWho?\n\nDocument catalog:\n"));
+        assert!(prompt.ends_with("\n\nOutput JSON:"));
+        assert!(nav_system("knowledge graph").contains("the knowledge graph"));
+    }
+
+    #[tokio::test]
+    async fn ask_structure_uses_outline_verdict() {
+        struct MockChat {
+            reply: String,
+        }
+        #[async_trait::async_trait]
+        impl HarnessChat for MockChat {
+            async fn chat(
+                &self,
+                system: &str,
+                _history: &[Value],
+                _gen: &Value,
+            ) -> Result<String, String> {
+                assert!(system.contains("You are given"));
+                Ok(self.reply.clone())
+            }
+            fn max_length(&self) -> usize {
+                8192
+            }
+        }
+        let entities = vec![json!({"name": "Alpha", "type": "Person"})];
+        let relations = vec![json!({"from": "Alpha", "to": "Beta", "type": "knows"})];
+        let chat = MockChat {
+            reply:
+                "{\"is_sufficient\": true, \"answer\": \"42\", \"relevant_entities\": [\"Alpha\"]}"
+                    .to_string(),
+        };
+        let (answer, relevant) =
+            ask_structure(&chat, "q", &entities, &relations, "knowledge graph", "test").await;
+        assert_eq!(answer, "42");
+        assert_eq!(relevant, vec!["Alpha"]);
+
+        let chat = MockChat {
+            reply: "{\"is_sufficient\": false, \"answer\": \"drop\", \"relevant_entities\": [\"Alpha\"]}"
+                .to_string(),
+        };
+        let (answer, relevant) =
+            ask_structure(&chat, "q", &entities, &relations, "catalog", "test").await;
+        assert!(answer.is_empty());
+        assert_eq!(relevant, vec!["Alpha"]);
+    }
+
+    #[test]
+    fn verdict_parsing_follows_sufficiency() {
+        let (sufficient, answer, relevant) = parse_verdict(
+            "<think>x</think>```json\n{\"is_sufficient\": true, \"answer\": \" 42 \", \"relevant_entities\": [\"Alpha\", 3, \"Beta\"]}\n```",
+        );
+        assert!(sufficient);
+        assert_eq!(answer, "42");
+        assert_eq!(relevant, vec!["Alpha", "Beta"]);
+
+        // Insufficient outlines keep only the entity hints.
+        let (sufficient, answer, relevant) = parse_verdict(
+            "{\"is_sufficient\": false, \"answer\": \"should be dropped\", \"relevant_entities\": [\"Alpha\"]}",
+        );
+        assert!(!sufficient);
+        assert!(answer.is_empty());
+        assert_eq!(relevant, vec!["Alpha"]);
+
+        let (sufficient, answer, relevant) = parse_verdict("not json");
+        assert!(!sufficient);
+        assert!(answer.is_empty());
+        assert!(relevant.is_empty());
+    }
+}

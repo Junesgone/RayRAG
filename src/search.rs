@@ -662,7 +662,45 @@ impl Default for SearchEngine {
     }
 }
 
+#[cfg(test)]
+mod pagerank_adjustment_tests {
+    use super::*;
 
+    fn chunk(id: &str, kb_id: &str, pagerank: Option<&str>) -> IndexedChunk {
+        let mut metadata = HashMap::from([("kb_id".into(), kb_id.into())]);
+        if let Some(pagerank) = pagerank {
+            metadata.insert("pagerank_fea".into(), pagerank.into());
+        }
+        IndexedChunk {
+            id: id.into(),
+            doc_name: "document.txt".into(),
+            content: "content".into(),
+            embedding: vec![],
+            token_count: 1,
+            position: 0,
+            metadata,
+        }
+    }
+
+    #[test]
+    fn pagerank_adjustment_is_scoped_and_clamped() {
+        let mut engine = SearchEngine::from_chunks(vec![
+            chunk("shared", "kb-a", Some("100")),
+            chunk("shared", "kb-b", Some("invalid")),
+        ]);
+
+        assert_eq!(
+            engine.adjust_chunk_pagerank("shared", "kb-a", 1),
+            Some((100.0, 100.0))
+        );
+        assert_eq!(
+            engine.adjust_chunk_pagerank("shared", "kb-b", -1),
+            Some((0.0, 0.0))
+        );
+        assert_eq!(engine.adjust_chunk_pagerank("missing", "kb-a", 1), None);
+        assert_eq!(engine.to_vec()[1].metadata.get("pagerank_fea"), None);
+    }
+}
 
 /// Compute the L2 (Euclidean) norm of a vector.
 fn l2_norm(v: &[f32]) -> f32 {
@@ -959,6 +997,631 @@ fn parse_tag_features(s: &str) -> HashMap<String, f64> {
         .unwrap_or_default()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn test_cosine_similarity() {
+        let a = vec![1.0, 0.0, 0.0];
+        let b = vec![1.0, 0.0, 0.0];
+        assert!((dot_product(&a, &b) - 1.0).abs() < 1e-6);
 
+        let a = vec![1.0, 0.0];
+        let b = vec![0.0, 1.0];
+        assert!((dot_product(&a, &b) - 0.0).abs() < 1e-6);
+    }
 
+    #[test]
+    fn test_search() {
+        let mut engine = SearchEngine::new();
+        engine.add(IndexedChunk {
+            id: "1".into(),
+            doc_name: "test".into(),
+            content: "Rust is great".into(),
+            embedding: vec![1.0, 0.0, 0.0],
+            token_count: 3,
+            position: 0,
+            metadata: HashMap::new(),
+        });
+        engine.add(IndexedChunk {
+            id: "2".into(),
+            doc_name: "test".into(),
+            content: "Python is ok".into(),
+            embedding: vec![0.0, 1.0, 0.0],
+            token_count: 3,
+            position: 1,
+            metadata: HashMap::new(),
+        });
+
+        // Query: "Rust" → embedding similar to [1,0,0]
+        let results = engine.search(&[1.0, 0.0, 0.0], 2);
+        assert_eq!(results.len(), 2);
+        assert!((results[0].score - 1.0).abs() < 1e-6);
+        assert_eq!(results[0].chunk.content, "Rust is great");
+    }
+    #[test]
+    fn test_search_enforces_kb_filter() {
+        let mut engine = SearchEngine::new();
+        for (id, kb_id) in [("1", "kb-a"), ("2", "kb-b")] {
+            let mut metadata = HashMap::new();
+            metadata.insert("kb_id".into(), kb_id.into());
+            engine.add(IndexedChunk {
+                id: id.into(),
+                doc_name: "test".into(),
+                content: format!("content-{kb_id}"),
+                embedding: vec![1.0, 0.0],
+                token_count: 1,
+                position: 0,
+                metadata,
+            });
+        }
+        let results = engine.search_kbs(&[1.0, 0.0], 10, &["kb-b".into()]);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].chunk.metadata.get("kb_id").unwrap(), "kb-b");
+    }
+
+    #[test]
+    fn hybrid_search_combines_term_and_vector_scores() {
+        let mut engine = SearchEngine::new();
+        for (id, content, embedding) in [
+            ("term", "rust ownership borrowing", vec![0.0, 1.0]),
+            ("vector", "python packaging", vec![1.0, 0.0]),
+        ] {
+            let mut metadata = HashMap::new();
+            metadata.insert("kb_id".into(), "kb-a".into());
+            engine.add(IndexedChunk {
+                id: id.into(),
+                doc_name: "test".into(),
+                content: content.into(),
+                embedding,
+                token_count: 2,
+                position: 0,
+                metadata,
+            });
+        }
+
+        let kb_ids = vec!["kb-a".into()];
+        let term_first = engine.hybrid_search_kbs(HybridSearchQuery {
+            query: "rust ownership",
+            query_embedding: Some(&[1.0, 0.0]),
+            top_k: 2,
+            kb_ids: &kb_ids,
+            vector_weight: 0.3,
+            doc_ids: None,
+            rank_feature: None,
+        });
+        assert_eq!(term_first[0].chunk.id, "term");
+        assert!(term_first[0].term_score > term_first[1].term_score);
+        assert!(term_first[1].vector_score > term_first[0].vector_score);
+
+        let vector_first = engine.hybrid_search_kbs(HybridSearchQuery {
+            query: "rust ownership",
+            query_embedding: Some(&[1.0, 0.0]),
+            top_k: 2,
+            kb_ids: &kb_ids,
+            vector_weight: 0.8,
+            doc_ids: None,
+            rank_feature: None,
+        });
+        assert_eq!(vector_first[0].chunk.id, "vector");
+    }
+
+    #[test]
+    fn hybrid_search_supports_term_only_without_embedding() {
+        let mut engine = SearchEngine::new();
+        for (id, content) in [
+            ("match", "aquaculture water quality"),
+            ("other", "server logs"),
+        ] {
+            let mut metadata = HashMap::new();
+            metadata.insert("kb_id".into(), "kb-a".into());
+            engine.add(IndexedChunk {
+                id: id.into(),
+                doc_name: "test".into(),
+                content: content.into(),
+                embedding: Vec::new(),
+                token_count: 2,
+                position: 0,
+                metadata,
+            });
+        }
+
+        let kb_ids = vec!["kb-a".into()];
+        let results = engine.hybrid_search_kbs(HybridSearchQuery {
+            query: "water quality",
+            query_embedding: None,
+            top_k: 2,
+            kb_ids: &kb_ids,
+            vector_weight: 0.0,
+            doc_ids: None,
+            rank_feature: None,
+        });
+        assert_eq!(results[0].chunk.id, "match");
+        assert_eq!(results[0].vector_score, 0.0);
+        assert_eq!(results[0].term_score, 1.0);
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn vector_search_rejects_dimension_mismatch() {
+        let mut engine = SearchEngine::new();
+        engine.add(IndexedChunk {
+            id: "mismatch".into(),
+            doc_name: "test".into(),
+            content: "content".into(),
+            embedding: vec![1.0],
+            token_count: 1,
+            position: 0,
+            metadata: HashMap::new(),
+        });
+        assert!(engine.search(&[1.0, 0.0], 1).is_empty());
+    }
+
+    #[test]
+    fn unavailable_chunks_are_hidden_from_vector_and_hybrid_search() {
+        let mut chunk = IndexedChunk {
+            id: "disabled".into(),
+            doc_name: "disabled.txt".into(),
+            content: "water quality".into(),
+            embedding: vec![1.0, 0.0],
+            token_count: 2,
+            position: 0,
+            metadata: HashMap::from([
+                ("kb_id".into(), "kb-a".into()),
+                ("available_int".into(), "0".into()),
+            ]),
+        };
+        let mut engine = SearchEngine::new();
+        engine.add(chunk.clone());
+        assert!(
+            engine
+                .search_kbs(&[1.0, 0.0], 10, &["kb-a".into()])
+                .is_empty()
+        );
+        assert!(
+            engine
+                .hybrid_search_kbs(HybridSearchQuery {
+                    query: "water quality",
+                    query_embedding: None,
+                    top_k: 10,
+                    kb_ids: &["kb-a".into()],
+                    vector_weight: 0.0,
+                    doc_ids: None,
+                    rank_feature: None,
+                })
+                .is_empty()
+        );
+
+        chunk.metadata.insert("available_int".into(), "1".into());
+        let engine = SearchEngine::from_chunks(vec![chunk]);
+        assert_eq!(
+            engine.search_kbs(&[1.0, 0.0], 10, &["kb-a".into()]).len(),
+            1
+        );
+        assert_eq!(
+            engine
+                .hybrid_search_kbs(HybridSearchQuery {
+                    query: "water quality",
+                    query_embedding: None,
+                    top_k: 10,
+                    kb_ids: &["kb-a".into()],
+                    vector_weight: 0.0,
+                    doc_ids: None,
+                    rank_feature: None,
+                })
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn hybrid_search_applies_ragflow_field_weights() {
+        let mut engine = SearchEngine::new();
+        for (id, title, keyword) in [
+            ("title", "water quality", None),
+            ("keyword", "unrelated", Some("water quality")),
+            ("body", "unrelated", None),
+        ] {
+            let mut metadata = HashMap::new();
+            metadata.insert("kb_id".into(), "kb-a".into());
+            if let Some(keyword) = keyword {
+                metadata.insert("important_kwd".into(), keyword.into());
+            }
+            engine.add(IndexedChunk {
+                id: id.into(),
+                doc_name: title.into(),
+                content: if id == "body" {
+                    "water quality"
+                } else {
+                    "common text"
+                }
+                .into(),
+                embedding: Vec::new(),
+                token_count: 2,
+                position: 0,
+                metadata,
+            });
+        }
+
+        let kb_ids = vec!["kb-a".into()];
+        let results = engine.hybrid_search_kbs(HybridSearchQuery {
+            query: "water quality",
+            query_embedding: None,
+            top_k: 3,
+            kb_ids: &kb_ids,
+            vector_weight: 0.0,
+            doc_ids: None,
+            rank_feature: None,
+        });
+        assert_eq!(results[0].chunk.id, "keyword");
+        assert!(results[0].term_score > results[1].term_score);
+        assert!(results[1].term_score > results[2].term_score);
+    }
+
+    #[test]
+    fn hybrid_search_filters_documents_before_scoring() {
+        let mut engine = SearchEngine::new();
+        for (id, doc_id) in [("one", "doc-one"), ("two", "doc-two")] {
+            let metadata = HashMap::from([
+                ("kb_id".into(), "kb-a".into()),
+                ("doc_id".into(), doc_id.into()),
+            ]);
+            engine.add(IndexedChunk {
+                id: id.into(),
+                doc_name: format!("{doc_id}.txt"),
+                content: "water quality".into(),
+                embedding: Vec::new(),
+                token_count: 2,
+                position: 0,
+                metadata,
+            });
+        }
+
+        let kb_ids = vec!["kb-a".into()];
+        let doc_ids = vec!["doc-two".into()];
+        let results = engine.hybrid_search_kbs(HybridSearchQuery {
+            query: "water quality",
+            query_embedding: None,
+            top_k: 10,
+            kb_ids: &kb_ids,
+            vector_weight: 0.0,
+            doc_ids: Some(&doc_ids),
+            rank_feature: None,
+        });
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].chunk.id, "two");
+    }
+
+    #[test]
+    fn hybrid_search_adds_tag_cosine_and_pagerank_features() {
+        let mut engine = SearchEngine::new();
+        for (id, tags, pagerank) in [
+            ("base", r#"{"fish":1}"#, "0"),
+            ("boosted", r#"{"fish":1,"pond":1}"#, "2"),
+        ] {
+            let metadata = HashMap::from([
+                ("kb_id".into(), "kb-a".into()),
+                ("tag_feas".into(), tags.into()),
+                ("pagerank_fea".into(), pagerank.into()),
+            ]);
+            engine.add(IndexedChunk {
+                id: id.into(),
+                doc_name: "doc.txt".into(),
+                content: "water quality".into(),
+                embedding: Vec::new(),
+                token_count: 2,
+                position: 0,
+                metadata,
+            });
+        }
+        let query_features = HashMap::from([("fish".into(), 1.0), ("pond".into(), 1.0)]);
+
+        let kb_ids = vec!["kb-a".into()];
+        let results = engine.hybrid_search_kbs(HybridSearchQuery {
+            query: "water quality",
+            query_embedding: None,
+            top_k: 10,
+            kb_ids: &kb_ids,
+            vector_weight: 0.0,
+            doc_ids: None,
+            rank_feature: Some(&query_features),
+        });
+        assert_eq!(results[0].chunk.id, "boosted");
+        assert!((results[0].rank_feature_score - 12.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn document_aggregation_uses_all_filtered_candidates() {
+        let results = vec![
+            hybrid_result("one", "doc-a", "A"),
+            hybrid_result("two", "doc-a", "A"),
+            hybrid_result("three", "doc-b", "B"),
+        ];
+        assert_eq!(
+            aggregate_documents(&results),
+            vec![
+                DocumentAggregation {
+                    doc_name: "A".into(),
+                    doc_id: "doc-a".into(),
+                    count: 2,
+                },
+                DocumentAggregation {
+                    doc_name: "B".into(),
+                    doc_id: "doc-b".into(),
+                    count: 1,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn highlight_escapes_content_and_marks_matches() {
+        assert_eq!(
+            highlight_content("Water <quality>", "water"),
+            "<em>Water</em> &lt;quality&gt;"
+        );
+        assert_eq!(highlight_content("pond health", "missing"), "pond health");
+    }
+
+    fn hybrid_result(id: &str, doc_id: &str, doc_name: &str) -> HybridSearchResult {
+        HybridSearchResult {
+            chunk: IndexedChunk {
+                id: id.into(),
+                doc_name: doc_name.into(),
+                content: "content".into(),
+                embedding: Vec::new(),
+                token_count: 1,
+                position: 0,
+                metadata: HashMap::from([("doc_id".into(), doc_id.into())]),
+            },
+            score: 1.0,
+            vector_score: 0.0,
+            term_score: 1.0,
+            model_term_score: 1.0,
+            rank_feature_score: 0.0,
+            rank: 0,
+        }
+    }
+
+    fn chunk_with_tokens(id: &str, doc_name: &str, content_ltks: &str) -> HybridSearchResult {
+        let mut r = hybrid_result(id, "d1", doc_name);
+        r.chunk.metadata.insert(
+            "content_ltks".into(),
+            content_ltks
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
+        r.chunk.metadata.insert("pagerank_fea".into(), "0.5".into());
+        r
+    }
+
+    #[test]
+    fn ragflow_rerank_fuses_token_and_rank_features() {
+        let tw = crate::nlp::TermWeightComputer::new();
+        let hit = chunk_with_tokens("c1", "doc-a", "水产 养殖 水质");
+        let miss = chunk_with_tokens("c2", "doc-b", "金融 股票 债券");
+        let (fused, tksim, vtsim) = ragflow_rerank(
+            &[hit, miss],
+            "水产 养殖",
+            &tw,
+            0.3,
+            0.7,
+            Some(&HashMap::from([("pagerank_fea".into(), 10.0_f32)])),
+        );
+        assert_eq!(fused.len(), 2);
+        assert!(fused[0] > fused[1], "term hit should rank first: {fused:?}");
+        assert!(tksim[0] > tksim[1], "token sim ranks hit first: {tksim:?}");
+        assert_eq!(vtsim.len(), 2);
+        // pagerank 0.5 contributes to every fused score
+        assert!(fused[1] >= 0.5 - 1e-9, "pagerank added: {fused:?}");
+    }
+
+    #[test]
+    fn ragflow_rerank_by_model_weights_model_scores() {
+        let tw = crate::nlp::TermWeightComputer::new();
+        let hit = chunk_with_tokens("c1", "doc-a", "水产 养殖 水质");
+        let miss = chunk_with_tokens("c2", "doc-b", "金融 股票 债券");
+        // reranker says miss (0.9) is more relevant than hit (0.2)
+        let (fused, tksim, vtsim) =
+            ragflow_rerank_by_model(&[hit, miss], "水产 养殖", &tw, 0.3, 0.7, &[0.2, 0.9], None);
+        assert!((vtsim[0] - 0.2).abs() < 1e-6 && (vtsim[1] - 0.9).abs() < 1e-6);
+        // vtweight 0.7 dominates: miss should now rank first
+        assert!(
+            fused[1] > fused[0],
+            "model score should dominate: {fused:?}"
+        );
+        assert!(tksim[0] > tksim[1], "lexical still prefers hit: {tksim:?}");
+    }
+
+    #[test]
+    fn ragflow_rank_feature_scores_add_pagerank_and_tag_boost() {
+        let mut c = chunk_with_tokens("c1", "doc-a", "水产");
+        c.chunk
+            .metadata
+            .insert("tag_fea".into(), "{\"水产\": 2.0}".into());
+        let scores = ragflow_rank_feature_scores(
+            Some(&HashMap::from([
+                ("水产".into(), 1.0_f32),
+                ("pagerank_fea".into(), 0.0_f32),
+            ])),
+            &[c],
+        );
+        // nor=1*2=2, denor=sqrt(4)=2, q_denor=sqrt(1)=1 → 2/2/1=1 → ×10 + pagerank 0.5
+        assert!((scores[0] - 10.5).abs() < 1e-9, "got {scores:?}");
+    }
+
+    #[test]
+    fn ragflow_rerank_by_model_requires_aligned_scores() {
+        let tw = crate::nlp::TermWeightComputer::new();
+        let hit = chunk_with_tokens("c1", "doc-a", "水产");
+        let result = std::panic::catch_unwind(|| {
+            ragflow_rerank_by_model(&[hit], "水产", &tw, 0.3, 0.7, &[0.5, 0.6], None)
+        });
+        assert!(result.is_err(), "length mismatch must panic");
+    }
+}
+
+#[cfg(test)]
+mod infinity_fusion_tests {
+    use super::*;
+
+    fn dense_chunk(id: &str, kb_id: &str, embedding: Vec<f32>) -> IndexedChunk {
+        let mut metadata = HashMap::new();
+        metadata.insert("kb_id".into(), kb_id.into());
+        metadata.insert("available_int".into(), "1".into());
+        IndexedChunk {
+            id: id.into(),
+            doc_name: "document.txt".into(),
+            content: "shared content".into(),
+            embedding,
+            token_count: 2,
+            position: 0,
+            metadata,
+        }
+    }
+
+    #[test]
+    fn atan_normalize_maps_scores_into_unit_interval() {
+        assert!((atan_normalize(0.0) - 0.0).abs() < 1e-6);
+        let one = atan_normalize(1.0);
+        let ten = atan_normalize(10.0);
+        assert!(one > 0.0 && one < 1.0);
+        assert!(ten > one && ten < 1.0);
+        // atan(x) * 2/pi: diminishing returns compress large scores.
+        assert!(atan_normalize(100.0) < 1.0);
+    }
+
+    #[test]
+    fn similarity_threshold_mask_follows_retrieval_post_filter() {
+        let scores = [0.05, 0.25, 0.95];
+        // vector weight active → keep only scores >= 0.2
+        assert_eq!(
+            similarity_threshold_mask(&scores, 0.2, 0.3),
+            vec![false, true, true]
+        );
+        // term-only retrieval → every candidate survives
+        assert_eq!(
+            similarity_threshold_mask(&scores, 0.2, 0.0),
+            vec![true, true, true]
+        );
+    }
+
+    #[test]
+    fn dense_threshold_zeroes_sub_threshold_vector_scores() {
+        let engine = SearchEngine::from_chunks(vec![
+            dense_chunk("near", "kb-a", vec![1.0, 0.0]),
+            dense_chunk("mid", "kb-a", vec![1.0, 1.0]),
+        ]);
+        let kb_ids = vec!["kb-a".into()];
+        fn request<'a>(kb_ids: &'a [String], vector_weight: f32) -> HybridSearchQuery<'a> {
+            HybridSearchQuery {
+                query: "content",
+                query_embedding: Some(&[1.0, 0.0]),
+                top_k: 10,
+                kb_ids,
+                vector_weight,
+                doc_ids: None,
+                rank_feature: None,
+            }
+        }
+        let plain = engine.hybrid_search_kbs_with(
+            request(&kb_ids, 1.0),
+            HybridSearchOptions {
+                dense_threshold: None,
+                atan_fusion: false,
+            },
+        );
+        let mid = plain.iter().find(|r| r.chunk.id == "mid").unwrap();
+        let mid_similarity = mid.vector_score;
+        assert!(
+            (mid_similarity - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-3,
+            "cosine of [1,0] vs [1,1] must be ~0.7071, got {mid_similarity}"
+        );
+
+        // At pure vector weight the sub-threshold chunk drops out entirely.
+        let thresholded = engine.hybrid_search_kbs_with(
+            request(&kb_ids, 1.0),
+            HybridSearchOptions {
+                dense_threshold: Some(0.9),
+                atan_fusion: false,
+            },
+        );
+        assert!(thresholded.iter().all(|r| r.chunk.id == "near"));
+
+        // With term weight the chunk survives but contributes no dense score.
+        let blended = engine.hybrid_search_kbs_with(
+            request(&kb_ids, 0.5),
+            HybridSearchOptions {
+                dense_threshold: Some(0.9),
+                atan_fusion: false,
+            },
+        );
+        let mid = blended.iter().find(|r| r.chunk.id == "mid").unwrap();
+        assert_eq!(mid.vector_score, 0.0);
+        assert!(mid.term_score > 0.0);
+
+        // Default options preserve the original behavior.
+        let defaulted = engine.hybrid_search_kbs(request(&kb_ids, 1.0));
+        assert_eq!(defaulted.len(), plain.len());
+    }
+
+    #[test]
+    fn atan_fusion_normalizes_the_weighted_sum_before_rank_features() {
+        let engine = SearchEngine::from_chunks(vec![
+            dense_chunk("near", "kb-a", vec![1.0, 0.0]),
+            dense_chunk("far", "kb-a", vec![0.0, 1.0]),
+        ]);
+        let kb_ids = vec!["kb-a".into()];
+        fn request<'a>(kb_ids: &'a [String]) -> HybridSearchQuery<'a> {
+            HybridSearchQuery {
+                query: "content",
+                query_embedding: Some(&[1.0, 0.0]),
+                top_k: 10,
+                kb_ids,
+                vector_weight: 0.8,
+                doc_ids: None,
+                rank_feature: None,
+            }
+        }
+        let fused = engine.hybrid_search_kbs_with(
+            request(&kb_ids),
+            HybridSearchOptions {
+                dense_threshold: None,
+                atan_fusion: true,
+            },
+        );
+        let near = fused.iter().find(|r| r.chunk.id == "near").unwrap();
+        // score == atan(0.8 * 1.0 + 0.2 * term) * 2/pi (+ no rank feature):
+        // term score is tiny for "shared content" vs "content", so verify the
+        // score is the atan of a positive weighted sum, bounded below 1.
+        assert!(near.score > 0.0 && near.score < 1.0);
+        let expected = atan_normalize(0.8 * near.vector_score + 0.2 * near.term_score);
+        assert!(
+            (near.score - expected).abs() < 1e-6,
+            "fused score {:.6} vs expected {:.6}",
+            near.score,
+            expected
+        );
+        // Rank features are added outside the atan normalization.
+        let mut ranked_engine =
+            SearchEngine::from_chunks(vec![dense_chunk("near", "kb-a", vec![1.0, 0.0])]);
+        ranked_engine.chunks[0]
+            .metadata
+            .insert("pagerank_fea".into(), "2.5".into());
+        let ranked = ranked_engine.hybrid_search_kbs_with(
+            request(&kb_ids),
+            HybridSearchOptions {
+                dense_threshold: None,
+                atan_fusion: true,
+            },
+        );
+        let ranked_near = ranked.iter().find(|r| r.chunk.id == "near").unwrap();
+        assert_eq!(ranked_near.rank_feature_score, 2.5);
+        assert!(
+            (ranked_near.score - (expected + 2.5)).abs() < 1e-6,
+            "rank feature must sit outside the atan normalization"
+        );
+    }
+}

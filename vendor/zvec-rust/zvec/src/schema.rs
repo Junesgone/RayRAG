@@ -773,4 +773,326 @@ impl CollectionSchemaBuilder {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::MetricType;
 
+    #[test]
+    fn test_collection_schema_builder_default_values() {
+        let builder = CollectionSchemaBuilder::new("test_collection");
+        assert_eq!(builder.name, "test_collection");
+        assert!(builder.fields.is_empty());
+        assert!(builder.max_doc_count_per_segment.is_none());
+    }
+
+    #[test]
+    fn test_collection_schema_builder_add_field() {
+        let field = FieldSchema::new("test_field", DataType::Int32, false, 0).unwrap();
+        let builder = CollectionSchemaBuilder::new("test_collection").add_field(field);
+
+        assert_eq!(builder.fields.len(), 1);
+        assert_eq!(builder.fields[0].0.name(), "test_field");
+        assert!(builder.fields[0].1.is_none());
+    }
+
+    #[test]
+    fn test_collection_schema_builder_add_vector_field() {
+        let index_params = IndexParams::hnsw(MetricType::L2, 16, 200).unwrap();
+        let builder = CollectionSchemaBuilder::new("test_collection").add_vector_field(
+            "vector",
+            DataType::VectorFp32,
+            128,
+            index_params,
+        );
+
+        assert_eq!(builder.fields.len(), 1);
+        assert_eq!(builder.fields[0].0.name(), "vector");
+        assert!(builder.fields[0].1.is_some());
+    }
+
+    #[test]
+    fn test_collection_schema_builder_add_indexed_field() {
+        let index_params = IndexParams::invert(true, false).unwrap();
+        let builder = CollectionSchemaBuilder::new("test_collection").add_indexed_field(
+            "age",
+            DataType::Int32,
+            index_params,
+        );
+
+        assert_eq!(builder.fields.len(), 1);
+        assert_eq!(builder.fields[0].0.name(), "age");
+        assert!(builder.fields[0].1.is_some());
+    }
+
+    #[test]
+    fn test_collection_schema_builder_max_doc_count_per_segment() {
+        let builder =
+            CollectionSchemaBuilder::new("test_collection").max_doc_count_per_segment(1000);
+
+        assert_eq!(builder.max_doc_count_per_segment, Some(1000));
+    }
+
+    #[test]
+    fn test_collection_schema_builder_multiple_fields() {
+        let field1 = FieldSchema::new("id", DataType::Int64, false, 0).unwrap();
+        let field2 = FieldSchema::new("name", DataType::String, false, 0).unwrap();
+        let index_params = IndexParams::hnsw(MetricType::L2, 16, 200).unwrap();
+
+        let builder = CollectionSchemaBuilder::new("test_collection")
+            .add_field(field1)
+            .add_field(field2)
+            .add_vector_field("vector", DataType::VectorFp32, 128, index_params);
+
+        assert_eq!(builder.fields.len(), 3);
+        assert_eq!(builder.fields[0].0.name(), "id");
+        assert_eq!(builder.fields[1].0.name(), "name");
+        assert_eq!(builder.fields[2].0.name(), "vector");
+    }
+
+    #[test]
+    fn test_index_params_hnsw() {
+        let params = IndexParams::hnsw(MetricType::L2, 16, 200).unwrap();
+        assert_eq!(params.index_type(), IndexType::Hnsw);
+        assert_eq!(params.metric_type(), MetricType::L2);
+    }
+
+    #[test]
+    fn test_index_params_hnsw_with_quantize() {
+        let params =
+            IndexParams::hnsw_with_quantize(MetricType::L2, 16, 200, QuantizeType::Int8).unwrap();
+        assert_eq!(params.index_type(), IndexType::Hnsw);
+        assert_eq!(params.metric_type(), MetricType::L2);
+        assert_eq!(params.quantize_type(), QuantizeType::Int8);
+    }
+
+    #[test]
+    fn test_index_params_ivf() {
+        let params = IndexParams::ivf(MetricType::Ip, 100, 10, true).unwrap();
+        assert_eq!(params.index_type(), IndexType::Ivf);
+        assert_eq!(params.metric_type(), MetricType::Ip);
+    }
+
+    #[test]
+    fn test_index_params_flat() {
+        let params = IndexParams::flat(MetricType::Cosine).unwrap();
+        assert_eq!(params.index_type(), IndexType::Flat);
+        assert_eq!(params.metric_type(), MetricType::Cosine);
+    }
+
+    #[test]
+    fn test_index_params_diskann() {
+        let params = IndexParams::diskann(MetricType::L2, 32, 100, 0).unwrap();
+        assert_eq!(params.index_type(), IndexType::Diskann);
+        assert_eq!(params.metric_type(), MetricType::L2);
+    }
+
+    #[test]
+    fn test_index_params_invert() {
+        let params = IndexParams::invert(true, true).unwrap();
+        assert_eq!(params.index_type(), IndexType::Invert);
+    }
+
+    #[test]
+    fn test_field_schema_properties() {
+        let field = FieldSchema::new("test_field", DataType::VectorFp32, true, 128).unwrap();
+        assert_eq!(field.name(), "test_field");
+        assert_eq!(field.data_type(), DataType::VectorFp32);
+        assert_eq!(field.dimension(), 128);
+        assert!(field.is_nullable());
+    }
+
+    #[test]
+    fn test_collection_schema_builder_method() {
+        let builder = CollectionSchema::builder("test_collection");
+        assert_eq!(builder.name, "test_collection");
+        assert!(builder.fields.is_empty());
+    }
+
+    #[test]
+    fn test_field_schema_non_nullable() {
+        let field = FieldSchema::new("test_field", DataType::Int32, false, 0).unwrap();
+        assert!(!field.is_nullable());
+    }
+
+    #[test]
+    fn test_field_schema_scalar_dimension_zero() {
+        let field = FieldSchema::new("scalar_field", DataType::String, false, 0).unwrap();
+        assert_eq!(field.dimension(), 0);
+        assert!(!field.is_vector_field());
+    }
+
+    #[test]
+    fn test_field_schema_new_with_null_byte() {
+        let result = FieldSchema::new("invalid\0field", DataType::String, false, 0);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_field_schema_new_success() {
+        let result = FieldSchema::new("valid_field", DataType::Int64, true, 0);
+        assert!(result.is_ok());
+        let field = result.unwrap();
+        assert_eq!(field.name(), "valid_field");
+        assert_eq!(field.data_type(), DataType::Int64);
+    }
+
+    #[test]
+    fn test_index_params_set_metric_type() {
+        let mut params = IndexParams::hnsw(MetricType::L2, 16, 200).unwrap();
+        params.set_metric_type(MetricType::Cosine).unwrap();
+        assert_eq!(params.metric_type(), MetricType::Cosine);
+    }
+
+    #[test]
+    fn test_index_params_set_quantize_type() {
+        let mut params =
+            IndexParams::hnsw_with_quantize(MetricType::L2, 16, 200, QuantizeType::Undefined)
+                .unwrap();
+        params.set_quantize_type(QuantizeType::Int8).unwrap();
+        assert_eq!(params.quantize_type(), QuantizeType::Int8);
+    }
+
+    #[test]
+    fn test_index_params_quantizer_enable_rotate() {
+        let mut params =
+            IndexParams::hnsw_with_quantize(MetricType::L2, 16, 200, QuantizeType::Int8).unwrap();
+        assert!(!params.quantizer_enable_rotate());
+        params.set_quantizer_enable_rotate(true).unwrap();
+        assert!(params.quantizer_enable_rotate());
+        params.set_quantizer_enable_rotate(false).unwrap();
+        assert!(!params.quantizer_enable_rotate());
+    }
+
+    #[test]
+    fn test_index_params_quantizer_enable_rotate_rejects_scalar_index() {
+        let mut params = IndexParams::invert(false, false).unwrap();
+        let err = params
+            .set_quantizer_enable_rotate(true)
+            .expect_err("scalar index params must reject the quantizer option");
+        assert_eq!(err.code, ErrorCode::InvalidArgument);
+    }
+
+    #[test]
+    fn test_pq_quantizer_params_default_matches_c_macro() {
+        // ZVEC_PQ_QUANTIZER_PARAMS_DEFAULT = {8, 8, false, false, 5, 4}
+        assert_eq!(
+            PqQuantizerParams::default(),
+            PqQuantizerParams {
+                num_chunk: 8,
+                num_bits: 8,
+                enable_rotate: false,
+                fast_scan: false,
+                opq_iter: 5,
+                opq_pq_iter: 4,
+            }
+        );
+    }
+
+    #[test]
+    fn test_index_params_quantizer_pq_roundtrip() {
+        let mut params = IndexParams::ivf(MetricType::L2, 100, 10, false).unwrap();
+        params.set_quantize_type(QuantizeType::Pq).unwrap();
+        let pq = PqQuantizerParams {
+            num_chunk: 4,
+            num_bits: 4,
+            enable_rotate: true,
+            fast_scan: true,
+            opq_iter: 3,
+            opq_pq_iter: 2,
+        };
+        params.set_quantizer_pq(&pq).unwrap();
+
+        assert_eq!(params.quantize_type(), QuantizeType::Pq);
+        assert_eq!(params.quantizer_pq().unwrap(), pq);
+    }
+
+    #[test]
+    fn test_index_params_quantizer_pq_rejects_invalid_combinations() {
+        let mut params = IndexParams::ivf(MetricType::L2, 100, 10, false).unwrap();
+
+        // FastScan is a 4-bit SIMD layout.
+        let err = params
+            .set_quantizer_pq(&PqQuantizerParams {
+                num_bits: 8,
+                fast_scan: true,
+                ..Default::default()
+            })
+            .expect_err("fast_scan must require 4-bit codes");
+        assert_eq!(err.code, ErrorCode::InvalidArgument);
+
+        // num_bits is 4 or 8.
+        let err = params
+            .set_quantizer_pq(&PqQuantizerParams {
+                num_bits: 3,
+                ..Default::default()
+            })
+            .expect_err("num_bits must be 4 or 8");
+        assert_eq!(err.code, ErrorCode::InvalidArgument);
+
+        // num_chunk must be positive.
+        let err = params
+            .set_quantizer_pq(&PqQuantizerParams {
+                num_chunk: 0,
+                ..Default::default()
+            })
+            .expect_err("num_chunk must be positive");
+        assert_eq!(err.code, ErrorCode::InvalidArgument);
+
+        // OPQ needs positive iteration counts.
+        let err = params
+            .set_quantizer_pq(&PqQuantizerParams {
+                enable_rotate: true,
+                opq_iter: 0,
+                ..Default::default()
+            })
+            .expect_err("enable_rotate must require positive OPQ iterations");
+        assert_eq!(err.code, ErrorCode::InvalidArgument);
+    }
+
+    #[test]
+    fn test_index_params_quantizer_pq_rejects_non_ivf_index() {
+        let mut params = IndexParams::hnsw(MetricType::L2, 16, 200).unwrap();
+        let err = params
+            .set_quantizer_pq(&PqQuantizerParams::default())
+            .expect_err("PQ configuration is IVF-only");
+        assert_eq!(err.code, ErrorCode::InvalidArgument);
+
+        let err = params
+            .quantizer_pq()
+            .expect_err("PQ configuration is IVF-only");
+        assert_eq!(err.code, ErrorCode::InvalidArgument);
+    }
+
+    #[test]
+    fn test_index_params_ivf_cosine() {
+        let params = IndexParams::ivf(MetricType::Cosine, 100, 10, false).unwrap();
+        assert_eq!(params.index_type(), IndexType::Ivf);
+        assert_eq!(params.metric_type(), MetricType::Cosine);
+    }
+
+    #[test]
+    fn test_index_params_flat_ip() {
+        let params = IndexParams::flat(MetricType::Ip).unwrap();
+        assert_eq!(params.index_type(), IndexType::Flat);
+        assert_eq!(params.metric_type(), MetricType::Ip);
+    }
+
+    #[test]
+    fn test_collection_schema_builder_chaining() {
+        let vector_index = IndexParams::hnsw(MetricType::L2, 16, 200).unwrap();
+        let scalar_index = IndexParams::invert(true, false).unwrap();
+
+        let builder = CollectionSchemaBuilder::new("chained_collection")
+            .add_field(FieldSchema::new("id", DataType::Int64, false, 0).unwrap())
+            .add_vector_field("embedding", DataType::VectorFp32, 128, vector_index)
+            .add_indexed_field("category", DataType::String, scalar_index)
+            .max_doc_count_per_segment(5000);
+
+        assert_eq!(builder.fields.len(), 3);
+        assert_eq!(builder.max_doc_count_per_segment, Some(5000));
+        assert_eq!(builder.fields[0].0.name(), "id");
+        assert_eq!(builder.fields[1].0.name(), "embedding");
+        assert_eq!(builder.fields[2].0.name(), "category");
+    }
+}

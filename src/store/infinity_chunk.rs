@@ -343,4 +343,95 @@ fn metadata_string(value: &Value) -> String {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::{InfinityChunkAnalyzer, infinity_chunk_field_for_alias};
+    use uuid::Uuid;
 
+    #[test]
+    fn fixed_schema_codec_materializes_defaults_aliases_and_dynamic_vector() {
+        let chunk = Chunk {
+            id: "chunk-1".into(),
+            content: "canonical content".into(),
+            content_type: "table".into(),
+            doc_id: Uuid::nil(),
+            position: 7,
+            token_count: 13,
+            embedding: Some(vec![1.0, 0.5]),
+            metadata: HashMap::from([
+                ("docnm_kwd".into(), "manual.pdf".into()),
+                ("title_tks".into(), "lower priority".into()),
+                ("important_kwd".into(), r#"["","rust",""]"#.into()),
+                ("question_kwd".into(), r#"["one","two"]"#.into()),
+                ("tag_kwd".into(), r#"["a","b"]"#.into()),
+                ("position_int".into(), "[[1,10,100,20,40]]".into()),
+                ("page_num_int".into(), "[1,2]".into()),
+                ("tag_feas".into(), r#"{"rust":0.75}"#.into()),
+                ("extra".into(), r#"{"kind":"raptor"}"#.into()),
+                ("chunk_data".into(), r#"{"cells":["a"]}"#.into()),
+            ]),
+        };
+
+        let record = encode_chunk_record(&chunk, "kb-a").unwrap();
+        assert_eq!(record.len(), 75); // 73 base + vector + chunk_data.
+        assert_eq!(record["available_int"], 1);
+        assert_eq!(record["weight_flt"], 0.0);
+        assert_eq!(record["docnm"], "manual.pdf");
+        assert_eq!(record["important_keywords"], "rust");
+        assert_eq!(record["important_kwd_empty_count"], 2);
+        assert_eq!(record["questions"], "one\ntwo");
+        assert_eq!(record["tag_kwd"], "a###b");
+        assert_eq!(
+            record["position_int"],
+            "00000001_0000000a_00000064_00000014_00000028"
+        );
+        assert_eq!(record["page_num_int"], "00000001_00000002");
+        assert_eq!(record["q_2_vec"], serde_json::json!([1.0, 0.5]));
+        assert_eq!(record["chunk_data"], serde_json::json!({"cells": ["a"]}));
+
+        let sparse = sparse_record_metadata(&record);
+        assert!(!sparse.contains_key("weight_int"));
+        assert_eq!(sparse.get("available_int").map(String::as_str), Some("1"));
+        let decoded = decode_sparse_metadata(&sparse).unwrap();
+        assert_eq!(
+            decoded.get("important_kwd").map(String::as_str),
+            Some(r#"["rust","",""]"#)
+        );
+        assert_eq!(
+            decoded.get("question_kwd").map(String::as_str),
+            Some(r#"["one","two"]"#)
+        );
+        assert_eq!(
+            decoded.get("position_int").map(String::as_str),
+            Some("[[1,10,100,20,40]]")
+        );
+    }
+
+    #[test]
+    fn codec_rejects_invalid_typed_or_coordinate_values() {
+        let base = Chunk {
+            id: "bad".into(),
+            content: String::new(),
+            content_type: "text".into(),
+            doc_id: Uuid::nil(),
+            position: 0,
+            token_count: 0,
+            embedding: None,
+            metadata: HashMap::from([("available_int".into(), "yes".into())]),
+        };
+        assert!(encode_chunk_record(&base, "kb").is_err());
+
+        let mut bad_position = base;
+        bad_position.metadata = HashMap::from([("position_int".into(), "[[1,-1]]".into())]);
+        assert!(encode_chunk_record(&bad_position, "kb").is_err());
+        assert_eq!(
+            infinity_chunk_field_for_alias("content_ltks"),
+            Some("content")
+        );
+        assert!(matches!(
+            INFINITY_CHUNK_FIELDS[9].analyzer,
+            InfinityChunkAnalyzer::Single("whitespace-#")
+        ));
+    }
+}

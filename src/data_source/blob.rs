@@ -201,4 +201,60 @@ fn parse_xml_names(xml: &str, item_type: &str, name_tag: &str) -> Vec<String> {
     names
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn parse_azure_listing() {
+        let xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<EnumerationResults>
+  <Blobs><Blob><Name>docs/a.pdf</Name></Blob><Blob><Name>notes.txt</Name></Blob></Blobs>
+</EnumerationResults>"#;
+        let names = parse_xml_names(xml, "Blob", "Name");
+        assert_eq!(names, vec!["docs/a.pdf", "notes.txt"]);
+    }
+
+    #[test]
+    fn parse_container_listing() {
+        let xml = r#"<EnumerationResults><Containers><Container><Name>alpha</Name></Container><Container><Name>beta</Name></Container></Containers></EnumerationResults>"#;
+        let names = parse_xml_names(xml, "Container", "Name");
+        assert_eq!(names, vec!["alpha", "beta"]);
+    }
+
+    #[test]
+    fn source_roundtrip() {
+        assert_eq!(DocumentSource::from_str("blob"), Some(DocumentSource::Blob));
+        assert_eq!(DocumentSource::Blob.as_str(), "blob");
+    }
+
+    #[tokio::test]
+    async fn missing_sas_bails() {
+        let connector = BlobConnector::new();
+        let error = connector
+            .fetch(&SourceOptions {
+                url: "https://acct.blob.core.windows.net".into(),
+                token: String::new(),
+                target: "c".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("SAS"));
+    }
+
+    #[tokio::test]
+    async fn missing_url_bails() {
+        let connector = BlobConnector::new();
+        let error = connector
+            .fetch(&SourceOptions {
+                url: String::new(),
+                token: "sv=1".into(),
+                target: "c".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("endpoint"));
+    }
+}

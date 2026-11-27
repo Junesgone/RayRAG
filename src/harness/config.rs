@@ -121,4 +121,39 @@ pub fn resolve_mode(thinking_mode: &str) -> ModeSpec {
     get_mode(thinking_mode)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn modes_mirror_upstream_tables() {
+        let low = get_mode("low");
+        assert!(!low.agentic);
+        assert!(!low.enable_sca);
+        assert_eq!(low.sca_max_rounds, 0);
+        assert!(low.tools.is_empty());
+
+        let medium = get_mode("Medium");
+        assert!(medium.agentic);
+        assert_eq!(medium.sca_max_rounds, 3);
+        assert!(!medium.use_fanout);
+        assert_eq!(medium.tools.len(), ALL_TOOLS.len());
+
+        let high = get_mode("high");
+        assert!(high.use_fanout);
+        assert_eq!(high.action_max_turns, 4);
+
+        let ultra = get_mode("ultra");
+        assert_eq!(ultra.sca_max_rounds, 5);
+        assert_eq!(ultra.action_max_turns, 6);
+        assert!(ultra.use_fanout);
+        assert!(ultra.tools.contains(GRAPH_EXPLORE));
+        assert_eq!(ultra.tools.len(), ALL_TOOLS.len() + 1);
+
+        // Unknown labels degrade to the non-agentic fallback.
+        let unknown = resolve_mode("  fantasy  ");
+        assert_eq!(unknown.label, "naive");
+        assert!(!unknown.agentic);
+        assert!(unknown.tools.is_empty());
+    }
+}

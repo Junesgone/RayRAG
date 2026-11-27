@@ -210,7 +210,54 @@ where
     )
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn test_provider_names() {
+        assert_eq!(ChatProvider::MiniMax.name(), "MiniMax");
+        assert_eq!(ChatProvider::from_name("qwen"), ChatProvider::Qwen);
+        assert_eq!(
+            ChatProvider::from_name("unknown"),
+            ChatProvider::Custom("unknown".into())
+        );
+    }
+
+    #[test]
+    fn test_model_capabilities() {
+        let cap = ModelRegistry::capabilities("gpt-4-turbo");
+        assert!(cap.supports_vision);
+        assert!(cap.supports_tools);
+        assert_eq!(cap.max_context_tokens, 128000);
+    }
+
+    #[test]
+    fn test_model_list() {
+        let models = ModelRegistry::list_by_provider(&ChatProvider::OpenAI);
+        assert!(models.len() >= 2);
+    }
+
+    #[tokio::test]
+    async fn test_retry_success() {
+        let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let c = counter.clone();
+        let result = retry_with_backoff(2, 10, move || {
+            let c = c.clone();
+            async move {
+                let n = c.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                if n < 3 {
+                    anyhow::bail!("fail")
+                } else {
+                    Ok("ok")
+                }
+            }
+        })
+        .await;
+        assert_eq!(result.unwrap(), "ok");
+        assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 3);
+    }
+}
 
 // ── Streaming Support ───────────────────────────────────────────
 

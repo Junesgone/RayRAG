@@ -1254,4 +1254,417 @@ pub async fn delete_group(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    /// A graph-based-wiki config that passes the v0.27.2 template validator.
+    fn wiki_config() -> serde_json::Value {
+        serde_json::json!({
+            "kind": "wiki",
+            "mode": "entity",
+            "claim": {"fields": [{"statement": "A is B", "subject": "A"}]},
+            "concept": {"fields": [{"term": "A", "definition_excerpt": "the A"}]}
+        })
+    }
+
+    fn template(name: &str, kind: &str, config: serde_json::Value) -> TemplateRequest {
+        TemplateRequest {
+            name: name.into(),
+            description: String::new(),
+            kind: kind.into(),
+            config,
+        }
+    }
+
+    fn request(name: &str, templates: Vec<TemplateRequest>) -> GroupCreateRequest {
+        GroupCreateRequest {
+            name: name.into(),
+            description: String::new(),
+            templates,
+        }
+    }
+
+    #[test]
+    fn scope_and_group_invariants_match_ragflow() {
+        let store = CompilationTemplateStore::in_memory();
+        let group = store
+            .create(
+                "tenant-a",
+                request(
+                    "File",
+                    vec![template(
+                        "Tree",
+                        "tree",
+                        serde_json::json!({"raptor":{"rechunk":true}}),
+                    )],
+                ),
+            )
+            .unwrap();
+        assert_eq!(group.scope, "file");
+        let artifact = store
+            .create(
+                "tenant-a",
+                request("Dataset", vec![template("Wiki", "wiki", wiki_config())]),
+            )
+            .unwrap();
+        assert_eq!(artifact.scope, "dataset");
+        assert!(
+            store
+                .create(
+                    "tenant-a",
+                    request(
+                        "Mixed",
+                        vec![
+                            template("Wiki", "wiki", wiki_config()),
+                            template("Other", "graph", serde_json::json!({}))
+                        ]
+                    )
+                )
+                .is_err()
+        );
+        assert!(
+            store
+                .create(
+                    "tenant-a",
+                    request(
+                        "Two",
+                        vec![
+                            template("A", "tree", serde_json::json!({"raptor":{"rechunk":true}})),
+                            template("B", "tree", serde_json::json!({"raptor":{"rechunk":true}}))
+                        ]
+                    )
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn tenant_scope_update_and_name_uniqueness_are_atomic() {
+        let store = CompilationTemplateStore::in_memory();
+        let first = store
+            .create(
+                "tenant-a",
+                request("One", vec![template("A", "tree", serde_json::json!({}))]),
+            )
+            .unwrap();
+        assert!(store.get("tenant-b", &first.id).is_none());
+        store
+            .create(
+                "tenant-a",
+                request("Two", vec![template("B", "tree", serde_json::json!({}))]),
+            )
+            .unwrap();
+        assert!(
+            store
+                .update(
+                    "tenant-a",
+                    &first.id,
+                    GroupUpdateRequest {
+                        name: Some("Two".into()),
+                        ..Default::default()
+                    }
+                )
+                .is_err()
+        );
+        assert_eq!(store.get("tenant-a", &first.id).unwrap().name, "One");
+        let updated = store
+            .update(
+                "tenant-a",
+                &first.id,
+                GroupUpdateRequest {
+                    templates: Some(vec![template("Artifact", "wiki", wiki_config())]),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.scope, "dataset");
+        assert_ne!(updated.templates[0].id, first.templates[0].id);
+    }
+
+    #[test]
+    fn validation_checks_nested_schema_rules() {
+        let store = CompilationTemplateStore::in_memory();
+        let duplicate = serde_json::json!({"entity":{"fields":[{"type":"person","description":"a"},{"type":"person","description":"b"}]}});
+        assert!(
+            store
+                .create(
+                    "tenant",
+                    request("Bad", vec![template("Bad", "tree", duplicate)])
+                )
+                .is_err()
+        );
+        let missing_claim = serde_json::json!({
+            "kind": "wiki",
+            "mode": "entity",
+            "claim": {"fields": [{"statement": "", "subject": "fish"}]}
+        });
+        let error = store
+            .create(
+                "tenant",
+                request("Bad wiki", vec![template("Bad", "wiki", missing_claim)]),
+            )
+            .unwrap_err();
+        assert_eq!(error.to_string(), "Claim statement is required.");
+    }
+
+    #[test]
+    fn persistent_store_recovers_complete_snapshot() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-template-groups-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("compilation_templates.json");
+        let store = CompilationTemplateStore::new(&path).unwrap();
+        let group = store
+            .create(
+                "tenant",
+                request(
+                    "Saved",
+                    vec![template("Tree", "tree", serde_json::json!({}))],
+                ),
+            )
+            .unwrap();
+        drop(store);
+        let restored = CompilationTemplateStore::new(&path).unwrap();
+        assert_eq!(restored.get("tenant", &group.id).unwrap(), group);
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn reference_data_is_identical_after_persistent_store_restart() {
+        let root = std::env::temp_dir().join(format!(
+            "rayrag-template-reference-restart-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("compilation_templates.json");
+        let first = CompilationTemplateStore::new(&path).unwrap();
+        let builtins = first.list_builtins();
+        let presets = first.list_wiki_presets();
+        drop(first);
+        let restarted = CompilationTemplateStore::new(&path).unwrap();
+        assert_eq!(restarted.list_builtins(), builtins);
+        assert_eq!(restarted.list_wiki_presets(), presets);
+        assert_eq!(std::fs::read_to_string(path).unwrap().trim(), "[]");
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn reference_palette_matches_v0272_seed_set() {
+        let store = CompilationTemplateStore::in_memory();
+        let builtins = store.list_builtins();
+        assert_eq!(builtins.len(), 8);
+        for builtin in &builtins {
+            assert_eq!(builtin.id, builtin.kind);
+            assert!(!builtin.display_name.is_empty());
+            assert!(builtin.config.is_object());
+        }
+        let wiki = builtins.iter().find(|b| b.id == "wiki").unwrap();
+        assert_eq!(wiki.kind, "wiki");
+        assert_eq!(wiki.config["kind"], "wiki");
+        assert_eq!(wiki.config["mode"], "entity");
+        assert!(
+            wiki.config["instruction"]
+                .as_str()
+                .unwrap()
+                .contains("wikilinks")
+        );
+        assert!(wiki.config["example"].as_str().is_some());
+        for section in ["entity", "relation", "claim", "concept"] {
+            assert!(
+                wiki.config[section]["fields"].as_array().is_some(),
+                "missing wiki section {section}"
+            );
+        }
+        let tree = builtins.iter().find(|b| b.id == "tree").unwrap();
+        assert_eq!(tree.config["raptor"]["max_token"], 512);
+        assert_eq!(tree.config["raptor"]["clustering_threshold"], 0.3);
+        let presets = store.list_wiki_presets();
+        assert_eq!(presets.len(), 6);
+        assert!(
+            presets
+                .iter()
+                .all(|preset| !preset.example.trim().is_empty())
+        );
+    }
+
+    #[test]
+    fn wiki_validation_messages_match_upstream() {
+        let store = CompilationTemplateStore::in_memory();
+        let bad_mode = serde_json::json!({"kind": "wiki", "mode": "neither"});
+        let error = store
+            .create(
+                "tenant",
+                request("Wiki", vec![template("Wiki", "wiki", bad_mode)]),
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Wiki mode must be either 'entity' or 'topic'."
+        );
+        let missing_concept = serde_json::json!({
+            "kind": "wiki",
+            "mode": "topic",
+            "concept": {"fields": [{"term": "", "definition_excerpt": "d"}]}
+        });
+        let error = store
+            .create(
+                "tenant",
+                request("Wiki 2", vec![template("Wiki", "wiki", missing_concept)]),
+            )
+            .unwrap_err();
+        assert_eq!(error.to_string(), "Concept term is required.");
+    }
+
+    #[test]
+    fn wiki_scope_error_message_matches_upstream() {
+        let store = CompilationTemplateStore::in_memory();
+        let error = store
+            .create(
+                "tenant",
+                request(
+                    "Mixed",
+                    vec![
+                        template("Wiki", "wiki", wiki_config()),
+                        template("Tree", "tree", serde_json::json!({})),
+                    ],
+                ),
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "A wiki template cannot be combined with other templates in the same group."
+        );
+    }
+
+    #[test]
+    fn legacy_artifacts_kind_migrates_to_wiki_on_load() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-template-legacy-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("compilation_templates.json");
+        let legacy = serde_json::json!([{
+            "id": "g1",
+            "tenant_id": "tenant",
+            "name": "Legacy",
+            "description": "",
+            "scope": "dataset",
+            "templates": [{
+                "id": "t1",
+                "name": "Wiki",
+                "description": "",
+                "kind": "artifacts",
+                "config": {"kind": "artifacts"},
+                "created_at": 1,
+                "updated_at": 1
+            }],
+            "created_at": 1,
+            "updated_at": 1
+        }]);
+        std::fs::write(&path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
+        let store = CompilationTemplateStore::new(&path).unwrap();
+        let group = store.get("tenant", "g1").unwrap();
+        assert_eq!(group.templates[0].kind, "wiki");
+        assert_eq!(group.templates[0].config["kind"], "wiki");
+        assert_eq!(group.templates[0].config["mode"], "entity");
+        // The migration is persisted, so a restart sees the canonical record too.
+        let persisted = std::fs::read_to_string(&path).unwrap();
+        assert!(persisted.contains("\"kind\": \"wiki\""));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn legacy_artifacts_write_is_normalized_to_wiki() {
+        let store = CompilationTemplateStore::in_memory();
+        let group = store
+            .create(
+                "tenant",
+                request(
+                    "Legacy client",
+                    vec![template(
+                        "Wiki",
+                        "artifacts",
+                        serde_json::json!({"kind": "artifacts"}),
+                    )],
+                ),
+            )
+            .unwrap();
+        assert_eq!(group.scope, "dataset");
+        assert_eq!(group.templates[0].kind, "wiki");
+        assert_eq!(group.templates[0].config["kind"], "wiki");
+        assert_eq!(group.templates[0].config["mode"], "entity");
+    }
+
+    #[test]
+    fn embedded_builtin_seed_is_complete_stable_and_read_only() {
+        let store = CompilationTemplateStore::in_memory();
+        // Upstream _sort_builtins: kind == empty first, then display_name; the
+        // v0.27.2 seed set has no empty template.
+        let expected = [
+            "knowledge_graph",
+            "timeline",
+            "mind_map",
+            "page_index",
+            "session_essence",
+            "session_graph",
+            "tree",
+            "wiki",
+        ];
+        assert_eq!(
+            store
+                .list_builtins()
+                .iter()
+                .map(|template| template.id.as_str())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        let mut changed = store.list_builtins();
+        changed[0].display_name = "changed by caller".into();
+        assert_eq!(store.list_builtins()[0].display_name, "Knowledge graph");
+        assert_eq!(
+            store
+                .list_builtins()
+                .iter()
+                .find(|template| template.id == "wiki")
+                .map(|template| template.display_name.as_str()),
+            Some("Wiki — Graph-based wiki")
+        );
+        assert_eq!(store.list("tenant-a", &GroupListQuery::default()).1, 0);
+        assert_eq!(store.list("tenant-b", &GroupListQuery::default()).1, 0);
+    }
+
+    #[test]
+    fn embedded_wiki_presets_match_fixed_filename_order_and_defaults() {
+        let presets = CompilationTemplateStore::in_memory().list_wiki_presets();
+        assert_eq!(
+            presets
+                .iter()
+                .map(|preset| preset.id.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "brand",
+                "engineering",
+                "general",
+                "market",
+                "product",
+                "user_interview"
+            ]
+        );
+        assert_eq!(presets[0].topic, "marketing");
+        assert!(presets[2].instruction.contains("See also"));
+        assert_eq!(presets[5].topic, "product");
+        assert!(presets[5].example.contains("# User interview"));
+    }
+
+    #[test]
+    fn reference_data_validation_rejects_duplicate_or_misordered_seeds() {
+        let store = CompilationTemplateStore::in_memory();
+        let mut duplicated = store.list_builtins();
+        duplicated[1].id = duplicated[0].id.clone();
+        assert!(validate_reference_data(&duplicated, &store.list_wiki_presets()).is_err());
+        let mut misordered = store.list_builtins();
+        misordered.swap(0, 7);
+        assert!(validate_reference_data(&misordered, &store.list_wiki_presets()).is_err());
+    }
+}

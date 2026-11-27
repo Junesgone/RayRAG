@@ -179,4 +179,51 @@ pub async fn extract_weighted_keywords(chat: &dyn HarnessChat, question: &str) -
     weighted_query(&aspects, question)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn parsing_dedups_across_the_four_aspects() {
+        let raw = "<think>ignore</think>```json\n{\"entity\": [\"Brown County\", \"brown county\"], \"aliases\": [\"Brown County, Kansas\"], \"fact_type\": [\"population\"], \"qualifiers\": [\"2020\"]}\n```";
+        let aspects = parse_aspects(raw);
+        assert_eq!(aspect_terms(&aspects, "entity"), vec!["Brown County"]);
+        assert_eq!(
+            aspect_terms(&aspects, "aliases"),
+            vec!["Brown County, Kansas"]
+        );
+        assert_eq!(aspect_terms(&aspects, "fact_type"), vec!["population"]);
+        assert_eq!(aspect_terms(&aspects, "qualifiers"), vec!["2020"]);
+
+        // A term named twice lands in the FIRST aspect only.
+        let raw = "{\"entity\": [\"Alpha\"], \"aliases\": [\"alpha\"]}";
+        let aspects = parse_aspects(raw);
+        assert_eq!(aspect_terms(&aspects, "entity"), vec!["Alpha"]);
+        assert!(aspect_terms(&aspects, "aliases").is_empty());
+    }
+
+    #[test]
+    fn weighting_repeats_entities_and_qualifiers() {
+        let aspects = parse_aspects(
+            "{\"entity\": [\"Alpha\"], \"aliases\": [\"Beta\"], \"fact_type\": [\"population\"], \"qualifiers\": [\"1999\"]}",
+        );
+        let (query, keywords) = weighted_query(&aspects, "plain question");
+        assert_eq!(
+            query,
+            "Alpha, Alpha, Alpha, 1999, 1999, 1999, Beta, population"
+        );
+        assert_eq!(keywords, "Alpha, Beta, population, 1999");
+
+        // No aspects -> both sides fall back to the question.
+        let (query, keywords) = weighted_query(&[], "the original question");
+        assert_eq!(query, "the original question");
+        assert_eq!(keywords, "the original question");
+
+        // The 400-char cap holds for both outputs.
+        let long = "x".repeat(500);
+        let aspects = vec![("entity".to_string(), vec![long])];
+        let (query, keywords) = weighted_query(&aspects, "q");
+        assert_eq!(query.chars().count(), KEYWORD_MAX_CHARS);
+        assert_eq!(keywords.chars().count(), KEYWORD_MAX_CHARS);
+    }
+}

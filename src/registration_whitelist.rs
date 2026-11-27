@@ -132,4 +132,74 @@ fn normalise(entry: &str) -> String {
     entry.trim().to_ascii_lowercase()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    /// The default deployment must not lock anybody out: a disabled whitelist admits everyone.
+    #[test]
+    fn a_disabled_whitelist_admits_everyone() {
+        let store = WhitelistStore::in_memory();
+        assert!(!store.snapshot().enabled);
+        assert!(store.allows("anyone@example.com"));
+        assert!(store.allows(""));
+    }
+
+    /// Enabled means enabled: only listed addresses, and an `@domain` entry admits the domain.
+    #[test]
+    fn an_enabled_whitelist_admits_only_listed_addresses_and_domains() {
+        let store = WhitelistStore::in_memory();
+        store.set_enabled(true).unwrap();
+        assert!(
+            !store.allows("someone@example.com"),
+            "empty list admits nobody"
+        );
+        assert!(
+            store.add("Someone@Example.com").unwrap(),
+            "normalised to lowercase"
+        );
+        assert!(store.allows("someone@example.com"));
+        assert!(store.allows("SOMEONE@EXAMPLE.COM"));
+        assert!(!store.allows("other@example.com"));
+        assert!(store.add("@partner.cn").unwrap());
+        assert!(store.allows("anyone@partner.cn"));
+        assert!(
+            !store.allows("anyone@notpartner.cn"),
+            "a domain entry is not a suffix match"
+        );
+    }
+
+    /// Adding the same entry twice must not silently duplicate it.
+    #[test]
+    fn duplicate_entries_are_reported_as_unchanged() {
+        let store = WhitelistStore::in_memory();
+        assert!(store.add("a@b.c").unwrap());
+        assert!(!store.add(" a@b.c ").unwrap());
+        assert_eq!(store.snapshot().entries, vec!["a@b.c".to_string()]);
+        assert_eq!(store.remove(&["a@b.c".into()]).unwrap(), 1);
+        assert_eq!(store.remove(&["a@b.c".into()]).unwrap(), 0);
+        assert!(store.snapshot().entries.is_empty());
+    }
+
+    /// The whitelist survives a restart, which is the whole point of persisting it.
+    #[test]
+    fn the_whitelist_survives_a_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("whitelist.json");
+        let path = path.to_string_lossy().into_owned();
+        {
+            let store = WhitelistStore::new(&path).unwrap();
+            store.set_enabled(true).unwrap();
+            store.add("ops@example.com").unwrap();
+        }
+        let reloaded = WhitelistStore::new(&path).unwrap();
+        let snapshot = reloaded.snapshot();
+        assert!(
+            snapshot.enabled,
+            "the toggle is persisted too: {snapshot:?}"
+        );
+        assert_eq!(snapshot.entries, vec!["ops@example.com".to_string()]);
+        assert!(reloaded.allows("ops@example.com"));
+        assert!(!reloaded.allows("nobody@example.com"));
+    }
+}

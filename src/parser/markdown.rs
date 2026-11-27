@@ -438,4 +438,202 @@ fn extract_text_block(
     MarkdownElement::new(content.join("\n"), start, end, Some("text_block".into()))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn extract_bordered_table_and_remainder() {
+        let md = "Intro text\n\n| Name | Age |\n| --- | --- |\n| Alice | 30 |\n| Bob | 25 |\n\nOutro text";
+        let (text, tables) = RAGFlowMarkdownParser::new().extract_tables_and_remainder(md, true);
+        assert_eq!(tables.len(), 1);
+        assert!(tables[0].contains("| Name | Age |"));
+        assert!(tables[0].contains("| Alice | 30 |"));
+        // Table removed from body.
+        assert!(!text.contains("| Name | Age |"));
+        assert!(text.contains("Intro text"));
+        assert!(text.contains("Outro text"));
+    }
+
+    #[test]
+    fn extract_borderless_table() {
+        let md = "Before\n\nName | Age\n--- | ---\nAlice | 30\n\nAfter";
+        let (text, tables) = RAGFlowMarkdownParser::new().extract_tables_and_remainder(md, true);
+        assert_eq!(tables.len(), 1);
+        assert!(tables[0].contains("Alice | 30"));
+        assert!(!text.contains("Alice | 30"));
+        assert!(text.contains("Before"));
+        assert!(text.contains("After"));
+    }
+
+    #[test]
+    fn extract_html_table_with_wrappers() {
+        let md = "Text\n\n<html><body><table><tr><td>A</td></tr></table></body></html>\n\nMore";
+        let (text, tables) = RAGFlowMarkdownParser::new().extract_tables_and_remainder(md, true);
+        assert_eq!(tables.len(), 1);
+        assert!(tables[0].contains("<table>"));
+        assert!(!text.contains("<table>"));
+    }
+
+    #[test]
+    fn normalize_table_tag_attributes() {
+        let md = "x <table class=\"t\"><tr><td>1</td></tr></table> y";
+        let (text, _) = RAGFlowMarkdownParser::new().extract_tables_and_remainder(md, false);
+        assert!(text.contains("<table>"));
+        assert!(!text.contains("class=\"t\""));
+    }
+
+    #[test]
+    fn keep_tables_inline_when_not_separate() {
+        // Border table regex requires a trailing newline (last row `\n`).
+        let md = "| A | B |\n| - | - |\n| 1 | 2 |\n";
+        let (text, tables) = RAGFlowMarkdownParser::new().extract_tables_and_remainder(md, false);
+        assert_eq!(tables.len(), 1);
+        // Table left inline.
+        assert!(text.contains("| A | B |"));
+    }
+
+    #[test]
+    fn get_delimiters_sorts_by_length_and_escapes() {
+        let dels = "use `[start]` and `code-block` tokens `[end]`".to_string();
+        let out = MarkdownElementExtractor::get_delimiters(&dels);
+        // Longest first, all escaped and joined by |.
+        let parts: Vec<&str> = out.split('|').collect();
+        assert!(parts[0].len() >= parts[1].len());
+        assert!(out.contains("code\\-block"));
+        assert!(out.contains("\\[start\\]"));
+        assert!(out.contains("\\[end\\]"));
+        assert_eq!(parts.len(), 3);
+    }
+
+    /// The line walk must advance from the element it just extracted. Reading the
+    /// position back out of the output vector reset `i` to 1 whenever an element's
+    /// meta was cleared (`include_meta == false`), so **any multi-line markdown
+    /// document looped forever**, appending sections until the process ran the
+    /// machine out of memory: a 168-byte list/table/code file froze the host.
+    #[test]
+    fn extract_elements_terminates_on_multiline_markdown() {
+        for (label, markdown) in [
+            ("list", "- item one\n- item two\n"),
+            ("code", "```rust\nfn main() {}\n```\n"),
+            ("table", "| a | b |\n| --- | --- |\n| 1 | 2 |\n"),
+            (
+                "mixed",
+                "# Heading\n\nSome **bold** text.\n\n- one\n- two\n\n```rust\nfn main() {}\n```\n\n> quoted\n",
+            ),
+        ] {
+            for include_meta in [false, true] {
+                let elements =
+                    MarkdownElementExtractor::new(markdown).extract_elements(None, include_meta);
+                assert!(
+                    !elements.is_empty(),
+                    "{label}: a non-empty document must yield elements"
+                );
+                // Every element must sit inside the document and the walk must have
+                // consumed it: a regression would have produced unbounded output.
+                let last_end = elements
+                    .iter()
+                    .map(|element| element.end_line)
+                    .max()
+                    .unwrap_or(0);
+                // The extractor splits on '\n', so a trailing newline is a line of
+                // its own; positions must stay inside that view of the document.
+                assert!(
+                    last_end < markdown.split('\n').count(),
+                    "{label}: element positions must stay inside the document"
+                );
+                let joined = elements
+                    .iter()
+                    .map(|element| element.content.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                assert!(
+                    joined.contains("item one")
+                        || joined.contains("fn main")
+                        || joined.contains("| a |"),
+                    "{label}: the block content must survive extraction"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn extract_elements_with_delimiter_no_meta() {
+        let md = "before [sep] middle [sep] after";
+        // Python: delimiter is a backtick-wrapped token list; the matched
+        // text uses the bare token.
+        let els = MarkdownElementExtractor::new(md).extract_elements(Some("`[sep]`"), false);
+        assert_eq!(els.len(), 3);
+        assert_eq!(els[0].content, "before");
+        assert_eq!(els[1].content, "middle");
+        assert_eq!(els[2].content, "after");
+    }
+
+    #[test]
+    fn extract_elements_with_delimiter_meta() {
+        let md = "one\n[sep]\ntwo\n[sep]\nthree";
+        let els = MarkdownElementExtractor::new(md).extract_elements(Some("`[sep]`"), true);
+        assert_eq!(els.len(), 3);
+        assert_eq!(els[0].content, "one");
+        assert_eq!(els[0].start_line, 0);
+        assert_eq!(els[0].end_line, 1); // "one\n" — newline counts toward end.
+        assert_eq!(els[1].content, "two");
+        assert_eq!(els[1].start_line, 1); // after first "[sep]" (text[..9] has 1 \n).
+        assert_eq!(els[1].end_line, 3); // text[..14] = "one\n[sep]\ntwo" has 3 \n.
+        assert_eq!(els[2].content, "three");
+        assert_eq!(els[2].start_line, 3);
+        assert_eq!(els[2].end_line, 4); // full text has 4 \n.
+    }
+
+    #[test]
+    fn extract_headers_code_lists_quotes_and_text() {
+        let md = "# Title\n\nSome paragraph\nwith a second line.\n\n- item 1\n- item 2\n\n> quoted\n> more\n\n```rust\nfn main() {}\n```\n\n### Sub\n\nTail text";
+        let els = MarkdownElementExtractor::new(md).extract_elements(None, true);
+        let types: Vec<&str> = els
+            .iter()
+            .map(|e| e.element_type.as_deref().unwrap_or(""))
+            .collect();
+        assert_eq!(types[0], "header");
+        assert_eq!(els[0].content, "# Title");
+        assert_eq!(types[1], "text_block");
+        assert!(els[1].content.contains("Some paragraph"));
+        assert!(els[1].content.contains("second line"));
+        assert_eq!(types[2], "list_block");
+        // Python absorbs the trailing blank line into the list block.
+        assert!(els[2].content.starts_with("- item 1"));
+        assert!(els[2].content.contains("- item 2"));
+        assert_eq!(types[3], "blockquote");
+        // Python absorbs the trailing blank line into the blockquote too.
+        assert!(els[3].content.starts_with("> quoted"));
+        assert!(els[3].content.contains("> more"));
+        assert_eq!(types[4], "code_block");
+        assert!(els[4].content.contains("fn main()"));
+        assert_eq!(types[5], "header");
+        assert_eq!(els[5].content, "### Sub");
+        assert_eq!(types[6], "text_block");
+        assert_eq!(els[6].content, "Tail text");
+    }
+
+    #[test]
+    fn list_block_absorbs_continuation_lines() {
+        let md = "- a\n- b\n  nested\n  text\n\nnext para";
+        let els = MarkdownElementExtractor::new(md).extract_elements(None, true);
+        assert_eq!(els.len(), 2);
+        assert_eq!(els[0].element_type.as_deref(), Some("list_block"));
+        assert!(els[0].content.contains("  nested"));
+        assert!(els[0].content.contains("  text"));
+        assert_eq!(els[1].content, "next para");
+    }
+
+    #[test]
+    fn text_block_stops_before_next_block_element() {
+        let md = "para one\n\n- list item\n\npara two";
+        let els = MarkdownElementExtractor::new(md).extract_elements(None, true);
+        assert_eq!(els.len(), 3);
+        assert_eq!(els[0].element_type.as_deref(), Some("text_block"));
+        assert_eq!(els[0].content, "para one");
+        assert_eq!(els[1].element_type.as_deref(), Some("list_block"));
+        assert_eq!(els[2].element_type.as_deref(), Some("text_block"));
+        assert_eq!(els[2].content, "para two");
+    }
+}

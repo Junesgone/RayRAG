@@ -96,7 +96,15 @@ impl DuckDuckGoClient {
         })
     }
 
-    
+    #[cfg(test)]
+    pub(crate) fn new_with_endpoints(
+        text: &str,
+        home: &str,
+        news: &str,
+        instant: &str,
+    ) -> Result<Self> {
+        Self::new(text, home, news, instant)
+    }
 
     async fn response_bytes(response: reqwest::Response) -> Result<Vec<u8>> {
         let status = response.status();
@@ -448,4 +456,198 @@ fn flatten_topics(values: &[Value], output: &mut Vec<DuckDuckGoTopic>) {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        Form, Json, Router,
+        extract::{Query, State},
+        http::StatusCode,
+        response::{Html, IntoResponse},
+        routing::{get, post},
+    };
+    use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
 
+    type RecordedCalls = Vec<(String, BTreeMap<String, String>)>;
+
+    #[derive(Clone, Default)]
+    struct Recorded(Arc<Mutex<RecordedCalls>>);
+
+    async fn text_handler(
+        State(recorded): State<Recorded>,
+        Form(form): Form<BTreeMap<String, String>>,
+    ) -> Html<&'static str> {
+        recorded.0.lock().unwrap().push(("text".into(), form));
+        Html(
+            r#"<div class="result results_links">
+              <h2 class="result__title"><a href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.test%2Frust">Rust &amp; safety</a></h2>
+              <a class="result__snippet">Memory <b>safety</b> without GC.</a>
+            </div>"#,
+        )
+    }
+
+    async fn home_handler(Query(query): Query<BTreeMap<String, String>>) -> Html<String> {
+        Html(format!("vqd='token-for-{}'&x=1", query["q"]))
+    }
+
+    async fn news_handler(
+        State(recorded): State<Recorded>,
+        Query(query): Query<BTreeMap<String, String>>,
+    ) -> Json<Value> {
+        recorded.0.lock().unwrap().push(("news".into(), query));
+        Json(serde_json::json!({
+            "results": [{
+                "date": 1_700_000_000,
+                "title": "Rust news",
+                "excerpt": "New <b>release</b>",
+                "url": "https%3A%2F%2Fexample.test%2Fnews",
+                "image": null,
+                "source": "Example"
+            }]
+        }))
+    }
+
+    async fn instant_handler(Query(query): Query<BTreeMap<String, String>>) -> Json<Value> {
+        assert_eq!(query["no_html"], "1");
+        Json(serde_json::json!({
+            "AbstractText": "Rust is a language.",
+            "AbstractURL": "https://example.test/rust",
+            "RelatedTopics": [{
+                "Text": "Languages",
+                "Topics": [
+                    {"Text": "Rust", "FirstURL": "https://example.test/rust"},
+                    {"Text": "Cargo", "FirstURL": "https://example.test/cargo"}
+                ]
+            }]
+        }))
+    }
+
+    async fn server() -> (DuckDuckGoClient, Recorded, tokio::task::JoinHandle<()>) {
+        let recorded = Recorded::default();
+        let app = Router::new()
+            .route("/text", post(text_handler))
+            .route("/home", get(home_handler))
+            .route("/news", get(news_handler))
+            .route("/instant", get(instant_handler))
+            .with_state(recorded.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let base = format!("http://{address}");
+        (
+            DuckDuckGoClient::new_with_endpoints(
+                &format!("{base}/text"),
+                &format!("{base}/home"),
+                &format!("{base}/news"),
+                &format!("{base}/instant"),
+            )
+            .unwrap(),
+            recorded,
+            handle,
+        )
+    }
+
+    #[tokio::test]
+    async fn text_and_news_follow_fixed_python_request_and_result_shapes() {
+        let (client, recorded, server) = server().await;
+        let text = client
+            .search(&DuckDuckGoSearchRequest {
+                query: "rust language".into(),
+                channel: DuckDuckGoChannel::Text,
+                top_n: 10,
+            })
+            .await
+            .unwrap();
+        assert_eq!(text.len(), 1);
+        assert_eq!(text[0]["title"], "Rust & safety");
+        assert_eq!(text[0]["href"], "https://example.test/rust");
+        assert_eq!(text[0]["body"], "Memory safety without GC.");
+
+        let news = client
+            .search(&DuckDuckGoSearchRequest {
+                query: "rust language".into(),
+                channel: DuckDuckGoChannel::News,
+                top_n: 10,
+            })
+            .await
+            .unwrap();
+        assert_eq!(news.len(), 1);
+        assert_eq!(news[0]["body"], "New release");
+        assert_eq!(news[0]["url"], "https://example.test/news");
+        assert_eq!(news[0]["image"], "");
+        assert!(news[0]["date"].as_str().unwrap().ends_with('Z'));
+
+        let calls = recorded.0.lock().unwrap();
+        assert_eq!(calls[0].0, "text");
+        assert_eq!(calls[0].1["q"], "rust language");
+        assert_eq!(calls[0].1["kl"], "wt-wt");
+        assert_eq!(calls[1].0, "news");
+        assert_eq!(calls[1].1["vqd"], "token-for-rust language");
+        assert_eq!(calls[1].1["p"], "-1");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn instant_answer_flattens_both_real_and_go_fixture_key_styles() {
+        let (client, _, server) = server().await;
+        let answer = client.instant_answer("rust", 1).await.unwrap();
+        assert_eq!(answer.abstract_text, "Rust is a language.");
+        assert_eq!(answer.related_topics.len(), 1);
+        assert_eq!(answer.related_topics[0].text, "Rust");
+        let default_limit = client.instant_answer("rust", 0).await.unwrap();
+        assert_eq!(default_limit.related_topics.len(), 2);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn status_body_limit_and_input_validation_fail_closed() {
+        async fn bad(Query(query): Query<BTreeMap<String, String>>) -> impl IntoResponse {
+            match query.get("q").map(String::as_str) {
+                Some("status") => (StatusCode::TOO_MANY_REQUESTS, "limited".to_owned()),
+                Some("large") => (StatusCode::OK, "x".repeat(MAX_DUCKDUCKGO_RESPONSE_BODY + 1)),
+                _ => (StatusCode::OK, "not json".to_owned()),
+            }
+        }
+        let app = Router::new().route("/", get(bad));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let endpoint = format!("http://{address}/");
+        let client =
+            DuckDuckGoClient::new_with_endpoints(&endpoint, &endpoint, &endpoint, &endpoint)
+                .unwrap();
+        for (query, expected) in [("status", "HTTP 429"), ("large", "exceeds")] {
+            let error = client.instant_answer(query, 1).await.unwrap_err();
+            assert!(error.to_string().contains(expected), "{error:#}");
+        }
+        assert!(client.instant_answer("", 1).await.is_err());
+        assert!(
+            client
+                .search(&DuckDuckGoSearchRequest {
+                    query: "x".into(),
+                    channel: DuckDuckGoChannel::Text,
+                    top_n: 0,
+                })
+                .await
+                .is_err()
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live access to DuckDuckGo search"]
+    async fn live_public_text_search_returns_a_result() {
+        let results = DuckDuckGoClient::default()
+            .search(&DuckDuckGoSearchRequest {
+                query: "Rust programming language".into(),
+                channel: DuckDuckGoChannel::Text,
+                top_n: 1,
+            })
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(!results[0]["title"].as_str().unwrap().is_empty());
+        assert!(!results[0]["body"].as_str().unwrap().is_empty());
+    }
+}

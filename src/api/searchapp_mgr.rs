@@ -577,4 +577,146 @@ pub async fn delete_search_app(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn create_persists_rerank_id() {
+        let dir = std::env::temp_dir().join(format!("rayrag-searchapp-{}", uuid::Uuid::new_v4()));
+        let store = SearchAppStore::new(dir.to_str().unwrap()).unwrap();
+        let rec = store
+            .create(
+                "u1",
+                SearchAppCreate {
+                    name: "rerank-app".into(),
+                    avatar: "data:image/png;base64,AAAA".into(),
+                    kb_ids: vec![],
+                    hybrid: false,
+                    rerank: true,
+                    rerank_id: "prov/inst/bge-reranker-v2-m3".into(),
+                    top_k: 8,
+                    similarity_threshold: 0.2,
+                    vector_similarity_weight: 0.3,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(rec.rerank_id, "prov/inst/bge-reranker-v2-m3");
+        assert_eq!(rec.avatar, "data:image/png;base64,AAAA");
+        let got = store.get(&rec.id).unwrap();
+        assert_eq!(got.rerank_id, "prov/inst/bge-reranker-v2-m3");
+        assert_eq!(got.avatar, "data:image/png;base64,AAAA");
+        assert_eq!(got.similarity_threshold, 0.2);
+        assert_eq!(got.vector_similarity_weight, 0.3);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn search_config_switch_fields_round_trip() {
+        let dir = std::env::temp_dir().join(format!("rayrag-searchapp-{}", uuid::Uuid::new_v4()));
+        let store = SearchAppStore::new(dir.to_str().unwrap()).unwrap();
+        let rec = store
+            .create(
+                "u1",
+                SearchAppCreate {
+                    name: "related".into(),
+                    avatar: String::new(),
+                    kb_ids: vec!["kb1".into()],
+                    hybrid: false,
+                    rerank: false,
+                    rerank_id: String::new(),
+                    top_k: 1024,
+                    similarity_threshold: 0.2,
+                    vector_similarity_weight: 0.3,
+                    doc_ids: vec!["doc1".into()],
+                    chat_id: "prov/inst/chat".into(),
+                    llm_setting: serde_json::json!({ "temperature": 0.5 }),
+                    meta_data_filter: serde_json::Value::Null,
+                    cross_languages: vec!["English".into()],
+                    use_kg: true,
+                    highlight: true,
+                    keyword: true,
+                    web_search: false,
+                    related_search: true,
+                    query_mindmap: true,
+                    summary: true,
+                },
+            )
+            .unwrap();
+        assert!(rec.related_search && rec.query_mindmap && rec.summary);
+        assert_eq!(rec.chat_id, "prov/inst/chat");
+        assert_eq!(rec.doc_ids, vec!["doc1".to_string()]);
+        assert_eq!(rec.llm_setting["temperature"], 0.5);
+        // Reload from disk so the JSON round-trip is covered, not just memory.
+        let reloaded = SearchAppStore::new(dir.to_str().unwrap()).unwrap();
+        let got = reloaded.get(&rec.id).expect("persisted app");
+        assert!(got.related_search && got.use_kg && got.highlight && got.keyword);
+        assert_eq!(got.cross_languages, vec!["English".to_string()]);
+        // Legacy records without the new keys deserialize with upstream defaults.
+        let legacy: SearchAppRecord = serde_json::from_value(serde_json::json!({
+            "id": "old",
+            "name": "legacy",
+            "created_at": "2026-01-01T00:00:00Z",
+        }))
+        .expect("legacy record");
+        assert_eq!(legacy.top_k, 1024);
+        assert!(!legacy.related_search);
+        assert_eq!(legacy.llm_setting, serde_json::Value::Null);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn upsert_replaces_existing_record() {
+        let dir = std::env::temp_dir().join(format!("rayrag-searchapp-{}", uuid::Uuid::new_v4()));
+        let store = SearchAppStore::new(dir.to_str().unwrap()).unwrap();
+        let rec = store
+            .create(
+                "u1",
+                SearchAppCreate {
+                    name: "检索A".into(),
+                    kb_ids: vec!["kb1".into()],
+                    hybrid: false,
+                    rerank: false,
+                    rerank_id: String::new(),
+                    top_k: 8,
+                    similarity_threshold: 0.2,
+                    vector_similarity_weight: 0.3,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let mut next = rec.clone();
+        next.rerank = true;
+        next.top_k = 16;
+        next.rerank_id = "prov/inst/bge-reranker-v2-m3".into();
+        next.similarity_threshold = 0.6;
+        next.vector_similarity_weight = 0.4;
+        next.icon = "🔎".into();
+        store.upsert(next).unwrap();
+        let got = store.get(&rec.id).unwrap();
+        assert!(got.rerank);
+        assert_eq!(got.top_k, 16);
+        assert_eq!(got.icon, "🔎");
+        assert_eq!(got.rerank_id, "prov/inst/bge-reranker-v2-m3");
+        assert_eq!(got.similarity_threshold, 0.6);
+        assert_eq!(got.vector_similarity_weight, 0.4);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn update_request_parses_partial_fields() {
+        let req: UpdateSearchAppRequest = serde_json::from_str(
+            r#"{"name":"新名","avatar":"data:image/png;base64,BBBB","rerank":true,"rerank_id":"prov/inst/m3","top_k":12,"similarity_threshold":0.6,"vector_similarity_weight":0.4}"#,
+        )
+        .unwrap();
+        assert_eq!(req.name.as_deref(), Some("新名"));
+        assert_eq!(req.avatar.as_deref(), Some("data:image/png;base64,BBBB"));
+        assert!(req.rerank == Some(true));
+        assert_eq!(req.top_k, Some(12));
+        assert!(req.hybrid.is_none());
+        assert_eq!(req.rerank_id.as_deref(), Some("prov/inst/m3"));
+        assert_eq!(req.similarity_threshold, Some(0.6));
+        assert_eq!(req.vector_similarity_weight, Some(0.4));
+    }
+}

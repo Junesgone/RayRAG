@@ -14,7 +14,73 @@ pub use openai::OpenAIEmbedder;
 use crate::{Chunk, Result};
 use std::sync::Arc;
 
+#[cfg(test)]
+mod chunk_response_tests {
+    use super::*;
 
+    struct ResponseEmbedder(Vec<Vec<f32>>);
+
+    #[async_trait::async_trait]
+    impl Embedder for ResponseEmbedder {
+        async fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+            assert!(!texts.is_empty(), "empty batches must not call a provider");
+            Ok(self.0.clone())
+        }
+    }
+
+    fn chunks() -> Vec<Chunk> {
+        (0..2)
+            .map(|position| Chunk {
+                id: position.to_string(),
+                content: format!("sample {position}"),
+                content_type: "text".into(),
+                doc_id: uuid::Uuid::nil(),
+                position,
+                token_count: 2,
+                embedding: Some(vec![9.0, 9.0]),
+                metadata: Default::default(),
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn invalid_embedding_batches_fail_atomically_with_configuration_guidance() {
+        for vectors in [
+            vec![],
+            vec![vec![1.0]],
+            vec![vec![1.0]; 3],
+            vec![vec![], vec![]],
+            vec![vec![1.0], vec![1.0, 2.0]],
+            vec![vec![1.0], vec![f32::NAN]],
+            vec![vec![1.0], vec![f32::INFINITY]],
+        ] {
+            let mut chunks = chunks();
+            let error = ResponseEmbedder(vectors)
+                .embed_chunks(&mut chunks)
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("API URL, credentials, model"), "{error}");
+            assert!(error.contains("parse again"), "{error}");
+            assert!(
+                chunks
+                    .iter()
+                    .all(|chunk| chunk.embedding.as_deref() == Some(&[9.0, 9.0]))
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn valid_embedding_batches_are_assigned_in_order_and_empty_input_is_noop() {
+        let vectors = vec![vec![1.0, 0.0], vec![0.0, 1.0]];
+        let embedder = ResponseEmbedder(vectors.clone());
+        let mut chunks = chunks();
+        embedder.embed_chunks(&mut chunks).await.unwrap();
+        assert_eq!(chunks[0].embedding.as_ref(), Some(&vectors[0]));
+        assert_eq!(chunks[1].embedding.as_ref(), Some(&vectors[1]));
+        embedder.embed_chunks(&mut []).await.unwrap();
+    }
+}
 
 /// Embedding model trait.
 #[async_trait::async_trait]
@@ -186,4 +252,71 @@ impl crate::structure_compile::EmbeddingBackend for EmbedderBridge {
     }
 }
 
+#[cfg(test)]
+mod embedder_bridge_tests {
+    use super::*;
+    use crate::structure_compile::EmbeddingBackend;
 
+    struct Counting {
+        dims: usize,
+        calls: std::sync::Mutex<usize>,
+    }
+
+    #[async_trait::async_trait]
+    impl Embedder for Counting {
+        async fn embed(&self, texts: &[&str]) -> crate::Result<Vec<Vec<f32>>> {
+            *self.calls.lock().unwrap() += 1;
+            Ok(texts.iter().map(|_| vec![0.5f32; self.dims]).collect())
+        }
+    }
+
+    struct Broken;
+
+    #[async_trait::async_trait]
+    impl Embedder for Broken {
+        async fn embed(&self, _texts: &[&str]) -> crate::Result<Vec<Vec<f32>>> {
+            Err(anyhow::anyhow!("provider refused the request"))
+        }
+    }
+
+    #[tokio::test]
+    async fn bridge_maps_texts_to_vectors() {
+        let inner = Arc::new(Counting {
+            dims: 3,
+            calls: std::sync::Mutex::new(0),
+        });
+        let bridge = EmbedderBridge::new(inner.clone());
+        let vectors = bridge
+            .encode(&["a".to_string(), "b".to_string()])
+            .await
+            .expect("encode");
+        assert_eq!(vectors.len(), 2);
+        assert_eq!(vectors[0].len(), 3);
+        assert_eq!(*inner.calls.lock().unwrap(), 1, "one batched call");
+    }
+
+    #[tokio::test]
+    async fn empty_input_short_circuits() {
+        let inner = Arc::new(Counting {
+            dims: 2,
+            calls: std::sync::Mutex::new(0),
+        });
+        let bridge = EmbedderBridge::new(inner.clone());
+        assert!(bridge.encode(&[]).await.unwrap().is_empty());
+        assert_eq!(
+            *inner.calls.lock().unwrap(),
+            0,
+            "no provider call for no text"
+        );
+    }
+
+    /// A provider failure must surface as an error: an empty `Ok` would let a generator write
+    /// rows with no embedding and still report success.
+    #[tokio::test]
+    async fn provider_failure_is_an_error_not_an_empty_vector() {
+        let bridge = EmbedderBridge::new(Arc::new(Broken));
+        let result = bridge.encode(&["x".to_string()]).await;
+        assert!(result.is_err(), "expected an error, got {result:?}");
+        assert!(result.unwrap_err().contains("refused"));
+    }
+}

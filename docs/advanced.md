@@ -10,7 +10,7 @@ RAGFlow 解析管线 Rust 重写 + zvec 向量数据库。
   **1636 passed / 0 failed / 27 ignored**；27 个 ignored 为需要显式 GPU 模型端点、
   凭据、公网或 MinIO 的 live 测试。
 - 覆盖台账（RAGFlow v0.27.2 固定快照 `a024bea0cd93`，5977 个文件，
-  `内部对标台账`）：v0.3.10v（W-5 续：重解析计数器释放）—— full **607** / aligned **279** /
+  `docs/ragflow-v0.27.2-coverage.md`）：v0.3.10v（W-5 续：重解析计数器释放）—— full **607** / aligned **279** /
   replaced **123** / N/A **61** / partial **75** / reference **4832** / unmapped **0**；
   partial 逐条带书面注记（搜索提供商、数据源、OCR 解析器、agentic harness、结构图/编译器、沙箱
   六类收敛队列，以及 UI 残留与上游变更复核队列）；`cargo run --locked --bin ragflow-coverage -- --check <ref-tree>`
@@ -30,7 +30,7 @@ Document (.pdf/.docx/.txt/.md/.html)
     │
     ▼
 ┌─────────────────────────────────────┐
-│  parser/  文档解析（端口 deepdoc）    │
+│  parser/  文档解析（内置 docling）   │
 │  ├── pdf.rs      PDF 文本提取        │
 │  ├── docx.rs     Word 文档解析       │
 │  ├── txt.rs      纯文本              │
@@ -60,7 +60,7 @@ Document (.pdf/.docx/.txt/.md/.html)
 
 ## 与 RAGFlow 的对应关系
 
-完整逐文件清单见 `内部对标台账`。该矩阵固定对标 RAGFlow
+完整逐文件清单见 `docs/ragflow-v0.27.2-coverage.md`。该矩阵固定对标 RAGFlow
 `v0.27.2` commit `a024bea0cd93f39e6652a42bf84dd20c55bc560b`，记录每个文件的
 Git blob、RayRAG 对应实现及 `aligned/partial/replaced/reference/unmapped` 状态。当前仓库保留
 固定提交的 5977 文件快照；纯 Rust coverage 门禁会直接读取固定 Git tree，校验 commit、
@@ -71,7 +71,7 @@ cargo run --locked --bin ragflow-coverage -- --check /path/to/ragflow-v0.27.2
 # 有意修改状态后，以固定 Git blob 修复元数据并重算摘要：
 cargo run --locked --bin ragflow-coverage -- --write /path/to/ragflow-v0.27.2
 # 切换固定基线时，从上一份台账继承状态并生成增量清单：
-cargo run --locked --bin ragflow-coverage -- --migrate 内部对标台账 /path/to/ragflow-v0.27.2
+cargo run --locked --bin ragflow-coverage -- --migrate docs/ragflow-v0.26.4-coverage.md /path/to/ragflow-v0.27.2
 ```
 
 未知路径不会再被兜底伪装成 `reference`：生产运行时目录必须显式映射为
@@ -525,7 +525,7 @@ item 的局部 Canvas 状态；每次恢复只消费当前稳定 item 地址，�
   族：AWS SigV4 签名客户端，MinIO/AWS S3/阿里云 OSS/腾讯云 COS 一套覆盖，
   真实 MinIO 容器 round-trip 实测通过；`RAYRAG_STORAGE_*` 环境配置）
 - ✅ OpenDataLoader v0.26.4 health/multipart/JSON/Markdown 与 PDF 管线接线；`RAYRAG_OCR_PROVIDER=opendataloader` 可选 PDF OCR
-- ✅ Docling v1/alpha remote convert、Markdown 优先与本地 fallback
+- ✅ 内置 docling.rs 2.89.1（PDF 文本层 + Office/HTML/Markdown），可选远程 v1/alpha 与 Markdown 优先
 - ✅ SoMarkAI/OXR 同步 `/parse/sync` Markdown 解析（免费 API/自建服务可选）
 - ✅ MinerU v0.26.4 同步 ZIP/content-list、Go 异步任务协议与 PDF 管线接线
 - ✅ SoMark v0.26.4 SaaS/private submit/retry/poll、结构化 block 与 PDF 管线接线
@@ -617,11 +617,18 @@ progress callback 和 tenant Provider 实例取密，因此该文件仍诚实标
 
 ## Docling document parser
 
-Docling 默认关闭。设置 `DOCLING_SERVER_URL` 指向 `docling-serve`（本地默认端口 5001）后，
-RayRAG 用稳定的 v1 API `POST /v1/convert/source` 发送 base64 PDF，请求 Markdown 与 text
-输出，并优先返回 `document.md_content`；旧部署可回退 `/v1alpha/convert/source`。可选 Bearer
-鉴权由 `DOCLING_API_KEY` 提供。若未配置服务地址，`layout_recognize=Docling` 会退回
-RayRAG 的轻量 Rust 本地 PDF/DOCX 子集，而不是伪装成完整 Docling。
+Docling 是新建知识库的默认版面解析器（`layout_recognize=Docling`），替代 DeepDOC。
+RayRAG 已把 [docling.rs](https://github.com/docling-project/docling.rs)（IBM Docling 的完整
+Rust 移植）作为库**内置**，不依赖 Python、PyTorch、外部服务或模型下载：DOCX/XLSX/PPTX/
+HTML/Markdown/CSV 等声明式格式与 PDF 文本层都由同一个 Rust 转换器输出 Docling 文档模型和
+Markdown。PDF 文本层由 `pdf-text` 路径处理；需要扫描件 OCR、版面分析和表格结构模型时，用
+`--features docling-ml` 编译（对应 `docling/pdf`），再把 Docling 的 `.models` 放到运行目录。
+
+仍可在 `DOCLING_SERVER_URL` 指向远程 `docling-serve`（默认端口 5001）时使用稳定的 v1
+`POST /v1/convert/source`，并优先返回 `document.md_content`；旧部署可回退
+`/v1alpha/convert/source`，可选 Bearer 鉴权由 `DOCLING_API_KEY` 提供。内置引擎转换失败时
+会记录原因并继续走 RayRAG 的原生解析/OCR 流水线，不会静默伪装成 Docling 成功；扫描件
+配置了 OCR 提供商时仍会进入 OCR，而不是被普通 PDF 解析路径截断。
 
 ```bash
 export DOCLING_SERVER_URL=http://127.0.0.1:5001
@@ -632,9 +639,11 @@ cargo run --bin rayrag -- parse document.pdf --layout-recognize Docling
 ```
 
 服务端知识库可把 `parser_config.layout_recognize` 设为 `Docling` 或
-`<model>@<instance>@Docling`。当前 Rust 适配器覆盖远程 v1/alpha 转换、Markdown 优先、
-DOCLING 健康探测和本地 fallback；尚未映射完整 Docling JSON 版面坐标、图片引用、page range、
-formula/table 专用导出和 tenant Provider 实例取密，因此 Docling 版面坐标仍标为 `partial`。
+`<model>@<instance>@Docling`。内置引擎使用 docling.rs 的 `DoclingDocument` 模型与
+`export_to_markdown()`，保留标题层级、段落、列表和 Markdown 表格；远程适配器另覆盖 v1/alpha
+转换、Markdown 优先、健康探测和 Bearer 鉴权。尚未映射远程产物的完整版面坐标、图片引用、
+page range、formula/table 专用导出和 tenant Provider 实例取密，因此 Docling 版面坐标仍标为
+`partial`，文字结构已可用。
 
 ## OXR document parser
 

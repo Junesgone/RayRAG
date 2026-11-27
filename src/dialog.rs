@@ -238,6 +238,155 @@ static ROW_COUNT_TARGET_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\bdataset\b|\btable\b|\bspreadsheet\b|\bexcel\b").unwrap());
 static WHERE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\bwhere\b ").unwrap());
 
+#[cfg(test)]
+mod use_sql_tests {
+    use super::*;
 
+    #[test]
+    fn aggregate_sql_detection() {
+        assert!(is_aggregate_sql("SELECT COUNT(*) FROM t"));
+        assert!(is_aggregate_sql("select count(*) from t"));
+        assert!(is_aggregate_sql("SELECT SUM(amount) FROM t"));
+        assert!(is_aggregate_sql("SELECT DISTINCT(name) FROM t"));
+        assert!(!is_aggregate_sql("SELECT name FROM t WHERE id = 1"));
+        assert!(!is_aggregate_sql(""));
+    }
 
+    #[test]
+    fn row_count_question_detection() {
+        assert!(is_row_count_question("How many rows are in the dataset?"));
+        assert!(is_row_count_question("number of rows in the excel file"));
+        assert!(!is_row_count_question("how many rows in the chart"));
+        assert!(!is_row_count_question("row count of my query"));
+    }
 
+    #[test]
+    fn add_kb_filter_injects_validated_where_clause() {
+        let sql = add_kb_filter(
+            "SELECT * FROM ragflow_t1",
+            &["3fa85f64-5717-4562-b3fc-2c963f66afa6".into()],
+        )
+        .unwrap();
+        assert_eq!(
+            sql,
+            "SELECT * FROM ragflow_t1 WHERE kb_id = '3fa85f64-5717-4562-b3fc-2c963f66afa6'"
+        );
+        // Multiple KBs become an OR group.
+        let sql = add_kb_filter(
+            "SELECT * FROM ragflow_t1",
+            &[
+                "3fa85f64-5717-4562-b3fc-2c963f66afa6".into(),
+                "4fa85f64-5717-4562-b3fc-2c963f66afa6".into(),
+            ],
+        )
+        .unwrap();
+        assert!(sql.contains("WHERE (kb_id = '3fa85f64-5717-4562-b3fc-2c963f66afa6' OR kb_id = '4fa85f64-5717-4562-b3fc-2c963f66afa6')"));
+        // Existing WHERE is preserved and ANDed (RAGFlow's re.sub replaces the
+        // token with a lowercase "where" clause).
+        let sql = add_kb_filter(
+            "SELECT * FROM ragflow_t1 WHERE doc_id = 'x'",
+            &["3fa85f64-5717-4562-b3fc-2c963f66afa6".into()],
+        )
+        .unwrap();
+        assert!(
+            sql.contains("where kb_id = '3fa85f64-5717-4562-b3fc-2c963f66afa6' and doc_id = 'x'")
+        );
+        // Non-UUID kb_id is rejected with the RAGFlow guard message.
+        let err = add_kb_filter("SELECT 1", &["not-a-uuid".into()]).unwrap_err();
+        assert_eq!(err.code, 400);
+        assert!(err.message.contains("Invalid kb_id format"));
+        // Empty kb list is a no-op.
+        assert_eq!(add_kb_filter("SELECT 1", &[]).unwrap(), "SELECT 1");
+    }
+
+    #[test]
+    fn add_kb_filter_respects_order_by_position() {
+        // RAGFlow lowercases the SQL in this branch (it splits the lowercased
+        // string), including the doubled spaces around the injected clause.
+        let sql = add_kb_filter(
+            "SELECT * FROM ragflow_t1 ORDER BY created_at DESC",
+            &["3fa85f64-5717-4562-b3fc-2c963f66afa6".into()],
+        )
+        .unwrap();
+        assert_eq!(
+            sql,
+            "select * from ragflow_t1  WHERE kb_id = '3fa85f64-5717-4562-b3fc-2c963f66afa6'  order by  created_at desc"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn arabic_digits_normalize_to_ascii() {
+        assert_eq!(normalize_arabic_digits("٠١٢٣٤٥٦٧٨٩"), "0123456789");
+        assert_eq!(normalize_arabic_digits("۰۱۲۳۴۵۶۷۸۹"), "0123456789");
+        assert_eq!(normalize_arabic_digits("abc123"), "abc123");
+        assert_eq!(normalize_arabic_digits(""), "");
+    }
+
+    #[test]
+    fn bad_citation_formats_are_canonicalized() {
+        let (out, idx) =
+            repair_bad_citation_formats("答案见 (ID: 12)、[ID: 3]、【ID: 7】与 ref9。", 20);
+        assert_eq!(out, "答案见 [ID:12]、[ID:3]、[ID:7]与 [ID:9]。");
+        assert_eq!(idx, HashSet::from([12, 3, 7, 9]));
+    }
+
+    #[test]
+    fn out_of_range_citations_are_kept_verbatim_and_not_cited() {
+        let (out, idx) = repair_bad_citation_formats("见 (ID: 99) 与 [ID: 5]", 10);
+        assert_eq!(out, "见 (ID: 99) 与 [ID:5]");
+        assert_eq!(idx, HashSet::from([5]));
+    }
+
+    #[test]
+    fn ref_marker_without_index_is_left_alone() {
+        let (out, idx) = repair_bad_citation_formats("参考 ref12 与 ref 文本", 20);
+        assert_eq!(out, "参考 [ID:12] 与 ref 文本");
+        assert_eq!(idx, HashSet::from([12]));
+    }
+
+    #[test]
+    fn arabic_indian_digits_in_citations_are_canonicalized() {
+        // U+0663 = 3, U+0661 = 1: 【ID: ٣】 → [ID:3].
+        let (out, idx) = repair_bad_citation_formats("见【ID: ٣】", 10);
+        assert_eq!(out, "见[ID:3]");
+        assert_eq!(idx, HashSet::from([3]));
+    }
+
+    #[test]
+    fn extract_cited_indexes_parses_canonical_markers() {
+        let cited = extract_cited_indexes("参考 [ID:1] 与 [ID:2]，以及 [ID:١]");
+        assert_eq!(cited, HashSet::from([1, 2, 1]));
+    }
+
+    #[test]
+    fn normalize_sql_strips_think_blocks_fences_and_trailing_semicolon() {
+        let cleaned = normalize_sql(
+            "```sql\n</think>\n思考过程略\nSELECT name FROM t WHERE kb_id = 'x';\n```",
+        );
+        assert_eq!(cleaned, "SELECT name FROM t WHERE kb_id = 'x'");
+    }
+
+    #[test]
+    fn normalize_sql_preserves_inner_semicolons_and_plain_sql() {
+        assert_eq!(normalize_sql("SELECT a; b FROM t;"), "SELECT a; b FROM t");
+        assert_eq!(normalize_sql("SELECT 1"), "SELECT 1");
+    }
+
+    #[test]
+    fn clean_tts_text_strips_control_chars_emoji_and_collapses_space() {
+        let cleaned = clean_tts_text("你好😀，\u{0007}世界\u{0000}！  \n 下一句  ");
+        assert_eq!(cleaned, "你好，世界！ 下一句");
+    }
+
+    #[test]
+    fn clean_tts_text_caps_at_500_chars() {
+        let long = "鱼".repeat(600);
+        let cleaned = clean_tts_text(&long);
+        assert_eq!(cleaned.chars().count(), 500);
+    }
+}

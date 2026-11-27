@@ -1318,4 +1318,349 @@ fn upstream_error(code: i64, message: &str) -> Response {
     Json(json!({"code": code, "message": message})).into_response()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    fn webhook_dsl(security: Value) -> Value {
+        json!({
+            "components": {
+                "begin": {
+                    "obj": {
+                        "component_name": "Begin",
+                        "params": {
+                            "mode": "Webhook",
+                            "methods": ["POST"],
+                            "content_types": "application/json",
+                            "execution_mode": "Immediately",
+                            "security": security,
+                            "response": {"status": 201, "body_template": "{\"ok\": true}"},
+                            "schema": {
+                                "body": {
+                                    "properties": {
+                                        "name": {"type": "string"},
+                                        "count": {"type": "number"},
+                                        "flag": {"type": "boolean"}
+                                    },
+                                    "required": ["name"]
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn finds_the_webhook_begin_params() {
+        let dsl = webhook_dsl(json!({"auth_type": "none", "allow_anonymous": true}));
+        let params = begin_webhook_params(&dsl).expect("webhook params");
+        assert_eq!(params["methods"], json!(["POST"]));
+        assert_eq!(params["response"]["status"], json!(201));
+    }
+
+    #[test]
+    fn finds_webhook_params_in_the_normalized_canvas_shape() {
+        let dsl = json!({
+            "components": {
+                "begin": {
+                    "id": "begin",
+                    "name": "Begin",
+                    "params": {
+                        "mode": "Webhook",
+                        "methods": ["GET"],
+                        "security": {"auth_type": "none", "allow_anonymous": true}
+                    }
+                }
+            }
+        });
+        let params = begin_webhook_params(&dsl).expect("normalized webhook params");
+        assert_eq!(params["methods"], json!(["GET"]));
+    }
+
+    #[test]
+    fn ignores_a_begin_with_another_mode() {
+        let mut dsl = webhook_dsl(json!({"auth_type": "none", "allow_anonymous": true}));
+        dsl["components"]["begin"]["obj"]["params"]["mode"] = json!("conversational");
+        assert!(begin_webhook_params(&dsl).is_none());
+    }
+
+    #[test]
+    fn anonymous_access_needs_the_explicit_opt_in() {
+        let params = begin_webhook_params(&webhook_dsl(json!({}))).unwrap();
+        let denied = validate_security(
+            "agent-1",
+            &params,
+            "POST",
+            &HeaderMap::new(),
+            "127.0.0.1".parse().unwrap(),
+            10,
+        )
+        .unwrap_err();
+        assert!(denied.contains("Webhook security is required"), "{denied}");
+        let params = begin_webhook_params(&webhook_dsl(json!({"auth_type": "none"}))).unwrap();
+        let denied = validate_security(
+            "agent-2",
+            &params,
+            "POST",
+            &HeaderMap::new(),
+            "127.0.0.1".parse().unwrap(),
+            10,
+        )
+        .unwrap_err();
+        assert!(denied.contains("allow_anonymous"), "{denied}");
+        let params = begin_webhook_params(&webhook_dsl(json!({
+            "auth_type": "none",
+            "allow_anonymous": true
+        })))
+        .unwrap();
+        assert!(
+            validate_security(
+                "agent-3",
+                &params,
+                "POST",
+                &HeaderMap::new(),
+                "127.0.0.1".parse().unwrap(),
+                10,
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn token_auth_compares_the_configured_header() {
+        let params = begin_webhook_params(&webhook_dsl(json!({
+            "auth_type": "token",
+            "token": {"token_header": "X-Hook-Token", "token_value": "s3cret"}
+        })))
+        .unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-hook-token", "s3cret".parse().unwrap());
+        assert!(
+            validate_security(
+                "agent-token",
+                &params,
+                "POST",
+                &headers,
+                "127.0.0.1".parse().unwrap(),
+                10,
+            )
+            .is_ok()
+        );
+        let mut wrong = HeaderMap::new();
+        wrong.insert("x-hook-token", "nope".parse().unwrap());
+        let denied = validate_security(
+            "agent-token-2",
+            &params,
+            "POST",
+            &wrong,
+            "127.0.0.1".parse().unwrap(),
+            10,
+        )
+        .unwrap_err();
+        assert!(denied.contains("Invalid token authentication"), "{denied}");
+    }
+
+    #[test]
+    fn basic_auth_decodes_standard_base64() {
+        let params = begin_webhook_params(&webhook_dsl(json!({
+            "auth_type": "basic",
+            "basic_auth": {"username": "u", "password": "p"}
+        })))
+        .unwrap();
+        let encoded = base64::engine::general_purpose::STANDARD.encode("u:p");
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", format!("Basic {encoded}").parse().unwrap());
+        assert!(
+            validate_security(
+                "agent-basic",
+                &params,
+                "POST",
+                &headers,
+                "127.0.0.1".parse().unwrap(),
+                10,
+            )
+            .is_ok()
+        );
+    }
+
+    fn sign_hs256(secret: &[u8], claims: Value) -> String {
+        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(br#"{"alg":"HS256","typ":"JWT"}"#);
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(serde_json::to_vec(&claims).unwrap());
+        let signing_input = format!("{header}.{payload}");
+        let mut mac = Hmac::<Sha256>::new_from_slice(secret).unwrap();
+        mac.update(signing_input.as_bytes());
+        let signature =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
+        format!("{signing_input}.{signature}")
+    }
+
+    #[test]
+    fn jwt_auth_verifies_signature_and_claims() {
+        let params = begin_webhook_params(&webhook_dsl(json!({
+            "auth_type": "jwt",
+            "jwt": {"secret": "jwt-secret", "algorithm": "HS256", "required_claims": ["tenant"]}
+        })))
+        .unwrap();
+        let token = sign_hs256(
+            b"jwt-secret",
+            json!({"tenant": "t1", "exp": now_f64() + 60.0}),
+        );
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", format!("Bearer {token}").parse().unwrap());
+        assert!(
+            validate_security(
+                "agent-jwt",
+                &params,
+                "POST",
+                &headers,
+                "127.0.0.1".parse().unwrap(),
+                10,
+            )
+            .is_ok()
+        );
+        let expired = sign_hs256(
+            b"jwt-secret",
+            json!({"tenant": "t1", "exp": now_f64() - 10.0}),
+        );
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "authorization",
+            format!("Bearer {expired}").parse().unwrap(),
+        );
+        let denied = validate_security(
+            "agent-jwt",
+            &params,
+            "POST",
+            &headers,
+            "127.0.0.1".parse().unwrap(),
+            10,
+        )
+        .unwrap_err();
+        assert!(denied.contains("expired"), "{denied}");
+    }
+
+    #[test]
+    fn body_size_and_content_type_rules() {
+        assert_eq!(parse_body_size("1MB").unwrap(), 1024 * 1024);
+        assert_eq!(parse_body_size("10kb").unwrap(), 10 * 1024);
+        assert!(parse_body_size("12MB").is_ok_and(|size| size > HARD_MAX_BODY_SIZE));
+        let dsl = webhook_dsl(json!({
+            "auth_type": "none",
+            "allow_anonymous": true,
+            "max_body_size": "1KB"
+        }));
+        let params = begin_webhook_params(&dsl).unwrap();
+        let denied = validate_security(
+            "agent-body",
+            &params,
+            "POST",
+            &HeaderMap::new(),
+            "127.0.0.1".parse().unwrap(),
+            2048,
+        )
+        .unwrap_err();
+        assert!(denied.contains("Request body too large"), "{denied}");
+    }
+
+    #[test]
+    fn ip_whitelist_supports_cidr_and_single_addresses() {
+        let peer: IpAddr = "192.168.1.42".parse().unwrap();
+        assert!(ip_allowed(peer, "192.168.1.0/24"));
+        assert!(ip_allowed(peer, "192.168.1.42"));
+        assert!(!ip_allowed(peer, "10.0.0.0/8"));
+        let v6: IpAddr = "2001:db8::1".parse().unwrap();
+        assert!(ip_allowed(v6, "2001:db8::/32"));
+    }
+
+    #[test]
+    fn schema_extraction_casts_and_validates() {
+        let parsed = json!({
+            "query": {},
+            "headers": {},
+            "body": {"name": "ray", "count": "7", "flag": "true"},
+        });
+        let schema = json!({
+            "body": {
+                "properties": {
+                    "name": {"type": "string"},
+                    "count": {"type": "number"},
+                    "flag": {"type": "boolean"},
+                    "missing": {"type": "array<string>"}
+                },
+                "required": ["name"]
+            }
+        });
+        let (_, _, body) = extract_request(&parsed, &schema).unwrap();
+        assert_eq!(body["name"], json!("ray"));
+        assert_eq!(body["count"], json!(7));
+        assert_eq!(body["flag"], json!(true));
+        assert_eq!(body["missing"], json!([]));
+        let missing = json!({"query": {}, "headers": {}, "body": {"count": "1"}});
+        let error = extract_request(&missing, &schema).unwrap_err();
+        assert!(error.contains("required field: name"), "{error}");
+        let bad_number = json!({
+            "query": {},
+            "headers": {},
+            "body": {"name": "x", "count": "abc"}
+        });
+        let error = extract_request(&bad_number, &schema).unwrap_err();
+        assert!(error.contains("auto-cast failed"), "{error}");
+    }
+
+    #[test]
+    fn templates_render_json_or_text() {
+        assert_eq!(
+            render_template("{\"ok\": true}"),
+            ("{\"ok\":true}".to_string(), "application/json")
+        );
+        assert_eq!(render_template("done"), ("done".to_string(), "text/plain"));
+        assert_eq!(
+            render_template(""),
+            ("null".to_string(), "application/json")
+        );
+    }
+
+    #[test]
+    fn rate_limit_bucket_drains_and_refills() {
+        let agent = format!("agent-{}", uuid::Uuid::new_v4());
+        assert!(rate_limit_allow(&agent, 2.0, 1.0));
+        assert!(rate_limit_allow(&agent, 2.0, 1.0));
+        assert!(!rate_limit_allow(&agent, 2.0, 1.0));
+        std::thread::sleep(Duration::from_millis(600));
+        assert!(rate_limit_allow(&agent, 2.0, 1.0));
+    }
+
+    #[test]
+    fn webhook_id_round_trips_like_upstream() {
+        let id = encode_webhook_id(1234.5);
+        assert_eq!(id, encode_webhook_id_of("1234.5"));
+        assert!(!id.contains('='));
+    }
+
+    #[test]
+    fn multipart_text_fields_are_parsed_and_files_rejected() {
+        let body = b"--X\r\nContent-Disposition: form-data; name=\"name\"\r\n\r\nray\r\n--X--\r\n";
+        let parsed = parse_multipart_form("X", body).unwrap();
+        assert_eq!(parsed["name"], json!("ray"));
+        let file = b"--X\r\nContent-Disposition: form-data; name=\"doc\"; filename=\"a.txt\"\r\nContent-Type: text/plain\r\n\r\nhi\r\n--X--\r\n";
+        let error = parse_multipart_form("X", file).unwrap_err();
+        assert!(error.contains("file uploads are not supported"), "{error}");
+    }
+
+    #[test]
+    fn begin_inputs_wrap_sections_as_value_descriptors() {
+        let clean = json!({
+            "query": {"a": "1"},
+            "headers": {"host": "example"},
+            "body": {"name": "ray"},
+            "input": {}
+        });
+        let inputs = begin_inputs(&clean);
+        assert_eq!(inputs["query"], json!({"value": {"a": "1"}}));
+        assert_eq!(inputs["body"], json!({"value": {"name": "ray"}}));
+    }
+}

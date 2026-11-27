@@ -375,4 +375,307 @@ async fn read_bounded_body(response: reqwest::Response) -> Result<Vec<u8>> {
     Ok(body)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{Json, Router, http::StatusCode, routing::post};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
 
+    fn params() -> QueritSearchParams {
+        QueritSearchParams {
+            query: "hello".to_owned(),
+            ..QueritSearchParams::default()
+        }
+    }
+
+    #[test]
+    fn search_validation_matches_upstream_messages() {
+        assert!(validate_search_inputs(&params()).is_ok());
+        let mut bad = params();
+        bad.count = 0;
+        assert!(
+            validate_search_inputs(&bad)
+                .unwrap_err()
+                .to_string()
+                .contains("count")
+        );
+        let mut bad = params();
+        bad.chunks_per_doc = Some(4);
+        assert!(
+            validate_search_inputs(&bad)
+                .unwrap_err()
+                .to_string()
+                .contains("chunks_per_doc")
+        );
+        let mut bad = params();
+        bad.chunks_per_doc = None;
+        assert!(validate_search_inputs(&bad).is_ok());
+        let mut bad = params();
+        bad.time_range = "d0".to_owned();
+        assert!(
+            validate_search_inputs(&bad)
+                .unwrap_err()
+                .to_string()
+                .contains("time_range")
+        );
+        for good in ["d7", "w1", "m3", "y1", "2024-01-01to2024-02-02"] {
+            let mut ok = params();
+            ok.time_range = good.to_owned();
+            assert!(
+                validate_search_inputs(&ok).is_ok(),
+                "{good} should be valid"
+            );
+        }
+        for bad_range in ["x7", "d", "2024-01-01", "2024-1-1to2024-2-2"] {
+            let mut bad = params();
+            bad.time_range = bad_range.to_owned();
+            assert!(
+                validate_search_inputs(&bad).is_err(),
+                "{bad_range} should be invalid"
+            );
+        }
+    }
+
+    #[test]
+    fn search_payload_includes_filters_only_when_set() {
+        let minimal = build_search_payload(&params());
+        assert_eq!(minimal["query"], "hello");
+        assert_eq!(minimal["count"], 10);
+        assert_eq!(minimal["chunksPerDoc"], 3);
+        assert!(minimal.get("filters").is_none());
+
+        let full = build_search_payload(&QueritSearchParams {
+            count: 5,
+            chunks_per_doc: Some(2),
+            site_include: vec!["a.com".into()],
+            site_exclude: vec!["b.com".into()],
+            time_range: "d7".into(),
+            country_include: vec!["us".into()],
+            language_include: vec!["en".into()],
+            ..params()
+        });
+        assert_eq!(full["filters"]["sites"]["include"], json!(["a.com"]));
+        assert_eq!(full["filters"]["sites"]["exclude"], json!(["b.com"]));
+        assert_eq!(full["filters"]["timeRange"]["date"], "d7");
+        assert_eq!(
+            full["filters"]["geo"]["countries"]["include"],
+            json!(["us"])
+        );
+        assert_eq!(full["filters"]["languages"]["include"], json!(["en"]));
+    }
+
+    #[test]
+    fn contents_validation_and_payload() {
+        assert_eq!(
+            normalize_contents_urls(&json!("https://a.com, https://b.com")),
+            vec!["https://a.com".to_owned(), "https://b.com".to_owned()]
+        );
+        assert_eq!(
+            normalize_contents_urls(&json!(["https://a.com", ""])),
+            vec!["https://a.com".to_owned(), String::new()]
+        );
+        let params = QueritContentsParams {
+            urls: vec!["https://a.com".into()],
+            ..QueritContentsParams::default()
+        };
+        assert!(validate_contents_inputs(&params).is_ok());
+        let payload = build_contents_payload(&params);
+        assert_eq!(payload["urls"], json!(["https://a.com"]));
+        assert_eq!(payload["format"], "markdown");
+        assert_eq!(payload["crawlTimeout"], 10);
+        assert_eq!(payload["extrasMeta"], false);
+
+        let bad_scheme = QueritContentsParams {
+            urls: vec!["ftp://a.com".into()],
+            ..QueritContentsParams::default()
+        };
+        assert!(validate_contents_inputs(&bad_scheme).is_err());
+        let too_many = QueritContentsParams {
+            urls: vec!["https://a.com".into(); 11],
+            ..QueritContentsParams::default()
+        };
+        assert!(validate_contents_inputs(&too_many).is_err());
+        let bad_timeout = QueritContentsParams {
+            urls: vec!["https://a.com".into()],
+            crawl_timeout: 61,
+            ..QueritContentsParams::default()
+        };
+        assert!(validate_contents_inputs(&bad_timeout).is_err());
+        let bad_format = QueritContentsParams {
+            urls: vec!["https://a.com".into()],
+            format: "pdf".into(),
+            ..QueritContentsParams::default()
+        };
+        assert!(validate_contents_inputs(&bad_format).is_err());
+    }
+
+    #[test]
+    fn contents_response_and_redaction() {
+        assert!(validate_contents_response(&json!({"results": []})).is_ok());
+        assert!(validate_contents_response(&json!({"statuses": []})).is_ok());
+        assert!(validate_contents_response(&json!("nope")).is_err());
+        assert!(validate_contents_response(&json!({"results": {}})).is_err());
+        assert!(validate_contents_response(&json!({"statuses": {}})).is_err());
+        assert_eq!(
+            safe_error_message("failed with sk-abc in text", "sk-abc"),
+            "failed with [REDACTED] in text"
+        );
+        assert_eq!(safe_error_message("plain", ""), "plain");
+    }
+
+    async fn spawn_sequence(
+        responses: Vec<StatusCode>,
+    ) -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let state = counter.clone();
+        let app = Router::new().route(
+            "/v1/search",
+            post(move || {
+                let state = state.clone();
+                let responses = responses.clone();
+                async move {
+                    let index = state.fetch_add(1, Ordering::SeqCst);
+                    let status = responses.get(index).copied().unwrap_or(StatusCode::OK);
+                    if status == StatusCode::OK {
+                        (status, Json(json!({"results": {"result": []}})))
+                    } else {
+                        (status, Json(json!({"error": "bad"})))
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{address}"), counter, server)
+    }
+
+    #[tokio::test]
+    async fn retries_retryable_statuses_then_succeeds() {
+        let (base, counter, server) = spawn_sequence(vec![
+            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::TOO_MANY_REQUESTS,
+            StatusCode::OK,
+        ])
+        .await;
+        let client = QueritClient::new_with_endpoints(
+            &format!("{base}/v1/search"),
+            &format!("{base}/v1/contents"),
+        )
+        .unwrap();
+        let payload = build_search_payload(&params());
+        let response = client
+            .search("sk-test", &payload, Duration::from_millis(1))
+            .await
+            .unwrap();
+        server.abort();
+        assert_eq!(response["results"]["result"], json!([]));
+        assert_eq!(counter.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn retryable_status_exhaustion_surfaces_http_status() {
+        let (base, counter, server) = spawn_sequence(vec![
+            StatusCode::BAD_GATEWAY,
+            StatusCode::BAD_GATEWAY,
+            StatusCode::BAD_GATEWAY,
+        ])
+        .await;
+        let client = QueritClient::new_with_endpoints(
+            &format!("{base}/v1/search"),
+            &format!("{base}/v1/contents"),
+        )
+        .unwrap();
+        let error = client
+            .search(
+                "sk",
+                &build_search_payload(&params()),
+                Duration::from_millis(1),
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+        server.abort();
+        assert!(error.contains("502"), "{error}");
+        assert_eq!(counter.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn non_retryable_status_raises_immediately() {
+        let (base, counter, server) = spawn_sequence(vec![StatusCode::NOT_FOUND]).await;
+        let client = QueritClient::new_with_endpoints(
+            &format!("{base}/v1/search"),
+            &format!("{base}/v1/contents"),
+        )
+        .unwrap();
+        let error = client
+            .search(
+                "sk",
+                &build_search_payload(&params()),
+                Duration::from_millis(1),
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+        server.abort();
+        assert!(error.contains("404"), "{error}");
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn empty_key_is_rejected_before_any_request() {
+        let client = QueritClient::default();
+        let error = client
+            .search(
+                "  ",
+                &build_search_payload(&params()),
+                Duration::from_millis(1),
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("API key is required"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn contents_posts_expected_payload() {
+        let app = Router::new().route(
+            "/v1/contents",
+            post(|headers: axum::http::HeaderMap, body: String| async move {
+                assert_eq!(headers["authorization"], "Bearer sk-c");
+                let payload: Value = serde_json::from_str(&body).unwrap();
+                assert_eq!(payload["urls"], json!(["https://a.com"]));
+                assert_eq!(payload["format"], "markdown");
+                assert_eq!(payload["crawlTimeout"], 10);
+                assert_eq!(payload["extrasMeta"], false);
+                Json(json!({"results": [], "statuses": []}))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = QueritClient::new_with_endpoints(
+            &format!("http://{address}/v1/search"),
+            &format!("http://{address}/v1/contents"),
+        )
+        .unwrap();
+        let params = QueritContentsParams {
+            urls: vec!["https://a.com".into()],
+            ..QueritContentsParams::default()
+        };
+        let response = client
+            .contents(
+                "sk-c",
+                &build_contents_payload(&params),
+                Duration::from_secs(15),
+                Duration::from_millis(1),
+            )
+            .await
+            .unwrap();
+        server.abort();
+        validate_contents_response(&response).unwrap();
+    }
+}

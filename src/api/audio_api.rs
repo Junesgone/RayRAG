@@ -214,4 +214,39 @@ async fn read_multipart(mut multipart: Multipart) -> Result<(Vec<u8>, String, bo
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn a_suffix_is_read_lowercased_and_only_from_a_real_extension() {
+        assert_eq!(audio_extension("recording.WAV"), ".wav");
+        assert_eq!(audio_extension("a.b.mp3"), ".mp3");
+        assert_eq!(audio_extension("noextension"), "");
+        assert_eq!(audio_extension(".hidden"), "");
+        assert!(ALLOWED_AUDIO_EXTENSIONS.contains(&audio_extension("x.M4A").as_str()));
+    }
+
+    #[test]
+    fn the_refusal_names_the_suffix_and_every_allowed_one() {
+        let message = unsupported_format_message(".mp4");
+        assert_eq!(
+            message,
+            "Unsupported audio format: .mp4. Allowed: .aac, .flac, .m4a, .mp3, .ogg, .opus, .wav, .webm, .wma"
+        );
+        // The same sentence the guide documents, character for character.
+        assert!(message.ends_with(".wma"));
+    }
+
+    #[test]
+    fn the_allowlist_is_exactly_the_documented_set() {
+        assert_eq!(
+            ALLOWED_AUDIO_EXTENSIONS.to_vec(),
+            vec![
+                ".aac", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".webm", ".wma"
+            ]
+        );
+        // `.mp4` is a video container: the guide uses it as the counterexample.
+        assert!(!ALLOWED_AUDIO_EXTENSIONS.contains(&".mp4"));
+    }
+}

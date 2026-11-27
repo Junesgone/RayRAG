@@ -371,4 +371,117 @@ fn base64_encode(data: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(data)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
 
+    #[test]
+    fn file_type_maps_extensions() {
+        assert_eq!(file_type_from_name("a.pdf"), "PDF");
+        assert_eq!(file_type_from_name("a.PNG"), "PNG");
+        assert_eq!(file_type_from_name("a.docx"), "WORD");
+        assert_eq!(file_type_from_name("a.xlsx"), "EXCEL");
+        assert_eq!(file_type_from_name("noext"), "PDF");
+    }
+
+    #[test]
+    fn civil_from_days_known_epoch() {
+        // 1970-01-01 = day 0
+        assert_eq!(civil_from_days(0), (1970, 1, 1));
+        // 2026-08-04 ≈ day 20669
+        assert_eq!(civil_from_days(20669), (2026, 8, 4));
+    }
+
+    #[test]
+    fn sse_extracts_download_url_at_100_percent() {
+        let body = r#"data: {"Progress": "10", "Message": "处理中"}
+
+data: {"Progress": "100", "TaskId": "t1", "SuccessPageNum": 3, "FailPageNum": 0, "DocumentRecognizeResultUrl": "https://example.com/result.zip"}
+
+"#;
+        let url = extract_download_url_from_sse(body).unwrap();
+        assert_eq!(url, "https://example.com/result.zip");
+    }
+
+    #[test]
+    fn sse_rejects_unfinished_task() {
+        let body = r#"data: {"Progress": "42"}"#;
+        let error = extract_download_url_from_sse(body).unwrap_err().to_string();
+        assert!(error.contains("not finished"));
+    }
+
+    #[test]
+    fn zip_extraction_collects_json_and_md() {
+        use std::io::Write;
+        let mut zip_buffer = std::io::Cursor::new(Vec::new());
+        {
+            let mut writer = zip::ZipWriter::new(&mut zip_buffer);
+            let options = zip::write::SimpleFileOptions::default();
+            writer.start_file("result.json", options).unwrap();
+            writer
+                .write_all(
+                    r#"[{"type":"text","content":"第一段"},{"type":"table","content":"|a|b|"}]"#
+                        .as_bytes(),
+                )
+                .unwrap();
+            writer.start_file("notes.md", options).unwrap();
+            writer.write_all("# 标题".as_bytes()).unwrap();
+            writer.finish().unwrap();
+        }
+        let data = zip_buffer.into_inner();
+        let content = extract_content_from_zip(&data).unwrap();
+        assert_eq!(content.len(), 3);
+        let sections = parse_content_to_sections(&content);
+        assert!(sections[0].contains("第一段"));
+        assert!(sections[1].contains("[表格]"));
+        assert!(sections[2].contains("# 标题"));
+    }
+
+    #[test]
+    fn zip_rejects_traversal_paths() {
+        use std::io::Write;
+        let mut zip_buffer = std::io::Cursor::new(Vec::new());
+        {
+            let mut writer = zip::ZipWriter::new(&mut zip_buffer);
+            writer
+                .start_file("../evil.json", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(b"{}").unwrap();
+            writer.finish().unwrap();
+        }
+        let data = zip_buffer.into_inner();
+        let error = extract_content_from_zip(&data).unwrap_err().to_string();
+        assert!(error.contains("traversal"));
+    }
+
+    #[test]
+    fn config_requires_secret_pair() {
+        let error = TcadpConfig::from_params(None, None, None)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("TENCENT_SECRET_ID"));
+        let config =
+            TcadpConfig::from_params(Some("id"), Some("key"), Some("ap-shanghai")).unwrap();
+        assert_eq!(config.region, "ap-shanghai");
+        assert_eq!(config.secret_id, "id");
+    }
+
+    #[test]
+    fn sign_headers_include_tc3_authorization() {
+        let headers = sign_headers(
+            &json!({"FileType": "PDF"}),
+            "ap-guangzhou",
+            "test-secret-id",
+            "test-secret-key",
+        );
+        let auth = headers.get("Authorization").unwrap().to_str().unwrap();
+        assert!(auth.starts_with("TC3-HMAC-SHA256 Credential=test-secret-id/"));
+        assert!(auth.contains("SignedHeaders=content-type;host;x-tc-action"));
+        assert!(auth.contains("Signature="));
+        assert_eq!(
+            headers.get("X-TC-Version").unwrap().to_str().unwrap(),
+            "2024-05-22"
+        );
+    }
+}

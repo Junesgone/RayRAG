@@ -1288,7 +1288,274 @@ pub fn deletion_report(steps: &[(&'static str, usize)]) -> String {
     report
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    fn message(message_id: i64, memory_id: &str, valid_at: &str, content: &str) -> MemoryMessage {
+        MemoryMessage {
+            message_id,
+            message_type: "raw".into(),
+            source_id: 0,
+            memory_id: memory_id.into(),
+            user_id: "u1".into(),
+            agent_id: "a1".into(),
+            session_id: "s1".into(),
+            content: content.into(),
+            valid_at: valid_at.into(),
+            invalid_at: None,
+            forget_at: None,
+            status: true,
+            zone_id: 0,
+            content_embed: vec![0.1, 0.2],
+        }
+    }
+
+    #[test]
+    fn fifo_eviction_frees_oldest_messages_first() {
+        let messages = [
+            message(1, "m1", "2026-08-01 00:00:00", "first"),
+            message(2, "m1", "2026-08-02 00:00:00", "second"),
+            message(3, "m1", "2026-08-03 00:00:00", "third"),
+        ];
+        // Each message ~= len(content) + 49 + 24*2 bytes; size_to_delete only
+        // the first message frees.
+        let target = messages[0].calculate_size();
+        let (ids, freed) = pick_messages_to_delete_by_fifo(messages.iter(), target);
+        assert_eq!(ids, vec![1]);
+        assert!(freed >= target);
+        // A huge budget takes everything.
+        let (ids, _) = pick_messages_to_delete_by_fifo(messages.iter(), usize::MAX);
+        assert_eq!(ids, vec![1, 2, 3]);
+        // Zero budget deletes nothing (RAGFlow's `current_size < size_to_delete` gate).
+        let (ids, freed) = pick_messages_to_delete_by_fifo(messages.iter(), 0);
+        assert!(ids.is_empty());
+        assert_eq!(freed, 0);
+    }
+
+    #[test]
+    fn message_size_accounting_matches_ragflow_formula() {
+        let msg = message(1, "m1", "2026-08-01 00:00:00", "hello");
+        assert_eq!(
+            msg.calculate_size(),
+            5 + MESSAGE_CONTENT_OVERHEAD + MESSAGE_EMBEDDING_DIM_SIZE * 2
+        );
+        assert_eq!(
+            build_raw_message_content("问", "答"),
+            "User Input: 问\nAgent Response: 答"
+        );
+    }
+
+    #[test]
+    fn message_store_budget_evicts_fifo_and_queries_latest_first() {
+        let service = MemoryMessageService::in_memory();
+        let raw = MemoryMessage {
+            message_id: service.next_message_id(),
+            ..message(0, "m1", "2026-08-01 00:00:00", "old")
+        };
+        let budget = 3 * raw.calculate_size();
+        service.insert_messages(vec![raw]).unwrap();
+        // Overflow: insert two more messages, forcing one FIFO eviction.
+        let second = MemoryMessage {
+            message_id: service.next_message_id(),
+            ..message(0, "m1", "2026-08-02 00:00:00", "second")
+        };
+        let third = MemoryMessage {
+            message_id: service.next_message_id(),
+            ..message(0, "m1", "2026-08-03 00:00:00", "third")
+        };
+        service
+            .save_messages_with_budget("m1", "FIFO", budget, vec![second, third])
+            .unwrap();
+        let remaining = service.query(&["m1".into()], None, None, None, None, None);
+        assert_eq!(remaining.len(), 2);
+        // Query orders by valid_at desc → newest first.
+        assert_eq!(remaining[0].message_id, 3);
+        assert_eq!(remaining[1].message_id, 2);
+        // Non-FIFO policy refuses to evict.
+        let fourth = MemoryMessage {
+            message_id: service.next_message_id(),
+            ..message(0, "m1", "2026-08-04 00:00:00", "fourth")
+        };
+        let err = service
+            .save_messages_with_budget("m1", "LRU", budget, vec![fourth])
+            .unwrap_err();
+        assert!(
+            err.message
+                .contains("Memory size reached limit and cannot decide which to delete")
+        );
+    }
+
+    #[test]
+    fn fifo_eviction_is_scoped_to_the_composite_message_identity() {
+        let service = MemoryMessageService::in_memory();
+        let old = message(1, "m1", "2026-08-01 00:00:00", "old");
+        let same_integer_other_memory = message(1, "m2", "2026-08-01 00:00:00", "keep");
+        service
+            .insert_messages(vec![old, same_integer_other_memory.clone()])
+            .unwrap();
+
+        let replacement = message(2, "m1", "2026-08-02 00:00:00", "new");
+        let budget = replacement.calculate_size();
+        service
+            .save_messages_with_budget("m1", "FIFO", budget, vec![replacement])
+            .unwrap();
+
+        assert!(service.get_by_message_id("m1", 1).is_none());
+        assert!(service.get_by_message_id("m1", 2).is_some());
+        assert_eq!(
+            service.get_by_message_id("m2", 1),
+            Some(same_integer_other_memory)
+        );
+    }
+
+    #[test]
+    fn invalid_budget_write_rolls_back_the_planned_fifo_eviction() {
+        let service = MemoryMessageService::in_memory();
+        let stable = message(1, "m1", "2026-08-01 00:00:00", "stable");
+        service.insert_messages(vec![stable.clone()]).unwrap();
+        let invalid = MemoryMessage {
+            message_id: 2,
+            content_embed: Vec::new(),
+            ..message(0, "m1", "2026-08-02 00:00:00", "invalid")
+        };
+
+        let result = service.save_messages_with_budget(
+            "m1",
+            "FIFO",
+            invalid.calculate_size(),
+            vec![invalid],
+        );
+        assert!(result.is_err());
+        assert_eq!(service.get_by_message_id("m1", 1), Some(stable));
+        assert!(service.get_by_message_id("m1", 2).is_none());
+    }
+
+    #[test]
+    fn tenant_default_model_resolution_matches_ragflow_errors() {
+        let defaults = TenantDefaultModels {
+            llm_id: "deepseek-chat@deepseek".into(),
+            embd_id: "bge-m3@builtin".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            defaults.model_name_for_type("chat").unwrap(),
+            "deepseek-chat@deepseek"
+        );
+        assert_eq!(
+            defaults.model_name_for_type("embedding").unwrap(),
+            "bge-m3@builtin"
+        );
+        assert_eq!(
+            defaults.model_name_for_type("tts").unwrap_err().message,
+            "No default tts model is set."
+        );
+        assert_eq!(
+            defaults.model_name_for_type("ocr").unwrap_err().message,
+            "OCR model name is required"
+        );
+        assert_eq!(
+            defaults.model_name_for_type("vision").unwrap_err().message,
+            "Unknown model type vision"
+        );
+        // Chat ↔ IMAGE2TEXT are interchangeable.
+        assert!(validate_model_type_match("image2text", "chat", "gpt-4o").is_ok());
+        assert!(validate_model_type_match("chat", "image2text", "gpt-4o").is_ok());
+        assert!(validate_model_type_match("chat", "embedding", "gpt-4o").is_err());
+    }
+
+    #[test]
+    fn new_user_plan_builds_kingdom_tenant_and_owner_relation() {
+        let defaults = ModelDefaults {
+            chat_mdl: "deepseek-chat@deepseek".into(),
+            embedding_mdl: "bge-m3@builtin".into(),
+            parsers: "naive".into(),
+            chat: ModelEndpoint {
+                factory: "deepseek".into(),
+                api_key: "k1".into(),
+                base_url: "https://api.deepseek.com".into(),
+            },
+            embedding: ModelEndpoint {
+                factory: "builtin".into(),
+                api_key: "k2".into(),
+                base_url: "http://embed:9380".into(),
+            },
+            ..Default::default()
+        };
+        // Seed tenant-LLM bindings with the plan's generated user id, the way
+        // `create_new_user` wires `get_init_tenant_llm(user_id)`.
+        let mut plan = NewUserPlan::build(
+            "Alice",
+            "alice@example.com",
+            "secret",
+            "password",
+            false,
+            &defaults,
+            Vec::new(),
+        );
+        plan.tenant_llms = init_tenant_llms(&plan.user.id, &defaults);
+        // user id == tenant id == owner relation tenant (RAGFlow uuid1().hex).
+        assert_eq!(plan.user.id, plan.tenant.id);
+        assert_eq!(plan.user_tenant.tenant_id, plan.user.id);
+        assert_eq!(plan.user_tenant.user_id, plan.user.id);
+        assert_eq!(plan.user_tenant.role, UserTenantRole::Owner);
+        assert_eq!(plan.tenant.name, "Alice‘s Kingdom");
+        assert_eq!(plan.tenant.llm_id, "deepseek-chat@deepseek");
+        // Root folder is self-rooted and owned by the new user.
+        assert_eq!(plan.root_file.parent_id, plan.root_file.id);
+        assert_eq!(plan.root_file.tenant_id, plan.user.id);
+        assert_eq!(plan.root_file.name, "/");
+        assert_eq!(plan.root_file.file_type, "folder");
+        // Tenant-LLM bindings carry the new tenant id.
+        assert!(!plan.tenant_llms.is_empty());
+        assert!(
+            plan.tenant_llms
+                .iter()
+                .all(|record| record.tenant_id == plan.user.id)
+        );
+    }
+
+    #[test]
+    fn delete_user_guards_and_relation_filtering() {
+        assert!(can_delete_user(false, false, "u1").is_ok());
+        assert_eq!(
+            can_delete_user(true, false, "u1").unwrap_err().message,
+            "u1 is active and can't be deleted."
+        );
+        assert_eq!(
+            can_delete_user(false, true, "u1").unwrap_err().message,
+            "Can't delete the super user."
+        );
+        let relations = vec![
+            UserTenantRecord {
+                tenant_id: "t-own".into(),
+                user_id: "u1".into(),
+                invited_by: "u1".into(),
+                role: UserTenantRole::Owner,
+            },
+            UserTenantRecord {
+                tenant_id: "t-join".into(),
+                user_id: "u1".into(),
+                invited_by: "t-join".into(),
+                role: UserTenantRole::Normal,
+            },
+        ];
+        assert_eq!(owned_tenant(&relations).unwrap().tenant_id, "t-own");
+        let joined = joined_tenants(&relations);
+        assert_eq!(joined.len(), 1);
+        assert_eq!(joined[0].tenant_id, "t-join");
+        // Deletion report mirrors RAGFlow's done_msg shape.
+        let counts = DeletionCounts {
+            knowledgebases: 2,
+            documents: 5,
+            ..Default::default()
+        };
+        let report = deletion_report(&deletion_steps(&counts));
+        assert!(report.contains("- Deleted 2 dataset records."));
+        assert!(report.contains("- Deleted 5 document records."));
+        assert!(report.ends_with("Delete done!"));
+    }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // init_data semantics — ported from RAGFlow `api/db/init_data.py`.
@@ -1996,7 +2263,7 @@ pub fn task_page_ranges(
         let do_layout = parser_config
             .get("layout_recognize")
             .and_then(|v| v.as_str())
-            .unwrap_or("DeepDOC");
+            .unwrap_or("Docling");
         let toc = parser_config
             .get("toc_extraction")
             .and_then(|v| v.as_bool())
@@ -2059,7 +2326,160 @@ pub fn reuse_prev_task_chunks(
     None
 }
 
+#[cfg(test)]
+mod init_data_tests {
+    use super::*;
+    use serde_json::json;
 
+    #[test]
+    fn system_settings_seed_inserts_only_missing_names() {
+        let existing = vec![SystemSetting {
+            name: "enable_whitelist".into(),
+            source: "variable".into(),
+            data_type: "bool".into(),
+            value: "true".into(),
+            create_time: 1,
+            update_time: 1,
+        }];
+        let from_file = vec![
+            SystemSetting {
+                name: "enable_whitelist".into(),
+                source: "variable".into(),
+                data_type: "bool".into(),
+                value: "true".into(),
+                create_time: 0,
+                update_time: 0,
+            },
+            SystemSetting {
+                name: "mail.server".into(),
+                source: "variable".into(),
+                data_type: "string".into(),
+                value: "".into(),
+                create_time: 0,
+                update_time: 0,
+            },
+        ];
+        let (to_save, count) = seed_system_settings(&existing, &from_file, 42);
+        assert_eq!(count, 1);
+        assert_eq!(to_save[0].name, "mail.server");
+        assert_eq!(to_save[0].create_time, 42);
+    }
+
+    #[test]
+    fn canvas_template_categories_normalize_and_dedupe() {
+        let template = json!({
+            "id": "t1",
+            "title": "Deep Research",
+            "canvas_type": "agent",
+            "canvas_types": ["agent", " agent ", "chatflow"],
+            "dsl": {"nodes": []}
+        });
+        let record = canvas_template_record("t1".into(), &template);
+        assert_eq!(record.canvas_type.as_deref(), Some("agent"));
+        assert_eq!(record.canvas_types, vec!["agent", "chatflow"]);
+        // Missing categories collapse to an empty list, canvas_type to null.
+        let bare = json!({"id": "t2", "title": "Bare"});
+        let record = canvas_template_record("t2".into(), &bare);
+        assert!(record.canvas_type.is_none());
+        assert!(record.canvas_types.is_empty());
+    }
+
+    #[test]
+    fn fix_empty_tenant_model_ids_groups_and_resolves_per_tenant() {
+        let rows = vec![
+            NullTenantModelRow {
+                id: "kb1".into(),
+                tenant_id: "t1".into(),
+                model_id: "gpt-4o".into(),
+            },
+            NullTenantModelRow {
+                id: "kb2".into(),
+                tenant_id: "t1".into(),
+                model_id: "gpt-4o".into(),
+            },
+            NullTenantModelRow {
+                id: "kb3".into(),
+                tenant_id: "t1".into(),
+                model_id: "bge-m3".into(),
+            },
+            NullTenantModelRow {
+                id: "kb4".into(),
+                tenant_id: "t2".into(),
+                model_id: "gpt-4o".into(),
+            },
+        ];
+        let resolve = |tenant: &str, model: &str| -> Option<String> {
+            match (tenant, model) {
+                ("t1", "gpt-4o") => Some("tlm-1".into()),
+                ("t2", "gpt-4o") => Some("tlm-2".into()),
+                _ => None,
+            }
+        };
+        let updates = plan_fix_empty_tenant_model_ids(&rows, resolve);
+        assert_eq!(
+            updates,
+            vec![
+                ("kb1".to_string(), "tlm-1".to_string()),
+                ("kb2".to_string(), "tlm-1".to_string()),
+                ("kb4".to_string(), "tlm-2".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn sync_log_counters_are_monotonic_and_pruning_respects_the_cap() {
+        let mut log = SyncLogRow {
+            id: "task-1".into(),
+            connector_id: "c1".into(),
+            kb_id: "kb".into(),
+            status: "5".into(),
+            poll_range_start: Some("2026-08-01T00:00:00Z".into()),
+            poll_range_end: Some("2026-08-01T00:00:00Z".into()),
+            new_docs_indexed: 0,
+            total_docs_indexed: 0,
+            docs_removed_from_index: 0,
+            error_count: 0,
+            error_msg: String::new(),
+            update_time: 0,
+        };
+        // A backwards poll marker must not regress the range.
+        sync_log_increase_docs(&mut log, "2026-07-01T00:00:00Z", 5, "", 0, 10);
+        assert_eq!(
+            log.poll_range_start.as_deref(),
+            Some("2026-08-01T00:00:00Z")
+        );
+        assert_eq!(log.new_docs_indexed, 5);
+        // Forward marker advances.
+        sync_log_increase_docs(&mut log, "2026-08-02T00:00:00Z", 3, "boom", 2, 20);
+        assert_eq!(log.poll_range_end.as_deref(), Some("2026-08-02T00:00:00Z"));
+        assert_eq!(log.total_docs_indexed, 8);
+        assert_eq!(log.error_count, 2);
+
+        // Prune plan: 101 matching logs -> 70 oldest ids dropped.
+        let logs: Vec<SyncLogRow> = (0..101)
+            .map(|i| SyncLogRow {
+                id: format!("l{i}"),
+                connector_id: "c1".into(),
+                kb_id: "kb".into(),
+                status: "5".into(),
+                poll_range_start: None,
+                poll_range_end: None,
+                new_docs_indexed: 0,
+                total_docs_indexed: 0,
+                docs_removed_from_index: 0,
+                error_count: 0,
+                error_msg: String::new(),
+                update_time: i as u64,
+            })
+            .collect();
+        let prune = sync_log_prune_plan(&logs, "c1", "kb");
+        assert_eq!(prune.len(), 70);
+        assert!(prune.contains(&"l0".to_string()));
+        assert!(!prune.contains(&"l70".to_string()));
+        // Under the cap nothing is pruned.
+        assert!(sync_log_prune_plan(&logs[..99], "c1", "kb").is_empty());
+    }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // memory/services/messages.py — remaining MessageService semantics.
@@ -2573,8 +2993,979 @@ pub fn fix_missing_tokenized_memory(
     Ok(repaired)
 }
 
+#[cfg(test)]
+mod message_service_extra_tests {
+    use super::*;
 
+    fn message(message_id: i64, memory_id: &str, valid_at: &str, content: &str) -> MemoryMessage {
+        MemoryMessage {
+            message_id,
+            message_type: "raw".into(),
+            source_id: 0,
+            memory_id: memory_id.into(),
+            user_id: "u1".into(),
+            agent_id: "a1".into(),
+            session_id: "s1".into(),
+            content: content.into(),
+            valid_at: valid_at.into(),
+            invalid_at: None,
+            forget_at: None,
+            status: true,
+            zone_id: 0,
+            content_embed: vec![0.1, 0.2],
+        }
+    }
 
+    #[test]
+    fn update_message_applies_status_and_timestamps_by_condition() {
+        let service = MemoryMessageService::in_memory();
+        let first = message(1, "m1", "2026-08-01 00:00:00", "hello");
+        let second = MemoryMessage {
+            message_id: 2,
+            agent_id: "a2".into(),
+            ..message(0, "m1", "2026-08-02 00:00:00", "world")
+        };
+        service.insert_messages(vec![first, second]).unwrap();
 
+        // Forget only agent a1's messages.
+        let updated = service
+            .update_messages(
+                &MessageCondition {
+                    agent_id: Some("a1".into()),
+                    ..Default::default()
+                },
+                &MessageUpdate {
+                    status: Some(false),
+                    forget_at: Some("2026-08-10 00:00:00".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(updated, 1);
+        let row = service.get_by_message_id("m1", 1).unwrap();
+        assert!(!row.status);
+        assert_eq!(row.forget_at.as_deref(), Some("2026-08-10 00:00:00"));
+        let untouched = service.get_by_message_id("m1", 2).unwrap();
+        assert!(untouched.status);
 
+        // message_id condition + content rewrite.
+        let updated = service
+            .update_messages(
+                &MessageCondition {
+                    message_id: Some(2),
+                    ..Default::default()
+                },
+                &MessageUpdate {
+                    content: Some("updated".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(updated, 1);
+        assert_eq!(
+            service.get_by_message_id("m1", 2).unwrap().content,
+            "updated"
+        );
+    }
 
+    #[test]
+    fn list_message_filters_raw_paginates_and_groups_extracts() {
+        let service = MemoryMessageService::in_memory();
+        let mut rows = vec![
+            message(1, "m1", "2026-08-01 00:00:00", "first"),
+            message(2, "m1", "2026-08-02 00:00:00", "second"),
+            message(3, "m1", "2026-08-03 00:00:00", "third"),
+        ];
+        // One extracted (semantic) message derived from raw message 1.
+        rows.push(MemoryMessage {
+            message_id: 4,
+            message_type: "semantic".into(),
+            source_id: 1,
+            content: "extracted".into(),
+            ..message(0, "m1", "2026-08-03 12:00:00", "ignored")
+        });
+        service.insert_messages(rows).unwrap();
+
+        let (page, total) = service.list_message("m1", &[], None, 1, 2);
+        assert_eq!(total, 3); // semantic rows are excluded
+        assert_eq!(page.len(), 2);
+        assert_eq!(page[0].message_id, 3); // valid_at desc
+        assert_eq!(page[1].message_id, 2);
+
+        let (page, total) = service.list_message("m1", &[], None, 2, 2);
+        assert_eq!(total, 3);
+        assert_eq!(page.len(), 1);
+        assert_eq!(page[0].message_id, 1);
+
+        // keywords maps to the session_id filter.
+        let (_page, total) = service.list_message("m1", &[], Some("s1"), 1, 50);
+        assert_eq!(total, 3);
+        let (page, total) = service.list_message("m1", &[], Some("nope"), 1, 50);
+        assert_eq!(total, 0);
+        assert!(page.is_empty());
+
+        // Extract grouping: semantic message 4 derives from raw message 1.
+        let all = service.query(&["m1".into()], None, None, None, None, None);
+        let grouped = group_extract_by_source(&all);
+        assert_eq!(grouped[&1].len(), 1);
+        assert_eq!(grouped[&1][0].message_id, 4);
+        assert!(!grouped.contains_key(&2));
+    }
+
+    #[test]
+    fn delete_by_condition_and_recent_messages_match_ragflow_semantics() {
+        let service = MemoryMessageService::in_memory();
+        let mut rows = vec![
+            message(1, "m1", "2026-08-01 00:00:00", "old"),
+            message(2, "m1", "2026-08-02 00:00:00", "mid"),
+            message(3, "m1", "2026-08-03 00:00:00", "new"),
+        ];
+        rows.push(MemoryMessage {
+            message_id: 4,
+            agent_id: "a2".into(),
+            ..message(0, "m1", "2026-08-04 00:00:00", "other-agent")
+        });
+        service.insert_messages(rows).unwrap();
+
+        // get_recent_messages: agent + session filter, newest first, capped.
+        let recent = service.recent_messages(&["m1".into()], "a1", "s1", 2);
+        assert_eq!(recent.len(), 2);
+        assert_eq!(recent[0].message_id, 3);
+        assert_eq!(recent[1].message_id, 2);
+
+        // delete_message(condition): drop agent a2's rows.
+        let deleted = service
+            .delete_messages_by_condition(&MessageCondition {
+                agent_id: Some("a2".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(deleted, 1);
+        assert!(service.get_by_message_id("m1", 4).is_none());
+        assert!(service.get_by_message_id("m1", 1).is_some());
+
+        // The pure helper avoids mutating the process environment in parallel
+        // tests while exercising the exact dynamic ES_INDEX_PREFIX contract.
+        assert_eq!(message_index_name_with_prefix("u1", ""), "memory_u1");
+        assert_eq!(message_index_name_with_prefix("u1", "   "), "memory_u1");
+        assert_eq!(
+            message_index_name_with_prefix(" u1 ", "  cn prod  "),
+            "memory_cn prod_ u1 "
+        );
+    }
+
+    #[test]
+    fn condition_delete_does_not_cross_memory_for_a_reused_integer_id() {
+        let service = MemoryMessageService::in_memory();
+        let first = message(7, "m1", "2026-08-01 00:00:00", "delete");
+        let second = message(7, "m2", "2026-08-01 00:00:00", "keep");
+        service
+            .insert_messages(vec![first, second.clone()])
+            .unwrap();
+
+        assert_eq!(
+            service
+                .delete_messages_by_condition(&MessageCondition {
+                    memory_id: Some("m1".into()),
+                    message_id: Some(7),
+                    ..Default::default()
+                })
+                .unwrap(),
+            1
+        );
+        assert!(service.get_by_message_id("m1", 7).is_none());
+        assert_eq!(service.get_by_message_id("m2", 7), Some(second));
+    }
+
+    #[test]
+    fn canonical_snapshot_uses_exact_infinity_fields_and_restores() {
+        let root = std::env::temp_dir().join(format!(
+            "rayrag-memory-message-snapshot-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("memory_messages.json");
+        let service = MemoryMessageService::new(&path).unwrap();
+        let mut stored = message(7, "memory-a", "2026-08-10 12:34:56", "remember this");
+        stored.zone_id = 9;
+        service.insert_messages(vec![stored.clone()]).unwrap();
+
+        let rows: Vec<Value> = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let row = rows[0].as_object().unwrap();
+        assert_eq!(row["id"], "memory-a_7");
+        assert_eq!(row["message_type_kwd"], "raw");
+        assert_eq!(row["status_int"], 1);
+        assert_eq!(row["zone_id"], 9);
+        assert_eq!(row["invalid_at"], "");
+        assert_eq!(row["invalid_at_flt"], 0.0);
+        assert_eq!(row["forget_at"], "");
+        assert_eq!(row["forget_at_flt"], 0.0);
+        assert_eq!(
+            row["q_2_vec"],
+            serde_json::to_value(vec![0.1_f32, 0.2_f32]).unwrap()
+        );
+        assert_eq!(
+            row["valid_at_flt"],
+            crate::common::time_utils::date_string_to_timestamp(
+                "2026-08-10 12:34:56",
+                crate::common::time_utils::DEFAULT_TIME_FORMAT,
+            )
+            .unwrap() as f64
+        );
+        for logical in ["message_type", "status", "content_embed"] {
+            assert!(!row.contains_key(logical));
+        }
+
+        drop(service);
+        let restored = MemoryMessageService::new(&path).unwrap();
+        assert_eq!(restored.get_by_message_id("memory-a", 7), Some(stored));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn legacy_logical_snapshot_migrates_to_canonical_storage() {
+        let root = std::env::temp_dir().join(format!(
+            "rayrag-memory-message-legacy-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("memory_messages.json");
+        std::fs::write(
+            &path,
+            serde_json::to_vec_pretty(&serde_json::json!([{
+                "message_id": 3,
+                "message_type": "raw",
+                "source_id": 0,
+                "memory_id": "legacy-memory",
+                "user_id": "u1",
+                "agent_id": "a1",
+                "session_id": "s1",
+                "content": "legacy",
+                "valid_at": "2026-08-01 00:00:00",
+                "invalid_at": null,
+                "forget_at": null,
+                "status": true,
+                "content_embed": [1.0, 0.0]
+            }]))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let service = MemoryMessageService::new(&path).unwrap();
+        assert_eq!(
+            service
+                .get_by_message_id("legacy-memory", 3)
+                .unwrap()
+                .content_embed,
+            vec![1.0, 0.0]
+        );
+        let rows: Vec<Value> = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let row = rows[0].as_object().unwrap();
+        assert_eq!(row["id"], "legacy-memory_3");
+        assert!(row.contains_key("message_type_kwd"));
+        assert!(row.contains_key("q_2_vec"));
+        assert!(!row.contains_key("message_type"));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn search_recent_and_list_apply_distinct_status_and_forget_rules() {
+        let service = MemoryMessageService::in_memory();
+        let active = message(1, "m1", "2026-08-01 00:00:00", "active rust");
+        let inactive = MemoryMessage {
+            message_id: 2,
+            status: false,
+            valid_at: "2026-08-02 00:00:00".into(),
+            content: "inactive rust".into(),
+            ..active.clone()
+        };
+        let forgotten = MemoryMessage {
+            message_id: 3,
+            valid_at: "2026-08-03 00:00:00".into(),
+            forget_at: Some("2026-08-04 00:00:00".into()),
+            content: "forgotten rust".into(),
+            ..active.clone()
+        };
+        service
+            .insert_messages(vec![active, inactive, forgotten])
+            .unwrap();
+
+        let search = service.query(&["m1".into()], None, None, None, None, None);
+        assert_eq!(search.len(), 1);
+        assert_eq!(search[0].message_id, 1);
+        let recent = service.recent_messages(&["m1".into()], "a1", "s1", 10);
+        assert_eq!(
+            recent
+                .iter()
+                .map(|message| message.message_id)
+                .collect::<Vec<_>>(),
+            vec![2, 1]
+        );
+        let (listed, total) = service.list_message("m1", &[], None, 1, 10);
+        assert_eq!(total, 3);
+        assert_eq!(listed[0].message_id, 3);
+    }
+
+    #[test]
+    fn persistence_failure_rolls_back_message_update() {
+        let root = std::env::temp_dir().join(format!(
+            "rayrag-memory-message-rollback-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("memory_messages.json");
+        let service = MemoryMessageService::new(&path).unwrap();
+        service
+            .insert_messages(vec![message(1, "m1", "2026-08-01 00:00:00", "stable")])
+            .unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+
+        assert!(
+            service
+                .update_messages(
+                    &MessageCondition {
+                        memory_id: Some("m1".into()),
+                        message_id: Some(1),
+                        ..Default::default()
+                    },
+                    &MessageUpdate {
+                        content: Some("must rollback".into()),
+                        ..Default::default()
+                    },
+                )
+                .is_err()
+        );
+        assert_eq!(
+            service.get_by_message_id("m1", 1).unwrap().content,
+            "stable"
+        );
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn persistence_failure_rolls_back_fifo_and_insert_as_one_transaction() {
+        let root = std::env::temp_dir().join(format!(
+            "rayrag-memory-message-fifo-rollback-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("memory_messages.json");
+        let service = MemoryMessageService::new(&path).unwrap();
+        let stable = message(1, "m1", "2026-08-01 00:00:00", "stable");
+        service.insert_messages(vec![stable.clone()]).unwrap();
+
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        let incoming = message(2, "m1", "2026-08-02 00:00:00", "incoming");
+        let result = service.save_messages_with_budget(
+            "m1",
+            "FIFO",
+            incoming.calculate_size(),
+            vec![incoming],
+        );
+        assert!(result.is_err());
+        assert_eq!(service.get_by_message_id("m1", 1), Some(stable));
+        assert!(service.get_by_message_id("m1", 2).is_none());
+
+        std::fs::remove_dir_all(root).ok();
+    }
+}
+
+#[cfg(test)]
+mod memory_extraction_tests {
+    use super::*;
+
+    #[derive(Debug, Clone, PartialEq)]
+    struct RecordedChatCall {
+        system: String,
+        history: Vec<(String, String)>,
+        temperature: Option<f32>,
+    }
+
+    struct FakeMemoryChatModel {
+        response: String,
+        fail: bool,
+        calls: Mutex<Vec<RecordedChatCall>>,
+    }
+
+    impl FakeMemoryChatModel {
+        fn returning(response: &str) -> Self {
+            Self {
+                response: response.into(),
+                fail: false,
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn failing() -> Self {
+            Self {
+                response: String::new(),
+                fail: true,
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ChatModel for FakeMemoryChatModel {
+        fn model_name(&self) -> &str {
+            "fake-memory-chat"
+        }
+
+        async fn chat(&self, _system: &str, _history: &[ChatMessage]) -> crate::Result<String> {
+            if self.fail {
+                anyhow::bail!("fake memory LLM failed")
+            }
+            Ok(self.response.clone())
+        }
+
+        async fn chat_with_generation(
+            &self,
+            system: &str,
+            history: &[ChatMessage],
+            generation: GenerationParamsPatch,
+        ) -> crate::Result<String> {
+            self.calls.lock().unwrap().push(RecordedChatCall {
+                system: system.into(),
+                history: history
+                    .iter()
+                    .map(|message| (message.role.clone(), message.content.clone()))
+                    .collect(),
+                temperature: generation.temperature,
+            });
+            self.chat(system, history).await
+        }
+
+        async fn chat_stream(
+            &self,
+            system: &str,
+            history: &[ChatMessage],
+            _on_chunk: Box<dyn for<'a> FnMut(&'a str) + Send>,
+        ) -> crate::Result<String> {
+            self.chat(system, history).await
+        }
+    }
+
+    struct LegacyFakeChatModel;
+
+    #[async_trait::async_trait]
+    impl ChatModel for LegacyFakeChatModel {
+        fn model_name(&self) -> &str {
+            "legacy"
+        }
+
+        async fn chat(&self, system: &str, history: &[ChatMessage]) -> crate::Result<String> {
+            Ok(format!("{system}:{}", history.len()))
+        }
+
+        async fn chat_stream(
+            &self,
+            system: &str,
+            history: &[ChatMessage],
+            _on_chunk: Box<dyn for<'a> FnMut(&'a str) + Send>,
+        ) -> crate::Result<String> {
+            self.chat(system, history).await
+        }
+    }
+
+    fn memory_types(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_owned()).collect()
+    }
+
+    #[test]
+    fn extraction_helper_reuses_primary_prompt_assembler_contract() {
+        let types = memory_types(&["raw", "semantic", "episodic", "procedural", "semantic"]);
+        let prompt = crate::memory::PromptAssembler::assemble_system_prompt(&types);
+        assert_eq!(
+            prompt,
+            crate::memory::PromptAssembler::assemble_system_prompt(&types)
+        );
+        assert!(prompt.starts_with("**Memory Extraction Specialist**"));
+        assert_eq!(prompt.matches("**EXTRACT SEMANTIC KNOWLEDGE:**").count(), 1);
+        assert_eq!(prompt.matches("**EXTRACT EPISODIC KNOWLEDGE:**").count(), 1);
+        assert_eq!(
+            prompt.matches("**EXTRACT PROCEDURAL KNOWLEDGE:**").count(),
+            1
+        );
+        assert!(prompt.contains("Timestamps in ISO 8601 format"));
+        assert!(prompt.contains("Maximum 5 items per type"));
+        assert!(prompt.contains("\"semantic\": ["));
+        assert!(prompt.contains("\"episodic\": ["));
+        assert!(prompt.contains("\"procedural\": ["));
+        assert!(!prompt.contains("\"raw\": ["));
+
+        assert_eq!(
+            crate::memory::PromptAssembler::assemble_user_prompt(
+                "User Input: hello\nAgent Response: world",
+                Some("2026-08-12 12:34:56"),
+                Some("2026-08-12 12:34:56"),
+            ),
+            "\n**CONVERSATION:**\nUser Input: hello\nAgent Response: world\n\n**CONVERSATION TIME:** 2026-08-12 12:34:56\n**CURRENT TIME:** 2026-08-12 12:34:56\n"
+        );
+
+        let raw_prompt =
+            crate::memory::PromptAssembler::assemble_system_prompt(&memory_types(&["raw"]));
+        assert!(!raw_prompt.contains("**EXTRACT SEMANTIC KNOWLEDGE:**"));
+        assert!(raw_prompt.contains("```json\n{\n\n}\n```"));
+        assert!(!raw_prompt.contains("**EXAMPLES:**"));
+    }
+
+    #[test]
+    fn response_parser_flattens_all_types_preserves_unknown_and_normalizes_time() {
+        let response = r#"```json
+        {
+          "semantic": [{"content":"Paris is in France","valid_at":"2024-01-01T12:00:00Z","invalid_at":""}],
+          "episodic": [{"content":"Deployed","valid_at":"2024-01-02T14:15:16+08:00"}],
+          "procedural": [{"content":"Check logs","valid_at":"not-a-time","invalid_at":null}],
+          "future_type": [{"content":"Keep this key","valid_at":"2024-01-03"}]
+        }
+        ```"#;
+        let items = parse_memory_extraction_response(response).unwrap();
+        assert_eq!(items.len(), 4);
+        assert_eq!(items[0].message_type, "semantic");
+        assert_eq!(items[0].valid_at, "2024-01-01 12:00:00");
+        assert_eq!(items[0].invalid_at, None);
+        assert_eq!(items[1].message_type, "episodic");
+        assert_eq!(items[1].valid_at, "2024-01-02 14:15:16");
+        assert_eq!(items[2].message_type, "procedural");
+        assert_eq!(items[2].valid_at, "not-a-time");
+        assert_eq!(items[3].message_type, "future_type");
+        assert_eq!(items[3].valid_at, "2024-01-03 00:00:00");
+    }
+
+    #[test]
+    fn response_parser_distinguishes_invalid_json_from_structural_errors() {
+        assert!(
+            parse_memory_extraction_response("not json")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            parse_memory_extraction_response("{broken")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(parse_memory_extraction_response("[]").is_err());
+        assert!(parse_memory_extraction_response(r#"{"semantic":{}}"#).is_err());
+        assert!(parse_memory_extraction_response(r#"{"semantic":["fact"]}"#).is_err());
+        assert!(
+            parse_memory_extraction_response(r#"{"semantic":[{"valid_at":"2024-01-01"}]}"#)
+                .is_err()
+        );
+        assert!(parse_memory_extraction_response(r#"{"semantic":[{"content":"fact"}]}"#).is_err());
+    }
+
+    #[tokio::test]
+    async fn extraction_sends_default_system_history_and_temperature_then_flattens() {
+        let model = FakeMemoryChatModel::returning(
+            r#"{"semantic":[{"content":"fact","valid_at":"2026-08-12T10:00:00","invalid_at":""}],"episodic":[],"procedural":[]}"#,
+        );
+        let items = extract_memory_by_llm(
+            &model,
+            &memory_types(&["raw", "semantic", "episodic", "procedural"]),
+            "hello",
+            "world",
+            None,
+            None,
+            "2026-08-12 12:34:56",
+            0.7,
+        )
+        .await
+        .unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].message_type, "semantic");
+        let calls = model.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            calls[0].system,
+            crate::memory::PromptAssembler::assemble_system_prompt(&memory_types(&[
+                "raw",
+                "semantic",
+                "episodic",
+                "procedural",
+            ]))
+        );
+        assert!(calls[0].system.contains("**EXTRACT SEMANTIC KNOWLEDGE:**"));
+        assert!(calls[0].system.contains("**EXTRACT EPISODIC KNOWLEDGE:**"));
+        assert!(
+            calls[0]
+                .system
+                .contains("**EXTRACT PROCEDURAL KNOWLEDGE:**")
+        );
+        assert_eq!(calls[0].temperature, Some(0.7));
+        assert_eq!(calls[0].history.len(), 1);
+        assert_eq!(calls[0].history[0].0, "user");
+        assert_eq!(
+            calls[0].history[0].1,
+            crate::memory::PromptAssembler::assemble_user_prompt(
+                "User Input: hello\nAgent Response: world",
+                Some("2026-08-12 12:34:56"),
+                Some("2026-08-12 12:34:56"),
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn extraction_custom_prompts_raw_only_empty_and_failure_match_worker_boundaries() {
+        let custom = FakeMemoryChatModel::returning("{}");
+        let items = extract_memory_by_llm(
+            &custom,
+            &memory_types(&["semantic"]),
+            "question",
+            "answer",
+            Some("custom system"),
+            Some("custom user"),
+            "2026-08-12 01:02:03",
+            0.2,
+        )
+        .await
+        .unwrap();
+        assert!(items.is_empty());
+        {
+            let calls = custom.calls.lock().unwrap();
+            assert_eq!(calls[0].system, "custom system");
+            assert_eq!(calls[0].temperature, Some(0.2));
+            assert_eq!(
+                calls[0].history,
+                vec![
+                    ("user".into(), "custom user".into()),
+                    (
+                        "user".into(),
+                        "Conversation: User Input: question\nAgent Response: answer\nConversation Time: 2026-08-12 01:02:03\nCurrent Time: 2026-08-12 01:02:03".into(),
+                    ),
+                ]
+            );
+        }
+
+        let raw_only = FakeMemoryChatModel::failing();
+        assert!(
+            extract_memory_by_llm(
+                &raw_only,
+                &memory_types(&["raw"]),
+                "question",
+                "answer",
+                None,
+                None,
+                "2026-08-12 01:02:03",
+                0.5,
+            )
+            .await
+            .unwrap()
+            .is_empty()
+        );
+        assert!(raw_only.calls.lock().unwrap().is_empty());
+
+        let invalid_json = FakeMemoryChatModel::returning("provider preamble");
+        assert!(
+            extract_memory_by_llm(
+                &invalid_json,
+                &memory_types(&["semantic"]),
+                "question",
+                "answer",
+                None,
+                None,
+                "2026-08-12 01:02:03",
+                0.5,
+            )
+            .await
+            .unwrap()
+            .is_empty()
+        );
+
+        let failing = FakeMemoryChatModel::failing();
+        assert!(
+            extract_memory_by_llm(
+                &failing,
+                &memory_types(&["semantic"]),
+                "question",
+                "answer",
+                None,
+                None,
+                "2026-08-12 01:02:03",
+                0.5,
+            )
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("fake memory LLM failed")
+        );
+    }
+
+    #[tokio::test]
+    async fn chat_model_generation_default_keeps_legacy_implementations_compatible() {
+        let answer = LegacyFakeChatModel
+            .chat_with_generation(
+                "system",
+                &[ChatMessage::new("user", "hello")],
+                GenerationParamsPatch {
+                    temperature: Some(0.9),
+                    ..GenerationParamsPatch::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(answer, "system:1");
+    }
+}
+
+#[cfg(test)]
+mod memory_index_cache_tests {
+    use super::*;
+    // Trait methods (`index_exist` / `insert` / `get`) live on the `DocStore`
+    // trait; bring it into scope for the `Arc<MemoryDocStore>` receivers.
+    use crate::doc_store::DocStore;
+
+    fn message(message_id: i64, memory_id: &str, content: &str) -> MemoryMessage {
+        MemoryMessage {
+            message_id,
+            message_type: "raw".into(),
+            source_id: 0,
+            memory_id: memory_id.into(),
+            user_id: "u1".into(),
+            agent_id: "a1".into(),
+            session_id: "s1".into(),
+            content: content.into(),
+            valid_at: format!("2026-08-0{message_id} 00:00:00"),
+            invalid_at: None,
+            forget_at: None,
+            status: true,
+            zone_id: 0,
+            content_embed: vec![0.1, 0.2],
+        }
+    }
+
+    // ── messages.py MessageService index lifecycle (DocStore backend) ──
+
+    #[test]
+    fn native_index_lifecycle_applies_prefix_and_tracks_creation() {
+        let store = std::sync::Arc::new(crate::doc_store::MemoryDocStore::new());
+        let lifecycle = MessageIndexLifecycle::new(store.clone());
+        assert!(!lifecycle.has_index("tenant-1", "memory-1").unwrap());
+        lifecycle.create_index("tenant-1", "memory-1", 768).unwrap();
+        assert!(lifecycle.has_index("tenant-1", "memory-1").unwrap());
+        // Index names are per-tenant: another uid does not see it.
+        assert!(!lifecycle.has_index("tenant-2", "memory-1").unwrap());
+        // The `memory_{uid}` name was applied to the native resource.
+        assert!(
+            store
+                .index_exist(&message_index_name("tenant-1"), "memory-1")
+                .unwrap()
+        );
+        lifecycle.delete_index("tenant-1", "memory-1").unwrap();
+        assert!(!lifecycle.has_index("tenant-1", "memory-1").unwrap());
+    }
+
+    #[test]
+    fn prefix_application_matches_upstream_index_name_contract() {
+        // Pure form: trimmed prefix yields `memory_{prefix}_{uid}`.
+        assert_eq!(
+            message_index_name_with_prefix("u1", "rayrag"),
+            "memory_rayrag_u1"
+        );
+        assert_eq!(
+            message_index_name_with_prefix("u1", "  rayrag  "),
+            "memory_rayrag_u1"
+        );
+        assert_eq!(message_index_name_with_prefix("u1", ""), "memory_u1");
+        assert_eq!(message_index_name_with_prefix("u 1", "p"), "memory_p_u 1");
+    }
+
+    #[test]
+    fn missing_field_repair_reapplies_content_and_counts_only_gaps() {
+        let store = std::sync::Arc::new(crate::doc_store::MemoryDocStore::new());
+        let lifecycle = MessageIndexLifecycle::new(store.clone());
+        lifecycle.create_index("tenant-1", "memory-1", 768).unwrap();
+        let mut complete = Map::new();
+        complete.insert("id".into(), Value::String("memory-1_3".into()));
+        complete.insert("memory_id".into(), Value::String("memory-1".into()));
+        complete.insert("message_id".into(), Value::from(3i64));
+        complete.insert("content".into(), Value::String("already tokenized".into()));
+        complete.insert(
+            "tokenized_content_ltks".into(),
+            Value::String("tokens".into()),
+        );
+        let mut missing = Map::new();
+        missing.insert("id".into(), Value::String("memory-1_1".into()));
+        missing.insert("memory_id".into(), Value::String("memory-1".into()));
+        missing.insert("message_id".into(), Value::from(1i64));
+        missing.insert("content".into(), Value::String("first".into()));
+        let mut empty = Map::new();
+        empty.insert("id".into(), Value::String("memory-1_2".into()));
+        empty.insert("memory_id".into(), Value::String("memory-1".into()));
+        empty.insert("message_id".into(), Value::from(2i64));
+        empty.insert("content".into(), Value::String("second".into()));
+        empty.insert(
+            "tokenized_content_ltks".into(),
+            Value::String(String::new()),
+        );
+        store
+            .insert(
+                &[complete.clone(), missing, empty],
+                &message_index_name("tenant-1"),
+                "memory-1",
+            )
+            .unwrap();
+
+        let repaired = lifecycle
+            .repair_missing_field("tenant-1", "memory-1", "tokenized_content_ltks")
+            .unwrap();
+        assert_eq!(repaired, 2);
+        // The complete row is untouched (content unchanged, field intact).
+        let after = store
+            .get(
+                "memory-1_3",
+                &message_index_name("tenant-1"),
+                &["memory-1".into()],
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            after.get("tokenized_content_ltks"),
+            Some(&Value::String("tokens".into()))
+        );
+    }
+
+    #[test]
+    fn fix_missing_tokenized_memory_is_a_noop_without_a_tokenizing_engine() {
+        let store = std::sync::Arc::new(crate::doc_store::MemoryDocStore::new());
+        let lifecycle = MessageIndexLifecycle::new(store);
+        let memories = vec![("memory-1".to_string(), "tenant-1".to_string())];
+        assert_eq!(
+            fix_missing_tokenized_memory(false, &memories, &lifecycle, "tokenized_content_ltks")
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            fix_missing_tokenized_memory(true, &memories, &lifecycle, "tokenized_content_ltks")
+                .unwrap(),
+            0
+        );
+    }
+
+    // ── MemorySizeCache (memory_message_service.py Redis helpers) ──
+
+    #[test]
+    fn size_cache_recomputes_on_miss_and_tracks_increase_decrease() {
+        let store = MemoryMessageService::in_memory();
+        store
+            .insert_messages(vec![message(1, "m1", "hello")])
+            .unwrap();
+        let cache = MemorySizeCache::new();
+        assert_eq!(
+            cache.get(&store, "m1", "tenant-1"),
+            message(1, "m1", "hello").calculate_size() as i64
+        );
+        assert_eq!(
+            cache.increase("m1", 100),
+            message(1, "m1", "hello").calculate_size() as i64 + 100
+        );
+        assert_eq!(
+            cache.decrease("m1", 30),
+            message(1, "m1", "hello").calculate_size() as i64 + 70
+        );
+        cache.set("m2", 500);
+        assert_eq!(cache.get(&store, "m2", "tenant-1"), 500);
+        // Cache keys are per memory id, never per tenant.
+        assert_eq!(cache.get(&store, "m3", "tenant-9"), 0);
+        assert_eq!(cache.get(&store, "m3", "tenant-8"), 0);
+    }
+
+    #[test]
+    fn init_size_cache_warms_every_memory() {
+        let store = MemoryMessageService::in_memory();
+        store
+            .insert_messages(vec![message(1, "m1", "hello")])
+            .unwrap();
+        let cache = MemorySizeCache::new();
+        let warmed = cache.init(
+            &store,
+            &[
+                ("m1".to_string(), "tenant-1".to_string()),
+                ("m2".to_string(), "tenant-2".to_string()),
+            ],
+        );
+        assert_eq!(warmed, 2);
+        assert!(cache.get(&store, "m1", "tenant-1") > 0);
+        assert_eq!(cache.get(&store, "m2", "tenant-2"), 0);
+    }
+
+    // ── embed_and_save cross-store transactional sequence ──
+
+    #[test]
+    fn transactional_save_creates_index_evicts_fifo_and_keeps_cache_consistent() {
+        let store = MemoryMessageService::in_memory();
+        let cache = MemorySizeCache::new();
+        let budget = 3 * message(1, "m1", "placeholder").calculate_size();
+        let first = message(1, "m1", "oldest");
+        let second = message(2, "m1", "middle");
+        let two_row_size = first.calculate_size() + second.calculate_size();
+        store
+            .save_messages_with_index_and_cache(
+                "tenant-1",
+                "m1",
+                "FIFO",
+                budget,
+                vec![first, second],
+                &cache,
+            )
+            .unwrap();
+        assert!(store.has_index("tenant-1", "m1"));
+        let cached = cache.get(&store, "m1", "tenant-1");
+        assert_eq!(cached, two_row_size as i64);
+
+        // Overflow: FIFO evicts the oldest rows and decrements the cache.
+        let bigger = "bigger".repeat(4);
+        let replacement = message(3, "m1", &bigger);
+        store
+            .save_messages_with_index_and_cache(
+                "tenant-1",
+                "m1",
+                "FIFO",
+                budget,
+                vec![replacement.clone()],
+                &cache,
+            )
+            .unwrap();
+        assert_eq!(
+            store.calculate_memory_size("m1"),
+            cache.get(&store, "m1", "tenant-1") as usize
+        );
+        assert!(store.calculate_memory_size("m1") <= budget);
+        assert!(store.get_by_message_id("m1", 3).is_some());
+    }
+
+    #[test]
+    fn transactional_save_rejects_non_fifo_overflow_and_leaves_store_untouched() {
+        let store = MemoryMessageService::in_memory();
+        let cache = MemorySizeCache::new();
+        let budget = 10;
+        let error = store
+            .save_messages_with_index_and_cache(
+                "tenant-1",
+                "m1",
+                "LRU",
+                budget,
+                vec![message(1, "m1", "content")],
+                &cache,
+            )
+            .unwrap_err();
+        assert_eq!(error.message, MEMORY_BUDGET_ERROR);
+        // Nothing inserted; the index was already created before the budget
+        // check, matching the upstream create-then-budget order.
+        assert_eq!(store.calculate_memory_size("m1"), 0);
+        assert!(store.has_index("tenant-1", "m1"));
+    }
+
+    #[test]
+    fn legacy_rows_without_index_bookkeeping_still_count_as_indexed() {
+        let store = MemoryMessageService::in_memory();
+        store
+            .insert_messages(vec![message(1, "m1", "legacy")])
+            .unwrap();
+        // No create_index call — rows alone must satisfy the has_index gate so
+        // delete flows reach restored snapshots.
+        assert!(store.has_index("tenant-1", "m1"));
+        assert!(!store.has_index("tenant-1", "m2"));
+    }
+}

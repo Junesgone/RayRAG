@@ -622,4 +622,57 @@ pub async fn delete_document_structure_graph(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn a_row_with_a_template_goes_to_that_template_and_a_row_without_one_does_not_disappear() {
+        let mut templated = Map::new();
+        templated.insert("doc_id".to_string(), json!("doc-1"));
+        templated.insert("compilation_template_ids".to_string(), json!(["tpl-9"]));
+        templated.insert("compile_kwd".to_string(), json!("knowledge_graph"));
+        templated.insert(
+            "compilation_template_kind_kwd".to_string(),
+            json!("Hypergraph"),
+        );
+        let (meta, scope) = bucket_for_row(&templated);
+        assert_eq!(meta.template_id, "tpl-9");
+        assert_eq!(meta.kind, "Hypergraph");
+        assert_eq!(scope["compilation_template_ids"], json!(["tpl-9"]));
+
+        let mut legacy = Map::new();
+        legacy.insert("doc_id".to_string(), json!("doc-1"));
+        legacy.insert("compile_kwd".to_string(), json!("knowledge_graph"));
+        let (meta, scope) = bucket_for_row(&legacy);
+        assert_eq!(meta.template_id, "legacy:knowledge_graph");
+        assert_eq!(meta.template_name, "Legacy (knowledge_graph)");
+        assert_eq!(scope["compile_kwd"], json!("knowledge_graph"));
+
+        // The kind normaliser folds the spellings that mean the same thing.
+        assert_eq!(normalise_kind("Page Index"), "page_index");
+        assert_eq!(normalise_kind("hyper-graph"), "hyper_graph");
+    }
+
+    #[test]
+    fn keyword_narrowing_keeps_matching_entities_and_only_their_relations() {
+        let entities = vec![
+            json!({"name": "rust", "content_with_weight": "Rust is a language"}),
+            json!({"name": "python", "content_with_weight": "Python is a language"}),
+        ];
+        let relations = vec![
+            json!({"from_entity_kwd": "rust", "to_entity_kwd": "python"}),
+            json!({"from_entity_kwd": "python", "to_entity_kwd": "python"}),
+        ];
+        let (kept_entities, kept_relations) = narrow_to_keywords(&entities, &relations, "RUST");
+        assert_eq!(kept_entities.len(), 1, "{kept_entities:?}");
+        assert_eq!(kept_entities[0]["name"], "rust");
+        // The relation between a survivor and a dropped entity is dropped with it.
+        assert!(kept_relations.is_empty(), "{kept_relations:?}");
+
+        // No keywords means no narrowing, not an empty graph.
+        let (all_entities, all_relations) = narrow_to_keywords(&entities, &relations, "   ");
+        assert_eq!(all_entities.len(), 2);
+        assert_eq!(all_relations.len(), 2);
+    }
+}

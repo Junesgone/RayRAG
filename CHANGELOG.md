@@ -16,7 +16,7 @@ All notable changes to RayRAG are documented in this file.
 - Configuration page labels/description localized (语言/权限/页面排名/标签集 and the
   Basic settings description).
 - FPK manifest description now welcomes feedback at
-  https://github.com/Junesgone/RayRAG or user@example.com
+  https://github.com/Junesgone/RayRAG or junesgone@foxmail.com.
 - Full test suite: 2586 passed / 0 failed / 34 ignored.
 
 ## [0.127.43] - 2026-11-23
@@ -126,6 +126,7 @@ All notable changes to RayRAG are documented in this file.
   second run with HTTP 409, and the detail page polls status/logs every 5 seconds.
 - Inline-script test failures now print the complete Node error, and the data-source page
   scripts are checked by the JS delimiter regression test.
+- Tests: 2585 passed / 0 failed / 34 ignored.
 
 ## [0.127.37] - 2026-11-20
 
@@ -137,6 +138,7 @@ All notable changes to RayRAG are documented in this file.
   title at all.
 - The empty state now keeps the filter bar visible and centers only the empty card in the
   remaining space, matching the normal page structure on desktop and mobile.
+- Tests: 2585 passed / 0 failed / 34 ignored.
 
 ## [0.127.36] - 2026-11-20
 
@@ -149,6 +151,7 @@ All notable changes to RayRAG are documented in this file.
 - The watcher stops after the document reaches a terminal state; it does not poll
   forever and it is not started for documents that are already DONE.
 - Added UI regression markers for the watcher and the automatic-refresh message.
+- Tests: 2585 passed / 0 failed / 34 ignored.
 
 ## [0.127.35] - 2026-11-20
 
@@ -160,6 +163,7 @@ All notable changes to RayRAG are documented in this file.
 - The link now includes `?knowledgeId={kb_id}`; the workbench resolves the dataset and
   renders its chunks normally.
 - Updated the chunk-view regression marker for the full edit URL.
+- Tests: 2585 passed / 0 failed / 34 ignored.
 
 ## [0.127.34] - 2026-11-20
 
@@ -170,6 +174,7 @@ All notable changes to RayRAG are documented in this file.
   .doc/.xls/.ppt fall back to the raw-file iframe in the browser instead of calling a
   preview endpoint that would return a parse error for the old container format.
 - Added a regression test for the legacy fallback.
+- Tests: 2585 passed / 0 failed / 34 ignored.
 
 ## [0.127.33] - 2026-11-20
 
@@ -182,6 +187,7 @@ All notable changes to RayRAG are documented in this file.
   detail pages were already converted in 0.127.32), so a large linked source cannot
   hold the Configuration page request open for minutes.
 - Updated the config-page regression marker for the async URL.
+- Tests: 2584 passed / 0 failed / 34 ignored.
 
 ## [0.127.32] - 2026-11-20
 
@@ -196,6 +202,7 @@ All notable changes to RayRAG are documented in this file.
   immediately shows the running logs (its existing 15s poll continues) instead of an
   HTTP request that can hang for minutes on a large WebDAV/S3 tree.
 - The existing synchronous form remains the API default for scripts and tests.
+- Tests: 2584 passed / 0 failed / 34 ignored.
 
 ## [0.127.31] - 2026-11-20
 
@@ -210,6 +217,7 @@ All notable changes to RayRAG are documented in this file.
 - Hardened the data-source batch-limit test: it now compares the auto-detected limit
   within 1% instead of requiring byte-identical readings of live host memory, which
   removed a flaky failure when available memory moved between two detections.
+- Tests: 2584 passed / 0 failed / 34 ignored.
 
 ## [0.127.30] - 2026-11-20
 
@@ -222,6 +230,7 @@ All notable changes to RayRAG are documented in this file.
 - Content is capped by the existing preview endpoints (5000 Word blocks, 500 spreadsheet
   rows, 64 columns) and failed previews show a visible error in the pane.
 - Added a UI regression test for the Office structured-preview branch.
+- Tests: 2584 passed / 0 failed / 34 ignored.
 
 ## [0.127.29] - 2026-11-20
 
@@ -234,6 +243,7 @@ All notable changes to RayRAG are documented in this file.
   Each beat is logged at WARN and refreshes the document progress message with elapsed
   seconds, so an embedding server that accepts and then stalls is visible in logs and
   the document row instead of looking like a silent RUNNING task.
+- Tests: 2583 passed / 0 failed / 34 ignored.
 
 ## [0.127.28] - 2026-11-20
 
@@ -244,6 +254,7 @@ All notable changes to RayRAG are documented in this file.
   right (the same page already reachable from the file name or chunk count).
 - The dataflow helper remains in the page for the Logs tab; no dataflow behavior removed.
 - Updated the UI regression expectation for the result action.
+- Tests: 2583 passed / 0 failed / 34 ignored.
 
 ## [0.127.27] - 2026-11-20
 
@@ -255,6 +266,7 @@ All notable changes to RayRAG are documented in this file.
 - The document original/chunks view now knows the document run state: a document
   still RUNNING/UNSTARTED shows "document is still being parsed; refresh when it
   finishes" instead of the misleading "No chunks parsed".
+- Tests: 2583 passed / 0 failed / 34 ignored.
 
 ## [0.127.26] - 2026-11-20
 
@@ -265,6 +277,7 @@ All notable changes to RayRAG are documented in this file.
   real `.doc-table .file-check` controls (row select and select-all) at 18px with a
   visible focus ring and a wider select column.
 - Browser verification found the gap: 17 controls measured 0px before the fix.
+- Tests: 2583 passed / 0 failed / 34 ignored.
 
 ## [0.127.25] - 2026-11-20
 
@@ -296,6 +309,7 @@ All notable changes to RayRAG are documented in this file.
   split view: the stored original file is rendered on the left and the parsed chunks are
   listed on the right with token counts and keywords/questions.
 - Added tests for the memory-derived budget and unchanged-file metadata.
+- Tests: 2583 passed / 0 failed / 34 ignored.
 
 ## [0.127.24] - 2026-11-20
 
@@ -306,6 +320,7 @@ All notable changes to RayRAG are documented in this file.
   reliable than last-modified (coarse timestamps, servers that omit `getlastmodified`).
   Missing ETags still fall back to size + last-modified, and missing both still downloads.
 - Added a PROPFIND ETag parsing test.
+- Tests: 2580 passed / 0 failed / 34 ignored.
 
 ## [0.127.23] - 2026-11-20
 
@@ -321,6 +336,7 @@ All notable changes to RayRAG are documented in this file.
 - The sync result's `count`/log total now includes pre-skipped unchanged files; prune
   protection still sees every considered source key.
 - Added a test that a second batch with known versions skips all downloads.
+- Tests: 2579 passed / 0 failed / 34 ignored.
 
 ## [0.127.22] - 2026-11-20
 
@@ -330,6 +346,7 @@ All notable changes to RayRAG are documented in this file.
   `schedule`, `reschedule` or `connect`. Scheduled refreshes are visible as
   `sync (auto)` and link-triggered runs as `sync (linked)` in the detail page's log table.
 - The stale comment claiming RayRAG has no background connector scheduler was corrected.
+- Tests: 2578 passed / 0 failed / 34 ignored.
 
 ## [0.127.21] - 2026-11-20
 
@@ -342,6 +359,7 @@ All notable changes to RayRAG are documented in this file.
   Chrome returned `Synced ✓ count 3 · ingested 0 · unchanged 3`, added one sync-log row,
   produced no page exception and had no horizontal overflow at 765px.
 - Added UI regression markers for the hint.
+- Tests: 2578 passed / 0 failed / 34 ignored.
 
 ## [0.127.20] - 2026-11-20
 
@@ -354,6 +372,7 @@ All notable changes to RayRAG are documented in this file.
 - When the source has no linked-knowledge-base sync log yet, it explains that the source
   must be linked in dataset configuration instead of pretending a sync succeeded.
 - Added UI regression markers for the real sync path.
+- Tests: 2578 passed / 0 failed / 34 ignored.
 
 ## [0.127.19] - 2026-11-20
 
@@ -367,6 +386,7 @@ All notable changes to RayRAG are documented in this file.
   apply. Failures are logged with source/KB ids and are recorded in the normal sync log.
 - A source already marked `running` is skipped, so a slow sync is never overlapped.
 - Added unit tests for the due/interval/disabled rules and recent-log deferral.
+- Tests: 2578 passed / 0 failed / 34 ignored.
 
 ## [0.127.18] - 2026-11-20
 
@@ -381,6 +401,7 @@ All notable changes to RayRAG are documented in this file.
   batch byte budget) skip pruning and say so, so a capped sync cannot mass-delete documents.
 - Documents created before this release have no `source_uri`; delete them once to migrate.
 - Added batch listing/truncation tests and updated the data-source UI regression test.
+- Tests: 2577 passed / 0 failed / 34 ignored.
 
 ## [0.127.17] - 2026-11-20
 
@@ -391,6 +412,7 @@ All notable changes to RayRAG are documented in this file.
   of only a failure count. Operators can see that a re-sync skipped unchanged files and
   why individual files were rejected.
 - Added markers to the data-source UI regression test.
+- Tests: 2576 passed / 0 failed / 34 ignored.
 
 ## [0.127.16] - 2026-11-20
 
@@ -405,6 +427,7 @@ All notable changes to RayRAG are documented in this file.
   not duplicated by a re-sync; delete their old rows once to migrate to location-aware
   replacement.
 - Added a folder-identity test for the source parent helper.
+- Tests: 2576 passed / 0 failed / 34 ignored.
 
 ## [0.127.15] - 2026-11-20
 
@@ -416,6 +439,7 @@ All notable changes to RayRAG are documented in this file.
   PDF/PNG/JPEG/GIF/WebP magic before defaulting to Markdown. This prevents binary files
   renamed or listed without a suffix from being parsed as text.
 - Added tests for href suffix fallback and magic-byte extension detection.
+- Tests: 2575 passed / 0 failed / 34 ignored.
 
 ## [0.127.14] - 2026-11-20
 
@@ -428,6 +452,7 @@ All notable changes to RayRAG are documented in this file.
 - The data source `timeout_secs` field is now enforced around the whole connector run
   (default 1740s, capped at 2h); a timed-out sync fails with an actionable message and is
   written to the sync log.
+- Tests: 2573 passed / 0 failed / 34 ignored.
 
 ## [0.127.13] - 2026-11-20
 
@@ -440,6 +465,7 @@ All notable changes to RayRAG are documented in this file.
 - A stream that *does* start with a valid zlib header is never retried as raw DEFLATE, so
   genuinely corrupt compressed streams still fail loudly instead of decoding garbage.
 - Added tests for raw-DEFLATE content, leading whitespace, and corrupt-header rejection.
+- Tests: 2571 passed / 0 failed / 34 ignored.
 
 ## [0.127.12] - 2026-11-20
 
@@ -452,6 +478,7 @@ All notable changes to RayRAG are documented in this file.
 - This keeps repeated WebDAV/S3/local syncs stable now that WebDAV recursively visits every
   subfolder.
 - The checked-in fpk/manifest version is bumped with each release, and build-fpk.sh now refuses to package unless it matches Cargo.toml.
+- Tests: 2568 passed / 0 failed / 34 ignored (dedupe verified end-to-end on a live instance; recursive WebDAV + parse + KB sync also verified end-to-end).
 
 ## [0.127.11] - 2026-11-20
 
@@ -474,6 +501,7 @@ All notable changes to RayRAG are documented in this file.
   compose `RAYRAG_POSTGRES_REQUIRED_VERSION`, Helm values and docs are updated.
 - Rust stable channel moved from 1.97.0 to **1.100.0** via `rustup update stable`
   (the release/toolchain already pinned 1.100.0; this removes the stale stable channel).
+- Tests: 2568 passed / 0 failed / 34 ignored.
 
 ## [0.127.10] - 2026-11-20
 
@@ -487,6 +515,7 @@ All notable changes to RayRAG are documented in this file.
   "PDF page content could not be inflated: corrupt deflate stream".
 - Added unit and mock-WebDAV end-to-end tests that assert a PDF survives
   fetch → normalize → `ConnectorDoc::bytes()` byte-for-byte.
+- Tests: 2567 passed / 0 failed / 34 ignored.
 
 ## [0.127.9] - 2026-11-20
 
@@ -504,6 +533,7 @@ All notable changes to RayRAG are documented in this file.
   errors. Native tool calling and `chat_raw` answer an explicit unsupported error.
 - Added mocked request/response/SSE tests plus an ignored live DeepSeek Responses test; the
   live check passes through RayRAG's own client.
+- Tests: 2564 passed / 0 failed / 34 ignored.
 
 ## [0.127.8] - 2026-11-20
 
@@ -519,6 +549,7 @@ All notable changes to RayRAG are documented in this file.
 - Verified the real DeepSeek key through RayRAG's own clients: all five live checks pass.
   The key is read from the process environment only and is never written to the repo,
   FPK or logs.
+- Tests: 2562 passed / 0 failed / 33 ignored.
 
 ## [0.127.7] - 2026-11-20
 
@@ -541,6 +572,7 @@ All notable changes to RayRAG are documented in this file.
   suite passes on the new compiler.
 - FPK packages are produced with **fnpack 1.3.3** (the 2026-11-19 release, which adds FPK
   signing support); unsigned local sideload remains supported.
+- Tests: 2562 passed / 0 failed / 28 ignored.
 
 ## [0.127.6] - 2026-11-20
 
@@ -554,6 +586,7 @@ All notable changes to RayRAG are documented in this file.
   known-account backdoor and restores the documented first-run flow.
 - The benchmark command now requires an explicit `--password`; the admin variables are
   removed from the environment template and user documentation.
+- Tests: 2559 passed / 0 failed / 28 ignored.
 
 ## [0.127.5] - 2026-11-20
 
@@ -566,6 +599,7 @@ All notable changes to RayRAG are documented in this file.
   provider pixels. Unloadable PDFs keep the OCR text and log a position warning.
 - Apply the same scaling to text, table and image-block tags, with lower-bound
   clamping matching upstream.
+- Tests: 2558 passed / 0 failed / 28 ignored.
 
 ## [0.127.4] - 2026-11-20
 
@@ -581,6 +615,7 @@ All notable changes to RayRAG are documented in this file.
   `query.text`/`passages` request shape, `rankings`+`logit` response, and the
   `nvidia/rerank-qa-mistral-4b` model-name remap.
 - Missing, short, duplicate or non-finite scores fail with provider/model guidance.
+- Tests: 2556 passed / 0 failed / 28 ignored.
 
 ## [0.127.3] - 2026-11-20
 
@@ -593,6 +628,7 @@ All notable changes to RayRAG are documented in this file.
   is XLS, and anything else is converted from CSV.
 - Route `application/vnd.ms-excel` through ingestion, parser dispatch and row counting;
   undecodable binaries keep the repair/re-upload guidance.
+- Tests: 2552 passed / 0 failed / 28 ignored.
 
 ## [0.127.2] - 2026-11-20
 
@@ -606,6 +642,7 @@ All notable changes to RayRAG are documented in this file.
 - Decode CSV and plain text with RAGFlow's BOM precedence: UTF-32 BE/LE, UTF-16 BE/LE, UTF-8
   BOM, then plain UTF-8. Invalid bytes return re-upload guidance instead of replacement
   characters.
+- Tests: 2549 passed / 0 failed / 28 ignored.
 
 ## [0.127.1] - 2026-11-20
 
@@ -630,6 +667,7 @@ All notable changes to RayRAG are documented in this file.
 - Reject a missing `ID` operator, unterminated literal strings and malformed image
   dictionaries with page/Form context instead of silently losing following text.
 - Apply the same sanitization to the native, Docling and MinerU local fallbacks.
+- Tests: 2543 passed / 0 failed / 28 ignored.
 
 ## [0.126.29] - 2026-11-19
 
@@ -912,6 +950,7 @@ All notable changes to RayRAG are documented in this file.
 - Delete now opens `adminDeleteUserModal` showing the account email, a permanent-removal
   warning and an inline error line; it redirects to `/admin/users` only on success.
 - New localized `Delete user` / warning strings so the label-backlog test stays at zero.
+- Tests: 2377 passed / 0 failed / 27 ignored.
 
 ## [0.124.0] - 2026-11-17
 
@@ -924,6 +963,7 @@ All notable changes to RayRAG are documented in this file.
   warning and an inline error line. It still deletes through the collection route
   (`DELETE /api/v1/datasets` with `{ids:[…]}`) and reloads only on success.
 - New localized title/warning strings; the KB page test also checks inline-script balance.
+- Tests: 2377 passed / 0 failed / 27 ignored.
 
 ## [0.123.0] - 2026-11-17
 
@@ -934,6 +974,7 @@ All notable changes to RayRAG are documented in this file.
 - It now opens `clearChatModal` with the irreversible-action warning and an inline error
   line; the confirm button posts to `/conversations/{id}/clear` and reloads only on success.
 - New localized `Clear conversation` / warning strings.
+- Tests: 2377 passed / 0 failed / 27 ignored.
 
 ## [0.122.0] - 2026-11-17
 
@@ -944,6 +985,7 @@ All notable changes to RayRAG are documented in this file.
 - The delete dialog now has `dsDeleteStatus`; a failed delete keeps the dialog open with the
   server message. The legacy table's `delDs` delegates to the grouped dialog instead of
   `confirm`.
+- Tests: 2377 passed / 0 failed / 27 ignored.
 
 ## [0.121.0] - 2026-11-17
 
@@ -955,6 +997,7 @@ All notable changes to RayRAG are documented in this file.
   cannot be undone; the confirm button reports failures inline and reloads the list only on
   success.
 - Generate and load errors now render in a `settingKeyStatus` line instead of alerts.
+- Tests: 2377 passed / 0 failed / 27 ignored.
 
 ## [0.120.0] - 2026-11-17
 
@@ -966,6 +1009,7 @@ All notable changes to RayRAG are documented in this file.
 - It now opens `docNoticeModal` with the localized title and message, and a failed
   ingestion query is caught and shown in the same notice instead of being dropped.
 - New localized `No ingestion log yet` / `Error` strings.
+- Tests: 2377 passed / 0 failed / 27 ignored.
 
 ## [0.119.0] - 2026-11-17
 
@@ -978,6 +1022,7 @@ All notable changes to RayRAG are documented in this file.
   cannot be undone; Reparse opens a card naming the document with the reparse prompt. Both
   report server errors inline and refresh the table only after success.
 - The same replacement is applied to the legacy dataset page.
+- Tests: 2377 passed / 0 failed / 27 ignored.
 
 ## [0.118.0] - 2026-11-17
 
@@ -991,6 +1036,7 @@ All notable changes to RayRAG are documented in this file.
   page-level status line and close only on success.
 - `dsTagRequest` now returns a promise so failures keep the dialog open; new
   Cancel/Save/Delete-tag/confirm labels.
+- Tests: 2377 passed / 0 failed / 27 ignored.
 
 ## [0.117.0] - 2026-11-17
 
@@ -1003,6 +1049,7 @@ All notable changes to RayRAG are documented in this file.
   inline server-error line; Delete opens a confirmation card with the dataset id and an
   inline error line. Both refresh the dashboard section on success.
 - New localized Cancel/Save/Delete/failure strings for the home dataset menu.
+- Tests: 2377 passed / 0 failed / 27 ignored.
 
 ## [0.116.0] - 2026-11-17
 
@@ -1013,6 +1060,7 @@ All notable changes to RayRAG are documented in this file.
 - Rename now opens a card with the current name pre-filled, a required-name check and an
   inline server-error line; Save reloads the listing on success.
 - New localized Cancel/Save/failure strings for the files page.
+- Tests: 2377 passed / 0 failed / 27 ignored.
 
 ## [0.115.0] - 2026-11-17
 
@@ -1027,6 +1075,7 @@ All notable changes to RayRAG are documented in this file.
   inline server-error line; Save reloads the table on success.
 - New localized titles and labels; the duplicate prompt-based `renameDoc` in the document
   page script was removed.
+- Tests: 2377 passed / 0 failed / 27 ignored.
 
 ## [0.114.0] - 2026-11-17
 
@@ -1041,6 +1090,7 @@ All notable changes to RayRAG are documented in this file.
   card naming the conversation and an inline server-error line. Every handler reports
   failures in the dialog instead of `alert`.
 - New localized strings for the delete dialog.
+- Tests: 2377 passed / 0 failed / 27 ignored.
 
 ## [0.113.0] - 2026-11-17
 
@@ -1056,6 +1106,7 @@ All notable changes to RayRAG are documented in this file.
   HTTP errors continue to display the JSON `message` or `HTTP <status>`.
 - Regression test now checks that the bubble creation precedes the stream request, occurs
   once, and that the catch clears `#streamStatus`.
+- Tests: 2376 passed / 0 failed / 27 ignored.
 
 ## [0.112.0] - 2026-11-17
 
@@ -1070,6 +1121,7 @@ All notable changes to RayRAG are documented in this file.
 - **Rename conversation** now opens a modal with the current name pre-filled, a required
   name check and an inline server-error line; Save reloads only on success.
 - New localized strings for both dialogs.
+- Tests: 2376 passed / 0 failed / 27 ignored.
 
 ## [0.111.0] - 2026-11-17
 
@@ -1085,6 +1137,7 @@ All notable changes to RayRAG are documented in this file.
   dynamically inserted rows alike.
 - The stop notice is now plain `Stopped` instead of `⏹ Stopped`, and `copyMsg` no longer
   needs to strip emoji from the copied text.
+- Tests: 2376 passed / 0 failed / 27 ignored.
 
 ## [0.110.0] - 2026-11-17
 
@@ -1099,6 +1152,7 @@ All notable changes to RayRAG are documented in this file.
   picker list in the error colour and suppresses the empty state until a later successful
   load clears the error.
 - Partial success still shows the documents that loaded; the error row explains the rest.
+- Tests: 2376 passed / 0 failed / 27 ignored.
 
 ## [0.109.0] - 2026-11-17
 
@@ -1113,6 +1167,7 @@ All notable changes to RayRAG are documented in this file.
   error colour via `textContent`, so provider failures are visible and safe from HTML
   injection.
 - Abort/stop behaviour is unchanged.
+- Tests: 2376 passed / 0 failed / 27 ignored.
 
 ## [0.108.0] - 2026-11-17
 
@@ -1127,6 +1182,7 @@ All notable changes to RayRAG are documented in this file.
 - Added the `Failed to load documents` / `加载文档失败` label.
 - Verified the rendered dataset page's inline scripts with `node --check`, and added
   regression assertions for the error branch.
+- Tests: 2376 passed / 0 failed / 27 ignored.
 
 ## [0.107.0] - 2026-11-17
 
@@ -1143,6 +1199,7 @@ All notable changes to RayRAG are documented in this file.
 - **Verified in the browser.** Forcing `/api/v1/memories` to return 500 with
   `simulated memory failure` renders that message in the list with zero page errors;
   the normal memory list is unchanged.
+- Tests: 2376 passed / 0 failed / 27 ignored.
 
 ## [0.106.0] - 2026-11-16
 
@@ -1158,6 +1215,7 @@ All notable changes to RayRAG are documented in this file.
 - **Verified in the browser.** Simulating a 500 from `/api/v1/files` renders
   `simulated load failure` in the table with zero page errors; the normal listing path is
   unchanged. A syntax check of every inline script on `/files` passes.
+- Tests: 2376 passed / 0 failed / 27 ignored.
 
 ## [0.105.0] - 2026-11-16
 
@@ -1175,6 +1233,7 @@ All notable changes to RayRAG are documented in this file.
   `Export MD` / `导出 Markdown`, so the label resolves consistently.
 - Verified in the browser: a search with no embedding model now displays
   `Embedding is not configured` instead of `未查到结果`; no page errors.
+- Tests: 2376 passed / 0 failed / 27 ignored.
 
 ## [0.104.0] - 2026-11-16
 
@@ -1195,6 +1254,7 @@ All notable changes to RayRAG are documented in this file.
 - **Audit.** 19 main routes at 1440 and 390 px report zero page errors, zero page-level
   horizontal overflow and no visible emoji; the chat detail page is clean at both widths and
   keeps its responsive stacked layout.
+- Tests: 2376 passed / 0 failed / 27 ignored.
 
 ## [0.103.0] - 2026-11-16
 
@@ -1216,6 +1276,7 @@ All notable changes to RayRAG are documented in this file.
   composer only.
 - **Responsive chat.** The 240 px sidebar and message column stack below 860 px; the chat
   page has no horizontal overflow at 390 px.
+- Tests: 2376 passed / 0 failed / 27 ignored.
 
 ## [0.102.0] - 2026-11-16
 
@@ -1235,6 +1296,7 @@ All notable changes to RayRAG are documented in this file.
 - **Verified against a live fnOS WebDAV server.** The reported source now passes the
   connection probe and lists 40 files from the target folder; the new unit tests cover
   fallback listing, file download and the missing-path error.
+- Tests: 2376 passed / 0 failed / 27 ignored.
 
 ## [0.101.0] - 2026-11-14
 
@@ -1256,6 +1318,7 @@ All notable changes to RayRAG are documented in this file.
 - **Audit evidence.** 19 main routes were rendered at 1440 and 390 px with zero page
   errors and zero page-level horizontal overflow; after the fixes, the re-audited target
   pages report no emoji glyphs.
+- Tests: 2373 passed / 0 failed / 27 ignored.
 
 ## [0.100.0] - 2026-11-14
 
@@ -1279,6 +1342,7 @@ All notable changes to RayRAG are documented in this file.
   pre-created, the first registration returns `role: admin`, the setup page offers 37
   fields, saving writes `.env`, applies live settings, marks `RAYRAG_SETUP_COMPLETED=1`,
   and `needs_setup` turns false.
+- Tests: 2373 passed / 0 failed / 27 ignored.
 
 ## [0.99.0] - 2026-11-14
 
@@ -1295,6 +1359,7 @@ All notable changes to RayRAG are documented in this file.
   row renders as one aligned line again.
 - **Touch/narrow screens.** Row action buttons were hover-only and therefore invisible on
   phones and touch devices; they are always visible at ≤860 px and when `hover:none`.
+- Tests: 2373 passed / 0 failed / 27 ignored.
 
 ## [0.98.0] - 2026-11-14
 
@@ -1319,6 +1384,7 @@ All notable changes to RayRAG are documented in this file.
   callers that need explicit Fetch requests.
 - **Docs.** `.env.example` and the internal parameter registry list `DEEPSEEK_API_KEY`,
   `RAYRAG_OCR_API_KEY`, `RAYRAG_OCR_RICH_LAYOUT` and the DeepSeek base-URL usage.
+- Tests: 2372 passed / 0 failed / 27 ignored.
 
 ## [0.97.0] - 2026-11-14
 
@@ -1341,6 +1407,7 @@ All notable changes to RayRAG are documented in this file.
   instead of an empty or "(empty response)" answer.
 - **Docs.** README/README.zh-CN, `.env.example`, and the internal parameter registry
   document the new model names and switches.
+- Tests: 2367 passed / 0 failed / 27 ignored.
 
 ## [0.96.0] - 2026-11-14
 
@@ -1476,6 +1543,7 @@ All notable changes to RayRAG are documented in this file.
   switching back to Built-in clears `pipeline_id` as before.
 - The Configuration pipeline picker matches a saved compact id against the dashed ids returned
   by /api/v1/agents, so the previously saved pipeline stays selected when the page reloads.
+- Tests: dashed-to-compact normalization (and pass-through of compact/invalid ids) is covered.
 ## [0.89.0] - 2026-11-12
 
 ### Chat/search list cards after creation; memory dialog labels
@@ -1520,6 +1588,8 @@ All notable changes to RayRAG are documented in this file.
 - Verified in the browser at 1440 px: row visibility switches both ways with no JS exceptions;
   creating a dataflow canvas makes it appear in the picker by title and the selected value is
   sent as parse_type=2 + pipeline_id by Save (existing saveConfig path).
+- Tests: configuration markup and the pipeline-options loader are asserted in the dataset page
+  test.
 ## [0.86.0] - 2026-11-12
 
 ### Local OpenAI-compatible models are never cut off by the remote timeout
@@ -1534,6 +1604,7 @@ All notable changes to RayRAG are documented in this file.
   requests now give up after the documented model budget instead of waiting two hours.
 - `.env.example`, the first-run guide field help, README (EN/zh-CN) and the internal
   parameter registry document the exemption; the timeout value itself is unchanged.
+- Tests: local/remote endpoint classification and timeout selection are covered.
 - **Create-dialog Parse type fix.** The hidden Pipeline block was still visible because the
   component rule (.ds-field display:flex) overrode the HTML hidden attribute: Built-in mode now
   really shows only the Chunking method select, Pipeline mode shows only the pipeline picker,
@@ -1557,6 +1628,8 @@ All notable changes to RayRAG are documented in this file.
   and the LAN self-signed HTTPS source connected successfully.
 - **Package icon.** The fnOS FPK icons now use the RayRAG header brand mark (64/256 px, 8-bit
   sRGB) instead of the generated letter tile.
+- Tests: PROPFIND namespace parsing and WebDAV href resolution for root/directory targets are
+  covered.
 ## [0.84.0] - 2026-11-11
 
 ### First-registration administrator, database credential sync and reported UI fixes
@@ -1586,6 +1659,8 @@ All notable changes to RayRAG are documented in this file.
 - **fnOS package.** The package config step no longer reapplies an install-time database
   password after the first administrator exists, so it cannot desynchronise the managed
   credential.
+- Tests: first-registration role, built-in pipeline normalization and LAN WebDAV host
+  detection are covered; the full suite is green.
 ## [0.83.0] - 2026-11-11
 
 ### Page rank slider, FPK update notes and App Center material
@@ -1597,6 +1672,8 @@ All notable changes to RayRAG are documented in this file.
   App Center update dialog explains the release; maintainer and distributor stay Junesgone.
 - **App Center material.** fpk/appstore/ ships the store listing copy (English and Chinese)
   and the screenshots captured from the running NAS app for submission.
+- Tests: the configuration contract test now asserts the page-rank slider/number pair;
+  dataset suite 18/18 green.
 ## [0.82.0] - 2026-11-11
 
 ### Dataset Logs tab parity and FPK developer identity
@@ -1612,6 +1689,8 @@ All notable changes to RayRAG are documented in this file.
   pipeline runs; a paginated footer reports the log total.
 - **FPK manifest.** The package manifest now lists Junesgone as both developer (maintainer)
   and publisher (distributor), matching the project owner.
+- Tests: dataset suite 18/18, including the updated Logs contract test (status badge helper,
+  stat grid, tabs, filter and process log modal).
 ## [0.81.0] - 2026-11-11
 
 ### Retrieval testing tab matches the upstream two-column workflow
@@ -1627,6 +1706,8 @@ All notable changes to RayRAG are documented in this file.
   after a run; a run whose request fails shows the server message as an error paragraph.
 - **Localization.** knowledgeDetails.testSetting / testResults / testingLabel / similarity
   labels were added for both English and Chinese.
+- Tests: the dataset testing-tab contract test now covers the two-column card, total, filter,
+  inline validation, similarity labels and render/filter plumbing; dataset suite 18/18 green.
 ## [0.80.0] - 2026-11-11
 
 ### Dataset document editors: metadata and parser change
@@ -1642,6 +1723,8 @@ All notable changes to RayRAG are documented in this file.
   fourteen legacy chunk methods, writing PATCH /api/v1/datasets/{id}/documents/{id} with
   chunk_method. The parse status and reparse control moved to the separate run-status column
   with an empty header, so the table now has upstream's nine columns.
+- Tests: a new dataset UI contract test covers both editors, and the dataset suite runs
+  18/18 green.
 ## [0.79.0] - 2026-11-11
 
 ### Dataset Files table parity + fnOS first-run verification
@@ -4323,7 +4406,7 @@ track (`token_num`, `thumbnail`).
 ### The API guide's field names, added systematically
 
 `document_count` in the last release was found by accident. To stop relying on accidents, there is now
-内部辅助脚本: it holds the field names the guide documents for each object — dataset,
+`scripts/api-field-audit.py`: it holds the field names the guide documents for each object — dataset,
 document, chunk, chat, session, file, agent, memory, search app, retrieval — fetches real responses from a
 running instance, and reports every documented key that is absent. It reports rather than fixes, so the
 mapping stays a human decision, and an object with no rows is listed as "no data" instead of a false alarm.
@@ -4468,7 +4551,7 @@ from now on.
 
 - **首次登录账号改为 `admin` / `admin` / `admin`（用户名、昵称、密码），不再生成随机密码、也不再因"密码不够 12 位"而拒绝启动**（用户要求）。此前 bootstrap 要求必须设置 `RAYRAG_ADMIN_PASSWORD` 且长度 ≥12，否则**直接启动失败**；现在未配置时就用 `admin`，`RAYRAG_ADMIN_EMAIL` 默认也从 `admin@rayrag.local` 改为 **`admin`**，并新增 `RAYRAG_ADMIN_NICKNAME`（默认 `admin`）三个都可被环境变量覆盖。
 - **仍然"不静默"**：启动时会用一行 WARN 说明"首个账号用的是默认密码 admin，请在登录后修改（Profile → password），或在首次启动前设置 RAYRAG_ADMIN_PASSWORD"；`RAYRAG_ADMIN_PASSWORD` 被显式设置为 **空字符串**时**报错拒绝**（避免出现空密码账号）。
-- **验证（端到端，非单测）**：新增的隔离自检 内部辅助脚本 现在**不预设任何管理员变量**，跑的正是全新部署的默认路径——实跑结果：`fresh login: OK (default admin/admin account)`；同一次运行里 env 写回也仍然通过。
+- **验证（端到端，非单测）**：新增的隔离自检 `scripts/setup-writeback-e2e.sh` 现在**不预设任何管理员变量**，跑的正是全新部署的默认路径——实跑结果：`fresh login: OK (default admin/admin account)`；同一次运行里 env 写回也仍然通过。
 - 文档同步：README 的登录说明与 `.env.example` 的「First login」段落都改为 admin/admin/admin，并说明可覆盖。
 
 ## [0.9.9] - 2026-10-02
@@ -5237,7 +5320,7 @@ from now on.
 
 ### Notes
 
-- 浏览器：Chrome/CDP 恢复尝试后仍为 `phase:blocked`（应用提示需在 App Center 停止再启动），
+- 浏览器：fnOS Chrome/CDP 恢复尝试后仍为 `phase:blocked`（应用提示需在 App Center 停止再启动），
   本轮 `/search/{id}` 与 chunk 详情真点遍历顺延；登记表轮不依赖浏览器。
 - 全量 `cargo test --locked --offline --lib` **1639 passed / 0 failed / 27 ignored**；`cargo fmt --check` 干净。
 
@@ -5247,7 +5330,7 @@ from now on.
 
 ### Added
 
-- **模板同步工具** 内部辅助脚本（`--check/--write`）：从固定参考树读取
+- **模板同步工具** `scripts/sync-agent-templates.py`（`--check/--write`）：从固定参考树读取
   `agent/templates/*.json` 与迁移后的 `internal/ingestion/pipeline/template/*.json`，一次生成
   fixtures（上游 `dsl` 紧凑 JSON）、`meta.json`（en/zh 标题/描述/canvas 元数据）与
   `src/agent_templates.rs` 的清单、`dataflow_canvas` 分类和计数。
@@ -5302,7 +5385,7 @@ from now on.
 
 ### Notes
 
-- 真浏览器（CDP，Chrome）探针 内部 UI 遍历脚本（`compilation-template-edit-cdp.mjs`：
+- 真浏览器（CDP，fnOS Chrome）探针 内部 UI 遍历脚本（`compilation-template-edit-cdp.mjs`：
   登录 → 创建（kind/global_rules/rechunk/rechunk_rules 持久化）→ 编辑回填 → 删除清理 →
   `/agents` 入口 Add/卡片/删除全链路 **PASS**。
 - 台账：edit-next 的 11 个核心文件由 `unmapped` 升为 `partial`（外壳/表单/保存/回填已实现，
@@ -5321,7 +5404,7 @@ from now on.
   **73 提供商 / 1008 模型**；`src/api/tenant_models.rs` 内嵌的 `RAGFLOW_LLM_FACTORIES_JSON`
   （Available 网格与工厂回退的数据源）重新生成为 **74 工厂 / 1009 行**。新增提供商：
   FunASR、GreenPT、Hubris、MWS、Mistral OCR、Synthorai、aimlapi.com、llmman。
-- **同步工具 内部辅助脚本**：从固定参考树一次生成两份产物，
+- **同步工具 `scripts/sync-llm-factories.py`**：从固定参考树一次生成两份产物，
   `--check` 可在 v0.26.4 快照上逐字段回归（两份产物都完全一致）；已有模型保留其类型，
   新模型按"含 chat 取 chat、否则取首类型"补齐，多类型列表原样保留。
 
@@ -5350,11 +5433,11 @@ from now on.
 
 - **对标基线升级到 RAGFlow v0.27.2**（固定提交 `a024bea0cd93f39e6652a42bf84dd20c55bc560b`）：
   上游新增 1845 个文件、删除 309 个，4132 个既有文件中 2222 个内容发生变化。新台账
-  `内部对标台账`（v0.26.4 台账归档保留）。
+  `docs/ragflow-v0.27.2-coverage.md`（v0.26.4 台账归档保留）。
 - **覆盖率门禁支持 `--migrate`**：按路径继承旧状态；内容变化且已审计的行标注
   `[v0.27.2 content changed: re-audit]`（本轮 515 行）；上游新增文件按既有引用规则归档
   （内部 Go / 测试 / 文档 / 仓库自动化，共 1353 个），其余 492 个产品文件标为 `unmapped`
-  等待逐文件审计；同时生成增量清单 `内部对标台账`。
+  等待逐文件审计；同时生成增量清单 `docs/ragflow-v0.27.2-delta.md`。
 - 重新生成逐文件工作清单（Python/TS/TSX 共 2722 个源文件）与文件指纹清单（5976 个文件）。
 
 ### Notes
@@ -7008,7 +7091,8 @@ from now on.
 ### Added
 
 - **Apache-2.0 `LICENSE` 与 `NOTICE`**：注明对标来源 RAGFlow v0.26.4 与第三方资产许可。
-- **净化发布流程**：当前提交导出为净化快照（剔除开发脚本、抓取产物、模型权重与运行时状态，并对机器标识脱敏）后推送 GitHub；脚本保留在内部工程仓。
+- **`scripts/publish-github.sh`**：把当前提交导出为净化快照（剔除探针脚本、UI 抓取、`node_modules`、
+  模型权重、运行时状态）并做确定性脱敏后推送到 GitHub，推送前有守卫扫描。
 
 ### Changed
 
@@ -7389,7 +7473,7 @@ from now on.
   由 `__SAPP__.rerank_id` 反向播种。该选择器保持表单本地态（上游
   react-hook-form 语义），不写租户默认模型。
 - **RAGFlow UI 遍历工具链**（内部 UI 遍历脚本（``）：`ragflow-auth-cdp.mjs`
-  （翻转卡片登录/注册自举，会话持久化于 Chrome profile）、
+  （翻转卡片登录/注册自举，会话持久化于 fnOS Chrome profile）、
   `ragflow-ui-dump.mjs`（逐路由导出按钮/链接/字段/表头/标签页 + 截图，产物
   内部 UI 遍历记录（ragflow-pages/`），作为 RayRAG UI 一比一对标的结构化基准。
 
@@ -7430,7 +7514,7 @@ from now on.
   deepinfra/gpustack 等），共 556 个模型条目；`model_meta.rs` 注册表
   `PROVIDER_MODEL_FIXTURES` 扩至 60 条 + `resolve_model_factory` 别名
   从 11 扩至 50（覆盖 Claude/混元/讯飞/百川/Azure/Bedrock/华为云等）。
-- **RAGFlow Web UI 清单** `内部界面盘点`：真实浏览器
+- **RAGFlow Web UI 清单** `docs/ragflow-ui-inventory.md`：真实浏览器
   登录逐页实测，记录 15+ 页面层级的按钮/路由（登录/注册/首页/Dataset 列表/
   知识库 4 Tab/Chat/Search/Agent/Memory/File/用户设置 8 菜单 + 35 数据源 +
   Model providers 类型筛选 + API 文档页）——RayRAG 前端对齐的 checklist。
@@ -7500,7 +7584,7 @@ from now on.
 
 ### Changed
 
-- **覆盖矩阵最终收尾**（纯文档，`内部对标台账`）：矩阵终态
+- **覆盖矩阵最终收尾**（纯文档，`docs/ragflow-v0.26.4-coverage.md`）：矩阵终态
   aligned 128 / full 541 / partial 18 / replaced 92 / N/A 61 / reference 3601 /
   unmapped 0（4441 文件快照）。摘要表按清单逐行重算，与库存行完全一致。
   agent/sandbox 22 个非代码文件、deepdoc/README×2、deepdoc/__init__.py、
@@ -7562,7 +7646,7 @@ from now on.
   task 服务（SyncLog 单调计数 + 100 条裁剪 + resume 状态机）。
 - **MCP 客户端**（`src/mcp_client.rs`）：SSE + Streamable HTTP 传输、
   initialize/list_tools/call_tool。
-- **Helm chart**（Kubernetes 部署脚手架 新建）：最小可用 chart（deployment/service/configmap，
+- **Helm chart**（`helm/` 新建）：最小可用 chart（deployment/service/configmap，
   镜像 rayrag:local，9390→8080，外部 PG18 依赖说明）；helm lint/template 通过。
 
 ## [0.2.2] — 2026-08-05

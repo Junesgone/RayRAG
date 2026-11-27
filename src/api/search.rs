@@ -659,4 +659,37 @@ pub async fn dify_retrieval(
     .into_response()
 }
 
+#[cfg(test)]
+mod search_request_schema_tests {
+    use super::*;
 
+    #[test]
+    fn defaults_match_ragflow_single_dataset_request() {
+        let request: SearchRequest =
+            serde_json::from_value(serde_json::json!({"question": "q"})).unwrap();
+        assert_eq!(request.top_k, 10);
+        assert_eq!(request.page, 1);
+        assert!(request.cross_languages.is_empty());
+        assert!(!request.use_kg);
+        assert!(!request.keyword);
+        assert_eq!(request.size, 0);
+        assert!(request.similarity_threshold.is_none());
+        assert!(request.vector_similarity_weight.is_none());
+    }
+
+    #[test]
+    fn new_fields_parse_and_roundtrip() {
+        let value = serde_json::json!({
+            "question": "水质",
+            "cross_languages": ["en", "ja"],
+            "use_kg": true,
+            "keyword": true,
+            "size": 30,
+        });
+        let request: SearchRequest = serde_json::from_value(value).unwrap();
+        assert_eq!(request.cross_languages, vec!["en", "ja"]);
+        assert!(request.use_kg);
+        assert!(request.keyword);
+        assert_eq!(request.size, 30);
+    }
+}

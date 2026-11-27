@@ -81,8 +81,77 @@ pub fn layout_recognizer_name(layout_recognizer: Option<String>) -> String {
         Some("true") | Some("True") => "DeepDOC".to_string(),
         Some("false") | Some("False") => "Plain Text".to_string(),
         Some(other) => other.trim().to_lowercase(),
-        None => "deepdoc".to_string(),
+        // RayRAG defaults to Docling for new knowledge bases; an explicit
+        // `true`/`false` still follows RAGFlow's boolean compatibility.
+        None => "docling".to_string(),
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn normalize_plain_value_passes_through() {
+        let (layout, model) = normalize_layout_recognizer(Some("DeepDOC"));
+        assert_eq!(layout.as_deref(), Some("DeepDOC"));
+        assert!(model.is_none());
+    }
+
+    #[test]
+    fn normalize_mineru_suffix_splits_model_name() {
+        let (layout, model) = normalize_layout_recognizer(Some("Qwen2-VL@mineru"));
+        assert_eq!(layout.as_deref(), Some("MinerU"));
+        assert_eq!(model.as_deref(), Some("Qwen2-VL"));
+    }
+
+    #[test]
+    fn normalize_paddleocr_suffix_splits_model_name() {
+        let (layout, model) = normalize_layout_recognizer(Some("PaddleOCR-VL@PaddleOCR"));
+        assert_eq!(layout.as_deref(), Some("PaddleOCR"));
+        assert_eq!(model.as_deref(), Some("PaddleOCR-VL"));
+    }
+
+    #[test]
+    fn normalize_opendataloader_suffix_splits_model_name() {
+        let (layout, model) = normalize_layout_recognizer(Some("my-model@OpenDataLoader"));
+        assert_eq!(layout.as_deref(), Some("OpenDataLoader"));
+        assert_eq!(model.as_deref(), Some("my-model"));
+    }
+
+    #[test]
+    fn normalize_monkeyocrv2_suffix_splits_model_name() {
+        let (layout, model) = normalize_layout_recognizer(Some("MonkeyOCRv2@monkeyocrv2"));
+        assert_eq!(layout.as_deref(), Some("MonkeyOCRv2"));
+        assert_eq!(model.as_deref(), Some("MonkeyOCRv2"));
+    }
+
+    #[test]
+    fn normalize_mistral_ocr_suffix_splits_model_name() {
+        let (layout, model) =
+            normalize_layout_recognizer(Some("mistral-ocr-latest@primary@Mistral OCR"));
+        assert_eq!(layout.as_deref(), Some("Mistral OCR"));
+        assert_eq!(model.as_deref(), Some("mistral-ocr-latest@primary"));
+    }
+
+    #[test]
+    fn normalize_none_returns_none() {
+        let (layout, model) = normalize_layout_recognizer(None);
+        assert!(layout.is_none());
+        assert!(model.is_none());
+    }
+
+    #[test]
+    fn layout_name_from_bool_strings() {
+        assert_eq!(layout_recognizer_name(Some("true".to_string())), "DeepDOC");
+        assert_eq!(
+            layout_recognizer_name(Some("false".to_string())),
+            "Plain Text"
+        );
+        assert_eq!(
+            layout_recognizer_name(Some("Plain Text".to_string())),
+            "plain text"
+        );
+        assert_eq!(layout_recognizer_name(None), "docling");
+    }
+}

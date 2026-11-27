@@ -162,4 +162,77 @@ pub fn parse_tag_file(filename: &str, text: &str) -> Result<Vec<TagPair>, String
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn be_adoc_tags_splits_and_normalizes() {
+        assert_eq!(
+            be_adoc_tags("x", " 水产 , 水质.management ,,"),
+            vec!["水产".to_string(), "水质_management".to_string()]
+        );
+        assert!(be_adoc_tags("x", " , ").is_empty());
+    }
+
+    #[test]
+    fn tag_doc_fields_carries_tag_kwd() {
+        let m = tag_doc_fields("tags.txt", "水体富营养化", "水质, 藻类", 3);
+        assert_eq!(m.get("docnm_kwd").unwrap(), "tags.txt");
+        assert_eq!(m.get("content_with_weight").unwrap(), "水体富营养化");
+        assert_eq!(m.get("tag_kwd").unwrap(), "水质,藻类");
+        assert_eq!(m.get("row_num").unwrap(), "3");
+    }
+
+    #[test]
+    fn detect_delimiter_prefers_tab_on_ties() {
+        assert_eq!(detect_delimiter("a\tb\nc\td\n"), '\t');
+        assert_eq!(detect_delimiter("a,b\nc,d\n"), ',');
+        assert_eq!(detect_delimiter("a\tb\nc,d\n"), '\t');
+    }
+
+    #[test]
+    fn parse_tag_text_closes_pairs_on_two_fields() {
+        let text = "内容1\t标签1,标签2\n续行\n内容2\t标签3";
+        let pairs = parse_tag_text(text, '\t');
+        assert_eq!(pairs.len(), 2);
+        assert_eq!(pairs[0].content, "内容1");
+        assert_eq!(
+            pairs[0].tags,
+            vec!["标签1".to_string(), "标签2".to_string()]
+        );
+        // deformed line joins the NEXT content (content starts empty)
+        assert_eq!(pairs[1].content, "续行\n内容2");
+        assert_eq!(pairs[1].tags, vec!["标签3".to_string()]);
+    }
+
+    #[test]
+    fn parse_tag_csv_drops_empty_fields() {
+        let text = "c1,tag1\nc2,t\n";
+        let pairs = parse_tag_csv(text);
+        assert_eq!(pairs.len(), 2);
+        assert_eq!(pairs[0].content, "c1");
+        assert_eq!(pairs[0].tags, vec!["tag1".to_string()]);
+        assert_eq!(pairs[1].content, "c2");
+        assert_eq!(pairs[1].tags, vec!["t".to_string()]);
+    }
+
+    #[test]
+    fn parse_tag_csv_3_field_line_joins_next_content() {
+        // 3-field row is a deformed line → absorbs into the next content
+        // (mirrors csv.reader row != 2 branch in tag.py)
+        let text = "c1,tag1,tag2\nc2,t\n";
+        let pairs = parse_tag_csv(text);
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].content, "c1,tag1,tag2\nc2");
+        assert_eq!(pairs[0].tags, vec!["t".to_string()]);
+    }
+
+    #[test]
+    fn parse_tag_file_dispatch_rejects_unsupported() {
+        assert!(parse_tag_file("data.pdf", "x").is_err());
+        let pairs = parse_tag_file("tags.txt", "q\ta,b\n").unwrap();
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].tags, vec!["a".to_string(), "b".to_string()]);
+    }
+}

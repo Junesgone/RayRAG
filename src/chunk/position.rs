@@ -68,4 +68,33 @@ fn coordinate(value: &str) -> Option<i32> {
         .map(|value| value as i32)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn extraction_matches_ragflow_page_and_coordinate_projection() {
+        let text = concat!(
+            "one@@1\t10.9\t100.2\t20.8\t40.7##",
+            "two@@2-3\t50.0\t150.0\t60.0\t90.0##"
+        );
+        let metadata = extract(text);
+        assert_eq!(
+            metadata.positions,
+            [
+                [1, 10, 100, 20, 40],
+                [2, 50, 150, 60, 90],
+                [3, 50, 150, 60, 90]
+            ]
+        );
+        assert_eq!(metadata.page_numbers, [1, 2, 3]);
+        assert_eq!(metadata.tops, [20, 60, 60]);
+    }
+
+    #[test]
+    fn removal_accepts_negative_coordinates_that_upstream_does_not_extract() {
+        let text = "visible@@1\t-10.0\t100.0\t-2.0\t40.0##";
+        assert!(extract(text).positions.is_empty());
+        assert_eq!(remove(text), "visible");
+    }
+}

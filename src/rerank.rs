@@ -575,4 +575,467 @@ pub fn apply_rerank(results: Vec<SearchResult>, reranked: &[(usize, f32)]) -> Ve
     output
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::search::IndexedChunk;
+    use std::collections::HashMap;
 
+    fn candidate(id: &str, term_score: f32) -> HybridSearchResult {
+        HybridSearchResult {
+            chunk: IndexedChunk {
+                id: id.into(),
+                doc_name: "doc".into(),
+                content: id.into(),
+                embedding: Vec::new(),
+                token_count: 1,
+                position: 0,
+                metadata: HashMap::new(),
+            },
+            score: term_score,
+            vector_score: 0.0,
+            term_score,
+            model_term_score: term_score,
+            rank_feature_score: 0.0,
+            rank: 0,
+        }
+    }
+
+    #[test]
+    fn hybrid_rerank_uses_ragflow_weights() {
+        let candidates = vec![candidate("term", 1.0), candidate("model", 0.0)];
+        let results = apply_hybrid_rerank(candidates, &[(0, 0.0), (1, 1.0)], 0.3).unwrap();
+        assert_eq!(results[0].chunk.id, "term");
+        assert!((results[0].score - 0.7).abs() < 1e-6);
+        assert!((results[1].score - 0.3).abs() < 1e-6);
+    }
+
+    #[test]
+    fn hybrid_rerank_rejects_duplicate_or_out_of_range_indices() {
+        let candidates = vec![candidate("one", 1.0)];
+        assert!(apply_hybrid_rerank(candidates.clone(), &[(0, 0.5), (0, 0.4)], 0.3).is_err());
+        assert!(apply_hybrid_rerank(candidates, &[(1, 0.5)], 0.3).is_err());
+    }
+
+    #[test]
+    fn hybrid_rerank_uses_model_branch_term_score() {
+        let mut lexical = candidate("lexical", 1.0);
+        lexical.model_term_score = 0.0;
+        let mut model = candidate("model", 0.0);
+        model.model_term_score = 1.0;
+
+        let results =
+            apply_hybrid_rerank(vec![lexical, model], &[(0, 0.0), (1, 0.0)], 0.3).unwrap();
+        assert_eq!(results[0].chunk.id, "model");
+        assert_eq!(results[0].term_score, 1.0);
+    }
+
+    #[test]
+    fn hybrid_rerank_preserves_rank_feature_boost() {
+        let mut boosted = candidate("boosted", 0.0);
+        boosted.rank_feature_score = 2.0;
+        let plain = candidate("plain", 0.0);
+
+        let results =
+            apply_hybrid_rerank(vec![boosted, plain], &[(0, 0.0), (1, 1.0)], 0.3).unwrap();
+        assert_eq!(results[0].chunk.id, "boosted");
+        assert!((results[0].score - 2.0).abs() < 1e-6);
+        assert!((results[1].score - 0.3).abs() < 1e-6);
+    }
+
+    #[test]
+    fn rerank_window_is_page_aligned_and_bounded() {
+        assert_eq!(rerank_window(10, None), 70);
+        assert_eq!(rerank_window(10, Some(25)), 30);
+        assert_eq!(rerank_window(1, Some(20)), 20);
+        assert_eq!(rerank_window(0, None), 30);
+    }
+
+    #[test]
+    fn reranker_endpoint_does_not_duplicate_openai_v1_prefix() {
+        assert_eq!(
+            RemoteReranker::new("http://127.0.0.1:8899").endpoint(),
+            "http://127.0.0.1:8899/v1/rerank"
+        );
+        assert_eq!(
+            RemoteReranker::new("http://127.0.0.1:8899/v1/").endpoint(),
+            "http://127.0.0.1:8899/v1/rerank"
+        );
+    }
+
+    /// `RERANK_MODEL` used to be documented and never sent. A body without the model
+    /// is what a single-model endpoint wants, so it must stay omitted when unset.
+    #[test]
+    fn reranker_accepts_a_full_endpoint_and_builds_nvidia_paths() {
+        assert_eq!(
+            RemoteReranker::new("http://127.0.0.1:8899/v1/rerank").endpoint(),
+            "http://127.0.0.1:8899/v1/rerank"
+        );
+        assert_eq!(
+            RemoteReranker::new("http://127.0.0.1:8899")
+                .with_model("nvidia/nv-rerankqa-mistral-4b-v3")
+                .endpoint(),
+            "http://127.0.0.1:8899/nv-rerankqa-mistral-4b-v3/reranking"
+        );
+    }
+
+    #[tokio::test]
+    async fn reranker_scores_all_documents_sorts_and_truncates_top_k() {
+        use axum::{Router, routing::post};
+        let captured: std::sync::Arc<tokio::sync::Mutex<Vec<serde_json::Value>>> =
+            std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let sink = captured.clone();
+        let app = Router::new().route(
+            "/v1/rerank",
+            post(move |axum::Json(body): axum::Json<serde_json::Value>| {
+                let sink = sink.clone();
+                async move {
+                    sink.lock().await.push(body);
+                    axum::Json(serde_json::json!({
+                        "results": [
+                            {"index": 0, "relevance_score": 0.2},
+                            {"index": 1, "relevance_score": 0.9},
+                            {"index": 2, "relevance_score": 0.5},
+                            {"index": 3, "relevance_score": 0.7}
+                        ]
+                    }))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let documents = vec![
+            "alpha".to_string(),
+            "beta".to_string(),
+            "gamma".to_string(),
+            "delta".to_string(),
+        ];
+        let ranked = RemoteReranker::new(&format!("http://{addr}"))
+            .rerank("question", &documents, 2)
+            .await
+            .unwrap();
+        assert_eq!(ranked, vec![(1, 0.9), (3, 0.7)]);
+        let requests = captured.lock().await;
+        assert_eq!(requests[0]["top_n"], 4);
+        assert_eq!(requests[0]["documents"].as_array().unwrap().len(), 4);
+    }
+
+    #[tokio::test]
+    async fn reranker_normalizes_out_of_range_scores_like_ragflow() {
+        use axum::{Router, routing::post};
+        let app = Router::new().route(
+            "/v1/rerank",
+            post(|| async move {
+                axum::Json(serde_json::json!({
+                    "results": [
+                        {"index": 0, "relevance_score": 10.0},
+                        {"index": 1, "relevance_score": -5.0},
+                        {"index": 2, "relevance_score": 2.5},
+                        {"index": 3, "relevance_score": 0.0}
+                    ]
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let documents = vec!["a".into(), "b".into(), "c".into(), "d".into()];
+        let ranked = RemoteReranker::new(&format!("http://{addr}"))
+            .rerank("q", &documents, 4)
+            .await
+            .unwrap();
+        assert_eq!(ranked[0].0, 0);
+        assert!((ranked[0].1 - 1.0).abs() < 1e-6, "{ranked:?}");
+        assert_eq!(ranked[1].0, 2);
+        assert!((ranked[1].1 - 0.5).abs() < 1e-6, "{ranked:?}");
+        assert_eq!(ranked[2].0, 3);
+        assert!((ranked[2].1 - 1.0 / 3.0).abs() < 1e-6, "{ranked:?}");
+        assert_eq!(ranked[3], (1, 0.0));
+    }
+
+    #[tokio::test]
+    async fn nvidia_reranker_uses_passages_rankings_and_logits() {
+        use axum::{Router, routing::post};
+        let captured: std::sync::Arc<tokio::sync::Mutex<Vec<serde_json::Value>>> =
+            std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let sink = captured.clone();
+        let app = Router::new().route(
+            "/reranking",
+            post(move |axum::Json(body): axum::Json<serde_json::Value>| {
+                let sink = sink.clone();
+                async move {
+                    sink.lock().await.push(body);
+                    axum::Json(serde_json::json!({
+                        "rankings": [
+                            {"index": 0, "logit": 5.0},
+                            {"index": 1, "logit": -1.0}
+                        ]
+                    }))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let documents = vec!["first".to_string(), "second".to_string()];
+        let ranked = RemoteReranker::new(&format!("http://{addr}"))
+            .with_model("nvidia/rerank-qa-mistral-4b")
+            .rerank("question", &documents, 1)
+            .await
+            .unwrap();
+        assert_eq!(ranked, vec![(0, 1.0)]);
+        let requests = captured.lock().await;
+        assert_eq!(requests[0]["model"], "nv-rerank-qa-mistral-4b:1");
+        assert_eq!(requests[0]["query"]["text"], "question");
+        assert_eq!(requests[0]["passages"][1]["text"], "second");
+        assert_eq!(requests[0]["top_n"], 2);
+    }
+
+    #[tokio::test]
+    async fn the_request_names_the_model_only_when_one_is_configured() {
+        use axum::{Router, routing::post};
+        let captured: std::sync::Arc<tokio::sync::Mutex<Vec<serde_json::Value>>> =
+            std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let sink = captured.clone();
+        let app = Router::new().route(
+            "/v1/rerank",
+            post(move |axum::Json(body): axum::Json<serde_json::Value>| {
+                let sink = sink.clone();
+                async move {
+                    sink.lock().await.push(body);
+                    // Every document needs a score: the client rejects a short answer
+                    // rather than silently dropping candidates.
+                    axum::Json(serde_json::json!({
+                        "results": [
+                            {"index": 0, "relevance_score": 0.9},
+                            {"index": 1, "relevance_score": 0.1}
+                        ]
+                    }))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let documents = vec!["alpha".to_string(), "beta".to_string()];
+        let with_model = RemoteReranker::new(&format!("http://{addr}"))
+            .with_api_key("secret")
+            .with_model("bge-reranker-v2-m3");
+        with_model.rerank("question", &documents, 2).await.unwrap();
+        let without_model = RemoteReranker::new(&format!("http://{addr}"));
+        without_model
+            .rerank("question", &documents, 2)
+            .await
+            .unwrap();
+
+        let requests = captured.lock().await;
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0]["model"], "bge-reranker-v2-m3");
+        assert_eq!(requests[0]["query"], "question");
+        assert_eq!(requests[0]["top_n"], 2);
+        assert!(
+            requests[0].get("top_k").is_none(),
+            "RAGFlow asks for every document with top_n, not top_k: {}",
+            requests[0]
+        );
+        assert!(
+            requests[1].get("model").is_none(),
+            "an unset RERANK_MODEL must not send a model name: {}",
+            requests[1]
+        );
+
+        // The manager builds the same client from the config, and the provider path
+        // no longer discards the instance's model.
+        let manager = RerankerManager::in_memory(None);
+        manager
+            .update(RerankerConfig {
+                enabled: true,
+                api_base: format!("http://{addr}"),
+                api_key: Some("secret".into()),
+                model: Some("  ".into()),
+            })
+            .unwrap();
+        assert_eq!(manager.public_config().model, None, "blank is not a model");
+    }
+
+    #[tokio::test]
+    async fn remote_reranker_reports_http_and_json_failures_with_guidance() {
+        use axum::{Router, body::Body, http::Response, routing::post};
+        for (status, body, expected) in [
+            (503, "<html>proxy unavailable</html>", "not JSON"),
+            (200, "<html>wrong endpoint</html>", "not JSON"),
+            (
+                401,
+                r#"{"error":{"message":"model unavailable"}}"#,
+                "model unavailable",
+            ),
+        ] {
+            let app = Router::new().route(
+                "/v1/rerank",
+                post(move || async move {
+                    Response::builder()
+                        .status(status)
+                        .body(Body::from(body))
+                        .unwrap()
+                }),
+            );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base_url = format!("http://{}", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            let error = RemoteReranker::new(&base_url)
+                .rerank("q", &["doc".into()], 1)
+                .await
+                .unwrap_err()
+                .to_string();
+            server.abort();
+            let status_text = status.to_string();
+            for detail in [
+                status_text.as_str(),
+                expected,
+                "API base URL",
+                "credentials",
+                "model name",
+                "重试检索",
+            ] {
+                assert!(error.contains(detail), "{error}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_reranker_refuses_oversized_response_before_json_decoding() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let limit = crate::common::cmd_timeout::body_limit_bytes();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 4096];
+            socket.read(&mut request).await.unwrap();
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                limit as u64 + 1
+            );
+            socket.write_all(headers.as_bytes()).await.unwrap();
+        });
+        let error = RemoteReranker::new(&base_url)
+            .rerank("q", &["doc".into()], 1)
+            .await
+            .unwrap_err()
+            .to_string();
+        server.await.unwrap();
+        for detail in ["Reranker API", "HTTP 200", "exceeds", "limit", "重试检索"] {
+            assert!(error.contains(detail), "{error}");
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_reranker_body_errors_do_not_expose_url_credentials() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 4096];
+            socket.read(&mut request).await.unwrap();
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{")
+                .await
+                .unwrap();
+            socket.shutdown().await.unwrap();
+        });
+        let base_url =
+            format!("http://user-fixture:password-fixture@{address}/?token=token-fixture");
+        let error = RemoteReranker::new(&base_url)
+            .rerank("q", &["doc".into()], 1)
+            .await
+            .unwrap_err()
+            .to_string();
+        server.await.unwrap();
+        assert!(error.contains("body read failed"), "{error}");
+        assert!(error.contains("HTTP 200"), "{error}");
+        for secret in ["user-fixture", "password-fixture", "token-fixture"] {
+            assert!(!error.contains(secret), "{error}");
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_reranker_request_errors_do_not_expose_url_credentials() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let base_url =
+            format!("http://user-fixture:password-fixture@{address}/?token=token-fixture");
+        let error = RemoteReranker::new(&base_url)
+            .rerank("q", &["doc".into()], 1)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("request failed"), "{error}");
+        assert!(error.contains("credentials"), "{error}");
+        for secret in ["user-fixture", "password-fixture", "token-fixture"] {
+            assert!(!error.contains(secret), "{error}");
+        }
+    }
+
+    #[test]
+    fn reranker_manager_persists_config_without_exposing_secret() {
+        let root = std::env::temp_dir().join(format!("rayrag-reranker-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("reranker.json");
+        let manager = RerankerManager::new(&path, RerankerConfig::default()).unwrap();
+        let public = manager
+            .update(RerankerConfig {
+                enabled: true,
+                api_base: "http://127.0.0.1:8899".into(),
+                api_key: Some("secret".into()),
+                model: Some("bge-reranker-v2-m3".into()),
+            })
+            .unwrap();
+        assert!(public.enabled);
+        assert!(public.api_key_configured);
+        assert_eq!(public.model.as_deref(), Some("bge-reranker-v2-m3"));
+        assert!(manager.current().is_some());
+
+        let reloaded = RerankerManager::new(&path, RerankerConfig::default()).unwrap();
+        assert_eq!(reloaded.public_config(), public);
+        let serialized = serde_json::to_value(public).unwrap();
+        assert!(serialized.get("api_key").is_none());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn reranker_manager_rejects_invalid_enabled_url_without_mutation() {
+        let manager = RerankerManager::in_memory(None);
+        assert!(
+            manager
+                .update(RerankerConfig {
+                    enabled: true,
+                    api_base: "file:///tmp/reranker".into(),
+                    api_key: None,
+                    model: None,
+                })
+                .is_err()
+        );
+        assert!(!manager.public_config().enabled);
+        assert!(manager.current().is_none());
+    }
+}

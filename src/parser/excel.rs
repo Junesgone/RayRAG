@@ -1332,4 +1332,469 @@ pub(crate) fn row_number(name: &str, data: &[u8]) -> Result<usize> {
     Ok(0)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
 
+    #[test]
+    fn missing_worksheet_fails_with_repair_guidance() {
+        let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        write_zip_entry(
+            &mut archive,
+            "xl/workbook.xml",
+            r#"<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Lost" r:id="rId1"/></sheets></workbook>"#,
+            options,
+        ).unwrap();
+        write_zip_entry(
+            &mut archive,
+            "xl/_rels/workbook.xml.rels",
+            r#"<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>"#,
+            options,
+        ).unwrap();
+        let bytes = archive.finish().unwrap().into_inner();
+        let error = ExcelParser::new()
+            .parse("missing.xlsx", &bytes)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("Lost"), "{error}");
+        assert!(error.contains("upload again"), "{error}");
+    }
+
+    #[test]
+    fn missing_worksheet_relationship_fails_with_repair_guidance() {
+        let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        write_zip_entry(
+            &mut archive,
+            "xl/workbook.xml",
+            r#"<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Lost" r:id="rIdMissing"/></sheets></workbook>"#,
+            options,
+        ).unwrap();
+        write_zip_entry(
+            &mut archive,
+            "xl/_rels/workbook.xml.rels",
+            "<Relationships/>",
+            options,
+        )
+        .unwrap();
+        let bytes = archive.finish().unwrap().into_inner();
+        let error = ExcelParser::new()
+            .parse("missing.xlsx", &bytes)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("Lost"), "{error}");
+        assert!(error.contains("relationship"), "{error}");
+        assert!(error.contains("upload again"), "{error}");
+    }
+
+    #[test]
+    fn invalid_shared_string_references_fail_with_repair_guidance() {
+        for value in ["bad", "12"] {
+            let xml = format!(
+                "<worksheet><sheetData><row><c t=\"s\"><v>{value}</v></c></row></sheetData></worksheet>"
+            );
+            let error = parse_sheet_rows(&xml, &[], 100, &DateStyles::default(), false)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("shared string index"), "{error}");
+            assert!(error.contains("upload again"), "{error}");
+        }
+    }
+
+    #[test]
+    fn xlsx_xml_preserves_cell_order_and_rich_shared_strings() {
+        let shared = parse_shared_strings(
+            r#"<sst><si><r><t>Hello &amp; </t></r><r><t>world</t></r></si></sst>"#,
+        )
+        .unwrap();
+        let (rows, merged_ranges, truncated) = parse_sheet_rows(
+            r#"<worksheet><mergeCells count="1"><mergeCell ref="B2:C3"/></mergeCells><sheetData><row><c r="A1"><v>42</v></c><c r="B1" t="s"><v>0</v></c><c r="D1" t="inlineStr"><is><t>tail</t></is></c></row></sheetData></worksheet>"#,
+            &shared,
+            1000,
+            &DateStyles::default(),
+            false,
+        )
+        .unwrap();
+        assert!(!truncated);
+        assert_eq!(rows, vec![vec!["42", "Hello & world", "", "tail"]]);
+        // mergeCell ref="B2:C3" → 1-based inclusive range
+        assert_eq!(merged_ranges, vec![(2, 2, 3, 3)]);
+    }
+
+    #[test]
+    fn date_styles_follow_builtin_and_custom_number_formats() {
+        let styles = parse_date_styles(
+            r#"<styleSheet><numFmts count="1"><numFmt numFmtId="164" formatCode="yyyy-mm-dd"/></numFmts><cellXfs count="4"><xf numFmtId="0"/><xf numFmtId="14"/><xf numFmtId="164"/><xf numFmtId="22"/></cellXfs></styleSheet>"#,
+        )
+        .unwrap();
+        assert_eq!(styles.cell_is_date, vec![false, true, true, true]);
+        assert!(!is_date_format("0.00"));
+        assert!(is_date_format("yyyy-mm-dd"));
+        assert!(!is_date_format(r#"0.00 "m""#));
+        assert!(workbook_uses_1904(r#"<workbook><workbookPr date1904="1"/></workbook>"#).unwrap());
+    }
+
+    #[test]
+    fn excel_serials_match_openpyxl_datetime_strings() {
+        assert_eq!(
+            excel_serial_text(45293.12783564815, false).as_deref(),
+            Some("2024-01-02 03:04:05")
+        );
+        assert_eq!(
+            excel_serial_text(45355.0, false).as_deref(),
+            Some("2024-03-04 00:00:00")
+        );
+        assert_eq!(
+            excel_serial_text(0.5210069444444444, false).as_deref(),
+            Some("12:30:15")
+        );
+        assert_eq!(excel_serial_text(0.0, false).as_deref(), Some("00:00:00"));
+        assert_eq!(
+            excel_serial_text(59.0, false).as_deref(),
+            Some("1900-02-28 00:00:00")
+        );
+        assert_eq!(
+            excel_serial_text(61.0, false).as_deref(),
+            Some("1900-03-01 00:00:00")
+        );
+        assert_eq!(
+            excel_serial_text(1.0, true).as_deref(),
+            Some("1904-01-02 00:00:00")
+        );
+    }
+
+    #[test]
+    fn xlsx_dated_cells_use_openpyxl_style_detection() {
+        let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        write_zip_entry(
+            &mut archive,
+            "xl/workbook.xml",
+            r#"<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Data" r:id="rId1"/></sheets></workbook>"#,
+            options,
+        )
+        .unwrap();
+        write_zip_entry(
+            &mut archive,
+            "xl/_rels/workbook.xml.rels",
+            r#"<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>"#,
+            options,
+        )
+        .unwrap();
+        write_zip_entry(
+            &mut archive,
+            "xl/styles.xml",
+            r#"<styleSheet><numFmts count="1"><numFmt numFmtId="164" formatCode="yyyy-mm-dd"/></numFmts><cellXfs count="3"><xf numFmtId="0"/><xf numFmtId="22"/><xf numFmtId="164"/></cellXfs></styleSheet>"#,
+            options,
+        )
+        .unwrap();
+        write_zip_entry(
+            &mut archive,
+            "xl/worksheets/sheet1.xml",
+            r#"<worksheet><sheetData><row><c r="A1" s="1"><v>45293.12783564815</v></c><c r="B1" s="2"><v>45355</v></c><c r="C1"><v>42</v></c></row></sheetData></worksheet>"#,
+            options,
+        )
+        .unwrap();
+        let bytes = archive.finish().unwrap().into_inner();
+        let sheets = read_xlsx_sheets(&bytes, usize::MAX).unwrap();
+        assert_eq!(
+            sheets[0].rows[0],
+            vec!["2024-01-02 03:04:05", "2024-03-04 00:00:00", "42"]
+        );
+    }
+
+    #[test]
+    fn csv_decoding_accepts_utf16_bom_and_strips_utf8_bom() {
+        let mut utf8 = vec![0xEF, 0xBB, 0xBF];
+        utf8.extend_from_slice(b"name,value\nalpha,1\n");
+        let document = ExcelParser::new().parse("bom.csv", &utf8).unwrap();
+        assert!(
+            document.content.contains("| name | value |"),
+            "{}",
+            document.content
+        );
+
+        let csv = "name,value\n中文,2\n";
+        let mut utf16 = vec![0xFF, 0xFE];
+        for unit in csv.encode_utf16() {
+            utf16.extend_from_slice(&unit.to_le_bytes());
+        }
+        let document = ExcelParser::new().parse("utf16.csv", &utf16).unwrap();
+        assert!(document.content.contains("中文"), "{}", document.content);
+        assert!(
+            document.content.contains("| name | value |"),
+            "{}",
+            document.content
+        );
+    }
+
+    #[test]
+    fn legacy_xls_reads_dates_booleans_sheets_and_magic_detection() {
+        let data = include_bytes!("../../tests/fixtures/parsing/rayrag-legacy.xls");
+        for name in ["legacy.xls", "legacy.bin"] {
+            let document = ExcelParser::new().parse(name, data).unwrap();
+            assert!(
+                document.content.contains("## Data"),
+                "{name}: {}",
+                document.content
+            );
+            assert!(
+                document
+                    .content
+                    .contains("| 2024-01-02 03:04:05 | 42 | True |"),
+                "{name}: {}",
+                document.content
+            );
+            assert!(
+                document
+                    .content
+                    .contains("| 2024-03-04 00:00:00 | 3.5 | False |"),
+                "{name}: {}",
+                document.content
+            );
+            assert!(
+                document.content.contains("| 12:30:15 | 0.25 |"),
+                "{name}: {}",
+                document.content
+            );
+            assert!(document.content.contains("## 汇总"), "{name}");
+            assert!(document.content.contains("| 中文 | 7 |"), "{name}");
+        }
+        assert_eq!(row_number("legacy.xls", data).unwrap(), 6);
+    }
+
+    #[test]
+    fn csv_invalid_encoding_includes_reupload_guidance() {
+        let error = ExcelParser::new()
+            .parse("damaged.CSV", b"name\n\xff\n")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("UTF-8"), "{error}");
+        assert!(error.contains("upload again"), "{error}");
+    }
+
+    #[test]
+    fn spreadsheet_reader_keeps_explicit_row_limits() {
+        let bytes = write_xlsx_sheets(&[(
+            "Data".into(),
+            vec![vec![json!("first")], vec![json!("last")]],
+        )])
+        .unwrap();
+        let sheets = read_xlsx_sheets(&bytes, 1).unwrap();
+        assert!(sheets[0].truncated);
+        assert_eq!(sheets[0].rows, vec![vec!["first"]]);
+        let document = ExcelParser::new().parse("rows.xlsx", &bytes).unwrap();
+        assert!(document.content.contains("last"));
+        assert!(!document.content.contains("truncated"));
+    }
+
+    #[test]
+    fn csv_extracts_well_formed_rows_and_survives_a_broken_quote() {
+        let parser = ExcelParser::new();
+        let data = b"name,qty\nwidget,3\ngadget,4\n";
+        let text = parser
+            .parse_csv(data)
+            .expect("csv parse must not fail hard");
+        assert!(text.contains("| name | qty |"), "header preserved: {text}");
+        assert!(text.contains("| widget | 3 |"), "first row: {text}");
+        assert!(text.contains("| gadget | 4 |"), "second row: {text}");
+    }
+
+    #[test]
+    fn csv_unterminated_quote_consumes_the_rest_and_stays_a_valid_table() {
+        // Standard CSV semantics: a quoted field may contain newlines, so an unterminated
+        // quote swallows the remainder of the file into that cell. The parser must still
+        // produce a document (never a hard error), and this test pins that behaviour —
+        // it is exactly why a malformed source file looks like a short table.
+        let parser = ExcelParser::new();
+        let text = parser
+            .parse_csv(b"name,qty\n\"broken,9\ngadget,4\n")
+            .expect("csv parse must not fail hard");
+        assert!(text.contains("| name | qty |"), "{text}");
+        assert!(
+            text.contains("broken,9"),
+            "the swallowed tail is visible: {text}"
+        );
+        assert!(text.starts_with("<!--TABLE_START-->"), "{text}");
+        assert!(text.trim_end().ends_with("<!--TABLE_END-->"), "{text}");
+    }
+
+    #[test]
+    fn merge_range_parsing_handles_single_and_multi_cell_refs() {
+        assert_eq!(parse_merge_range("A1:B2"), Some((1, 1, 2, 2)));
+        assert_eq!(parse_merge_range("C5"), Some((5, 3, 5, 3)));
+        assert_eq!(parse_merge_range("B2:A1"), Some((1, 1, 2, 2)));
+        assert_eq!(parse_merge_range(""), None);
+        assert_eq!(parse_merge_range("12"), None);
+    }
+
+    #[test]
+    fn merged_ranges_round_trip_through_xlsx_writer() {
+        let bytes = write_xlsx_sheets_with_merges(
+            &[(
+                "Merged".into(),
+                vec![
+                    vec![json!("name"), json!("value")],
+                    vec![json!("a"), json!("1")],
+                ],
+            )],
+            &[vec![(1, 1, 2, 1), (1, 2, 1, 2)]],
+        )
+        .unwrap();
+        let sheets = read_xlsx_sheets(&bytes, 100).unwrap();
+        assert_eq!(sheets[0].merged_ranges, vec![(1, 1, 2, 1), (1, 2, 1, 2)]);
+        // Anchor cells survive: A1="name", B1="value", A2="a".
+        assert_eq!(sheets[0].rows[0][0], "name");
+        assert_eq!(sheets[0].rows[0][1], "value");
+        assert_eq!(sheets[0].rows[1][0], "a");
+    }
+
+    #[test]
+    fn xlsx_writer_round_trips_multiple_sheets_and_native_cells() {
+        let bytes = write_xlsx_sheets(&[
+            (
+                "Alpha".into(),
+                vec![
+                    vec![json!("name"), json!("score"), json!("active")],
+                    vec![json!("A&B"), json!(2), json!(true)],
+                ],
+            ),
+            (
+                "Beta/Unsafe".into(),
+                vec![vec![json!("value")], vec![json!({"nested": 1})]],
+            ),
+        ])
+        .unwrap();
+        assert_eq!(&bytes[..4], b"PK\x03\x04");
+
+        let sheets = read_xlsx_sheets(&bytes, 100).unwrap();
+        assert_eq!(
+            sheets
+                .iter()
+                .map(|sheet| sheet.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Alpha", "Beta_Unsafe"]
+        );
+        assert_eq!(
+            sheets[0].rows,
+            vec![vec!["name", "score", "active"], vec!["A&B", "2", "True"]]
+        );
+        assert_eq!(sheets[1].rows[1], [r#"{"nested":1}"#]);
+    }
+
+    #[test]
+    fn xlsx_writer_keeps_an_empty_default_sheet() {
+        let bytes = write_xlsx_sheets(&[]).unwrap();
+        let sheets = read_xlsx_sheets(&bytes, 100).unwrap();
+        assert_eq!(sheets.len(), 1);
+        assert_eq!(sheets[0].name, "Sheet1");
+        assert!(sheets[0].rows.is_empty());
+    }
+
+    #[test]
+    fn sheet_lines_emit_header_value_pairs_with_sheet_suffix() {
+        // "__call__" — excel_parser.py:263-292.
+        let sheets = vec![
+            SpreadsheetSheet {
+                name: "Sheet1".into(), // contains "sheet" → no suffix
+                rows: vec![
+                    vec!["name".into(), "qty".into()],
+                    vec!["bolt".into(), "3".into()],
+                    vec!["".into(), "7".into()], // empty cell skipped
+                ],
+                truncated: false,
+                merged_ranges: vec![],
+            },
+            SpreadsheetSheet {
+                name: "2024 销售".into(),
+                rows: vec![
+                    vec!["月份".into(), "金额".into()],
+                    vec!["1月".into(), "100".into()],
+                ],
+                truncated: false,
+                merged_ranges: vec![],
+            },
+        ];
+        let lines = sheet_lines(&sheets);
+        assert_eq!(
+            lines,
+            vec![
+                "name：bolt; qty：3".to_string(),
+                "qty：7".to_string(), // empty leading cell skipped, header "qty" used
+                "月份：1月; 金额：100 ——2024 销售".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn sheet_html_chunks_rows_and_escapes_content() {
+        // "html()" — excel_parser.py:204-247.
+        let sheets = vec![SpreadsheetSheet {
+            name: "A&B".into(),
+            rows: vec![
+                vec!["k".into(), "v".into()],
+                vec!["a".into(), "1".into()],
+                vec!["b".into(), "2".into()],
+                vec!["c".into(), "<3>".into()],
+            ],
+            truncated: false,
+            merged_ranges: vec![],
+        }];
+        let chunks = sheet_html(&sheets, 2);
+        assert_eq!(chunks.len(), 2);
+        assert!(chunks[0].starts_with("<table><caption>A&amp;B</caption>"));
+        assert!(chunks[0].contains("<th>k</th><th>v</th>"));
+        assert!(chunks[0].contains("<td>a</td><td>1</td>"));
+        assert!(chunks[1].contains("<td>c</td><td>&lt;3&gt;</td>"));
+        assert!(chunks[1].ends_with("</table>\n"));
+    }
+
+    #[test]
+    fn actual_row_count_uses_binary_search_for_large_sheets() {
+        // "_get_actual_row_count" — excel_parser.py:156-195. The upstream
+        // heuristic assumes dense data: the 10-row-window binary search only
+        // converges when rows above the last data row are populated.
+        let mut xml = String::from(r#"<worksheet><dimension ref="A1:XFD1048576"/><sheetData>"#);
+        for r in 1..=20000u32 {
+            xml.push_str(&format!(
+                r#"<row r="{r}"><c r="A{r}" t="inlineStr"><is><t>d</t></is></c></row>"#
+            ));
+        }
+        xml.push_str("</sheetData></worksheet>");
+        assert_eq!(actual_row_count_from_xml(&xml, &[]), 20000);
+
+        // Empty first 100 rows → counts as empty (0), even with data below.
+        let empty = r#"<worksheet><dimension ref="A1:XFD1048576"/><sheetData><row r="50000"><c r="A50000"><v>5</v></c></row></sheetData></worksheet>"#;
+        assert_eq!(actual_row_count_from_xml(empty, &[]), 0);
+
+        // max_row <= 10000 short-circuits to max_row.
+        let small = r#"<worksheet><dimension ref="A1:D120"/><sheetData><row r="120"><c r="A120"><v>1</v></c></row></sheetData></worksheet>"#;
+        assert_eq!(actual_row_count_from_xml(small, &[]), 120);
+
+        // Shared-string cells resolve through the sst like openpyxl values.
+        let shared = r#"<worksheet><dimension ref="A1:B3"/><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row><row r="2"><c r="A2" t="s"><v>0</v></c></row><row r="3"><c r="B3"><v>42</v></c></row></sheetData></worksheet>"#;
+        assert_eq!(
+            actual_row_count_from_xml(shared, &["hello".to_string(), "world".to_string()]),
+            3
+        );
+    }
+
+    #[test]
+    fn row_number_sums_sheets_and_counts_csv_lines() {
+        // "row_number" — excel_parser.py:294-312.
+        let bytes = write_xlsx_sheets(&[
+            (
+                "S1".into(),
+                vec![vec![json!("a")], vec![json!("1")], vec![json!("2")]],
+            ),
+            ("S2".into(), vec![vec![json!("b")], vec![json!("3")]]),
+        ])
+        .unwrap();
+        // openpyxl max_row = last data row: S1 → 3, S2 → 2.
+        assert_eq!(row_number("book.xlsx", &bytes).unwrap(), 5);
+        // Python: len(txt.split("\n")) — trailing newline yields an extra "".
+        assert_eq!(row_number("data.csv", b"a,b\n1,2\n3,4\n").unwrap(), 4);
+    }
+}

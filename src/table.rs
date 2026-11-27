@@ -576,4 +576,350 @@ pub fn chunk_table(
     Ok((chunks, headers, data_rows.len()))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    fn grid(rows: &[&[&str]]) -> Vec<Vec<Option<String>>> {
+        rows.iter()
+            .map(|r| r.iter().map(|s| Some(s.to_string())).collect())
+            .collect()
+    }
+
+    #[test]
+    fn header_classification_distinguishes_header_from_data() {
+        assert!(looks_like_header("姓名"));
+        assert!(looks_like_header("Supplier/Vendor"));
+        assert!(looks_like_header("size(M,L,XL)"));
+        assert!(!looks_like_header("42"));
+        assert!(!looks_like_header("Y"));
+        assert!(looks_like_data("42"));
+        assert!(looks_like_data("Y"));
+        assert!(looks_like_data("0x1f"));
+        assert!(!looks_like_data("Name"));
+    }
+
+    #[test]
+    fn row_header_detection_requires_header_majority() {
+        let header_row = vec![
+            Some("姓名".into()),
+            Some("电话".into()),
+            Some("地址".into()),
+        ];
+        assert!(row_looks_like_header(&header_row));
+        // CJK values are header-like in RAGFlow (`ord(c) > 127` → header);
+        // a row with mostly numeric/symbol data cells is data-like.
+        let data_row = vec![Some("1".into()), Some("139".into()), Some("Y".into())];
+        assert!(!row_looks_like_header(&data_row));
+        // Mixed: two data-like, one header-like → data row.
+        let mixed = vec![Some("Y".into()), Some("N".into()), Some("备注".into())];
+        assert!(!row_looks_like_header(&mixed));
+    }
+
+    #[test]
+    fn detect_header_rows_stops_at_first_data_row() {
+        // RAGFlow treats alpha/CJK cells as header-like; numeric rows stop it.
+        let g = grid(&[
+            &["name", "phone", "addr"],
+            &["1", "13900000000", "N"],
+            &["2", "13800000000", "Y"],
+        ]);
+        assert_eq!(detect_header_rows(&g), 1);
+        // Two header rows (multi-level), then data. Row 3 is numeric → data.
+        let g2 = grid(&[
+            &["basic", "", ""],
+            &["name", "phone", "addr"],
+            &["1", "139", "N"],
+        ]);
+        assert_eq!(detect_header_rows(&g2), 2);
+    }
+
+    #[test]
+    fn simple_headers_fill_blank_cells_with_column_n() {
+        let g = grid(&[&["姓名", "", "地址"]]);
+        let (headers, n) = parse_simple_headers(&g);
+        assert_eq!(headers, vec!["姓名", "Column_2", "地址"]);
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn hierarchical_headers_join_parts_with_dash_and_skip_invalid() {
+        let g = grid(&[&["基本信息", "", ""], &["姓名", "电话", "地址"]]);
+        let headers = build_hierarchical_headers(&g, &[], 2);
+        assert_eq!(headers, vec!["基本信息-姓名", "电话", "地址"]);
+        // Header cells that are lone Y/N/M/X or numeric are filtered out;
+        // the column still gets a Column_N placeholder (RAGFlow keeps it).
+        let g2 = grid(&[&["状态", "Y", "N"]]);
+        let headers2 = build_hierarchical_headers(&g2, &[], 1);
+        assert_eq!(headers2, vec!["状态", "Column_2", "Column_3"]);
+    }
+
+    #[test]
+    fn merged_value_reads_anchor_cell() {
+        let g = grid(&[&["分组", "值"], &["", "1"], &["", "2"]]);
+        let ranges = vec![(1, 1, 3, 1)];
+        assert_eq!(merged_value(&ranges, 2, 1, &g), Some("分组".into()));
+        assert_eq!(merged_value(&ranges, 3, 1, &g), Some("分组".into()));
+        assert_eq!(merged_value(&ranges, 1, 2, &g), None);
+    }
+
+    #[test]
+    fn extract_row_data_inherits_merged_values() {
+        let g = grid(&[&["分组", "值"], &["", "1"], &["", "2"]]);
+        let ranges = vec![(1, 1, 3, 1)];
+        let row = extract_row_data(&g, &ranges, 1, 2);
+        assert_eq!(row, vec!["分组", "1"]);
+        let row2 = extract_row_data(&g, &ranges, 2, 2);
+        assert_eq!(row2, vec!["分组", "2"]);
+    }
+
+    #[test]
+    fn empty_row_detection() {
+        assert!(is_empty_row(&["".into(), "  ".into()]));
+        assert!(!is_empty_row(&["a".into(), "".into()]));
+    }
+
+    #[test]
+    fn datetime_parsing_handles_common_formats() {
+        assert_eq!(
+            trans_datatime("2026-08-03"),
+            Some("2026-08-03 00:00:00".into())
+        );
+        assert_eq!(
+            trans_datatime("2026/08/03 14:30"),
+            Some("2026-08-03 14:30:00".into())
+        );
+        assert_eq!(
+            trans_datatime("2026-08-03T14:30:05Z"),
+            Some("2026-08-03 14:30:05".into())
+        );
+        assert_eq!(
+            trans_datatime("2026年8月3日"),
+            Some("2026-08-03 00:00:00".into())
+        );
+        assert_eq!(trans_datatime("not a date"), None);
+        assert_eq!(trans_datatime("2026-13-01"), None);
+    }
+
+    #[test]
+    fn bool_translation_maps_cn_and_symbols() {
+        assert_eq!(trans_bool("是"), Some("yes"));
+        assert_eq!(trans_bool("✓"), Some("yes"));
+        assert_eq!(trans_bool("×"), Some("no"));
+        assert_eq!(trans_bool("否"), Some("no"));
+        assert_eq!(trans_bool("unknown"), None);
+    }
+
+    #[test]
+    fn column_type_inference_majority_wins() {
+        let (values, ty) =
+            column_data_type(&["1".into(), "2".into(), "3".into(), "x".into(), "4".into()]);
+        assert_eq!(ty, "int");
+        assert_eq!(values[0], "1");
+
+        let (values, ty) =
+            column_data_type(&["1.5".into(), "2.5".into(), "abc".into(), "3.5".into()]);
+        assert_eq!(ty, "float");
+        assert_eq!(values[1], "2.5");
+
+        let (values, ty) = column_data_type(&["是".into(), "否".into(), "是".into()]);
+        assert_eq!(ty, "bool");
+        assert_eq!(values[0], "yes");
+        assert_eq!(values[1], "no");
+
+        let (_, ty) = column_data_type(&["2026-08-03".into(), "2026-08-04".into(), "text".into()]);
+        assert_eq!(ty, "datetime");
+    }
+
+    #[test]
+    fn field_names_carry_type_suffix() {
+        assert_eq!(field_name("姓名", "text"), "姓名_tks");
+        assert_eq!(field_name("amount", "int"), "amount_long");
+        assert_eq!(field_name("score", "float"), "score_flt");
+        assert_eq!(field_name("date", "datetime"), "date_dt");
+        assert_eq!(field_name("ok", "bool"), "ok_kwd");
+    }
+
+    #[test]
+    fn row_to_chunk_formats_field_lines() {
+        let chunk = row_to_chunk(
+            "data.xlsx",
+            &["姓名".into(), "电话".into(), "地址".into()],
+            &["张三".into(), "139".into(), "中山".into()],
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            chunk.content_with_weight,
+            "- 姓名: 张三\n- 电话: 139\n- 地址: 中山"
+        );
+        assert_eq!(chunk.docnm_kwd, "data.xlsx");
+        assert!(chunk.title_tks.contains(&"data".to_string()));
+    }
+
+    #[test]
+    fn row_to_chunk_skips_all_empty_rows() {
+        let chunk = row_to_chunk(
+            "data.xlsx",
+            &["a".into(), "b".into()],
+            &["".into(), "  ".into()],
+            false,
+        );
+        assert!(chunk.is_none());
+    }
+
+    #[test]
+    fn chunk_table_end_to_end_simple_grid() {
+        let g = grid(&[
+            &["姓名", "电话", "地址"],
+            &["张三", "139", "中山"],
+            &["李四", "138", "珠海"],
+        ]);
+        let (chunks, headers, count) =
+            chunk_table("data.xlsx", &g, &[], "Chinese", 0, usize::MAX).unwrap();
+        assert_eq!(headers, vec!["姓名", "电话", "地址"]);
+        assert_eq!(count, 2);
+        assert_eq!(chunks.len(), 2);
+        assert!(chunks[0].content_with_weight.contains("张三"));
+    }
+
+    #[test]
+    fn chunk_table_honors_page_bounds() {
+        let g = grid(&[
+            &["姓名", "电话"],
+            &["张三", "139"],
+            &["李四", "138"],
+            &["王五", "137"],
+        ]);
+        let (chunks, _, count) = chunk_table("data.xlsx", &g, &[], "Chinese", 1, 2).unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(chunks.len(), 1);
+        assert!(chunks[0].content_with_weight.contains("李四"));
+    }
+
+    #[test]
+    fn chunk_table_handles_merged_group_column() {
+        // With a merged range touching row 1 the complex-header path runs;
+        // RAGFlow's heuristic treats CJK cells (甲/乙) as header-like, so the
+        // data rows extend the header block and the merged anchor "分组"
+        // participates in the hierarchical header. Faithful port behavior:
+        let g = grid(&[
+            &["分组", "名称", "数量"],
+            &["", "甲", "1"],
+            &["", "乙", "2"],
+        ]);
+        // Merge 分组 over rows 1-3 (A1:A3).
+        let ranges = vec![(1, 1, 3, 1)];
+        let (chunks, headers, _) =
+            chunk_table("g.xlsx", &g, &ranges, "Chinese", 0, usize::MAX).unwrap();
+        // Complex path: rows 2-3 are header-like (CJK) → header block = 3,
+        // hierarchical headers join every non-empty part.
+        assert_eq!(headers, vec!["分组", "名称-甲-乙", "数量"]);
+        // With the whole grid consumed as headers there are no data rows.
+        assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn chunk_table_simple_chinese_grid_without_merges() {
+        // No merged ranges → simple-header path: first row is the header,
+        // every subsequent row is one chunk with `- field: value` lines.
+        let g = grid(&[
+            &["姓名", "电话", "地址"],
+            &["张三", "139", "中山"],
+            &["李四", "138", "珠海"],
+        ]);
+        let (chunks, headers, count) =
+            chunk_table("data.xlsx", &g, &[], "Chinese", 0, usize::MAX).unwrap();
+        assert_eq!(headers, vec!["姓名", "电话", "地址"]);
+        assert_eq!(count, 2);
+        assert_eq!(chunks.len(), 2);
+        assert!(chunks[0].content_with_weight.contains("- 姓名: 张三"));
+        assert!(chunks[1].content_with_weight.contains("- 姓名: 李四"));
+    }
+
+    #[test]
+    fn xlsx_to_chunks_end_to_end_with_merged_group_column() {
+        // Full pipeline: xlsx bytes (writer with merges) → read_xlsx_sheets →
+        // grid → chunk_table. Mirrors RAGFlow: file → table.py chunk().
+        use crate::parser::excel::read_xlsx_sheets;
+        use crate::parser::excel::write_xlsx_sheets_with_merges;
+        use serde_json::json;
+
+        let bytes = write_xlsx_sheets_with_merges(
+            &[(
+                "Sheet1".into(),
+                vec![
+                    // Header row with a vertical merge in column A (group).
+                    vec![json!("分组"), json!("名称"), json!("数量")],
+                    vec![json!(""), json!("A组"), json!("10")],
+                    vec![json!(""), json!("B组"), json!("20")],
+                ],
+            )],
+            // A1:A3 merged: "分组" spans rows 1-3.
+            &[vec![(1, 1, 3, 1)]],
+        )
+        .unwrap();
+
+        let sheets = read_xlsx_sheets(&bytes, 1000).unwrap();
+        assert_eq!(sheets[0].merged_ranges, vec![(1, 1, 3, 1)]);
+
+        // Build the Option<String> grid from rows.
+        let grid: Vec<Vec<Option<String>>> = sheets[0]
+            .rows
+            .iter()
+            .map(|row| row.iter().map(|v| Some(v.clone())).collect())
+            .collect();
+        let (chunks, headers, count) = chunk_table(
+            "merged.xlsx",
+            &grid,
+            &sheets[0].merged_ranges,
+            "Chinese",
+            0,
+            usize::MAX,
+        )
+        .unwrap();
+
+        // Complex-header path (merge touches row 1): RAGFlow's CJK heuristic
+        // treats A组/B组 as header-like, extending the header block.
+        assert_eq!(headers, vec!["分组", "名称-A组-B组", "数量"]);
+        // Grid fully consumed as headers → no data rows.
+        assert_eq!(count, 0);
+        assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn xlsx_to_chunks_end_to_end_numeric_rows_stop_headers() {
+        // English headers + numeric data: simple path, one chunk per row.
+        use crate::parser::excel::read_xlsx_sheets;
+        use crate::parser::excel::write_xlsx_sheets_with_merges;
+        use serde_json::json;
+
+        let bytes = write_xlsx_sheets_with_merges(
+            &[(
+                "Sheet1".into(),
+                vec![
+                    vec![json!("name"), json!("score")],
+                    vec![json!("alice"), json!("95")],
+                    vec![json!("bob"), json!("88")],
+                ],
+            )],
+            &[],
+        )
+        .unwrap();
+
+        let sheets = read_xlsx_sheets(&bytes, 1000).unwrap();
+        let grid: Vec<Vec<Option<String>>> = sheets[0]
+            .rows
+            .iter()
+            .map(|row| row.iter().map(|v| Some(v.clone())).collect())
+            .collect();
+        let (chunks, headers, count) =
+            chunk_table("scores.xlsx", &grid, &[], "English", 0, usize::MAX).unwrap();
+
+        assert_eq!(headers, vec!["name", "score"]);
+        assert_eq!(count, 2);
+        assert_eq!(chunks.len(), 2);
+        assert!(chunks[0].content_with_weight.contains("- name: alice"));
+        assert!(chunks[1].content_with_weight.contains("- name: bob"));
+    }
+}

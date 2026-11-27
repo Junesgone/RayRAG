@@ -35,4 +35,31 @@ fn is_cjk(c: char) -> bool {
     )
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn test_english_tokens() {
+        let text = "The quick brown fox jumps over the lazy dog";
+        let count = token_count(text);
+        assert!(count > 0);
+        assert!(count <= (text.len() / 4 + 1));
+    }
+
+    #[test]
+    fn test_chinese_tokens() {
+        let text = "这是一段中文测试文本";
+        let count = token_count(text);
+        assert!(count > 0);
+        // Chinese: ~1.5 chars per token
+        let expected = (text.chars().count() as f64 / 1.5).ceil() as usize;
+        assert_eq!(count, expected);
+    }
+
+    #[test]
+    fn test_empty() {
+        assert_eq!(token_count(""), 0);
+        assert_eq!(token_count(" "), 0);
+    }
+}

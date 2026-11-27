@@ -414,4 +414,100 @@ fn push_list_item(value: &mut Value, level: usize, text: String) {
     push_list_item(&mut items[last_index], level - 1, text);
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
 
+    struct MockChat {
+        reply: String,
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessChat for MockChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            _history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            Ok(self.reply.clone())
+        }
+        fn max_length(&self) -> usize {
+            4096
+        }
+    }
+
+    #[test]
+    fn dictify_builds_nested_object_from_markdown() {
+        let value = dictify("# Root\n## A\n- x\n- y\n## B\n- z\n");
+        assert_eq!(value["Root"]["A"]["_"], json!(["x", "y"]));
+        assert_eq!(value["Root"]["B"]["_"], json!(["z"]));
+    }
+
+    #[test]
+    fn merge_recurses_lists_and_dicts() {
+        let mut target = json!({"A": {"_": ["x"]}, "B": {"_": ["p"]}});
+        let source = json!({"A": {"_": ["y"]}, "B": {"_": ["q"]}, "C": {"_": ["r"]}});
+        merge_json(&source, &mut target);
+        assert_eq!(target["A"]["_"], json!(["x", "y"]));
+        assert_eq!(target["B"]["_"], json!(["p", "q"]));
+        assert_eq!(target["C"]["_"], json!(["r"]));
+    }
+
+    #[test]
+    fn be_children_strips_asterisks_and_dedupes() {
+        let subtree = json!({"*A*": {"B": ["x"]}, "A": {"C": ["y"]}});
+        let mut keyset: Vec<String> = Vec::new();
+        let children = be_children(&subtree, &mut keyset);
+        assert_eq!(children.len(), 1, "the second A is a duplicate key");
+        assert_eq!(children[0]["id"], json!("A"));
+        let list = be_children(&json!(["a", "", "b"]), &mut keyset);
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0]["id"], json!("a"));
+    }
+
+    #[test]
+    fn list_to_kv_converts_pair_lists() {
+        let mut value = json!({"k": [["a", 1], ["b", 2]]});
+        to_dict(&mut value);
+        assert_eq!(value["k"]["a"], json!(1));
+        assert_eq!(value["k"]["b"], json!(2));
+    }
+
+    #[tokio::test]
+    async fn extractor_single_root_and_multi_root_shapes() {
+        let chat = MockChat {
+            reply: "# Topic\n- alpha\n- beta\n".to_string(),
+        };
+        let extractor = MindMapExtractor::new(&chat);
+        let result = extractor.call(&["one".to_string()], &Map::new()).await;
+        assert_eq!(result.output["id"], json!("Topic"));
+        assert_eq!(result.output["children"][0]["id"], json!("alpha"));
+
+        let multi = MockChat {
+            reply: "# A\n- a1\n# B\n- b1\n".to_string(),
+        };
+        let extractor = MindMapExtractor::new(&multi);
+        let result = extractor.call(&["one".to_string()], &Map::new()).await;
+        assert_eq!(result.output["id"], json!("root"));
+        let ids: Vec<String> = result.output["children"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|child| child["id"].as_str().unwrap().to_string())
+            .collect();
+        assert!(ids.contains(&"A".to_string()));
+        assert!(ids.contains(&"B".to_string()));
+    }
+
+    #[tokio::test]
+    async fn extractor_empty_sections_yield_empty_root() {
+        let chat = MockChat {
+            reply: String::new(),
+        };
+        let extractor = MindMapExtractor::new(&chat);
+        let result = extractor.call(&[], &Map::new()).await;
+        assert_eq!(result.output, json!({"id": "root", "children": []}));
+    }
+}

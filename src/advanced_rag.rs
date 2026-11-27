@@ -326,7 +326,38 @@ fn is_stop_word(word: &str) -> bool {
     )
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn test_decompose_query() {
+        let parts = decompose_query("What is Rust and how does it compare to Python?");
+        assert!(!parts.is_empty());
+
+        let simple = decompose_query("Rust");
+        assert_eq!(simple.len(), 1);
+    }
+
+    #[test]
+    fn test_jaccard() {
+        let sim = jaccard_similarity("hello world", "hello world rust");
+        assert!(sim > 0.5);
+        assert!(sim < 1.0);
+
+        let same = jaccard_similarity("hello world", "hello world");
+        assert!((same - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_tree_decompose() {
+        let tree = DecomposedQuery::build(
+            "How does Rust's ownership model compare to Python's garbage collection?",
+        );
+        assert!(tree.root.is_some());
+        assert!(tree.sub_queries.len() >= 2);
+    }
+}
 
 // ── Tree-Structured Query Decomposition (DeepResearcher) ────────
 
@@ -769,4 +800,156 @@ Missing Information: {missing_information}
 Retrieved Documents:
 {retrieved_docs}"#;
 
+#[cfg(test)]
+mod deep_research_tests {
+    use super::*;
+    use crate::llm::{ChatMessage, ChatModel};
+    use crate::search::{IndexedChunk, SearchResult};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
+    struct FakeChatModel {
+        calls: Arc<AtomicUsize>,
+        sufficient_after: usize,
+    }
+
+    #[async_trait::async_trait]
+    impl ChatModel for FakeChatModel {
+        fn model_name(&self) -> &str {
+            "fake-chat"
+        }
+        async fn chat(&self, system: &str, _history: &[ChatMessage]) -> anyhow::Result<String> {
+            let n = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+            if system.contains("sufficient") {
+                if n <= self.sufficient_after {
+                    Ok(r#"{"is_sufficient": false, "reasoning": "need more", "missing_information": ["more details"]}"#.into())
+                } else {
+                    Ok(r#"{"is_sufficient": true, "reasoning": "enough", "missing_information": []}"#.into())
+                }
+            } else {
+                Ok(r#"{"reasoning": "split", "queries": [{"question": "sub q1", "query": "sub query 1"}, {"question": "sub q2", "query": "sub query 2"}]}"#.into())
+            }
+        }
+        async fn chat_stream(
+            &self,
+            _system: &str,
+            _history: &[ChatMessage],
+            _on_chunk: Box<dyn for<'a> FnMut(&'a str) + Send>,
+        ) -> anyhow::Result<String> {
+            Ok(String::new())
+        }
+    }
+
+    fn fake_retrieve(
+        calls: Arc<AtomicUsize>,
+    ) -> impl Fn(&str) -> anyhow::Result<Vec<SearchResult>> {
+        move |query: &str| {
+            let n = calls.fetch_add(1, Ordering::SeqCst) + 1;
+            Ok(vec![SearchResult {
+                chunk: IndexedChunk {
+                    id: format!("c{n}"),
+                    doc_name: format!("doc{n}"),
+                    content: format!("content for {query} ({n})"),
+                    embedding: vec![],
+                    token_count: 0,
+                    position: 0,
+                    metadata: Default::default(),
+                },
+                score: 0.9,
+                rank: 0,
+            }])
+        }
+    }
+
+    #[tokio::test]
+    async fn sufficient_evidence_stops_after_one_level() {
+        let chat_calls = Arc::new(AtomicUsize::new(0));
+        let ret_calls = Arc::new(AtomicUsize::new(0));
+        let chat: Arc<dyn ChatModel> = Arc::new(FakeChatModel {
+            calls: chat_calls.clone(),
+            sufficient_after: 0,
+        });
+        let retriever = DeepResearchRetriever::new(chat, fake_retrieve(ret_calls.clone()));
+        let (outcome, info) = retriever
+            .deep_research("what is x", "x")
+            .await
+            .expect("deep research runs");
+        assert_eq!(
+            chat_calls.load(Ordering::SeqCst),
+            1,
+            "only sufficiency check"
+        );
+        assert_eq!(ret_calls.load(Ordering::SeqCst), 1, "only one retrieval");
+        assert!(outcome.text.contains("content for x"));
+        assert_eq!(info.total, 1);
+        assert_eq!(info.doc_aggs.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn insufficient_evidence_recurses_into_followups() {
+        let chat_calls = Arc::new(AtomicUsize::new(0));
+        let ret_calls = Arc::new(AtomicUsize::new(0));
+        let chat: Arc<dyn ChatModel> = Arc::new(FakeChatModel {
+            calls: chat_calls.clone(),
+            sufficient_after: 1,
+        });
+        let retriever = DeepResearchRetriever::new(chat, fake_retrieve(ret_calls.clone()));
+        let (outcome, info) = retriever
+            .deep_research("what is x", "x")
+            .await
+            .expect("deep research runs");
+        // 1 sufficiency (insufficient) + 1 followup gen + 2 sufficiency checks
+        assert_eq!(chat_calls.load(Ordering::SeqCst), 4);
+        // 1 root retrieval + 2 follow-up retrievals, deduplicated
+        assert_eq!(ret_calls.load(Ordering::SeqCst), 3);
+        assert_eq!(info.total, 3);
+        assert!(outcome.text.contains("content for sub query 1"));
+        assert!(outcome.text.contains("content for sub query 2"));
+    }
+
+    #[test]
+    fn kb_prompt_numbers_and_truncates_chunks() {
+        let results = vec![
+            SearchResult {
+                chunk: IndexedChunk {
+                    id: "a".into(),
+                    doc_name: "d".into(),
+                    content: "hello world".into(),
+                    embedding: vec![],
+                    token_count: 0,
+                    position: 0,
+                    metadata: Default::default(),
+                },
+                score: 1.0,
+                rank: 0,
+            },
+            SearchResult {
+                chunk: IndexedChunk {
+                    id: "b".into(),
+                    doc_name: "d".into(),
+                    content: "second chunk".into(),
+                    embedding: vec![],
+                    token_count: 0,
+                    position: 0,
+                    metadata: Default::default(),
+                },
+                score: 0.5,
+                rank: 1,
+            },
+        ];
+        let prompt = kb_prompt(&results, 1, 5);
+        assert_eq!(prompt, "[1] hello\n");
+        let all = kb_prompt(&results, 10, 1000);
+        assert!(all.contains("[1] hello world"));
+        assert!(all.contains("[2] second chunk"));
+    }
+
+    #[test]
+    fn parse_llm_json_handles_markdown_fences() {
+        let raw = "Here you go:\n```json\n{\"is_sufficient\": true, \"reasoning\": \"ok\", \"missing_information\": []}\n```";
+        let json = parse_llm_json(raw).expect("json extracted");
+        assert_eq!(json["is_sufficient"], true);
+        let arr = parse_llm_json("[1, 2, 3] trailing");
+        assert_eq!(arr.unwrap()[1], 2);
+        assert!(parse_llm_json("no json here").is_none());
+    }
+}

@@ -316,4 +316,144 @@ impl Parse for JsonParser {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
 
+    fn compact(v: &Value) -> String {
+        serde_json::to_string(v).unwrap()
+    }
+
+    #[test]
+    fn splits_large_object_into_bounded_chunks() {
+        let parser = RAGFlowJsonParser::new(30, None); // max=60, min=max(60-200,50)=50
+        let data = json!({
+            "a": {"b": 1, "c": 2, "d": 3},
+            "e": {"f": 4, "g": 5, "h": 6},
+            "i": {"j": 7, "k": 8, "l": 9},
+        });
+        let chunks = parser.split_json(&data, true);
+        assert!(chunks.len() >= 2);
+        // langchain semantics: a fitted key may push a chunk slightly past
+        // max_chunk_size, so only assert structural preservation.
+        for c in &chunks {
+            assert!(!is_empty_value(c));
+        }
+        // All data preserved across chunks.
+        let joined: String = chunks.iter().map(compact).collect();
+        assert!(joined.contains("1"));
+        assert!(joined.contains("9"));
+    }
+
+    #[test]
+    fn lists_convert_to_index_keys_when_requested() {
+        let parser = RAGFlowJsonParser::new(2000, None);
+        let data = json!({"items": [10, 20, 30]});
+        let pre = RAGFlowJsonParser::list_to_dict_preprocessing(&data);
+        assert_eq!(compact(&pre), r#"{"items":{"0":10,"1":20,"2":30}}"#);
+        // Without convert_lists, array stays as-is.
+        let chunks = parser.split_json(&data, false);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(compact(&chunks[0]), r#"{"items":[10,20,30]}"#);
+    }
+
+    #[test]
+    fn empty_last_chunk_is_dropped() {
+        let parser = RAGFlowJsonParser::new(10, Some(5)); // max=20, min=5
+        let data = json!({"x": {"y": "abcdefghij"}});
+        let chunks = parser.split_json(&data, true);
+        assert!(!chunks.is_empty());
+        assert!(!is_empty_value(chunks.last().unwrap()));
+    }
+
+    #[test]
+    fn parse_binary_handles_json_document() {
+        let parser = RAGFlowJsonParser::default();
+        let binary = br#"{"name":"Alice","age":30,"tags":["a","b"]}"#;
+        let sections = parser.parse_binary(binary).unwrap();
+        assert_eq!(sections.len(), 1);
+        assert!(sections[0].contains("Alice"));
+        assert!(sections[0].contains("30"));
+    }
+
+    #[test]
+    fn parse_binary_handles_jsonl_document() {
+        let parser = RAGFlowJsonParser::default();
+        let binary = b"{\"id\":1,\"name\":\"one\"}\n{\"id\":2,\"name\":\"two\"}\n";
+        let sections = parser.parse_binary(binary).unwrap();
+        assert_eq!(sections.len(), 2);
+        assert!(sections[0].contains("one"));
+        assert!(sections[1].contains("two"));
+    }
+
+    #[test]
+    fn is_jsonl_detects_ndjson_but_not_single_json() {
+        let parser = RAGFlowJsonParser::default();
+        assert!(parser.is_jsonl_format("{\"a\":1}\n{\"b\":2}\n", 10, 0.8));
+        // Whole text is valid JSON → not JSONL.
+        assert!(!parser.is_jsonl_format("{\"a\":1}", 10, 0.8));
+        // Mixed invalid lines below threshold → not JSONL.
+        assert!(!parser.is_jsonl_format("{\"a\":1}\nnot json\n", 10, 0.8));
+    }
+
+    #[test]
+    fn invalid_json_fails_with_format_guidance() {
+        let parser = RAGFlowJsonParser::default();
+        let error = parser.parse_binary(b"not json at all").unwrap_err();
+        assert!(error.to_string().contains("Invalid JSON"));
+    }
+
+    #[test]
+    fn malformed_jsonl_record_fails_with_its_line_number() {
+        let parser = RAGFlowJsonParser::default();
+        let error = parser
+            .parse_binary(b"{\"id\":1}\nnot json\n{\"id\":3}\n{\"id\":4}\n{\"id\":5}\n")
+            .unwrap_err();
+        assert!(error.to_string().contains("line 2"), "{error}");
+    }
+
+    #[test]
+    fn invalid_utf8_fails_instead_of_being_replaced() {
+        let parser = RAGFlowJsonParser::default();
+        let error = parser.parse_binary(b"{\"name\":\xff}").unwrap_err();
+        assert!(error.to_string().contains("UTF-8"));
+    }
+
+    #[test]
+    fn parse_trait_includes_reupload_guidance_for_invalid_json() {
+        let parser = JsonParser::new();
+        let error = parser.parse("broken.json", b"not json").unwrap_err();
+        assert!(error.to_string().contains("upload it again"));
+        assert!(error.to_string().contains("UTF-8 encoded"));
+    }
+
+    #[test]
+    fn set_nested_dict_creates_intermediate_objects() {
+        let mut map = Map::new();
+        RAGFlowJsonParser::set_nested_dict(
+            &mut map,
+            &["a".to_string(), "b".to_string(), "c".to_string()],
+            json!(42),
+        );
+        assert_eq!(map["a"]["b"]["c"], 42);
+    }
+
+    #[test]
+    fn flatten_json_legacy_still_works() {
+        let v = json!({"k": {"n": 1}, "arr": [1, 2]});
+        let text = flatten_json(&v, "");
+        assert!(text.contains("k.n: 1"));
+        assert!(text.contains("arr: [1, 2]"));
+    }
+
+    #[test]
+    fn json_parser_parse_trait_joins_sections() {
+        let parser = JsonParser::new();
+        let doc = parser
+            .parse("test.json", br#"{"a":1,"b":[1,2,3]}"#)
+            .unwrap();
+        assert!(doc.content.contains("1"));
+        assert_eq!(doc.mime_type, "application/json");
+    }
+}

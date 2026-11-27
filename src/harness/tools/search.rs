@@ -534,4 +534,188 @@ pub async fn load_specific_chunks(
     found
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
 
+    struct MockRetriever {
+        result: Kbinfos,
+        last: std::sync::Mutex<Option<RetrievalRequest>>,
+    }
+
+    #[async_trait]
+    impl HarnessRetriever for MockRetriever {
+        async fn retrieval(&self, request: RetrievalRequest) -> Result<Kbinfos, String> {
+            *self.last.lock().unwrap() = Some(request);
+            Ok(self.result.clone())
+        }
+    }
+
+    fn context<'a>(retriever: &'a MockRetriever) -> SearchContext<'a> {
+        SearchContext {
+            kb_ids: vec!["kb-1".to_string()],
+            sql_kb_ids: vec![],
+            tenant_ids: vec!["tenant".to_string()],
+            has_embed_model: true,
+            settings: SearchSettings::default(),
+            retriever,
+            scoped_doc_ids: None,
+            search_cache: None,
+        }
+    }
+
+    #[test]
+    fn helpers_mirror_upstream() {
+        assert_eq!(
+            resolve_top_n(&SearchSettings::default(), None),
+            DEFAULT_TOP_N
+        );
+        assert_eq!(resolve_top_n(&SearchSettings::default(), Some(5)), 5);
+        assert_eq!(resolve_top_k(&SearchSettings::default()), DEFAULT_TOP_K);
+        assert_eq!(
+            resolve_rerank_candidates(&SearchSettings::default(), 100),
+            100
+        );
+        assert_eq!(
+            effective_query("who?", "alpha", "alpha, alpha, 1999"),
+            "who? alpha, alpha, 1999"
+        );
+        assert_eq!(effective_query("who?", "alpha", ""), "who? alpha");
+        let key_a = search_cache_key("Q", &["b".into(), "a".into()], 12, &["d1".into()]);
+        let key_b = search_cache_key("q", &["a".into(), "b".into()], 12, &["d1".into()]);
+        assert_eq!(key_a, key_b);
+
+        let terms = grep_terms_from_query("Culdect-Saga: the 2011 season?", GREP_TERMS_MAX);
+        assert!(terms.contains(&"Culdect-Saga".to_string()));
+        assert!(terms.contains(&"2011".to_string()));
+        let regex_terms = query_to_terms("(?i)(Alpha|beta\\b|gamma)");
+        assert!(regex_terms.contains(&"Alpha".to_string()));
+        assert!(regex_terms.contains(&"beta".to_string()));
+    }
+
+    #[test]
+    fn tables_detected_and_ranked() {
+        assert!(is_table_chunk(
+            &json!({"content": "| a | b |\n| - | - |\n| 1 | 2 |"})
+        ));
+        assert!(is_table_chunk(
+            &json!({"content": "<table><tr></tr></table>"})
+        ));
+        assert!(!is_table_chunk(&json!({"content": "plain prose"})));
+
+        let candidates = vec![
+            json!({"chunk_id": "c1", "content": "nothing here"}),
+            json!({"chunk_id": "c2", "content": "alpha and beta appear"}),
+        ];
+        let ranked = rank_chunks_by_terms(&candidates, &["alpha beta".to_string()]);
+        assert_eq!(ranked.len(), 1);
+        assert_eq!(ranked[0]["chunk_id"], json!("c2"));
+    }
+
+    #[tokio::test]
+    async fn hybrid_legs_pass_flags_and_narrow() {
+        let retriever = MockRetriever {
+            result: Kbinfos {
+                chunks: vec![
+                    json!({"chunk_id": "c1", "content": "alpha wins the race"}),
+                    json!({"chunk_id": "c2", "content": "unrelated filler about nothing at all"}),
+                ],
+                doc_aggs: vec![],
+                pre_summary: None,
+            },
+            last: std::sync::Mutex::new(None),
+        };
+        let ctx = context(&retriever);
+        // Keyword narrowing needs 3+ comma terms (upstream bigram behaviour).
+        let result = hybrid_search(
+            &ctx,
+            "who won?",
+            None,
+            None,
+            None,
+            "alpha, wins, race",
+            "",
+            true,
+        )
+        .await;
+        assert_eq!(result.chunks.len(), 1, "keyword narrowing drops the filler");
+        let request = retriever.last.lock().unwrap().clone().unwrap();
+        assert!(request.use_embedding);
+        assert_eq!(
+            request.vector_similarity_weight,
+            DEFAULT_HYBRID_VECTOR_WEIGHT
+        );
+        assert!(request.aggs);
+        assert!(request.must_not_compile_kwd);
+
+        // Vector leg: weight 1.0 and no aggs; BM25 leg: weight 0.
+        let _ = vector_search(&ctx, "q", None, None, "", "", None).await;
+        let request = retriever.last.lock().unwrap().clone().unwrap();
+        assert_eq!(request.vector_similarity_weight, 1.0);
+        assert!(!request.aggs);
+        let _ = bm25_search(&ctx, "q", None, None, "", "", None).await;
+        let request = retriever.last.lock().unwrap().clone().unwrap();
+        assert_eq!(request.vector_similarity_weight, 0.0);
+    }
+
+    #[tokio::test]
+    async fn grep_search_keeps_tables_whole_and_falls_back() {
+        let table = json!({"chunk_id": "t1", "content": "| rank | city |\n| --- | --- |\n| 1 | Tokyo |\n| 2 | Lima |"});
+        let prose = json!({"chunk_id": "p1", "content": "The 2011 season standings list Culdect Saga at rank nineteen overall in that long table of results and more words to pass the short threshold for narrowing to apply at all here in this chunk of text."});
+        let retriever = MockRetriever {
+            result: Kbinfos {
+                chunks: vec![table.clone(), prose.clone()],
+                doc_aggs: vec![],
+                pre_summary: None,
+            },
+            last: std::sync::Mutex::new(None),
+        };
+        let ctx = context(&retriever);
+        let result = grep_search(&ctx, "Culdect Saga", None, 60, None, None).await;
+        assert!(
+            result
+                .chunks
+                .iter()
+                .any(|chunk| chunk["chunk_id"] == json!("t1"))
+        );
+        assert!(
+            result
+                .chunks
+                .iter()
+                .any(|chunk| chunk["chunk_id"] == json!("p1"))
+        );
+
+        // No terms at all: the BM25 candidates come back untouched.
+        let result = grep_search(&ctx, "!!!", None, 60, None, None).await;
+        assert_eq!(result.chunks.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn deep_read_helpers() {
+        let fetch = |doc_id: &str| -> Result<Kbinfos, String> {
+            if doc_id == "d1" {
+                Ok(Kbinfos {
+                    chunks: vec![json!({"chunk_id": "c1"}), json!({"chunk_id": "c2"})],
+                    doc_aggs: vec![json!({"doc_id": "d1"})],
+                    pre_summary: None,
+                })
+            } else {
+                Err("missing".to_string())
+            }
+        };
+        let full = list_chunks(Some(&fetch), "d1").await;
+        assert_eq!(full.chunks.len(), 2);
+        assert!(list_chunks(Some(&fetch), "").await.chunks.is_empty());
+
+        let scope = vec!["d1".to_string()];
+        let loaded = load_specific_chunks(&fetch, &["c2".to_string()], Some(&scope)).await;
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0]["chunk_id"], json!("c2"));
+        assert!(
+            load_specific_chunks(&fetch, &["c9".to_string()], Some(&scope))
+                .await
+                .is_empty()
+        );
+    }
+}

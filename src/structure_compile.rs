@@ -7049,13 +7049,2197 @@ pub async fn struct_doc_storage_dedup_batch(
     Ok((inserted, updated + existing_relation_updates))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    mod graphrag_extractor_alignment {
+        use super::*;
 
+        #[test]
+        fn repair_json_text_recovers_non_strict_json() {
+            // single quotes + trailing commas + unquoted keys + bare value
+            let v = repair_json_text(
+                "{'items': [{'name': 'Alice', type: person, 'aliases': ['A',],}]}",
+            )
+            .unwrap();
+            let items = v.get("items").and_then(Value::as_array).unwrap();
+            assert_eq!(items.len(), 1);
+            assert_eq!(items[0]["name"], "Alice");
+            assert_eq!(items[0]["type"], "person");
+            assert_eq!(items[0]["aliases"], json!(["A"]));
+            // markdown fence + surrounding prose
+            let v2 = repair_json_text(
+                "Here you go:\n```json\n{\"items\": [{\"name\": \"Bob\"}]}\n```\nHope this helps",
+            )
+            .unwrap();
+            assert_eq!(v2["items"][0]["name"], "Bob");
+            // truncated object: missing closers are re-balanced
+            let v3 = repair_json_text("{\"items\": [{\"name\": \"Carol\"}").unwrap();
+            assert_eq!(v3["items"][0]["name"], "Carol");
+            // bare multi-word value
+            let v4 = repair_json_text("{items: [{name: John Smith, age: 30}]}").unwrap();
+            assert_eq!(v4["items"][0]["name"], "John Smith");
+            assert_eq!(v4["items"][0]["age"], 30);
+            // strict JSON passes through parse_json_lenient untouched
+            let v5 = parse_json_lenient("{\"a\": 1}").unwrap();
+            assert_eq!(v5["a"], 1);
+            // garbage → None
+            assert!(repair_json_text("no json here").is_none());
+        }
 
+        #[test]
+        fn parse_tuple_records_and_entities_and_relations_mirror_graph_extractor() {
+            let raw = concat!(
+                "(\"entity\"<|>\"Alice\"<|>\"person\"<|>\"Alice is a person.\")##",
+                "(\"entity\"<|>\"Acme\"<|>\"organization\"<|>\"A company.\")##",
+                "(\"entity\"<|>\"Dodge\"<|>\"vehicle\"<|>\"A car.\")##",
+                "(\"relationship\"<|>\"Alice\"<|>\"Acme\"<|>\"works at\"<|>7)##",
+                "(\"relationship\"<|>\"Acme\"<|>\"Alice\"<|>\"works at\"<|>notanumber)##",
+                "this record has no parentheses at all##",
+                "(\"relationship\"<|>\"Alice\"<|>\"Acme\"<|>\"late\"<|>2.5)<|COMPLETE|>"
+            );
+            let records =
+                parse_tuple_records(raw, DEFAULT_RECORD_DELIMITER, DEFAULT_COMPLETION_DELIMITER);
+            assert_eq!(records.len(), 6); // paren-less record dropped
+            let (nodes, edges) = entities_and_relations(
+                &records,
+                DEFAULT_TUPLE_DELIMITER,
+                &["person", "organization"],
+                "chunk-1",
+            );
+            assert_eq!(nodes.len(), 2);
+            assert_eq!(nodes[0]["entity_name"], "ALICE");
+            assert_eq!(nodes[0]["entity_type"], "PERSON");
+            assert_eq!(nodes[0]["source_id"], "chunk-1");
+            // "vehicle" type filtered out; all 3 relation records kept
+            assert_eq!(edges.len(), 3);
+            let w: Vec<f64> = edges.iter().filter_map(|e| e["weight"].as_f64()).collect();
+            assert!(w.contains(&7.0));
+            assert!(w.contains(&1.0)); // non-numeric strength → default 1.0
+            assert!(w.contains(&2.5));
+            // src/tgt are the sorted-uppercased pair
+            assert_eq!(edges[0]["src_id"], "ACME");
+            assert_eq!(edges[0]["tgt_id"], "ALICE");
+            // empty allow-list → DEFAULT_ENTITY_TYPES (still filters vehicle)
+            let (n2, _) = extract_entity_relations_from_output(raw, &[], "chunk-1");
+            assert_eq!(n2.len(), 2);
+        }
 
+        #[test]
+        fn merge_entity_and_relation_records_mirror_extractor() {
+            let ents = vec![
+                json!({"entity_name": "ALICE", "entity_type": "PERSON", "description": "b desc", "source_id": "c1"}),
+                json!({"entity_name": "ALICE", "entity_type": "PERSON", "description": "a desc", "source_id": "c2"}),
+                json!({"entity_name": "ALICE", "entity_type": "CATEGORY", "description": "a desc", "source_id": "c2"}),
+            ];
+            let merged = merge_entity_records(&ents).unwrap();
+            assert_eq!(merged["entity_type"], "PERSON"); // majority type
+            assert_eq!(
+                merged["description"],
+                format!("a desc{GRAPH_FIELD_SEP}b desc")
+            );
+            assert_eq!(merged["source_id"], json!(["c1", "c2"]));
+            assert_eq!(merged["entity_name"], "ALICE");
 
+            let rels = vec![
+                json!({"src_id": "A", "tgt_id": "B", "weight": 2.0, "description": "d2", "keywords": "k1", "source_id": "c1"}),
+                json!({"src_id": "A", "tgt_id": "B", "weight": 3.5, "description": "d1", "keywords": ["k1", "k2"], "source_id": "c2"}),
+            ];
+            let edge = merge_relation_records(&rels).unwrap();
+            assert_eq!(edge["weight"], 5.5);
+            assert_eq!(edge["description"], format!("d1{GRAPH_FIELD_SEP}d2"));
+            assert_eq!(edge["keywords"], json!(["k1", "k2"]));
+            assert_eq!(edge["source_id"], json!(["c1", "c2"]));
+            assert_eq!(
+                most_common_value(&["a".into(), "b".into(), "a".into()]),
+                Some("a".into())
+            );
+            assert_eq!(
+                flat_uniq_list(&rels, "keywords"),
+                vec!["k1".to_string(), "k2".to_string()]
+            );
+            assert!(merge_entity_records(&[]).is_none());
+            assert!(merge_relation_records(&[]).is_none());
+        }
 
+        #[test]
+        fn spacy_mapping_and_keyword_normalization_constants() {
+            assert_eq!(spacy_to_app_entity_type("PERSON"), "person");
+            assert_eq!(spacy_to_app_entity_type("ORG"), "organization");
+            assert_eq!(spacy_to_app_entity_type("GPE"), "geo");
+            assert_eq!(spacy_to_app_entity_type("LOC"), "geo");
+            assert_eq!(spacy_to_app_entity_type("EVENT"), "event");
+            assert_eq!(spacy_to_app_entity_type("QUANTITY"), "category");
+            assert_eq!(spacy_to_app_entity_type("NOT_A_LABEL"), "category");
+            assert!(has_uppercase("Hello"));
+            assert!(!has_uppercase("hello"));
+            assert_eq!(replace_word("New - York"), "New-York");
+            assert_eq!(replace_word("cat 's"), "cat's");
+            assert_eq!(replace_word("A - B"), "A-B");
+            // missing graphrag constants now present
+            assert_eq!(MAX_CONCURRENT_PROCESS_AND_EXTRACT_CHUNK, 10);
+            assert_eq!(GRAPHRAG_MAX_ERRORS, 3);
+            assert_eq!(ENTITY_SUMMARY_MAX_TOKENS, 512);
+            assert_eq!(ENTITY_SUMMARY_DESCRIPTION_LIST_LIMIT, 12);
+            assert_eq!(ENTITY_EXTRACTION_MAX_GLEANINGS, 2);
+            assert_eq!(GRAPH_FIELD_SEP, "<SEP>");
+            assert_eq!(DEFAULT_TUPLE_DELIMITER, "<|>");
+            assert_eq!(DEFAULT_RECORD_DELIMITER, "##");
+            assert_eq!(DEFAULT_COMPLETION_DELIMITER, "<|COMPLETE|>");
+            assert!(DEFAULT_ENTITY_TYPES.contains(&"person"));
+            assert!(is_float_regex("7"));
+            assert!(is_float_regex("-3.5"));
+            assert!(is_float_regex("10.5"));
+            assert!(!is_float_regex("10.")); // regex requires a trailing digit
+            assert!(!is_float_regex("abc"));
+        }
 
+        #[tokio::test]
+        async fn upsert_row_by_id_implements_if_not_exists_semantics() {
+            let store = MemoryCompileStore::default();
+            let row = to_es_doc(
+                &json!({"name": "A", "description": "desc"}),
+                "hypergraph",
+                "doc-1",
+                &["c1".to_string()],
+                vec![],
+                "entity",
+                None,
+                None,
+                None,
+                None,
+            );
+            assert_eq!(
+                upsert_row_by_id(&store, "kb-1", &row).await.unwrap(),
+                PersistOutcome::Inserted
+            );
+            // same stable id → update, not a second row
+            assert_eq!(
+                upsert_row_by_id(&store, "kb-1", &row).await.unwrap(),
+                PersistOutcome::Updated
+            );
+            let rows = store
+                .search("kb-1", &CompileFilter::default(), 100)
+                .await
+                .unwrap();
+            assert_eq!(rows.len(), 1);
+            // different kb → independent insert
+            assert_eq!(
+                upsert_row_by_id(&store, "kb-2", &row).await.unwrap(),
+                PersistOutcome::Inserted
+            );
+            let rows = store
+                .search("kb-2", &CompileFilter::default(), 100)
+                .await
+                .unwrap();
+            assert_eq!(rows.len(), 1);
+        }
+    }
 
+    fn sample_config() -> Value {
+        json!({
+            "guideline": {
+                "target": "Extract the main entities and relations.",
+                "rules_for_entities": "Entities are people, organizations, locations.",
+                "rules_for_relations": "Relations link two known entities.",
+                "rules_for_time": "Time: {observation_time}"
+            },
+            "entity": {
+                "description": "A named entity.",
+                "fields": [
+                    {"type": "person", "description": "A person"},
+                    {"type": "org", "description": "An org"}
+                ]
+            },
+            "relation": {
+                "description": "A relation.",
+                "fields": [
+                    {"type": "works_at", "description": "works at"}
+                ]
+            }
+        })
+    }
 
+    #[test]
+    fn infer_type_explicit_and_kind_normalization() {
+        assert_eq!(infer_type(&json!({"compile_type": "set"})), "set");
+        assert_eq!(infer_type(&json!({"kind": "pageIndex"})), "timeline");
+        assert_eq!(infer_type(&json!({"kind": "knowledge_graph"})), "timeline");
+        assert_eq!(
+            infer_type(&json!({"output": {"entities": {}, "relations": {}}})),
+            "hypergraph"
+        );
+        assert_eq!(infer_type(&json!({})), "list");
+    }
 
+    #[test]
+    fn localize_supports_language_and_lists() {
+        let v = json!({"en": "Hello", "zh": "你好"});
+        assert_eq!(localize(&v, "zh"), "你好");
+        assert_eq!(localize(&v, "fr"), "Hello");
+        assert_eq!(localize(&json!(["a", "b"]), "en"), "1. a\n2. b");
+        assert_eq!(localize(&Value::Null, "en"), "");
+    }
+
+    #[test]
+    fn render_fields_builds_skeleton() {
+        let fields = vec![
+            json!({"name": "name", "type": "str", "description": "The name"}),
+            json!({"name": "tags", "type": "list", "description": "Tags", "required": false}),
+        ];
+        let (lines, skeleton) = render_fields(&fields, "en");
+        assert!(lines.contains("- name (str, required): The name"));
+        assert!(lines.contains("- tags (list, optional): Tags"));
+        assert!(skeleton.contains("\"name\": <string>"));
+        assert!(skeleton.contains("\"tags\": [<string>, ...]"));
+    }
+
+    #[test]
+    fn hypergraph_prompts_render_both_stages() {
+        let (node, edge) = hypergraph_prompts(&sample_config(), "en");
+        assert!(node.contains("## Entity Fields:"));
+        assert!(node.contains("{\"items\":"));
+        assert!(edge.contains("## Known Entities:\n{known_nodes}"));
+        assert!(edge.contains("Only create relations between entities listed"));
+    }
+
+    #[test]
+    fn payload_description_flattens_lists() {
+        let p = json!({"name": "A", "tags": ["x", "y"], "description": "d"});
+        let desc = payload_description(&p);
+        assert!(desc.contains("A"));
+        assert!(desc.contains("x"));
+        assert!(desc.contains("y"));
+        assert!(desc.contains("d"));
+    }
+
+    #[test]
+    fn graph_entity_and_relation_shapes() {
+        let e = graph_entity(
+            &json!({"name": "A", "type": "person", "aliases": ["a1"]}),
+            Some(&["c1".to_string()]),
+        )
+        .unwrap();
+        assert_eq!(e["mention_count"], 1);
+        assert_eq!(e["source_chunk_ids"], json!(["c1"]));
+        assert_eq!(e["discription"], "");
+        let r = graph_relation(&json!({"source": "A", "target": "B", "type": "x"})).unwrap();
+        assert_eq!(r["from"], "A");
+        assert_eq!(r["to"], "B");
+        assert!(graph_relation(&json!({"source": "A"})).is_none());
+    }
+
+    #[test]
+    fn merge_graph_entities_unions_by_name_type() {
+        let ents = vec![
+            json!({"name": "A", "type": "p", "mention_count": 1, "aliases": [], "source_chunk_ids": ["c1"], "discription": ""}),
+            json!({"name": "A", "type": "p", "mention_count": 2, "aliases": ["a1"], "source_chunk_ids": ["c2"], "discription": "d"}),
+        ];
+        let merged = merge_graph_entities(&ents);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0]["mention_count"], 3);
+        assert_eq!(merged[0]["source_chunk_ids"], json!(["c1", "c2"]));
+        assert_eq!(merged[0]["discription"], "d");
+    }
+
+    #[test]
+    fn to_es_doc_builds_stable_rows() {
+        let row = to_es_doc(
+            &json!({"name": "A", "description": "desc"}),
+            "list",
+            "doc-1",
+            &["c1".to_string()],
+            vec![1.0, 0.0],
+            "entity",
+            None,
+            None,
+            Some("tpl-1"),
+            Some("list"),
+        );
+        assert_eq!(row.compile_kwd, "list");
+        assert_eq!(row.knowledge_graph_kwd, "entity");
+        assert_eq!(row.source_chunk_ids, vec!["c1"]);
+        assert_eq!(row.compilation_template_ids, vec!["tpl-1"]);
+        assert_eq!(row.compilation_template_kind_kwd.as_deref(), Some("list"));
+        assert!(!row.id.is_empty());
+        // Stable: same inputs → same id.
+        let row2 = to_es_doc(
+            &json!({"name": "A", "description": "desc"}),
+            "list",
+            "doc-1",
+            &["c1".to_string()],
+            vec![1.0, 0.0],
+            "entity",
+            None,
+            None,
+            Some("tpl-1"),
+            Some("list"),
+        );
+        assert_eq!(row.id, row2.id);
+    }
+
+    #[test]
+    fn filter_key_includes_template() {
+        let a = to_es_doc(
+            &json!({"name": "A"}),
+            "list",
+            "d",
+            &[],
+            vec![],
+            "entity",
+            None,
+            None,
+            Some("t1"),
+            None,
+        );
+        let b = to_es_doc(
+            &json!({"name": "A"}),
+            "list",
+            "d",
+            &[],
+            vec![],
+            "entity",
+            None,
+            None,
+            Some("t2"),
+            None,
+        );
+        assert_ne!(filter_key(&a), filter_key(&b));
+    }
+
+    #[test]
+    fn build_chunk_batches_split_mode() {
+        let chunks: Vec<ChunkInput> = (0..6)
+            .map(|i| ChunkInput {
+                id: format!("c{i}"),
+                text: "word ".repeat(50),
+            })
+            .collect();
+        let (batches, info) = build_chunk_batches(&chunks, 1000, 100, None, None, None, 1024);
+        assert_eq!(info.total, 6);
+        assert_eq!(info.kept, 6);
+        assert_eq!(info.skipped_empty, 0);
+        assert!(info.input_budget >= 1024);
+        // 50 words ≈ 50 tokens each; budget floor 1024 → all fit in ≤2 batches.
+        assert!(info.n_batches >= 1 && info.n_batches <= 2);
+        assert!(batches.iter().all(|b| !b.is_empty()));
+        // Labels are per-batch positional.
+        assert_eq!(batches[0][0].label, "C1");
+    }
+
+    #[test]
+    fn build_chunk_batches_greedy_mode() {
+        let chunks: Vec<ChunkInput> = (0..10)
+            .map(|i| ChunkInput {
+                id: format!("c{i}"),
+                text: "x".repeat(100),
+            })
+            .collect();
+        let (batches, info) = build_chunk_batches(&chunks, 100_000, 0, None, Some(8), None, 1024);
+        assert_eq!(info.n_batches, 2); // 10 items / cap 8 → 2 batches
+        assert_eq!(batches[0].len(), 8);
+        assert_eq!(batches[1].len(), 2);
+    }
+
+    #[test]
+    fn build_chunk_batches_skips_resume_and_empty() {
+        let chunks = vec![
+            ChunkInput {
+                id: "c0".into(),
+                text: "text".into(),
+            },
+            ChunkInput {
+                id: "c1".into(),
+                text: "   ".into(),
+            },
+            ChunkInput {
+                id: "c2".into(),
+                text: "more".into(),
+            },
+        ];
+        let resume: HashSet<String> = ["c2".into()].into_iter().collect();
+        let (batches, info) =
+            build_chunk_batches(&chunks, 1000, 0, Some(&resume), None, None, 1024);
+        assert_eq!(info.kept, 1);
+        assert_eq!(info.skipped_resume, 1);
+        assert_eq!(info.skipped_empty, 1);
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0][0].chunk_id, "c0");
+    }
+
+    #[test]
+    fn stable_row_id_is_stable_and_distinct() {
+        let a = stable_row_id(&["x".into(), "y".into()]);
+        let b = stable_row_id(&["x".into(), "y".into()]);
+        let c = stable_row_id(&["x".into(), "z".into()]);
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        assert_eq!(a.len(), 16);
+    }
+
+    #[test]
+    fn tokenize_for_search_handles_empty() {
+        assert_eq!(tokenize_for_search(""), (vec![], vec![]));
+        assert_eq!(tokenize_for_search("  "), (vec![], vec![]));
+        let (ltks, sm) = tokenize_for_search("hello world");
+        assert_eq!(ltks, vec!["hello", "world"]);
+        assert_eq!(sm, ltks);
+    }
+
+    #[test]
+    fn chain_detect_violations_covers_all_four() {
+        let edges = vec![
+            ("a".to_string(), "a".to_string()), // self-loop
+            ("a".to_string(), "b".to_string()), // fan-out (a)
+            ("a".to_string(), "c".to_string()),
+            ("d".to_string(), "b".to_string()), // fan-in (b)
+            ("x".to_string(), "y".to_string()), // cycle x→y→x
+            ("y".to_string(), "x".to_string()),
+        ];
+        let issues = chain_detect_violations(&edges);
+        // All six edges carry at least one issue: (a,a) self-loop+fan-out,
+        // (a,b) fan-out+fan-in, (a,c) fan-out, (d,b) fan-in, (x,y)/(y,x) cycle.
+        assert_eq!(issues.len(), 6);
+        assert!(issues[&("a".into(), "a".into())].contains(&"self-loop".to_string()));
+        assert!(
+            issues[&("a".into(), "b".into())]
+                .iter()
+                .any(|s| s.contains("fan-out"))
+        );
+        assert!(
+            issues[&("d".into(), "b".into())]
+                .iter()
+                .any(|s| s.contains("fan-in"))
+        );
+        assert!(
+            issues[&("x".into(), "y".into())]
+                .iter()
+                .any(|s| s.contains("cycle"))
+        );
+        assert!(
+            issues[&("y".into(), "x".into())]
+                .iter()
+                .any(|s| s.contains("cycle"))
+        );
+    }
+
+    #[test]
+    fn chain_clean_edges_have_no_issues() {
+        let edges = vec![
+            ("a".to_string(), "b".to_string()),
+            ("b".to_string(), "c".to_string()),
+            ("c".to_string(), "d".to_string()),
+        ];
+        let issues = chain_detect_violations(&edges);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn tarjan_scc_finds_cycles() {
+        let mut adj: HashMap<String, Vec<String>> = HashMap::new();
+        adj.insert("x".into(), vec!["y".into()]);
+        adj.insert("y".into(), vec!["x".into(), "z".into()]);
+        adj.insert("z".into(), vec![]);
+        let sccs = tarjan_scc_iterative(&adj);
+        assert!(sccs.iter().any(|c| c.contains("x") && c.contains("y")));
+    }
+
+    #[test]
+    fn chain_gather_caps_and_dedups() {
+        let bad_docs = vec![json!({
+            "id": "r1",
+            "source_chunk_ids": ["c1", "c2", "c1"],
+        })];
+        let mut map = HashMap::new();
+        map.insert("c1".into(), "text1".into());
+        map.insert("c2".into(), "text2".into());
+        let pairs = chain_gather_chunk_text(&bad_docs, &map);
+        assert_eq!(pairs.len(), 2);
+    }
+
+    #[test]
+    fn exact_dedup_groups_by_normalized_key() {
+        let items = vec![
+            json!({"name": "Apple", "mention_count": 2, "aliases": [], "chunk_ids": ["c1"]}),
+            json!({"name": "apple", "mention_count": 3, "aliases": ["APPLE Inc"], "chunk_ids": ["c2"]}),
+        ];
+        let out = exact_dedup_by_key(&items, "name", None, None);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0]["name"], "Apple");
+        assert_eq!(out[0]["mention_count"], 5);
+        assert!(
+            out[0]["aliases"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("APPLE Inc"))
+        );
+        assert_eq!(out[0]["chunk_ids"], json!(["c1", "c2"]));
+    }
+
+    #[test]
+    fn memory_store_roundtrip_and_knn() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let store = MemoryCompileStore::new();
+            let row = to_es_doc(
+                &json!({"name": "A"}),
+                "list",
+                "doc-1",
+                &["c1".into()],
+                vec![1.0, 0.0, 0.0],
+                "entity",
+                None,
+                None,
+                None,
+                None,
+            );
+            store.insert("kb1", &[row.clone()]).await.unwrap();
+            let found = store.get("kb1", &row.id).await.unwrap();
+            assert!(found.is_some());
+            let filter = row.filter_of();
+            let knn = store
+                .search_knn("kb1", &filter, &[0.99, 0.01, 0.0], 1)
+                .await
+                .unwrap();
+            assert_eq!(knn.len(), 1);
+            // Different kb is isolated.
+            let other = store
+                .search_knn("kb2", &filter, &[1.0, 0.0, 0.0], 1)
+                .await
+                .unwrap();
+            assert!(other.is_empty());
+            // update
+            store
+                .update("kb1", &row.id, &json!({"from_entity_kwd": "X"}))
+                .await
+                .unwrap();
+            let after = store.get("kb1", &row.id).await.unwrap().unwrap();
+            assert_eq!(after["from_entity_kwd"], "X");
+        });
+    }
+
+    #[test]
+    fn json_store_roundtrip_and_delete_document() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let store = JsonFileCompileStore::new(dir.path()).unwrap();
+            let row = to_es_doc(
+                &json!({"name": "A"}),
+                "list",
+                "doc-1",
+                &["c1".into()],
+                vec![1.0, 0.0],
+                "entity",
+                None,
+                None,
+                None,
+                None,
+            );
+            store.insert("kb1", &[row.clone()]).await.unwrap();
+            let found = store.get("kb1", &row.id).await.unwrap();
+            assert!(found.is_some());
+            store.delete_document("kb1", "doc-1").await.unwrap();
+            let gone = store.get("kb1", &row.id).await.unwrap();
+            assert!(gone.is_none());
+            // Graph JSON upsert is id-stable.
+            let graph = json!({"entities": [], "relations": []});
+            store
+                .upsert_graph_json("kb1", &graph, "list", "doc-1", Some("tpl"))
+                .await
+                .unwrap();
+            let g = store
+                .get("kb1", &graph_row_id("doc-1", "list", Some("tpl")))
+                .await
+                .unwrap();
+            assert!(g.is_some());
+            assert_eq!(g.unwrap()["knowledge_graph_kwd"], "graph");
+        });
+    }
+
+    #[test]
+    fn rebuild_es_doc_preserves_identity() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let base = to_es_doc(
+                &json!({"source": "A", "target": "B", "description": "old"}),
+                "list",
+                "doc-1",
+                &["c1".into()],
+                vec![1.0, 0.0],
+                "relation",
+                Some("source"),
+                Some("target"),
+                None,
+                None,
+            );
+            let base_value = serde_json::to_value(&base).unwrap();
+            let rebuilt = rebuild_es_doc(
+                &json!({"source": "A", "target": "B", "description": "new"}),
+                &base_value,
+                vec![0.9, 0.1],
+                &["c1".into(), "c2".into()],
+                true,
+                None,
+                None,
+            );
+            assert_eq!(rebuilt.id, base.id);
+            assert_eq!(rebuilt.from_entity_kwd, base.from_entity_kwd);
+            assert_eq!(rebuilt.to_entity_kwd, base.to_entity_kwd);
+            assert_eq!(rebuilt.source_chunk_ids, vec!["c1", "c2"]);
+        });
+    }
+
+    #[test]
+    fn phase_marker_constants_and_key_format() {
+        assert_eq!(PHASE_RESOLUTION, "resolution_done");
+        assert_eq!(PHASE_COMMUNITY, "community_done");
+        assert_eq!(ALL_PHASES, [PHASE_RESOLUTION, PHASE_COMMUNITY]);
+        assert_eq!(PHASE_MARKER_DEFAULT_TTL_SECONDS, 7 * 24 * 3600);
+        assert_eq!(
+            phase_marker_key("kb-1", PHASE_RESOLUTION),
+            "graphrag:phase:kb-1:resolution_done"
+        );
+        assert_eq!(
+            phase_marker_key("kb-1", PHASE_COMMUNITY),
+            "graphrag:phase:kb-1:community_done"
+        );
+        // KB-scoped: distinct KBs never collide.
+        assert_ne!(
+            phase_marker_key("kb-1", PHASE_RESOLUTION),
+            phase_marker_key("kb-2", PHASE_RESOLUTION)
+        );
+        assert_eq!(NER_SKIP_SPACY_LABELS, ["ORDINAL", "CARDINAL"]);
+    }
+
+    #[test]
+    fn entity_name_similarity_matches_ragflow_gate() {
+        // English edit-distance gate: distance <= min(len)//2.
+        assert!(entity_name_similarity("Acme", "Acme"));
+        assert!(entity_name_similarity("Apple", "apple")); // distance 1 <= 2
+        assert!(entity_name_similarity("abc", "abd")); // distance 1 <= 1
+        assert!(!entity_name_similarity("Acme", "Zenith")); // distance > 2
+        assert!(!entity_name_similarity("computer", "phone")); // distance > 2
+        // Digit-bearing 2-gram symmetric difference short-circuits to false.
+        assert!(!entity_name_similarity("version2", "version3"));
+        assert!(!entity_name_similarity("iPhone 15", "iPhone 16"));
+        // Non-English character-set overlap path.
+        assert!(entity_name_similarity("北京", "北京市")); // max set 3 < 4, overlap 2 > 1
+        assert!(!entity_name_similarity("北京", "上海")); // overlap 0
+        assert!(entity_name_similarity("阿里巴巴", "阿里巴巴"));
+        assert!(!entity_name_similarity("阿里巴巴", "阿里巴巴集团")); // 3/5 = 0.6 < 0.8
+        // is_english / levenshtein primitives.
+        assert!(text_is_english("hello world"));
+        assert!(!text_is_english("你好"));
+        assert!(!text_is_english("hello你好")); // 5/7 < 0.8
+        assert_eq!(levenshtein_distance("kitten", "sitting"), 3);
+        assert_eq!(levenshtein_distance("", "abc"), 3);
+    }
+
+    #[test]
+    fn entity_resolution_candidates_and_result_parsing() {
+        let nodes = vec![
+            ("Apple".to_string(), Some("org")),
+            ("apple".to_string(), Some("org")),
+            ("Microsoft".to_string(), Some("org")),
+            ("北京".to_string(), Some("geo")),
+            ("北京市".to_string(), Some("geo")),
+            ("上海".to_string(), Some("geo")),
+        ];
+        let subgraph: HashSet<String> = ["Apple".into(), "北京".into()].into_iter().collect();
+        let pairs = entity_resolution_candidates(&nodes, &subgraph);
+        // Same-type unordered pairs, at least one endpoint in the subgraph,
+        // passing the similarity gate.  Entity types iterate in sorted order
+        // ("geo" < "org"), matching RAGFlow's sorted entity_types dict.
+        assert_eq!(
+            pairs,
+            vec![
+                ("北京".to_string(), "北京市".to_string()),
+                ("Apple".to_string(), "apple".to_string()),
+            ]
+        );
+
+        // _process_results: only in-range "yes" records survive.
+        let output = "(For question <|>1<|>, &&no&&, different.)##\
+                      (For question <|>2<|>, &&yes&&, same.)##\
+                      (For question <|>3<|>, &&Yes&&, same.)##\
+                      (For question <|>99<|>, &&yes&&, out of range.)";
+        let indices = parse_resolution_results(
+            output,
+            3,
+            DEFAULT_RECORD_DELIMITER,
+            DEFAULT_ENTITY_INDEX_DELIMITER,
+            DEFAULT_RESOLUTION_RESULT_DELIMITER,
+        );
+        assert_eq!(indices, vec![2, 3]);
+        // Malformed / empty output yields no merges.
+        assert!(parse_resolution_results("no delimiters here", 5, "##", "<|>", "&&").is_empty());
+    }
+}
+#[cfg(test)]
+mod common_helpers_tests {
+    use super::*;
+
+    fn set_env(key: &str, value: &str) {
+        // SAFETY: tests use unique variable names and do not rely on the
+        // process environment otherwise.
+        unsafe { std::env::set_var(key, value) }
+    }
+
+    fn clear_env(key: &str) {
+        unsafe { std::env::remove_var(key) }
+    }
+    use crate::doc_store::{DocRow, DocStore, FilterCondition, SearchQuery, SearchResponse};
+    use async_trait::async_trait;
+    use serde_json::json;
+    use std::sync::Mutex;
+
+    #[test]
+    fn env_int_and_float_read_and_clamp() {
+        set_env("RAYRAG_TEST_COMMON_INT", "12");
+        assert_eq!(env_int("RAYRAG_TEST_COMMON_INT", 5, None), 12);
+        set_env("RAYRAG_TEST_COMMON_INT", "2");
+        assert_eq!(env_int("RAYRAG_TEST_COMMON_INT", 5, Some(4)), 4, "floored");
+        set_env("RAYRAG_TEST_COMMON_INT", "not-a-number");
+        assert_eq!(
+            env_int("RAYRAG_TEST_COMMON_INT", 5, None),
+            5,
+            "invalid -> default"
+        );
+        set_env("RAYRAG_TEST_COMMON_INT", "  ");
+        assert_eq!(
+            env_int("RAYRAG_TEST_COMMON_INT", 5, None),
+            5,
+            "blank -> default"
+        );
+        clear_env("RAYRAG_TEST_COMMON_INT");
+        assert_eq!(env_int("RAYRAG_TEST_COMMON_INT", 7, None), 7);
+
+        set_env("RAYRAG_TEST_COMMON_FLOAT", "0.25");
+        assert_eq!(env_float("RAYRAG_TEST_COMMON_FLOAT", 0.5, None, None), 0.25);
+        set_env("RAYRAG_TEST_COMMON_FLOAT", "0.01");
+        assert_eq!(
+            env_float("RAYRAG_TEST_COMMON_FLOAT", 0.5, Some(0.1), None),
+            0.1
+        );
+        set_env("RAYRAG_TEST_COMMON_FLOAT", "2.0");
+        assert_eq!(
+            env_float("RAYRAG_TEST_COMMON_FLOAT", 0.5, None, Some(1.0)),
+            1.0
+        );
+        set_env("RAYRAG_TEST_COMMON_FLOAT", "nan");
+        assert_eq!(
+            env_float("RAYRAG_TEST_COMMON_FLOAT", 0.5, None, None),
+            0.5,
+            "non-finite -> default"
+        );
+        clear_env("RAYRAG_TEST_COMMON_FLOAT");
+    }
+
+    #[test]
+    fn gen_conf_model_branches() {
+        let deepseek = knowledge_compile_gen_conf("deepseek-v4-flash", None);
+        assert_eq!(deepseek["max_completion_tokens"], json!(32768));
+        assert_eq!(
+            deepseek["extra_body"]["thinking"]["type"],
+            json!("disabled")
+        );
+
+        let qwen = knowledge_compile_gen_conf("Qwen3-32B", None);
+        assert_eq!(qwen["enable_thinking"], json!(false));
+        let preview = knowledge_compile_gen_conf("qwen3.8-max-preview", None);
+        assert_eq!(preview["enable_thinking"], json!(true));
+
+        let other = knowledge_compile_gen_conf("gpt-4o", None);
+        assert_eq!(other["reasoning_effort"], json!("none"));
+
+        let mut base = serde_json::Map::new();
+        base.insert("temperature".to_string(), json!(0.1));
+        let kept = knowledge_compile_gen_conf("gpt-4o", Some(&base));
+        assert_eq!(kept["temperature"], json!(0.1));
+    }
+
+    struct MockEmbed;
+
+    #[async_trait]
+    impl EmbeddingBackend for MockEmbed {
+        async fn encode(&self, texts: &[String]) -> std::result::Result<Vec<Vec<f32>>, String> {
+            Ok(texts.iter().map(|_| vec![0.1, 0.2]).collect())
+        }
+    }
+
+    struct FailingEmbed;
+
+    #[async_trait]
+    impl EmbeddingBackend for FailingEmbed {
+        async fn encode(&self, _texts: &[String]) -> std::result::Result<Vec<Vec<f32>>, String> {
+            Err("boom".to_string())
+        }
+    }
+
+    #[tokio::test]
+    async fn encode_seam_contract() {
+        assert!(encode(&MockEmbed, &[]).await.unwrap().is_empty());
+        let vectors = encode(&MockEmbed, &["a".to_string(), "b".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(vectors.len(), 2);
+        assert!(encode(&FailingEmbed, &["a".to_string()]).await.is_err());
+    }
+
+    #[test]
+    fn input_budget_math() {
+        let budget = make_input_budget(10_000, &[""], 1024, 0.5);
+        assert_eq!(budget, 5000, "empty prompts leave half the context");
+        let floored = make_input_budget(100, &[""], 1024, 0.5);
+        assert_eq!(floored, 1024);
+        let overhead = make_input_budget(10_000, &["hello world"], 0, 0.5);
+        assert!(overhead < 5000);
+    }
+
+    #[test]
+    fn index_name_matches_upstream() {
+        assert_eq!(doc_store_index_name("t1"), "ragflow_t1");
+    }
+
+    #[derive(Default)]
+    struct MockStore {
+        inserted: Mutex<usize>,
+        deleted: Mutex<usize>,
+        rows: Mutex<Vec<DocRow>>,
+    }
+
+    impl DocStore for MockStore {
+        fn db_type(&self) -> &'static str {
+            "memory"
+        }
+        fn health(&self) -> crate::Result<crate::doc_store::HealthStatus> {
+            Ok(crate::doc_store::HealthStatus::green("test"))
+        }
+        fn create_idx(
+            &self,
+            _index_name: &str,
+            _dataset_id: &str,
+            _vector_size: usize,
+        ) -> crate::Result<()> {
+            Ok(())
+        }
+        fn delete_idx(&self, _index_name: &str, _dataset_id: &str) -> crate::Result<()> {
+            Ok(())
+        }
+        fn index_exist(&self, _index_name: &str, _dataset_id: &str) -> crate::Result<bool> {
+            Ok(true)
+        }
+        fn insert(
+            &self,
+            rows: &[DocRow],
+            _index_name: &str,
+            _dataset_id: &str,
+        ) -> crate::Result<Vec<String>> {
+            *self.inserted.lock().unwrap() += rows.len();
+            self.rows.lock().unwrap().extend(rows.iter().cloned());
+            Ok(rows
+                .iter()
+                .filter_map(|row| row.get("id").and_then(|v| v.as_str()).map(str::to_string))
+                .collect())
+        }
+        fn get(
+            &self,
+            _data_id: &str,
+            _index_name: &str,
+            _dataset_ids: &[String],
+        ) -> crate::Result<Option<DocRow>> {
+            Ok(None)
+        }
+        fn update(
+            &self,
+            _condition: &FilterCondition,
+            _new_value: &DocRow,
+            _index_name: &str,
+            _dataset_id: &str,
+        ) -> crate::Result<bool> {
+            Ok(false)
+        }
+        fn delete(
+            &self,
+            _condition: &FilterCondition,
+            _index_name: &str,
+            _dataset_id: &str,
+        ) -> crate::Result<usize> {
+            *self.deleted.lock().unwrap() += 1;
+            Ok(1)
+        }
+        fn search(&self, _query: &SearchQuery) -> crate::Result<SearchResponse> {
+            let rows = self.rows.lock().unwrap().clone();
+            Ok(SearchResponse {
+                total: rows.len(),
+                docs: rows,
+                ..SearchResponse::default()
+            })
+        }
+        fn sql(&self, _sql: &str, _fetch_size: usize) -> crate::Result<Vec<Value>> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[tokio::test]
+    async fn doc_storage_wrappers_roundtrip() {
+        let store = MockStore::default();
+        let row: DocRow = [
+            ("id".to_string(), json!("r1")),
+            ("name".to_string(), json!("Alpha")),
+        ]
+        .into_iter()
+        .collect();
+        doc_storage_insert(&store, std::slice::from_ref(&row), "ragflow_t1", "kb1").await;
+        let fields = vec!["id".to_string(), "name".to_string()];
+        let found = doc_storage_search(
+            &store,
+            SearchQuery {
+                select_fields: fields.clone(),
+                dataset_ids: vec!["kb1".to_string()],
+                ..SearchQuery::default()
+            },
+            &fields,
+        )
+        .await;
+        assert_eq!(
+            found.get("r1").and_then(|r| r.get("name")),
+            Some(&json!("Alpha"))
+        );
+
+        let condition: FilterCondition = [("id".to_string(), json!("r1"))].into_iter().collect();
+        doc_storage_upsert_one(&store, &condition, &row, "t1", "kb1").await;
+        assert_eq!(*store.deleted.lock().unwrap(), 1);
+        assert_eq!(
+            *store.inserted.lock().unwrap(),
+            2,
+            "one direct + one upsert insert"
+        );
+    }
+}
+#[cfg(test)]
+mod runner_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[derive(Default)]
+    struct MockBackend {
+        templates: std::collections::HashMap<String, Value>,
+        compile_calls: std::sync::Mutex<Vec<String>>,
+        merges: std::sync::Mutex<Vec<String>>,
+        dataset_rebuilds: std::sync::Mutex<Vec<String>>,
+        nav_upserts: std::sync::Mutex<usize>,
+        timeline_cleanups: std::sync::Mutex<usize>,
+        plans: std::sync::Mutex<usize>,
+        refines: std::sync::Mutex<usize>,
+        docs_per_batch: usize,
+    }
+
+    #[async_trait::async_trait]
+    impl StructureCompileBackend for MockBackend {
+        fn resolve_template_ids_from_group(&self, group_id: &str, _tenant_id: &str) -> Vec<String> {
+            vec![format!("{group_id}-a"), format!("{group_id}-b")]
+        }
+        fn saved_template(&self, template_id: &str, _tenant_id: &str) -> Option<Value> {
+            self.templates.get(template_id).cloned()
+        }
+        async fn compile_structure_from_text(
+            &self,
+            batch: &[Value],
+            _parser_cfg: &Value,
+            _doc_id: &str,
+            _doc_name: &str,
+            _language: &str,
+            compilation_template_id: &str,
+        ) -> std::result::Result<Vec<Value>, String> {
+            self.compile_calls
+                .lock()
+                .unwrap()
+                .push(compilation_template_id.to_string());
+            Ok((0..self.docs_per_batch.max(batch.len()))
+                .map(|index| json!({"id": format!("{compilation_template_id}-{index}")}))
+                .collect())
+        }
+        async fn merge_compiled_structures(
+            &self,
+            request: MergeFlushRequest<'_>,
+        ) -> std::result::Result<Value, String> {
+            self.merges
+                .lock()
+                .unwrap()
+                .push(request.compilation_template_id.to_string());
+            Ok(json!({
+                "inserted": request.docs.len(),
+                "updated": 0,
+                "duplicates_dropped": 0,
+                "compile_kwds": ["list"],
+            }))
+        }
+        async fn rebuild_structure_graph_json(
+            &self,
+            _tenant_id: &str,
+            _kb_id: &str,
+            _doc_id: &str,
+            _doc_name: &str,
+            compile_kwd: &str,
+            _compilation_template_id: &str,
+        ) -> std::result::Result<Value, String> {
+            if compile_kwd == "page_index" {
+                return Ok(json!({"entities": [{"name": "Alpha", "description": "first"}]}));
+            }
+            Ok(json!({}))
+        }
+        async fn rebuild_dataset_structure_graph_json(
+            &self,
+            _tenant_id: &str,
+            _kb_id: &str,
+            compile_kwd: &str,
+            _compilation_template_id: &str,
+            _structure_kind: Option<&str>,
+        ) -> std::result::Result<(), String> {
+            self.dataset_rebuilds
+                .lock()
+                .unwrap()
+                .push(compile_kwd.to_string());
+            Ok(())
+        }
+        async fn upsert_dataset_nav_doc(
+            &self,
+            _tenant_id: &str,
+            _kb_id: &str,
+            _doc_id: &str,
+            _summary: &str,
+        ) -> std::result::Result<(), String> {
+            *self.nav_upserts.lock().unwrap() += 1;
+            Ok(())
+        }
+        async fn wiki_plan_from_reduction(
+            &self,
+            _tenant_id: &str,
+            _kb_id: &str,
+        ) -> std::result::Result<Value, String> {
+            *self.plans.lock().unwrap() += 1;
+            Ok(json!({"pages": [{"title": "P"}]}))
+        }
+        async fn wiki_refine_from_plan(
+            &self,
+            _tenant_id: &str,
+            _kb_id: &str,
+            _example: &str,
+        ) -> std::result::Result<Vec<Value>, String> {
+            *self.refines.lock().unwrap() += 1;
+            Ok(vec![json!({"title": "P"})])
+        }
+        async fn cleanup_timeline_isolated_entities(
+            &self,
+            _tenant_id: &str,
+            _kb_id: &str,
+            _doc_id: &str,
+            _doc_name: &str,
+            _compilation_template_id: &str,
+        ) -> std::result::Result<(), String> {
+            *self.timeline_cleanups.lock().unwrap() += 1;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn template_helpers() {
+        assert_eq!(runner_template_kind(Some(" Page-Index ")), "page_index");
+        assert_eq!(runner_template_kind(None), "");
+        assert!(is_page_index_template(&json!({"kind": "pageindex"})));
+        assert!(is_page_index_template(&json!({"kind": "Page-Index"})));
+        assert!(!is_page_index_template(&json!({"kind": "tree"})));
+        assert!(!is_page_index_template(&json!({})));
+    }
+
+    #[test]
+    fn page_index_summary_limits_and_formats() {
+        let graph = json!({"entities": [
+            {"name": "Alpha", "description": "first"},
+            {"name": "Beta", "description": "second"},
+            {"name": "", "description": ""},
+        ]});
+        assert_eq!(
+            page_index_graph_summary(&graph, 80),
+            "Alpha: first\nBeta: second"
+        );
+        assert_eq!(page_index_graph_summary(&graph, 1), "Alpha: first");
+        assert!(page_index_graph_summary(&json!({}), 80).is_empty());
+    }
+
+    #[test]
+    fn resolve_and_filter_templates() {
+        let mut backend = MockBackend::default();
+        backend
+            .templates
+            .insert("g1-a".to_string(), json!({"config": {"kind": "list"}}));
+        backend
+            .templates
+            .insert("g1-b".to_string(), json!({"config": {"kind": "wiki"}}));
+        backend
+            .templates
+            .insert("g2-a".to_string(), json!({"config": {"kind": "tree"}}));
+        let ids = resolve_template_ids_from_groups(
+            &backend,
+            &["g1".to_string(), "g1".to_string(), " ".to_string()],
+            "t1",
+        );
+        assert_eq!(
+            ids,
+            vec!["g1-a".to_string(), "g1-b".to_string()],
+            "deduped, blanks skipped"
+        );
+        let active = load_active_templates(&backend, &ids, "t1");
+        assert_eq!(active.len(), 1, "wiki and missing templates are dropped");
+        assert_eq!(active[0].0, "g1-a");
+
+        let mut with_tree = active.clone();
+        with_tree.push(("g2-a".to_string(), json!({"kind": "tree"})));
+        let (tree, non_tree) = split_tree_templates(with_tree);
+        assert_eq!(tree.len(), 1);
+        assert_eq!(non_tree.len(), 1);
+    }
+
+    #[test]
+    fn batch_budget_knowledge_graph_clamped() {
+        let kg = dynamic_batch_budget(Some(100_000), "knowledge_graph");
+        assert_eq!(
+            kg, *KNOWLEDGE_GRAPH_MAX_BATCH_TOKENS,
+            "0.1 * 100k = 10k -> capped at 4096"
+        );
+        let kg_small = dynamic_batch_budget(Some(10_000), "knowledge_graph");
+        assert_eq!(
+            kg_small, *KNOWLEDGE_GRAPH_MIN_BATCH_TOKENS,
+            "1000 < 2048 floor"
+        );
+        let list = dynamic_batch_budget(Some(10_000), "list");
+        assert_eq!(list, 5000);
+        assert_eq!(
+            dynamic_batch_budget(None, "list"),
+            (100_000.0 * 0.5) as usize
+        );
+    }
+
+    #[tokio::test]
+    async fn runner_end_to_end_with_synthesis_and_phases() {
+        let mut backend = MockBackend {
+            docs_per_batch: 2,
+            ..MockBackend::default()
+        };
+        backend
+            .templates
+            .insert("tpl-list".to_string(), json!({"config": {"kind": "list"}}));
+        backend.templates.insert(
+            "tpl-kg".to_string(),
+            json!({"config": {"kind": "knowledge_graph", "dataset_merge": true}}),
+        );
+        backend.templates.insert(
+            "tpl-timeline".to_string(),
+            json!({"config": {"kind": "timeline"}}),
+        );
+        backend.templates.insert(
+            "tpl-pi".to_string(),
+            json!({"config": {"kind": "page_index", "synthesis": {"enabled": true, "example": "{\"title\": \"x\"}", "compile_kwd": "wiki_page"}}}),
+        );
+        let progress = |_msg: &str| {};
+        let cancel = || false;
+        let recorded = std::sync::Mutex::new(Vec::new());
+        let record = |key: &str, value: Value| {
+            recorded.lock().unwrap().push((key.to_string(), value));
+        };
+        let chunks: Vec<Value> = (0..3)
+            .map(|index| json!({"id": format!("c{index}"), "content_with_weight": "alpha beta gamma"}))
+            .collect();
+        let request = CompileOverBatchesRequest {
+            active_templates: vec![
+                ("tpl-list".to_string(), json!({"kind": "list"})),
+                (
+                    "tpl-kg".to_string(),
+                    json!({"kind": "knowledge_graph", "dataset_merge": true}),
+                ),
+                ("tpl-timeline".to_string(), json!({"kind": "timeline"})),
+                (
+                    "tpl-pi".to_string(),
+                    json!({"kind": "page_index", "synthesis": {"enabled": true, "example": "x"}}),
+                ),
+            ],
+            tenant_id: "t1",
+            kb_id: "kb1",
+            doc_id: "d1",
+            doc_name: "Doc",
+            language: "en",
+            chunk_batches: vec![chunks],
+            progress: &progress,
+            cancel_check: &cancel,
+            record: Some(&record),
+        };
+        let agg = run_structure_compile_over_batches(&backend, request)
+            .await
+            .unwrap();
+        for template_id in ["tpl-list", "tpl-kg", "tpl-timeline", "tpl-pi"] {
+            assert!(agg.get(template_id).is_some(), "{template_id} reported");
+            assert_eq!(
+                agg[template_id]["inserted"].as_i64().unwrap() > 0,
+                true,
+                "{template_id} merged docs"
+            );
+        }
+        assert!(
+            backend.merges.lock().unwrap().len() >= 4,
+            "one flush per template"
+        );
+        assert!(
+            backend
+                .dataset_rebuilds
+                .lock()
+                .unwrap()
+                .contains(&"list".to_string()),
+            "dataset-scope rebuild runs for harvested kwds"
+        );
+        assert_eq!(
+            *backend.nav_upserts.lock().unwrap(),
+            1,
+            "page_index nav upsert"
+        );
+        assert_eq!(*backend.timeline_cleanups.lock().unwrap(), 1);
+        assert_eq!(*backend.plans.lock().unwrap(), 1);
+        assert_eq!(*backend.refines.lock().unwrap(), 1);
+        assert_eq!(recorded.lock().unwrap().len(), 4);
+    }
+
+    #[tokio::test]
+    async fn runner_cancellation_surfaces() {
+        let backend = MockBackend::default();
+        let progress = |_msg: &str| {};
+        let cancel = || true;
+        let request = CompileOverBatchesRequest {
+            active_templates: vec![("tpl".to_string(), json!({"kind": "list"}))],
+            tenant_id: "t1",
+            kb_id: "kb1",
+            doc_id: "d1",
+            doc_name: "Doc",
+            language: "en",
+            chunk_batches: vec![vec![json!({"id": "c1", "content_with_weight": "x"})]],
+            progress: &progress,
+            cancel_check: &cancel,
+            record: None,
+        };
+        assert_eq!(
+            run_structure_compile_over_batches(&backend, request).await,
+            Err(RunnerError::Cancelled)
+        );
+    }
+}
+#[cfg(test)]
+mod struct_gap_tests {
+    use super::*;
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    #[test]
+    fn lock_key_and_sentinel() {
+        assert_eq!(
+            struct_merge_lock_key("kb1", Some("t1")),
+            "struct_merge:kb1:t1"
+        );
+        assert_eq!(struct_merge_lock_key("kb1", None), "struct_merge:kb1:");
+        assert!(struct_is_invalid_sentinel(&json!(" -1 ")));
+        assert!(!struct_is_invalid_sentinel(&json!("-2")));
+        assert!(!struct_is_invalid_sentinel(&json!(1)));
+    }
+
+    #[test]
+    fn expand_source_chunk_ids_ranges() {
+        let mut texts = HashMap::new();
+        for id in ["t1", "t2", "t3", "t4"] {
+            texts.insert(id.to_string(), "text".to_string());
+        }
+        assert_eq!(
+            struct_expand_source_chunk_ids(&json!("t1-t3"), &texts),
+            vec!["t1", "t2", "t3"]
+        );
+        assert_eq!(
+            struct_expand_source_chunk_ids(&json!(["T4-T2"]), &texts),
+            vec!["t4", "t3", "t2"],
+            "descending ranges and case-insensitive prefixes"
+        );
+        assert_eq!(
+            struct_expand_source_chunk_ids(&json!(["t9", "t1", "t1"]), &texts),
+            vec!["t1"],
+            "unknown ids dropped, duplicates removed"
+        );
+        assert!(struct_expand_source_chunk_ids(&json!(5), &texts).is_empty());
+    }
+
+    #[test]
+    fn payload_chunk_ids_filters_and_falls_back() {
+        let batch = vec!["c1".to_string(), "c2".to_string()];
+        let payload = json!({"source_chunk_ids": ["c2", "c9", "c2"]});
+        assert_eq!(struct_payload_chunk_ids(&payload, &batch), vec!["c2"]);
+        assert_eq!(
+            struct_payload_chunk_ids(&json!({}), &batch),
+            batch.clone(),
+            "no selection -> whole batch"
+        );
+        assert_eq!(
+            struct_payload_chunk_ids(&json!({"source_chunk_ids": ["c9"]}), &batch),
+            batch,
+            "nothing survives -> whole batch"
+        );
+        assert_eq!(
+            struct_payload_chunk_ids(&json!({"source_chunk_ids": "c1"}), &["c1".to_string()]),
+            vec!["c1"]
+        );
+    }
+
+    #[test]
+    fn merge_graph_relations_unions_doc_ids() {
+        let relations = vec![
+            json!({"from": "Alpha", "to": "Beta", "type": "owns", "doc_ids_kwd": ["d1"]}),
+            json!({"from": " alpha ", "to": "BETA", "type": "OWNS", "doc_ids_kwd": ["d1", "d2"]}),
+            json!({"from": "", "to": "Beta", "type": "x"}),
+            json!({"from": "Gamma", "to": "Delta", "type": "likes"}),
+        ];
+        let merged = struct_merge_graph_relations(&relations);
+        assert_eq!(
+            merged.len(),
+            2,
+            "folded pair + untouched pair; blank from dropped"
+        );
+        assert_eq!(merged[0]["from"], json!("Alpha"));
+        assert_eq!(merged[0]["doc_ids_kwd"], json!(["d1", "d2"]));
+        assert_eq!(merged[0]["type"], json!("owns"), "first payload wins");
+        assert_eq!(merged[1]["type"], json!("likes"));
+    }
+
+    #[test]
+    fn rechunked_docs_defaults() {
+        let docs = RechunkedDocs::new(vec![json!({"id": "r1"})], Vec::new());
+        assert_eq!(docs.docs.len(), 1);
+        assert!(docs.rechunked_chunks.is_empty());
+        let empty = RechunkedDocs::default();
+        assert!(empty.docs.is_empty());
+    }
+}
+#[cfg(test)]
+mod struct_b1_tests {
+    use super::*;
+    use async_trait::async_trait;
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    struct MockEmbed;
+
+    #[async_trait]
+    impl EmbeddingBackend for MockEmbed {
+        async fn encode(&self, texts: &[String]) -> std::result::Result<Vec<Vec<f32>>, String> {
+            Ok(texts
+                .iter()
+                .map(|text| vec![text.chars().count() as f32])
+                .collect())
+        }
+    }
+
+    fn relation_doc() -> Value {
+        json!({
+            "id": "r1",
+            "knowledge_graph_kwd": "relation",
+            "compile_kwd": "list",
+            "doc_id": "d1",
+            "docnm_kwd": "Doc",
+            "from_entity_kwd": "OldFrom",
+            "to_entity_kwd": "To",
+            "source_chunk_ids": ["c1", "c2"],
+            "content_with_weight": json!({"source": "OldFrom", "target": "To", "type": "owns"}).to_string(),
+        })
+    }
+
+    #[test]
+    fn alias_chains_are_cycle_guarded() {
+        let mut aliases = HashMap::new();
+        aliases.insert("A".to_string(), "B".to_string());
+        aliases.insert("B".to_string(), "C".to_string());
+        assert_eq!(struct_resolve_entity_alias(" A ", &aliases), "C");
+        assert_eq!(struct_resolve_entity_alias("X", &aliases), "X");
+        aliases.insert("C".to_string(), "A".to_string());
+        assert_eq!(
+            struct_resolve_entity_alias("A", &aliases),
+            "A",
+            "loop stops before re-entering A"
+        );
+    }
+
+    #[test]
+    fn rewrite_relation_payload_field_groups() {
+        let mut aliases = HashMap::new();
+        aliases.insert("OldFrom".to_string(), "NewFrom".to_string());
+        let mut payload = json!({"source": "OldFrom", "target": "To", "from": null});
+        assert!(struct_rewrite_relation_payload(&mut payload, &aliases));
+        assert_eq!(payload["source"], json!("NewFrom"));
+        assert_eq!(payload["target"], json!("To"));
+        assert!(
+            !struct_rewrite_relation_payload(&mut payload, &aliases),
+            "second pass is a no-op"
+        );
+    }
+
+    #[test]
+    fn dedup_condition_scopes() {
+        let doc = json!({
+            "compile_kwd": "list",
+            "doc_id": "d1",
+            "knowledge_graph_kwd": "entity",
+            "compilation_template_ids": ["t1"],
+        });
+        let doc_scope = struct_doc_storage_dedup_condition(&doc, false);
+        assert_eq!(doc_scope["compile_kwd"], json!(["list"]));
+        assert_eq!(doc_scope["doc_id"], json!(["d1"]));
+        assert_eq!(doc_scope["compilation_template_ids"], json!(["t1"]));
+        let dataset_scope = struct_doc_storage_dedup_condition(&doc, true);
+        assert!(
+            dataset_scope.get("doc_id").is_none(),
+            "dataset scope ignores doc_id"
+        );
+    }
+
+    #[test]
+    fn exact_entity_merge_fills_and_unions() {
+        let existing = json!({
+            "compile_kwd": "list",
+            "content_with_weight": json!({
+                "name": "Alpha",
+                "type": "fact",
+                "description": "short",
+                "source_chunk_ids": ["c1"],
+            }).to_string(),
+        });
+        let incoming = json!({
+            "compile_kwd": "list",
+            "content_with_weight": json!({
+                "name": "Alpha",
+                "type": "title",
+                "description": "a much longer description",
+                "aliases": ["A"],
+                "source_chunk_ids": ["c1", "c2"],
+            }).to_string(),
+        });
+        let merged = struct_merge_exact_entity_payload(&existing, &incoming).unwrap();
+        assert_eq!(merged["type"], json!("title"), "preferred type wins");
+        assert_eq!(merged["description"], json!("a much longer description"));
+        assert_eq!(merged["aliases"], json!(["A"]), "missing keys filled");
+        assert_eq!(
+            merged["source_chunk_ids"],
+            json!(["c1", "c2"]),
+            "union preserves order"
+        );
+    }
+
+    #[test]
+    fn rebuild_overlays_identity_fields() {
+        let base = relation_doc();
+        let payload = json!({"source": "NewFrom", "target": "To", "type": "owns"});
+        let row = struct_rebuild_doc_storage_doc(
+            &payload,
+            &base,
+            vec![1.0, 2.0],
+            &["c1".to_string()],
+            true,
+        );
+        assert_eq!(row.id, "r1", "preserved id");
+        assert_eq!(row.from_entity_kwd.as_deref(), Some("OldFrom"));
+        assert_eq!(row.to_entity_kwd.as_deref(), Some("To"));
+        assert_eq!(row.knowledge_graph_kwd, "relation");
+    }
+
+    #[tokio::test]
+    async fn rewrite_relation_doc_end_to_end() {
+        let mut aliases = HashMap::new();
+        aliases.insert("OldFrom".to_string(), "NewFrom".to_string());
+        let rewritten = struct_rewrite_relation_doc(&relation_doc(), &aliases, &MockEmbed).await;
+        let payload: Value =
+            serde_json::from_str(rewritten["content_with_weight"].as_str().unwrap()).unwrap();
+        assert_eq!(payload["source"], json!("NewFrom"));
+        assert_eq!(rewritten["from_entity_kwd"], json!("NewFrom"));
+        assert_eq!(rewritten["id"], json!("r1"));
+
+        let untouched =
+            struct_rewrite_relation_doc(&relation_doc(), &HashMap::new(), &MockEmbed).await;
+        assert_eq!(
+            untouched,
+            relation_doc(),
+            "empty alias map returns the doc as-is"
+        );
+    }
+
+    #[tokio::test]
+    async fn merge_exact_named_entities_collapses_duplicates() {
+        let docs = vec![
+            json!({
+                "id": "e1",
+                "knowledge_graph_kwd": "entity",
+                "compile_kwd": "list",
+                "doc_id": "d1",
+                "source_chunk_ids": ["c1"],
+                "content_with_weight": json!({"name": "Alpha", "description": "first", "type": "fact"}).to_string(),
+            }),
+            json!({
+                "id": "e2",
+                "knowledge_graph_kwd": "entity",
+                "compile_kwd": "list",
+                "doc_id": "d1",
+                "source_chunk_ids": ["c2"],
+                "content_with_weight": json!({"name": " alpha ", "description": "a longer second description", "type": "title"}).to_string(),
+            }),
+            json!({
+                "id": "e3",
+                "knowledge_graph_kwd": "entity",
+                "compile_kwd": "list",
+                "content_with_weight": json!({"description": "no name here"}).to_string(),
+            }),
+        ];
+        let (out, dropped) = struct_merge_exact_named_entities(&docs, &MockEmbed).await;
+        assert_eq!(dropped, 1);
+        assert_eq!(out.len(), 2, "one collapsed entity + the unnamed doc");
+        let merged: Value =
+            serde_json::from_str(out[0]["content_with_weight"].as_str().unwrap()).unwrap();
+        assert_eq!(merged["type"], json!("title"));
+        assert_eq!(
+            merged["source_chunk_ids"],
+            json!([]),
+            "payload-level ids stay empty (the envelope carries them)"
+        );
+        assert_eq!(
+            out[0]["source_chunk_ids"],
+            json!(["c1", "c2"]),
+            "the rebuilt row unions the envelope chunk ids"
+        );
+        assert_eq!(out[0]["id"], json!("e1"), "base id preserved");
+    }
+}
+#[cfg(test)]
+mod pool_tests {
+    use super::*;
+    use serde_json::json;
+    use std::sync::Mutex;
+
+    fn manual_clock() -> (
+        std::sync::Arc<dyn Fn() -> f64 + Send + Sync>,
+        std::sync::Arc<Mutex<f64>>,
+    ) {
+        let value = std::sync::Arc::new(Mutex::new(0.0f64));
+        let read = value.clone();
+        let clock: std::sync::Arc<dyn Fn() -> f64 + Send + Sync> =
+            std::sync::Arc::new(move || *read.lock().unwrap());
+        (clock, value)
+    }
+
+    #[test]
+    fn model_key_join_semantics() {
+        assert_eq!(
+            LlmCallPool::model_key_for("1", "openai", "gpt", "http://x"),
+            "1:openai:gpt:http://x"
+        );
+        assert_eq!(LlmCallPool::model_key_for("", "", "qwen3", ""), "::qwen3:");
+        assert_eq!(LlmCallPool::model_key_for("", "", "", ""), "");
+    }
+
+    #[test]
+    fn rate_limit_and_error_detection() {
+        assert!(LlmCallPool::is_rate_limited("HTTP 429 Too Many Requests"));
+        assert!(LlmCallPool::is_rate_limited("Rate_Limit exceeded"));
+        assert!(!LlmCallPool::is_rate_limited("ok"));
+        assert!(LlmCallPool::is_error_result("  **ERROR** boom"));
+        assert!(!LlmCallPool::is_error_result("fine"));
+    }
+
+    #[test]
+    fn retry_delay_is_exponential_capped() {
+        let pool = LlmCallPool::new(2);
+        assert_eq!(pool.rate_limit_retry_delay(1), 1.0);
+        assert_eq!(pool.rate_limit_retry_delay(2), 2.0);
+        assert_eq!(pool.rate_limit_retry_delay(5), 16.0);
+        assert_eq!(pool.rate_limit_retry_delay(10), 30.0, "capped at max delay");
+    }
+
+    #[tokio::test]
+    async fn admission_respects_concurrency_and_priority() {
+        let pool = LlmCallPool::new(1);
+        pool.debug_enqueue("a", 30).await;
+        pool.debug_enqueue("b", 10).await;
+        assert_eq!(
+            pool.debug_admit_next().await.as_deref(),
+            Some("b"),
+            "lower priority wins"
+        );
+        assert_eq!(pool.active_count().await, 1);
+        assert_eq!(pool.debug_admit_next().await, None, "ceiling reached");
+        pool.release("b", "success").await;
+        assert_eq!(pool.debug_admit_next().await.as_deref(), Some("a"));
+    }
+
+    #[tokio::test]
+    async fn acquire_blocks_until_release() {
+        let pool = std::sync::Arc::new(LlmCallPool::new(1));
+        pool.acquire("m", 20).await;
+        let clone = pool.clone();
+        let waiting = tokio::spawn(async move { clone.acquire("m", 20).await });
+        let blocked = tokio::time::timeout(std::time::Duration::from_millis(80), async {
+            loop {
+                if pool.active_count().await == 2 {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await;
+        assert!(
+            blocked.is_err(),
+            "second acquire must block while the slot is taken"
+        );
+        pool.release("m", "success").await;
+        tokio::time::timeout(std::time::Duration::from_millis(200), waiting)
+            .await
+            .expect("second acquire proceeds after release")
+            .expect("task ok");
+        assert_eq!(
+            pool.active_count().await,
+            1,
+            "the first acquire was released; the second now holds the slot"
+        );
+    }
+
+    #[tokio::test]
+    async fn adaptive_decrease_and_cooldown() {
+        let (clock, now) = manual_clock();
+        let pool = LlmCallPool::new(10).with_clock(clock);
+        pool.acquire("m", 20).await;
+        pool.release("m", "rate_limited").await;
+        assert_eq!(pool.concurrency_for("m").await, 5, "halved");
+        pool.acquire("m", 20).await;
+        pool.release("m", "rate_limited").await;
+        assert_eq!(
+            pool.concurrency_for("m").await,
+            5,
+            "cooldown suppresses the second decrease"
+        );
+        *now.lock().unwrap() = 6.0;
+        pool.acquire("m", 20).await;
+        pool.release("m", "rate_limited").await;
+        assert_eq!(pool.concurrency_for("m").await, 2, "5 * 0.5 floored");
+    }
+
+    #[tokio::test]
+    async fn adaptive_recovery_after_successes() {
+        let (clock, now) = manual_clock();
+        let mut pool = LlmCallPool::new(10).with_clock(clock);
+        pool.recovery_successes = 2;
+        pool.recovery_cooldown = 0.0;
+        pool.decrease_cooldown = 0.0;
+        pool.acquire("m", 20).await;
+        pool.release("m", "rate_limited").await;
+        assert_eq!(pool.concurrency_for("m").await, 5);
+        *now.lock().unwrap() = 100.0;
+        for _ in 0..2 {
+            pool.acquire("m", 20).await;
+            pool.release("m", "success").await;
+        }
+        assert_eq!(pool.concurrency_for("m").await, 6, "one slot recovered");
+    }
+
+    #[tokio::test]
+    async fn call_retries_rate_limits_and_returns_error_results() {
+        let mut pool = LlmCallPool::new(4);
+        pool.rate_limit_retry_base_delay = 0.0;
+        pool.rate_limit_retry_max_delay = 0.0;
+        let attempts = std::sync::Arc::new(Mutex::new(0usize));
+        let counter = attempts.clone();
+        let result = pool
+            .call(
+                || {
+                    let counter = counter.clone();
+                    async move {
+                        let mut count = counter.lock().unwrap();
+                        *count += 1;
+                        if *count < 3 {
+                            Err("429 rate limit".to_string())
+                        } else {
+                            Ok("done".to_string())
+                        }
+                    }
+                },
+                "m",
+                20,
+                "test",
+                None,
+            )
+            .await;
+        assert_eq!(result, Ok("done".to_string()));
+        assert_eq!(
+            *attempts.lock().unwrap(),
+            3,
+            "two rate-limit retries then success"
+        );
+        assert_eq!(pool.active_count().await, 0, "slots released");
+
+        let error_text = pool
+            .call(
+                || async { Ok("**ERROR** provider exploded".to_string()) },
+                "m",
+                20,
+                "test",
+                None,
+            )
+            .await;
+        assert_eq!(error_text, Ok("**ERROR** provider exploded".to_string()));
+    }
+
+    struct MockChat {
+        seen_conf: Mutex<Vec<Value>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::harness::HarnessChat for MockChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            _history: &[Value],
+            gen_conf: &Value,
+        ) -> std::result::Result<String, String> {
+            self.seen_conf.lock().unwrap().push(gen_conf.clone());
+            Ok("answer".to_string())
+        }
+        fn max_length(&self) -> usize {
+            1234
+        }
+    }
+
+    #[tokio::test]
+    async fn pooled_chat_model_applies_gen_conf() {
+        let pool = LlmCallPool::new(2);
+        let chat = MockChat {
+            seen_conf: Mutex::new(Vec::new()),
+        };
+        let pooled = pool.wrap(&chat, "key", "gpt-4o", 20, "label", None);
+        assert_eq!(crate::harness::HarnessChat::max_length(&pooled), 1234);
+        let answer = crate::harness::HarnessChat::chat(
+            &pooled,
+            "sys",
+            &[json!({"role": "user", "content": "hi"})],
+            &json!({"temperature": 0.1}),
+        )
+        .await;
+        assert_eq!(answer, Ok("answer".to_string()));
+        let conf = chat.seen_conf.lock().unwrap()[0].clone();
+        assert_eq!(conf["temperature"], json!(0.1), "caller conf preserved");
+        assert_eq!(
+            conf["reasoning_effort"],
+            json!("none"),
+            "model-specific control applied"
+        );
+    }
+}
+
+#[cfg(test)]
+mod struct_c1_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn doc(id: &str, doc_id: &str, vec: [f32; 3]) -> Value {
+        json!({
+            "id": id,
+            "doc_id": doc_id,
+            "compile_kwd": "list",
+            "knowledge_graph_kwd": "entity",
+            "q_1024_vec": vec,
+            "content_with_weight": json!({"name": id}).to_string(),
+        })
+    }
+
+    #[test]
+    fn filter_key_value_matches_tuple() {
+        let row = json!({
+            "doc_id": "d1",
+            "compile_kwd": "list",
+            "from_entity_kwd": "A",
+            "to_entity_kwd": "",
+            "compilation_template_ids": ["t1"],
+        });
+        let key = struct_filter_key_value(&row);
+        assert_eq!(key.0, "d1");
+        assert_eq!(key.1, "list");
+        assert_eq!(key.2.as_deref(), Some("A"));
+        assert_eq!(key.3, None);
+        assert_eq!(key.4.as_deref(), Some("t1"));
+    }
+
+    #[test]
+    fn dataset_graph_row_id_is_stable_and_scoped() {
+        let first = dataset_struct_graph_row_id("kb1", "list", Some("t1"));
+        let again = dataset_struct_graph_row_id("kb1", "list", Some("t1"));
+        assert_eq!(first, again);
+        assert_ne!(first, dataset_struct_graph_row_id("kb1", "list", None));
+        assert_ne!(
+            first,
+            dataset_struct_graph_row_id("kb2", "list", Some("t1"))
+        );
+        assert_ne!(first, dataset_struct_graph_row_id("kb1", "set", Some("t1")));
+    }
+
+    #[test]
+    fn entity_candidate_groups_partition_by_similarity() {
+        let docs = vec![
+            doc("a1", "d1", [1.0, 0.0, 0.0]),
+            doc("a2", "d1", [0.99, 0.01, 0.0]),
+            doc("b1", "d1", [0.0, 1.0, 0.0]),
+            doc("a3-doc2", "d2", [1.0, 0.0, 0.0]),
+        ];
+        let groups = struct_entity_candidate_groups(&docs, 0.9);
+        // d1: a1+a2 connected, b1 alone; d2: a3-doc2 alone (different filter key).
+        assert_eq!(groups.len(), 3);
+        assert_eq!(groups[0].len(), 2);
+        assert_eq!(groups[0][0]["id"], json!("a1"));
+        assert_eq!(groups[1].len(), 1);
+        assert_eq!(groups[2].len(), 1);
+        assert_eq!(groups[2][0]["id"], json!("a3-doc2"));
+    }
+
+    #[test]
+    fn entity_candidate_groups_keep_vectorless_docs_separate() {
+        let mut no_vec = doc("c1", "d1", [0.0, 0.0, 0.0]);
+        if let Some(map) = no_vec.as_object_mut() {
+            map.remove("q_1024_vec");
+        }
+        let docs = vec![doc("a1", "d1", [1.0, 0.0, 0.0]), no_vec];
+        let groups = struct_entity_candidate_groups(&docs, 0.9);
+        assert_eq!(
+            groups.len(),
+            2,
+            "a doc without a vector never joins a component"
+        );
+    }
+}
+#[cfg(test)]
+mod struct_c2a_tests {
+    use super::*;
+    use async_trait::async_trait;
+    use serde_json::json;
+    use std::sync::Mutex;
+
+    struct MockChat {
+        reply: String,
+        seen_user: Mutex<String>,
+    }
+
+    #[async_trait]
+    impl crate::harness::HarnessChat for MockChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            history: &[Value],
+            _gen_conf: &Value,
+        ) -> std::result::Result<String, String> {
+            let user = history
+                .first()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            *self.seen_user.lock().unwrap() = user;
+            Ok(self.reply.clone())
+        }
+        fn max_length(&self) -> usize {
+            4096
+        }
+    }
+
+    fn entity_doc(id: &str, name: &str) -> Value {
+        json!({
+            "id": id,
+            "doc_id": "d1",
+            "compile_kwd": "list",
+            "knowledge_graph_kwd": "entity",
+            "content_with_weight": json!({"name": name, "type": "fact", "description": "d"}).to_string(),
+        })
+    }
+
+    #[tokio::test]
+    async fn judge_batch_returns_duplicate_sets() {
+        let chat = MockChat {
+            reply: json!({
+                "groups": [{
+                    "group_id": "g1",
+                    "decisions": [
+                        {"incoming_index": 0, "duplicated": true},
+                        {"incoming_index": 1, "duplicated": false},
+                        {"incoming_index": 99, "duplicated": true},
+                    ],
+                }],
+            })
+            .to_string(),
+            seen_user: Mutex::new(String::new()),
+        };
+        let specs = vec![json!({
+            "request_group_id": "g1",
+            "old_doc": entity_doc("e1", "Alpha"),
+            "incoming_docs": [entity_doc("e2", "Alpha"), entity_doc("e3", "Beta")],
+        })];
+        let result = struct_judge_doc_storage_group_batch(&chat, &specs).await;
+        let hits = result.get("g1").unwrap();
+        assert!(hits.contains(&0));
+        assert!(!hits.contains(&1));
+        assert_eq!(hits.len(), 1, "out-of-range index ignored");
+        assert!(chat.seen_user.lock().unwrap().contains("g1"),);
+    }
+
+    #[tokio::test]
+    async fn merge_group_batch_splits_separate_and_merged() {
+        let chat = MockChat {
+            reply: json!({
+                "groups": [{
+                    "group_id": "e1",
+                    "decisions": [
+                        {"incoming_index": 0, "duplicated": true},
+                        {"incoming_index": 1, "duplicated": false},
+                    ],
+                    "merged": {"name": "Alpha", "type": "title"},
+                }],
+            })
+            .to_string(),
+            seen_user: Mutex::new(String::new()),
+        };
+        let specs = vec![json!({
+            "old_id": "e1",
+            "old_doc": entity_doc("e1", "Alpha"),
+            "incoming_docs": [entity_doc("e2", "Alpha"), entity_doc("e3", "Beta")],
+        })];
+        let result = struct_merge_doc_storage_group_batch(&chat, &specs).await;
+        let (separate, merged) = result.get("e1").unwrap();
+        assert_eq!(separate.len(), 1);
+        assert_eq!(separate[0]["id"], json!("e3"));
+        assert_eq!(merged.as_ref().unwrap()["type"], json!("title"));
+    }
+
+    #[tokio::test]
+    async fn merge_group_single_uses_pair_prompt() {
+        let chat = MockChat {
+            reply: json!({"duplicated": true, "merged": {"name": "Alpha", "type": "title"}})
+                .to_string(),
+            seen_user: Mutex::new(String::new()),
+        };
+        let old = entity_doc("e1", "Alpha");
+        let incoming = vec![entity_doc("e2", "Alpha")];
+        let (separate, merged) = struct_merge_doc_storage_group(&chat, &old, &incoming).await;
+        assert!(separate.is_empty());
+        assert!(merged.is_some());
+        assert!(
+            chat.seen_user.lock().unwrap().contains("Item B"),
+            "the merge-pair prompt is used for single candidates"
+        );
+
+        let chat_no = MockChat {
+            reply: json!({"duplicated": false}).to_string(),
+            seen_user: Mutex::new(String::new()),
+        };
+        let (separate, merged) = struct_merge_doc_storage_group(&chat_no, &old, &incoming).await;
+        assert_eq!(separate.len(), 1);
+        assert!(merged.is_none());
+    }
+}
+#[cfg(test)]
+mod struct_c2b_tests {
+    use super::*;
+    use async_trait::async_trait;
+    use serde_json::json;
+    use std::sync::Mutex;
+
+    struct MockChat {
+        replies: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl crate::harness::HarnessChat for MockChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            _history: &[Value],
+            _gen_conf: &Value,
+        ) -> std::result::Result<String, String> {
+            let mut queue = self.replies.lock().unwrap();
+            if queue.is_empty() {
+                Ok(String::new())
+            } else {
+                Ok(queue.remove(0))
+            }
+        }
+        fn max_length(&self) -> usize {
+            4096
+        }
+    }
+
+    struct MockEmbed;
+
+    #[async_trait]
+    impl EmbeddingBackend for MockEmbed {
+        async fn encode(&self, texts: &[String]) -> std::result::Result<Vec<Vec<f32>>, String> {
+            Ok(texts.iter().map(|_| vec![0.1, 0.2, 0.3]).collect())
+        }
+    }
+
+    #[derive(Default)]
+    struct MockStore {
+        search_rows: Vec<Value>,
+        inserts: Mutex<Vec<usize>>,
+    }
+
+    impl crate::doc_store::DocStore for MockStore {
+        fn db_type(&self) -> &'static str {
+            "memory"
+        }
+        fn health(&self) -> crate::Result<crate::doc_store::HealthStatus> {
+            Ok(crate::doc_store::HealthStatus::green("test"))
+        }
+        fn create_idx(
+            &self,
+            _index_name: &str,
+            _dataset_id: &str,
+            _vector_size: usize,
+        ) -> crate::Result<()> {
+            Ok(())
+        }
+        fn delete_idx(&self, _index_name: &str, _dataset_id: &str) -> crate::Result<()> {
+            Ok(())
+        }
+        fn index_exist(&self, _index_name: &str, _dataset_id: &str) -> crate::Result<bool> {
+            Ok(true)
+        }
+        fn insert(
+            &self,
+            rows: &[crate::doc_store::DocRow],
+            _index_name: &str,
+            _dataset_id: &str,
+        ) -> crate::Result<Vec<String>> {
+            self.inserts.lock().unwrap().push(rows.len());
+            Ok(Vec::new())
+        }
+        fn get(
+            &self,
+            _data_id: &str,
+            _index_name: &str,
+            _dataset_ids: &[String],
+        ) -> crate::Result<Option<crate::doc_store::DocRow>> {
+            Ok(None)
+        }
+        fn update(
+            &self,
+            _condition: &crate::doc_store::FilterCondition,
+            _new_value: &crate::doc_store::DocRow,
+            _index_name: &str,
+            _dataset_id: &str,
+        ) -> crate::Result<bool> {
+            Ok(false)
+        }
+        fn delete(
+            &self,
+            _condition: &crate::doc_store::FilterCondition,
+            _index_name: &str,
+            _dataset_id: &str,
+        ) -> crate::Result<usize> {
+            Ok(0)
+        }
+        fn search(
+            &self,
+            query: &crate::doc_store::SearchQuery,
+        ) -> crate::Result<crate::doc_store::SearchResponse> {
+            // Only the KNN/relation searches consume rows; return the seeded set
+            // for the KNN search (match expressions or name filter), nothing for
+            // the relation-rewrite search (`knowledge_graph_kwd = relation`).
+            let wants_relation = query
+                .condition
+                .get("knowledge_graph_kwd")
+                .and_then(Value::as_array)
+                .map(|items| items.iter().any(|item| item.as_str() == Some("relation")))
+                .unwrap_or(false);
+            let docs: Vec<crate::doc_store::DocRow> = if wants_relation {
+                Vec::new()
+            } else {
+                self.search_rows
+                    .iter()
+                    .filter_map(|row| row.as_object().cloned())
+                    .collect()
+            };
+            Ok(crate::doc_store::SearchResponse {
+                total: docs.len(),
+                docs,
+                ..Default::default()
+            })
+        }
+        fn sql(&self, _sql: &str, _fetch_size: usize) -> crate::Result<Vec<Value>> {
+            Ok(Vec::new())
+        }
+    }
+
+    fn entity_doc(id: &str, name: &str) -> Value {
+        json!({
+            "id": id,
+            "doc_id": "d1",
+            "compile_kwd": "list",
+            "knowledge_graph_kwd": "entity",
+            "source_chunk_ids": ["c1"],
+            "content_with_weight": json!({"name": name, "type": "fact", "description": "d"}).to_string(),
+        })
+    }
+
+    #[tokio::test]
+    async fn dedup_batch_merges_duplicate_entities() {
+        let store = MockStore {
+            search_rows: vec![entity_doc("old1", "Alpha")],
+            ..MockStore::default()
+        };
+        let chat = MockChat {
+            replies: Mutex::new(vec![
+                // judge batch (ES_GROUP_DECISION_BATCH_PROMPT)
+                json!({"groups": [{"group_id": "old1:part-0", "decisions": [{"incoming_index": 0, "duplicated": true}]}]}).to_string(),
+                // merge group (single candidate -> merge-pair prompt)
+                json!({"duplicated": true, "merged": {"name": "Alpha", "type": "title"}}).to_string(),
+            ]),
+        };
+        let docs = vec![entity_doc("new1", "Alpha")];
+        let cancel = || false;
+        let (inserted, updated) = struct_doc_storage_dedup_batch(
+            &store, &chat, &MockEmbed, &docs, "t1", "kb1", 0.9, false, &cancel,
+        )
+        .await
+        .expect("dedup runs");
+        assert_eq!(inserted, 0, "the duplicate is not inserted separately");
+        assert_eq!(updated, 1, "the existing row is rewritten");
+        assert!(
+            !store.inserts.lock().unwrap().is_empty(),
+            "a write happened"
+        );
+    }
+
+    #[tokio::test]
+    async fn dedup_batch_cancellation_surfaces() {
+        let store = MockStore::default();
+        let chat = MockChat {
+            replies: Mutex::new(Vec::new()),
+        };
+        let cancel = || true;
+        let result = struct_doc_storage_dedup_batch(
+            &store,
+            &chat,
+            &MockEmbed,
+            &[entity_doc("new1", "Alpha")],
+            "t1",
+            "kb1",
+            0.9,
+            false,
+            &cancel,
+        )
+        .await;
+        assert_eq!(result, Err(RunnerError::Cancelled));
+    }
+}

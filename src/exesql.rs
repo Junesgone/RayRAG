@@ -145,4 +145,91 @@ impl ExeSqlConfig {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
 
+    fn sample_config() -> ExeSqlConfig {
+        ExeSqlConfig {
+            db_type: "postgres".into(),
+            database: "app".into(),
+            username: "postgres".into(),
+            host: "127.0.0.1".into(),
+            port: 5432,
+            password: "secret".into(),
+            max_records: 1024,
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_empty_sql() {
+        let result = execute_sql(&sample_config(), "  ").await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("MUST not be empty")
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_missing_config_fields() {
+        let config = ExeSqlConfig {
+            database: "".into(),
+            ..sample_config()
+        };
+        let result = execute_sql(&config, "select 1").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Database name"));
+    }
+
+    #[tokio::test]
+    async fn rejects_rag_flow_database() {
+        let config = ExeSqlConfig {
+            database: "rag_flow".into(),
+            host: "ragflow-mysql".into(),
+            ..sample_config()
+        };
+        let result = execute_sql(&config, "select 1").await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("does not support database named rag_flow")
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_mysql_db_type() {
+        // Boss 决策：RayRAG 不使用 mysql，任何 mysql 请求都明确报错
+        let config = ExeSqlConfig {
+            db_type: "mysql".into(),
+            ..sample_config()
+        };
+        let result = execute_sql(&config, "select 1").await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Unsupported db_type")
+        );
+    }
+
+    #[test]
+    fn config_from_params_and_env_prefers_params() {
+        let params = Map::from_iter([
+            ("db_type".into(), json!("postgres")),
+            ("host".into(), json!("db.internal")),
+        ]);
+        unsafe { std::env::set_var("EXESQL_DB_TYPE", "mysql") };
+        let config = ExeSqlConfig::from_params_and_env(&params);
+        assert_eq!(config.db_type, "postgres");
+        assert_eq!(config.port, 5432);
+        assert_eq!(config.max_records, 1024);
+        unsafe { std::env::remove_var("EXESQL_DB_TYPE") };
+    }
+}

@@ -215,7 +215,24 @@ pub fn template_canvas_category(slug: &str) -> &'static str {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn fixed_template_categories_preserve_ingestion_pipelines() {
+        assert_eq!(
+            template_canvas_category("advanced_ingestion_pipeline"),
+            "dataflow_canvas"
+        );
+        assert_eq!(template_canvas_category("chunk_summary"), "dataflow_canvas");
+        assert_eq!(template_canvas_category("title_chunker"), "dataflow_canvas");
+        assert_eq!(
+            template_canvas_category("customer_feedback_dispatcher"),
+            "agent_canvas"
+        );
+    }
+}
 
 /// Template metadata fixture (`id`, localized title/description, canvas type),
 /// extracted verbatim from the upstream `agent/templates/*.json` catalogue.

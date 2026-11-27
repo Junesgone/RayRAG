@@ -443,4 +443,156 @@ pub struct HypergraphTemplateResult {
     pub relation_count: usize,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
 
+    fn sample_config() -> Value {
+        json!({
+            "guideline": {
+                "target": "Extract the main entities and relations from the source text.",
+                "rules_for_entities": "Entities are people, organizations, locations, or concepts.",
+                "rules_for_relations": "Relations link two known entities.",
+                "rules_for_time": ""
+            },
+            "entity": {
+                "description": "A named entity appearing in the text.",
+                "fields": [
+                    {"type": "person", "description": "A person name"},
+                    {"type": "organization", "description": "A company or group"}
+                ]
+            },
+            "relation": {
+                "description": "A directed link between two entities.",
+                "fields": [
+                    {"type": "works_at", "description": "Employment relationship"}
+                ]
+            }
+        })
+    }
+
+    #[test]
+    fn infer_type_hypergraph_when_relations_configured() {
+        assert_eq!(infer_type(&sample_config()), "hypergraph");
+        let list_cfg = json!({"output": {"entities": {"ordered": true}}});
+        assert_eq!(infer_type(&list_cfg), "list");
+        let set_cfg = json!({"output": {"entities": {"unique": true}}});
+        assert_eq!(infer_type(&set_cfg), "set");
+        let bare = json!({"entity": {"description": "x"}});
+        assert_eq!(infer_type(&bare), "list");
+    }
+
+    #[test]
+    fn prompts_render_node_and_edge_with_known_nodes_placeholder() {
+        let (node_prompt, edge_prompt) = hypergraph_prompts(&sample_config());
+        assert!(node_prompt.contains("# Role and Task:"));
+        assert!(node_prompt.contains("## Entity Fields:"));
+        assert!(
+            node_prompt.contains("{\"items\": [{ \"type\": \"<one of: person|organization>\",")
+        );
+        assert!(node_prompt.contains("Auto-type: \"hypergraph\""));
+        assert!(edge_prompt.contains("{known_nodes}"));
+        assert!(
+            edge_prompt
+                .contains("Only create relations between entities listed in 'Known Entities'")
+        );
+    }
+
+    #[test]
+    fn legacy_output_shape_renders_plain_fields() {
+        let cfg = json!({
+            "output": {
+                "entities": {
+                    "description": "items",
+                    "fields": [
+                        {"name": "name", "type": "str", "required": true, "description": "the name"},
+                        {"name": "count", "type": "int", "description": "how many"}
+                    ]
+                }
+            }
+        });
+        let (node_prompt, edge_prompt) = hypergraph_prompts(&cfg);
+        assert!(node_prompt.contains("- name (str, required): the name"));
+        assert!(node_prompt.contains("- count (int, required): how many"));
+        assert!(node_prompt.contains("\"name\": <string>, \"count\": <int>"));
+        assert!(edge_prompt.is_empty(), "no relations → no edge prompt");
+    }
+
+    #[test]
+    fn parse_json_reply_handles_fences_and_prose() {
+        let fenced = "```json\n{\"items\": [{\"name\": \"a\"}]}\n```";
+        let v = parse_json_reply(fenced).unwrap();
+        assert_eq!(v["items"][0]["name"], "a");
+        let prose = "Here is the result:\n{\"items\": []}\nDone.";
+        let v2 = parse_json_reply(prose).unwrap();
+        assert_eq!(v2["items"].as_array().unwrap().len(), 0);
+        assert!(parse_json_reply("no json here").is_none());
+    }
+
+    #[test]
+    fn unwrap_items_accepts_array_and_items_object() {
+        assert_eq!(unwrap_items(json!([1, 2])).len(), 2);
+        let wrapped = unwrap_items(json!({"items": [{"x": 1}, {"x": 2}]}));
+        assert_eq!(wrapped.len(), 2);
+        let bare_obj = unwrap_items(json!({"x": 1}));
+        assert_eq!(bare_obj.len(), 1);
+    }
+
+    // Real GPU two-stage hypergraph extraction (ignored by default; requires
+    // RAYRAG_TEST_LLM_BASE e.g. http://127.0.0.1:8088/v1 and
+    // RAYRAG_TEST_LLM_MODEL).
+    #[tokio::test]
+    #[ignore]
+    async fn gpu_hypergraph_extraction_entities_then_relations() {
+        let base = std::env::var("RAYRAG_TEST_LLM_BASE").expect("RAYRAG_TEST_LLM_BASE");
+        let model = std::env::var("RAYRAG_TEST_LLM_MODEL").expect("RAYRAG_TEST_LLM_MODEL");
+        let client = crate::llm::LlmClient::new(crate::llm::LlmConfig {
+            api_base: base,
+            api_key: String::new(),
+            model,
+            generation: Default::default(),
+            system_prompt: String::new(),
+            deepseek: Default::default(),
+        });
+        let text = "中山市百鲤居水产养殖场由李锦澎负责运营，主要养殖四大家鱼。\
+                    养殖场与本地饲料供应商合作，重视水质管理。";
+        let config = json!({
+            "guideline": {
+                "target": "从源文本中提取主要实体和关系。",
+                "rules_for_entities": "实体包括人名、组织名、地点和概念。",
+                "rules_for_relations": "关系连接两个已知实体。",
+                "rules_for_time": ""
+            },
+            "entity": {
+                "description": "文本中出现的命名实体。",
+                "fields": [{"type": "person"}, {"type": "organization"}, {"type": "location"}]
+            },
+            "relation": {
+                "description": "两个实体之间的有向关系。",
+                "fields": [{"type": "operates"}, {"type": "supplies"}]
+            }
+        });
+        let (entities, relations) = extract_hypergraph(&client, text, &config)
+            .await
+            .expect("extraction");
+        assert!(!entities.is_empty(), "entities extracted: {entities:?}");
+        let names: Vec<String> = entities
+            .iter()
+            .filter_map(|e| e.get("name").and_then(Value::as_str).map(String::from))
+            .collect();
+        assert!(
+            names
+                .iter()
+                .any(|n| n.contains("百鲤居") || n.contains("李锦澎")),
+            "expected farm or owner entity, got {names:?}"
+        );
+        // Relations reference known entities only.
+        for r in &relations {
+            let src = r.get("source").and_then(Value::as_str).unwrap_or("");
+            let dst = r.get("target").and_then(Value::as_str).unwrap_or("");
+            assert!(names.iter().any(|n| n == src), "unknown source {src}");
+            assert!(names.iter().any(|n| n == dst), "unknown target {dst}");
+        }
+    }
+}

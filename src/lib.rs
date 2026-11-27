@@ -94,7 +94,8 @@ pub mod duckduckgo;
 pub mod eastmoney;
 pub mod email;
 pub mod embed;
-
+#[cfg(test)]
+pub mod env_surface;
 pub mod exesql;
 pub mod extractor;
 pub mod generation_params;
@@ -366,7 +367,7 @@ impl Default for ParserConfig {
             table_context_size: 256,
             image_context_size: 256,
             ocr_lang: "English".to_string(),
-            layout_recognize: "DeepDOC".to_string(),
+            layout_recognize: "Docling".to_string(),
             opendataloader_hybrid: None,
             opendataloader_image_output: None,
             opendataloader_sanitize: None,
@@ -420,6 +421,150 @@ impl Default for ParserConfig {
 /// Result type alias for RayRAG operations.
 pub type Result<T> = anyhow::Result<T>;
 
+#[cfg(test)]
+mod raptor_graphrag_config_tests {
+    use super::*;
 
+    #[test]
+    fn raptor_and_graphrag_fields_roundtrip_through_json() {
+        let json = serde_json::json!({
+            "raptor_enabled": true,
+            "raptor_depth": 5,
+            "raptor_threshold": 0.6,
+            "raptor_scope": "Single file",
+            "raptor_prompt": "Summarize this:",
+            "raptor_max_token": 1024,
+            "raptor_cluster_method": "AHC",
+            "raptor_max_cluster": 32,
+            "raptor_random_seed": 42,
+            "graphrag_enabled": true,
+            "graphrag_method": "general",
+            "graphrag_batch_chunk_size": 4096,
+            "graphrag_entity_resolution": true,
+            "graphrag_community_reports": true,
+        });
+        let cfg: ParserConfig = serde_json::from_value(json).unwrap();
+        assert!(cfg.raptor_enabled);
+        assert_eq!(cfg.raptor_scope, "Single file");
+        assert_eq!(cfg.raptor_cluster_method, "AHC");
+        assert_eq!(cfg.raptor_random_seed, 42);
+        assert_eq!(cfg.graphrag_batch_chunk_size, 4096);
+        assert!(cfg.graphrag_entity_resolution);
+        assert!(cfg.graphrag_community_reports);
+    }
 
+    #[test]
+    fn defaults_match_ragflow_shipping_values() {
+        let cfg = ParserConfig::default();
+        assert!(!cfg.raptor_enabled);
+        assert_eq!(cfg.raptor_depth, 5);
+        assert_eq!(cfg.raptor_threshold, 0.7);
+        assert_eq!(cfg.raptor_scope, "Dataset");
+        assert_eq!(cfg.raptor_cluster_method, "GMM");
+        assert_eq!(cfg.raptor_max_cluster, 64);
+        assert_eq!(cfg.graphrag_batch_chunk_size, 8196);
+        assert_eq!(cfg.graphrag_method, "light");
+    }
+}
 
+#[cfg(test)]
+mod parser_config_tests {
+    use super::*;
+
+    #[test]
+    fn partial_parser_config_preserves_explicit_values_and_fills_defaults() {
+        let config: ParserConfig =
+            serde_json::from_str(r#"{"chunk_token_num":512,"overlapped_percent":0.2}"#).unwrap();
+        assert_eq!(config.chunk_token_num, 512);
+        assert_eq!(config.overlapped_percent, 0.2);
+        assert_eq!(config.delimiter, "\n");
+        assert_eq!(config.ocr_lang, "English");
+    }
+
+    #[test]
+    fn parser_config_accepts_web_graphrag_and_raptor_aliases() {
+        let config: ParserConfig = serde_json::from_str(
+            r#"{"raptorEn":true,"raptorDepth":3,"graphEn":true,"entityTypes":["Person"],"graphMethod":"general"}"#,
+        )
+        .unwrap();
+        assert!(config.raptor_enabled);
+        assert_eq!(config.raptor_depth, 3);
+        assert!(config.graphrag_enabled);
+        assert_eq!(config.graphrag_entity_types, ["Person"]);
+        assert_eq!(config.graphrag_method, "general");
+    }
+
+    #[test]
+    fn parser_config_accepts_opendataloader_request_options() {
+        let config: ParserConfig = serde_json::from_str(
+            r#"{"hybrid":"docling-fast","image_output":"embedded","sanitize":false}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            config.opendataloader_hybrid.as_deref(),
+            Some("docling-fast")
+        );
+        assert_eq!(
+            config.opendataloader_image_output.as_deref(),
+            Some("embedded")
+        );
+        assert_eq!(config.opendataloader_sanitize, Some(false));
+
+        let serialized = serde_json::to_value(config).unwrap();
+        assert_eq!(serialized["hybrid"], "docling-fast");
+        assert_eq!(serialized["image_output"], "embedded");
+        assert_eq!(serialized["sanitize"], false);
+    }
+
+    #[test]
+    fn parser_config_accepts_mineru_request_options() {
+        let config: ParserConfig = serde_json::from_str(
+            r#"{
+                "mineru_parse_method":"ocr",
+                "mineru_formula_enable":false,
+                "mineru_table_enable":true,
+                "mineru_lang":"Japanese"
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(config.mineru_parse_method, "ocr");
+        assert!(!config.mineru_formula_enable);
+        assert!(config.mineru_table_enable);
+        assert_eq!(config.mineru_lang, "Japanese");
+    }
+
+    #[test]
+    fn parser_config_accepts_somark_request_options_without_hiding_absence() {
+        let config: ParserConfig = serde_json::from_str(
+            r#"{
+                "somark_image_format":"base64",
+                "somark_formula_format":"mathml",
+                "somark_table_format":"markdown",
+                "somark_cs_format":"image",
+                "somark_enable_text_cross_page":true,
+                "somark_enable_table_cross_page":false,
+                "somark_enable_title_level_recognition":true,
+                "somark_enable_inline_image":false,
+                "somark_enable_table_image":true,
+                "somark_enable_image_understanding":false,
+                "somark_keep_header_footer":true
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(config.somark_image_format.as_deref(), Some("base64"));
+        assert_eq!(config.somark_formula_format.as_deref(), Some("mathml"));
+        assert_eq!(config.somark_table_format.as_deref(), Some("markdown"));
+        assert_eq!(config.somark_cs_format.as_deref(), Some("image"));
+        assert_eq!(config.somark_enable_text_cross_page, Some(true));
+        assert_eq!(config.somark_enable_table_cross_page, Some(false));
+        assert_eq!(config.somark_enable_title_level_recognition, Some(true));
+        assert_eq!(config.somark_enable_inline_image, Some(false));
+        assert_eq!(config.somark_enable_table_image, Some(true));
+        assert_eq!(config.somark_enable_image_understanding, Some(false));
+        assert_eq!(config.somark_keep_header_footer, Some(true));
+
+        let defaults: ParserConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(defaults.somark_image_format, None);
+        assert_eq!(defaults.somark_keep_header_footer, None);
+    }
+}

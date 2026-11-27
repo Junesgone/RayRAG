@@ -823,4 +823,269 @@ impl Drop for GroupBySearchQuery {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn test_vector_query_builder_default_values() {
+        let builder = SearchQueryBuilder::new();
+        assert!(builder.field_name.is_none());
+        assert!(builder.vector.is_none());
+        assert_eq!(builder.topk, 10);
+        assert!(builder.filter.is_none());
+        assert!(builder.include_vector.is_none());
+        assert!(builder.include_doc_id.is_none());
+        assert!(builder.output_fields.is_none());
+    }
+
+    #[test]
+    fn test_vector_query_builder_setters() {
+        let builder = SearchQueryBuilder::new()
+            .field_name("test_field")
+            .vector(&[1.0, 2.0, 3.0])
+            .topk(5)
+            .filter("age > 18")
+            .include_vector(true)
+            .include_doc_id(false)
+            .output_fields(&["name", "age"]);
+
+        assert_eq!(builder.field_name, Some("test_field".to_string()));
+        assert_eq!(builder.vector, Some(vec![1.0, 2.0, 3.0]));
+        assert_eq!(builder.topk, 5);
+        assert_eq!(builder.filter, Some("age > 18".to_string()));
+        assert_eq!(builder.include_vector, Some(true));
+        assert_eq!(builder.include_doc_id, Some(false));
+        assert_eq!(
+            builder.output_fields,
+            Some(vec!["name".to_string(), "age".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_vector_query_builder_build_missing_field_name() {
+        let builder = SearchQueryBuilder::new().vector(&[1.0, 2.0, 3.0]);
+
+        let result = builder.build();
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert_eq!(e.code, ErrorCode::InvalidArgument);
+            assert!(e.message.contains("field_name is required"));
+        }
+    }
+
+    #[test]
+    fn test_vector_query_builder_build_field_name_without_vector_or_fts() {
+        let builder = SearchQueryBuilder::new().field_name("test_field");
+
+        let result = builder.build();
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert_eq!(e.code, ErrorCode::InvalidArgument);
+            assert!(e.message.contains("omit it to build a scalar query"));
+        }
+    }
+
+    #[test]
+    fn test_vector_query_builder_build_scalar_query() {
+        let query = SearchQueryBuilder::new()
+            .topk(3)
+            .filter("count > 1")
+            .include_doc_id(true)
+            .build()
+            .expect("scalar query without a field name or vector");
+
+        let handle = query.handle;
+        assert_eq!(
+            unsafe { zvec_rust_sys::zvec_vector_query_get_topk(handle) },
+            3
+        );
+        assert!(unsafe { zvec_rust_sys::zvec_vector_query_get_include_doc_id(handle) });
+        let filter = unsafe { zvec_rust_sys::zvec_vector_query_get_filter(handle) };
+        assert!(!filter.is_null());
+        assert_eq!(
+            unsafe { std::ffi::CStr::from_ptr(filter) }.to_str(),
+            Ok("count > 1")
+        );
+        assert!(unsafe { zvec_rust_sys::zvec_vector_query_get_fts(handle) }.is_null());
+    }
+
+    #[test]
+    fn test_vector_query_builder_build_fts_only_query() {
+        let query = SearchQueryBuilder::new()
+            .field_name("content")
+            .fts_match_string("hello world")
+            .topk(7)
+            .build()
+            .expect("keyword-only query without a vector");
+
+        let handle = query.handle;
+        assert_eq!(
+            unsafe { zvec_rust_sys::zvec_vector_query_get_topk(handle) },
+            7
+        );
+        let field_name = unsafe { zvec_rust_sys::zvec_vector_query_get_field_name(handle) };
+        assert!(!field_name.is_null());
+        assert_eq!(
+            unsafe { std::ffi::CStr::from_ptr(field_name) }.to_str(),
+            Ok("content")
+        );
+        assert!(!unsafe { zvec_rust_sys::zvec_vector_query_get_fts(handle) }.is_null());
+    }
+
+    #[test]
+    fn test_vector_query_builder_build_missing_field_name_with_fts() {
+        let result = SearchQueryBuilder::new().fts_match_string("hello").build();
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert_eq!(e.code, ErrorCode::InvalidArgument);
+            assert!(e.message.contains("field_name is required"));
+        }
+    }
+
+    #[test]
+    fn test_vector_query_builder_build_hybrid_query() {
+        let query = SearchQueryBuilder::new()
+            .field_name("embedding")
+            .vector(&[1.0, 2.0])
+            .fts_match_string("hello")
+            .topk(4)
+            .build()
+            .expect("hybrid query keeps the FTS clause on top of the vector");
+
+        let handle = query.handle;
+        assert_eq!(
+            unsafe { zvec_rust_sys::zvec_vector_query_get_topk(handle) },
+            4
+        );
+        assert!(!unsafe { zvec_rust_sys::zvec_vector_query_get_fts(handle) }.is_null());
+    }
+
+    #[test]
+    fn test_vector_query_builder_builder_method() {
+        let builder = SearchQuery::builder();
+        assert!(builder.field_name.is_none());
+        assert!(builder.vector.is_none());
+        assert_eq!(builder.topk, 10);
+    }
+
+    #[test]
+    fn test_vector_query_builder_partial_setters() {
+        let builder = SearchQueryBuilder::new()
+            .field_name("test_field")
+            .vector(&[1.0, 2.0])
+            .filter("status = 'active'");
+        assert_eq!(builder.field_name, Some("test_field".to_string()));
+        assert_eq!(builder.vector, Some(vec![1.0, 2.0]));
+        assert_eq!(builder.filter, Some("status = 'active'".to_string()));
+        assert!(builder.include_vector.is_none());
+        assert!(builder.output_fields.is_none());
+    }
+
+    #[test]
+    fn test_vector_query_builder_empty_vector() {
+        let builder = SearchQueryBuilder::new()
+            .field_name("test_field")
+            .vector(&[]);
+        assert_eq!(builder.vector, Some(vec![]));
+    }
+
+    #[test]
+    fn test_vector_query_builder_empty_output_fields() {
+        let builder = SearchQueryBuilder::new()
+            .field_name("test_field")
+            .vector(&[1.0])
+            .output_fields(&[]);
+        assert_eq!(builder.output_fields, Some(vec![]));
+    }
+
+    #[test]
+    fn test_vector_query_builder_topk_zero() {
+        let builder = SearchQueryBuilder::new()
+            .field_name("test_field")
+            .vector(&[1.0])
+            .topk(0);
+        assert_eq!(builder.topk, 0);
+    }
+
+    #[test]
+    fn test_vector_query_builder_topk_negative() {
+        let builder = SearchQueryBuilder::new()
+            .field_name("test_field")
+            .vector(&[1.0])
+            .topk(-1);
+        assert_eq!(builder.topk, -1);
+    }
+
+    #[test]
+    fn test_vector_query_builder_overwrite_field_name() {
+        let builder = SearchQueryBuilder::new()
+            .field_name("first_field")
+            .field_name("second_field");
+        assert_eq!(builder.field_name, Some("second_field".to_string()));
+    }
+
+    #[test]
+    fn test_vector_query_builder_large_vector() {
+        let large_vector: Vec<f32> = (0..1024).map(|i| i as f32).collect();
+        let builder = SearchQueryBuilder::new()
+            .field_name("test_field")
+            .vector(&large_vector);
+        assert_eq!(builder.vector.as_ref().unwrap().len(), 1024);
+    }
+
+    #[test]
+    fn test_fts_query_no_vector() {
+        // A pure FTS query must build without a query vector.
+        // `SearchQueryBuilder::build` reaches the same path when an FTS clause is
+        // set without a vector.
+        let mut fts = Fts::new().expect("create fts payload");
+        fts.set_match_string("hello world")
+            .expect("set match string");
+
+        let query = SearchQuery::fts("content", &fts, 10);
+        assert!(
+            query.is_ok(),
+            "pure FTS query should build without a vector"
+        );
+        assert!(!unsafe { query.unwrap().as_raw() }.is_null());
+    }
+
+    #[test]
+    fn test_diskann_query_params_create_and_getters() {
+        let mut params = DiskannQueryParams::new(200);
+        assert_eq!(params.list_size(), 200);
+        params.set_list_size(300).expect("set list_size");
+        assert_eq!(params.list_size(), 300);
+    }
+
+    #[test]
+    fn test_ivf_rabitq_query_params_create_and_getters() {
+        let mut params = IvfRabitqQueryParams::new(16, 0.0, false, true);
+        assert_eq!(params.nprobe(), 16);
+        params.set_nprobe(32).expect("set nprobe");
+        assert_eq!(params.nprobe(), 32);
+        params.set_scale_factor(2.5).expect("set scale_factor");
+        assert!((params.scale_factor() - 2.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_group_by_query_new_rejects_nul_field_name() {
+        // The native handle is already created when the field name conversion
+        // fails, so it must be owned by the wrapper to avoid leaking it.
+        let result = GroupBySearchQuery::new("embedding\0", "category", &[0.1, 0.2], 2, 2);
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert_eq!(e.code, ErrorCode::InvalidArgument);
+        }
+    }
+
+    #[test]
+    fn test_vector_query_new_rejects_nul_field_name() {
+        let result = SearchQuery::new("embedding\0", &[0.1, 0.2], 2);
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert_eq!(e.code, ErrorCode::InvalidArgument);
+        }
+    }
+}

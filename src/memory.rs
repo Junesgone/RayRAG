@@ -480,7 +480,225 @@ fn extraction_example(memory_type: &str) -> &'static str {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use sha2::{Digest, Sha256};
 
+    fn sha256(value: &str) -> String {
+        hex::encode(Sha256::digest(value.as_bytes()))
+    }
+
+    #[test]
+    fn highlight_english_uses_word_boundaries() {
+        let keywords = vec!["rag".to_string()];
+        // Match at a word boundary; sub-word occurrence ("storage") untouched.
+        let out = highlight_text("RAG storage is great.", &keywords, None);
+        assert!(out.contains("<em>RAG</em>"));
+        assert!(!out.contains("<em>storage</em>"));
+        // Punctuation-boundary match.
+        let out = highlight_text("(rag)", &keywords, None);
+        assert_eq!(out, "(<em>rag</em>)");
+    }
+
+    #[test]
+    fn highlight_literal_is_longest_first_and_keeps_keyword_casing() {
+        let keywords = vec!["数据".to_string(), "数据库".to_string()];
+        let out = highlight_text("数据库是存储数据的地方", &keywords, Some(is_english_ascii));
+        // Faithful to RAGFlow: longest keyword first, replacement keeps keyword
+        // casing, and the second pass wraps the substring inside the first
+        // <em> (nested tags — verified against highlight_utils.py).
+        assert_eq!(out, "<em><em>数据</em>库</em>是存储<em>数据</em>的地方");
+        // With the English word-boundary path (is_english = None), Chinese
+        // keywords never touch a boundary char, so the text is returned
+        // space-normalized but unwrapped (verified against highlight_utils.py).
+        assert_eq!(
+            highlight_text("数据库是存储数据的地方", &keywords, None),
+            "数据库是存储数据的地方"
+        );
+    }
+
+    #[test]
+    fn highlight_keeps_only_matching_sentences() {
+        let keywords = vec!["rust".to_string()];
+        let txt = "Rust is fast. The weather is nice today. I love rust.";
+        // Verified against highlight_utils.py: sentences are split on
+        // `.?!;`, so the trailing period is dropped before joining with "...".
+        let out = highlight_text(txt, &keywords, None);
+        assert_eq!(out, "<em>Rust</em> is fast...I love <em>rust</em>");
+        // No match at all -> space-normalized original.
+        let out = highlight_text("Nothing to see here.", &keywords, None);
+        assert_eq!(out, "Nothing to see here.");
+        // Empty inputs -> empty string.
+        assert_eq!(highlight_text("", &keywords, None), "");
+        assert_eq!(highlight_text("abc", &[], None), "");
+    }
+
+    #[test]
+    fn get_highlight_from_messages_filters_by_field_and_em() {
+        let messages = vec![
+            json!({"id": "c1", "content": "Rust powers RayRAG."}),
+            json!({"id": "c2", "content": "No keywords inside."}),
+            json!({"id": "c3"}), // missing content
+        ];
+        let out = get_highlight_from_messages(&messages, &["rust".to_string()], "content", None);
+        assert_eq!(out.len(), 1);
+        assert!(out["c1"].contains("<em>Rust</em>"));
+        assert!(!out.contains_key("c2"));
+        assert!(!out.contains_key("c3"));
+    }
+
+    #[test]
+    fn aggregate_by_field_handles_rows_lists_and_preaggregated() {
+        let messages = vec![
+            json!({"value": "total", "count": 3}),
+            json!({"tags": ["a", " b ", "a"]}),
+            json!({"tags": "b"}),
+            json!({"tags": ""}),
+        ];
+        let out = aggregate_by_field(&messages, "tags");
+        assert_eq!(
+            out,
+            vec![
+                ("total".to_string(), 3),
+                ("a".to_string(), 2),
+                ("b".to_string(), 2),
+            ]
+        );
+        assert!(aggregate_by_field(&[], "tags").is_empty());
+    }
+
+    #[test]
+    fn prompt_assembler_filters_raw_deduplicates_and_emits_each_requested_type() {
+        let prompt = PromptAssembler::assemble_system_prompt(&[
+            "raw".into(),
+            "semantic".into(),
+            "procedural".into(),
+            "semantic".into(),
+            "unknown".into(),
+        ]);
+        assert!(prompt.starts_with("**Memory Extraction Specialist**\n"));
+        assert_eq!(prompt.matches("**EXTRACT SEMANTIC KNOWLEDGE:**").count(), 1);
+        assert_eq!(
+            prompt.matches("**EXTRACT PROCEDURAL KNOWLEDGE:**").count(),
+            1
+        );
+        assert!(!prompt.contains("EXTRACT RAW"));
+        assert!(!prompt.contains("EXTRACT EPISODIC"));
+        assert!(prompt.contains("\"semantic\": ["));
+        assert!(prompt.contains("\"procedural\": ["));
+        assert!(prompt.contains("Maximum 5 items per type"));
+        assert!(prompt.contains("**Procedural Example:**"));
+    }
+
+    #[test]
+    fn prompt_assembler_matches_raw_only_and_custom_option_contracts() {
+        let raw = PromptAssembler::assemble_system_prompt(&["raw".into()]);
+        assert_eq!(raw.chars().count(), 435);
+        assert_eq!(
+            sha256(&raw),
+            "0353e9f4f62134073050a0a1cd362100c935c9a65bed6e34c605dfa658ed8f70"
+        );
+        assert!(raw.contains("\n\n\n\n**OUTPUT REQUIREMENTS:**"));
+        assert!(raw.contains("```json\n{\n\n}\n```\n"));
+        assert!(!raw.contains("**EXAMPLES:**"));
+
+        let configured = PromptAssembler::assemble_system_prompt_with_options(
+            &["episodic".into()],
+            "RFC 3339",
+            2,
+        );
+        assert!(configured.contains("Timestamps in RFC 3339 format"));
+        assert!(configured.contains("Maximum 2 items per type"));
+        assert!(configured.contains("**Episodic Example:**"));
+
+        for (memory_type, expected_len, expected_sha256) in [
+            (
+                "semantic",
+                1497,
+                "d941d0ad4fe092d493e3978ac2c38c37fd5a77eb375c71d1527b91100bfe6d59",
+            ),
+            (
+                "episodic",
+                1432,
+                "d518bb2605636b6d3b1dbdc8a12fe1f5f1eb8fc62e7c807fdf228edb83780ecb",
+            ),
+            (
+                "procedural",
+                1569,
+                "8adfd8ba68e430144a92ee58be1bc826ec4ce7df5dcb907b41e6329d56363eaa",
+            ),
+        ] {
+            let prompt = PromptAssembler::assemble_system_prompt(&[memory_type.into()]);
+            assert_eq!(
+                prompt.chars().count(),
+                expected_len,
+                "{memory_type} prompt drifted"
+            );
+            assert_eq!(sha256(&prompt), expected_sha256);
+            assert!(prompt.ends_with("\n            \n"));
+        }
+    }
+
+    #[test]
+    fn prompt_assembler_user_prompt_and_raw_template_match_fixed_shape() {
+        let prompt = PromptAssembler::assemble_user_prompt(
+            "User Input: hi\nAgent Response: hello",
+            Some("2026-08-12 10:00:00"),
+            Some("2026-08-12 10:00:01"),
+        );
+        assert_eq!(
+            prompt,
+            "\n**CONVERSATION:**\nUser Input: hi\nAgent Response: hello\n\n**CONVERSATION TIME:** 2026-08-12 10:00:00\n**CURRENT TIME:** 2026-08-12 10:00:01\n"
+        );
+        assert_eq!(
+            sha256(&PromptAssembler::assemble_user_prompt(
+                "x",
+                Some("conversation"),
+                Some("current")
+            )),
+            "2b71b613730f9096ebe4990468e857a03144e06cc6d8c4c3452e0da93664a6bd"
+        );
+        assert_eq!(
+            PromptAssembler::get_raw_user_prompt(),
+            PromptAssembler::BASE_USER_PROMPT
+        );
+        assert!(
+            PromptAssembler::assemble_user_prompt("x", Some(""), Some("now"))
+                .contains("**CONVERSATION TIME:** Not specified")
+        );
+    }
+
+    #[test]
+    fn memory_llm_json_parser_only_strips_fixed_lowercase_fence() {
+        let expected = json!({
+            "semantic": [{
+                "content": "Rust is memory safe",
+                "valid_at": "2026-08-12T10:00:00",
+                "invalid_at": ""
+            }]
+        });
+        assert_eq!(
+            get_json_result_from_llm_response(&expected.to_string()),
+            expected
+        );
+        assert_eq!(
+            get_json_result_from_llm_response(&format!("```json\n{expected}\n```")),
+            expected
+        );
+        assert_eq!(get_json_result_from_llm_response("not json"), json!({}));
+        assert_eq!(
+            get_json_result_from_llm_response(&format!("```JSON\n{expected}\n```")),
+            json!({})
+        );
+        assert_eq!(
+            get_json_result_from_llm_response(&format!("prefix {expected} suffix")),
+            json!({})
+        );
+        assert_eq!(get_json_result_from_llm_response("[1, 2]"), json!([1, 2]));
+    }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // memory/services/query.py — MsgTextQuery.
@@ -800,6 +1018,103 @@ impl MsgTextQuery {
     }
 }
 
+#[cfg(test)]
+mod msg_text_query_tests {
+    use super::*;
 
+    #[test]
+    fn english_question_builds_boosted_terms_and_keywords() {
+        let query = MsgTextQuery::new();
+        let (expr, keywords) = query.question("What is RAG retrieval?", 0.6);
+        let expr = expr.expect("english branch yields an expression");
+        assert_eq!(expr.fields, vec!["content"]);
+        assert_eq!(expr.boost, 100);
+        assert!(expr.query.contains("^"));
+        assert!(expr.query.contains("rag"));
+        assert!(expr.options.original_query.as_deref() == Some("What is RAG retrieval?"));
+        assert!(expr.options.minimum_should_match.is_none());
+        // Keywords come from the tokenizer; the question words are dropped
+        // by rmWWW but the substantive term survives.
+        assert!(keywords.iter().any(|kw| kw == "rag"));
+    }
 
+    #[test]
+    fn chinese_question_builds_minimum_should_match_expression() {
+        let query = MsgTextQuery::new();
+        let (expr, keywords) = query.question("数据库性能优化方案", 0.6);
+        let expr = expr.expect("chinese branch yields an expression");
+        assert_eq!(expr.fields, vec!["content"]);
+        assert_eq!(expr.options.minimum_should_match, Some(0.6));
+        assert!(expr.options.original_query.as_deref() == Some("数据库性能优化方案"));
+        assert!(!expr.query.is_empty());
+        assert!(!keywords.is_empty());
+        // English input stays on the English branch; the Chinese branch
+        // option is only set for Chinese queries.
+        let (expr, _) = query.question("Tell me about databases", 0.6);
+        assert!(expr.unwrap().options.minimum_should_match.is_none());
+    }
 
+    #[test]
+    fn empty_input_yields_no_expression_but_keywords() {
+        let query = MsgTextQuery::new();
+        let (expr, keywords) = query.question("", 0.6);
+        // An empty question normalizes to nothing; the branches may still
+        // return keywords, but no match expression is required for empty
+        // text after cleanup.
+        assert!(keywords.is_empty() || expr.is_none());
+    }
+
+    #[test]
+    fn normalization_applies_fullwidth_and_fillers() {
+        let query = MsgTextQuery::new();
+        // Full-width letters are converted to half-width before tokenizing.
+        let (expr, keywords) = query.question("ＲＡＧ ｓｅａｒｃｈ", 0.6);
+        let expr = expr.expect("normalized input yields an expression");
+        assert!(expr.query.contains("rag"));
+        assert!(keywords.iter().any(|kw| kw.eq_ignore_ascii_case("rag")));
+    }
+}
+
+#[cfg(test)]
+mod memory_utils_tests {
+    use super::*;
+
+    fn names(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn calculate_memory_type_ors_valid_names_and_skips_unknowns() {
+        assert_eq!(calculate_memory_type(&names(&["raw", "semantic"])), 0b0011);
+        assert_eq!(calculate_memory_type(&names(&["procedural"])), 0b1000);
+        assert_eq!(calculate_memory_type(&names(&["raw"])), 0b0001);
+        // Unknown names contribute 0, exactly like the Python lookup.
+        assert_eq!(
+            calculate_memory_type(&names(&["episodic", "nope", ""])),
+            0b0100
+        );
+        assert_eq!(calculate_memory_type(&names(&[])), 0);
+        // Trimming + case-folding mirror `name.lower()`.
+        assert_eq!(calculate_memory_type(&names(&["  SEMANTIC "])), 0b0010);
+    }
+
+    #[test]
+    fn get_memory_type_human_emits_enum_order_lowercase_names() {
+        assert_eq!(
+            get_memory_type_human(0b0101),
+            vec!["raw".to_string(), "episodic".to_string()]
+        );
+        assert_eq!(
+            get_memory_type_human(0b1111),
+            vec![
+                "raw".to_string(),
+                "semantic".to_string(),
+                "episodic".to_string(),
+                "procedural".to_string(),
+            ]
+        );
+        assert!(get_memory_type_human(0).is_empty());
+        // Unknown bits are not named.
+        assert_eq!(get_memory_type_human(0b1000_0000), Vec::<String>::new());
+    }
+}

@@ -223,4 +223,98 @@ pub fn abstract_chunk(
     )
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn not_bullet_rejects_number_ranges() {
+        assert!(not_bullet("0"));
+        assert!(not_bullet("12 34个"));
+        // single dot after digit does not match [0-9]+\.{2,} (anchored)
+        assert!(!not_bullet("1.2.3.4.5"));
+        assert!(!not_bullet("1. 概述"));
+    }
+
+    #[test]
+    fn not_title_rejects_long_lines_and_punctuation() {
+        assert!(!not_title("第1条 管理规定"));
+        assert!(!not_title("Short Title"));
+        assert!(not_title(
+            "This is a very long sentence that goes way beyond twelve words in a single title line yes"
+        ));
+        assert!(not_title("Title with, comma"));
+        // >=32 chars with no space is rejected
+        assert!(not_title(
+            "这是一个超过三十二个字符的标题行长度测试用字符串啊啊啊啊啊啊啊啊"
+        ));
+    }
+
+    #[test]
+    fn bullets_category_picks_numeric_family_for_chinese() {
+        let sections = vec![
+            "1. 概述".to_string(),
+            "2. 方法".to_string(),
+            "3. 结果".to_string(),
+        ];
+        assert_eq!(bullets_category(&sections), 1);
+    }
+
+    #[test]
+    fn bullets_category_picks_chapter_family() {
+        let sections = vec![
+            "第一章 总则".to_string(),
+            "第二章 水质".to_string(),
+            "第三章 投喂".to_string(),
+        ];
+        assert_eq!(bullets_category(&sections), 0);
+    }
+
+    #[test]
+    fn bullets_category_returns_minus_one_on_no_match() {
+        let sections = vec!["plain text".to_string(), "more text".to_string()];
+        assert_eq!(bullets_category(&sections), -1);
+    }
+
+    #[test]
+    fn title_frequency_finds_most_common_level() {
+        let sections: Vec<Section> = vec![
+            ("1. 概述", "title"),
+            ("正文1", "text"),
+            ("2. 方法", "title"),
+            ("正文2", "text"),
+            ("3. 结果", "title"),
+        ];
+        let (most, levels) = title_frequency(1, &sections);
+        assert_eq!(most, 2, "numeric level 2 is the most frequent: {levels:?}");
+        assert_eq!(levels[0], 2);
+        assert_eq!(levels[4], 2);
+    }
+
+    #[test]
+    fn group_sections_merges_by_pivot_level() {
+        let sections: Vec<Section> = vec![
+            ("1. 概述", "title"),
+            ("概述正文第一行", "text"),
+            ("概述正文第二行", "text"),
+            ("2. 方法", "title"),
+            ("方法正文", "text"),
+        ];
+        let chunks = group_sections(&sections);
+        assert_eq!(chunks.len(), 2, "two pivots: {chunks:?}");
+        assert!(chunks[0].contains("1. 概述"));
+        assert!(chunks[0].contains("概述正文第一行"));
+        assert!(chunks[0].contains("概述正文第二行"));
+        assert!(chunks[1].contains("2. 方法"));
+        assert!(chunks[1].contains("方法正文"));
+    }
+
+    #[test]
+    fn group_sections_keeps_plain_text_as_one_chunk() {
+        let sections: Vec<Section> = vec![("第一段", "text"), ("第二段", "text")];
+        let chunks = group_sections(&sections);
+        assert_eq!(chunks.len(), 1);
+        assert!(chunks[0].contains("第一段"));
+        assert!(chunks[0].contains("第二段"));
+    }
+}

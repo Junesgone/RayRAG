@@ -531,4 +531,192 @@ pub async fn wiki_query(
     json!({"answer": "", "chunks": narrowed, "doc_aggs": doc_aggs(&narrowed)})
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
 
+    #[allow(clippy::too_many_arguments)]
+    struct MockHost {
+        seed_rows: Vec<Value>,
+        from_rows: Vec<Value>,
+        to_rows: Vec<Value>,
+        name_rows: Vec<Value>,
+        answer: String,
+        relevant: Vec<String>,
+        evidence: Vec<Value>,
+        calls: Mutex<Vec<String>>,
+    }
+
+    impl Default for MockHost {
+        fn default() -> Self {
+            Self {
+                seed_rows: vec![],
+                from_rows: vec![],
+                to_rows: vec![],
+                name_rows: vec![],
+                answer: String::new(),
+                relevant: vec![],
+                evidence: vec![],
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ExplorationHost for MockHost {
+        async fn kg_search(
+            &self,
+            _kb_id: &str,
+            _tenant_id: &str,
+            _doc_ids: Option<&[String]>,
+            kind: &str,
+            _text: &str,
+            _top_n: usize,
+            extra: &Map<String, Value>,
+            _scope_kwd: Option<&str>,
+            _order_desc: Option<&str>,
+            _pool: usize,
+            _similarity: f64,
+        ) -> Vec<Value> {
+            self.calls.lock().unwrap().push(format!("{kind}:{extra:?}"));
+            if extra.contains_key("from_entity_kwd") {
+                return self.from_rows.clone();
+            }
+            if extra.contains_key("to_entity_kwd") {
+                return self.to_rows.clone();
+            }
+            if extra.contains_key("name_kwd") {
+                return self.name_rows.clone();
+            }
+            self.seed_rows.clone()
+        }
+
+        async fn ask_structure(
+            &self,
+            _query: &str,
+            _entities: &[Value],
+            _relations: &[Value],
+        ) -> (String, Vec<String>) {
+            (self.answer.clone(), self.relevant.clone())
+        }
+
+        async fn load_chunks_by_ids(&self, _doc_id: &str, _chunk_ids: &[String]) -> Vec<Value> {
+            self.evidence.clone()
+        }
+
+        async fn wiki_search(&self, _kb_id: &str, _tenant_id: &str, _text: &str) -> Vec<Value> {
+            self.calls.lock().unwrap().push("wiki".to_string());
+            self.seed_rows.clone()
+        }
+    }
+
+    fn entity_row(name: &str) -> Value {
+        json!({
+            "content_with_weight": json!({"name": name, "type": "Person", "description": "d"}).to_string(),
+            "source_chunk_ids": ["c1"],
+            "doc_id": "d1",
+        })
+    }
+
+    fn relation_row(from: &str, to: &str) -> Value {
+        json!({
+            "from_entity_kwd": from,
+            "to_entity_kwd": to,
+            "content_with_weight": json!({"type": "knows"}).to_string(),
+            "source_chunk_ids": ["c2"],
+            "doc_id": "d1",
+        })
+    }
+
+    #[test]
+    fn parse_helpers_mirror_upstream() {
+        let entity = kg_parse_entity(&entity_row("Alpha")).unwrap();
+        assert_eq!(entity["name"], json!("Alpha"));
+        assert_eq!(entity["type"], json!("Person"));
+        assert_eq!(entity["doc_id"], json!("d1"));
+        assert!(kg_parse_entity(&json!({"content_with_weight": "{}"})).is_none());
+
+        let relation = kg_parse_relation(&relation_row("Alpha", "Beta")).unwrap();
+        assert_eq!(relation["from"], json!("Alpha"));
+        assert_eq!(relation["type"], json!("knows"));
+
+        assert_eq!(
+            endpoint_terms(&["Alpha".to_string()]),
+            vec!["Alpha".to_string(), "alpha".to_string()]
+        );
+    }
+
+    #[test]
+    fn evidence_collection_groups_by_doc() {
+        let entities = vec![kg_parse_entity(&entity_row("Alpha")).unwrap()];
+        let relations = vec![kg_parse_relation(&relation_row("Alpha", "Beta")).unwrap()];
+        let grouped = collect_evidence_ids(&entities, &relations, &["alpha".to_string()]);
+        assert_eq!(grouped.len(), 1);
+        assert_eq!(grouped[0].0, "d1");
+        assert_eq!(grouped[0].1, vec!["c1".to_string(), "c2".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn graph_explore_answer_and_evidence_paths() {
+        let scopes = vec![("kb1".to_string(), "t1".to_string(), None)];
+
+        // Answered directly from the subgraph.
+        let host = MockHost {
+            seed_rows: vec![entity_row("Alpha")],
+            from_rows: vec![relation_row("Alpha", "Beta")],
+            name_rows: vec![entity_row("Beta")],
+            answer: "42".to_string(),
+            ..Default::default()
+        };
+        let result = graph_explore(&host, &scopes, false, "q", "").await;
+        assert_eq!(result["answer"], json!("42"));
+        assert!(result["chunks"].as_array().unwrap().is_empty());
+
+        // Insufficient: relevant nodes' evidence chunks come back narrowed.
+        let host = MockHost {
+            seed_rows: vec![entity_row("Alpha")],
+            from_rows: vec![relation_row("Alpha", "Beta")],
+            name_rows: vec![entity_row("Beta")],
+            relevant: vec!["Alpha".to_string()],
+            evidence: vec![
+                json!({"chunk_id": "c1", "content_with_weight": "alpha evidence about the topic", "doc_id": "d1"}),
+            ],
+            ..Default::default()
+        };
+        // Keyword narrowing needs 3+ comma terms (upstream bigram behaviour).
+        let result = graph_explore(&host, &scopes, false, "q", "alpha, evidence, topic").await;
+        assert_eq!(result["answer"], json!(""));
+        assert_eq!(result["chunks"].as_array().unwrap().len(), 1);
+        assert_eq!(result["doc_aggs"][0]["doc_id"], json!("d1"));
+
+        // No subgraph in scope -> empty contract.
+        let host = MockHost::default();
+        let result = graph_explore(&host, &scopes, true, "q", "").await;
+        assert_eq!(result["answer"], json!(""));
+        assert!(result["chunks"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn wiki_query_renders_pages() {
+        let host = MockHost {
+            seed_rows: vec![json!({
+                "id": "w1",
+                "content_with_weight": json!({"content_md": "# Alpha\nwiki body about alpha", "slug": "alpha-page"}).to_string(),
+                "docnm_kwd": "Alpha Page",
+            })],
+            ..Default::default()
+        };
+        let kbs = vec![("kb1".to_string(), "t1".to_string())];
+        let result = wiki_query(&host, &kbs, "alpha", "").await;
+        assert_eq!(result["chunks"].as_array().unwrap().len(), 1);
+        assert_eq!(result["chunks"][0]["doc_id"], json!("alpha-page"));
+        assert_eq!(result["chunks"][0]["docnm_kwd"], json!("Alpha Page"));
+        assert!(
+            wiki_query(&host, &[], "alpha", "").await["chunks"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+    }
+}

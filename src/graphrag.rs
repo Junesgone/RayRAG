@@ -1525,4 +1525,403 @@ impl GraphExtractor {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::graphrag_enhanced::{EntityGraph, EntityType, NerEntity};
 
+    // ── community report helpers ──────────────────────────────────
+
+    fn graph_with_entities() -> EntityGraph {
+        let mut g = EntityGraph::new();
+        g.add_entities(&[
+            NerEntity {
+                name: "中山市百鲤居".into(),
+                entity_type: EntityType::Organization,
+                start: 0,
+                end: 0,
+                confidence: 1.0,
+            },
+            NerEntity {
+                name: "李锦澎".into(),
+                entity_type: EntityType::Person,
+                start: 0,
+                end: 0,
+                confidence: 1.0,
+            },
+            NerEntity {
+                name: "水产养殖基地".into(),
+                entity_type: EntityType::Location,
+                start: 0,
+                end: 0,
+                confidence: 1.0,
+            },
+            NerEntity {
+                name: "孤岛节点".into(),
+                entity_type: EntityType::Unknown,
+                start: 0,
+                end: 0,
+                confidence: 1.0,
+            },
+        ]);
+        g.add_relation("中山市百鲤居", "李锦澎", 1.0);
+        g.add_relation("中山市百鲤居", "水产养殖基地", 1.0);
+        g
+    }
+
+    #[test]
+    fn partition_finds_connected_components() {
+        let g = graph_with_entities();
+        let communities = partition_communities(&g);
+        let level0 = &communities[&0];
+        // 3 connected nodes form one community; the isolated node another
+        assert_eq!(level0.len(), 2, "expected 2 components");
+        let big = level0
+            .values()
+            .find(|c| c.nodes.len() == 3)
+            .expect("3-node community");
+        assert!(big.nodes.contains(&"中山市百鲤居".to_string()));
+        let single = level0
+            .values()
+            .find(|c| c.nodes.len() == 1)
+            .expect("single-node community");
+        assert_eq!(single.nodes[0], "孤岛节点");
+    }
+
+    #[test]
+    fn perform_variable_replacements_substitutes_braces() {
+        let mut vars = HashMap::new();
+        vars.insert("entity_df".to_string(), "id,entity\n0,A\n".to_string());
+        let out = perform_variable_replacements("Text:\n-Entities-\n{entity_df}", &vars);
+        assert!(out.contains("id,entity\n0,A"));
+        assert!(!out.contains("{entity_df}"));
+    }
+
+    #[test]
+    fn clean_str_removes_control_chars_and_unescapes() {
+        let cleaned = clean_str("  A&amp;B\u{0} C\u{7f}D  ");
+        assert_eq!(cleaned, "A&B CD");
+        assert_eq!(clean_str("&lt;x&gt;"), "<x>");
+    }
+
+    #[test]
+    fn dict_keys_type_validation() {
+        let ok = json!({"title": "t", "summary": "s", "rating": 5.0, "findings": [], "rating_explanation": "e"});
+        assert!(dict_has_keys_with_types(
+            &ok,
+            &[
+                ("title", JsonType::Str),
+                ("summary", JsonType::Str),
+                ("findings", JsonType::List),
+                ("rating", JsonType::Float),
+                ("rating_explanation", JsonType::Str),
+            ]
+        ));
+        let bad = json!({"title": "t", "summary": 42, "rating": 5.0, "findings": [], "rating_explanation": "e"});
+        assert!(!dict_has_keys_with_types(
+            &bad,
+            &[
+                ("title", JsonType::Str),
+                ("summary", JsonType::Str),
+                ("findings", JsonType::List),
+                ("rating", JsonType::Float),
+                ("rating_explanation", JsonType::Str),
+            ]
+        ));
+        let missing = json!({"title": "t"});
+        assert!(!dict_has_keys_with_types(
+            &missing,
+            &[("title", JsonType::Str), ("rating", JsonType::Float)]
+        ));
+    }
+
+    #[test]
+    fn extract_report_json_handles_fences_and_prose() {
+        let raw = "Sure!\n```json\n{{\"title\": \"A\", \"summary\": \"B\", \"rating\": 5.0, \"findings\": [], \"rating_explanation\": \"E\"}}\n```\nDone.";
+        let parsed = extract_report_json(raw).expect("should parse");
+        assert_eq!(parsed["title"], "A");
+        assert_eq!(parsed["rating"], 5.0);
+    }
+
+    #[test]
+    fn report_text_output_formats_markdown() {
+        let parsed = json!({
+            "title": "社区报告",
+            "summary": "概览",
+            "findings": [
+                {"summary": "洞察一", "explanation": "解释一"},
+                "字符串洞察"
+            ]
+        });
+        let out = report_text_output(&parsed, 1500);
+        assert!(out.starts_with("# 社区报告"));
+        assert!(out.contains("## 洞察一"));
+        assert!(out.contains("解释一"));
+        assert!(out.contains("## 字符串洞察"));
+    }
+
+    #[test]
+    fn report_text_output_truncates_to_max_length() {
+        let parsed = json!({
+            "title": "长标题",
+            "summary": "x".repeat(300),
+            "findings": []
+        });
+        let out = report_text_output(&parsed, 100);
+        assert!(out.chars().count() <= 100);
+    }
+
+    #[test]
+    fn html_unescape_known_entities() {
+        assert_eq!(
+            html_unescape("a&amp;b&lt;c&gt;&quot;d&quot;&#39;e&#39;"),
+            "a&b<c>\"d\"'e'"
+        );
+        // unknown entity preserved verbatim
+        assert_eq!(html_unescape("a&unknown;b"), "a&unknown;b");
+    }
+
+    // ── KG search ─────────────────────────────────────────────────
+
+    fn kg_graph() -> EntityGraph {
+        let mut g = EntityGraph::new();
+        g.add_entities(&[
+            NerEntity {
+                name: "中山市百鲤居".into(),
+                entity_type: EntityType::Organization,
+                start: 0,
+                end: 0,
+                confidence: 1.0,
+            },
+            NerEntity {
+                name: "李锦澎".into(),
+                entity_type: EntityType::Person,
+                start: 0,
+                end: 0,
+                confidence: 1.0,
+            },
+            NerEntity {
+                name: "水产养殖基地".into(),
+                entity_type: EntityType::Location,
+                start: 0,
+                end: 0,
+                confidence: 1.0,
+            },
+            NerEntity {
+                name: "罗氏沼虾".into(),
+                entity_type: EntityType::Product,
+                start: 0,
+                end: 0,
+                confidence: 1.0,
+            },
+        ]);
+        g.add_relation("中山市百鲤居", "李锦澎", 1.0);
+        g.add_relation("中山市百鲤居", "水产养殖基地", 0.8);
+        g.add_relation("水产养殖基地", "罗氏沼虾", 0.6);
+        g.set_description("罗氏沼虾", "淡水养殖虾类");
+        g
+    }
+
+    #[test]
+    fn kg_entities_by_keywords_matches_names() {
+        let g = kg_graph();
+        let hits = KgSearch::get_relevant_ents_by_keywords(&g, &["百鲤居".to_string()], 0.3, 10);
+        assert!(hits.contains_key("中山市百鲤居"));
+        let e = &hits["中山市百鲤居"];
+        assert!(e.pagerank >= 2.0, "hub node should have degree 2");
+    }
+
+    #[test]
+    fn kg_entities_by_types_filters_and_orders() {
+        let g = kg_graph();
+        let hits = KgSearch::get_relevant_ents_by_types(&g, &["PERSON".to_string()], 10);
+        assert!(hits.contains_key("李锦澎"));
+        assert!(!hits.contains_key("中山市百鲤居"));
+        let prods = KgSearch::get_relevant_ents_by_types(&g, &["产品".to_string()], 10);
+        assert!(prods.contains_key("罗氏沼虾"));
+    }
+
+    #[test]
+    fn kg_relations_by_txt_finds_edges() {
+        let g = kg_graph();
+        let rels = KgSearch::get_relevant_relations_by_txt(&g, "百鲤居 水产养殖基地", 0.3, 10);
+        assert!(rels.contains_key(&("中山市百鲤居".to_string(), "水产养殖基地".to_string())));
+    }
+
+    #[test]
+    fn kg_parse_rewrite_json_handles_fences() {
+        let raw = "Here you go:\n```json\n{\"answer_type_keywords\": [\"LOCATION\"], \"entities_from_query\": [\"中山\", \"虾\"]}\n```";
+        let (types, ents) = KgSearch::parse_rewrite_json(raw);
+        assert_eq!(types, vec!["LOCATION"]);
+        assert_eq!(ents.len(), 2);
+        // Truncation to 5 entities
+        let big = "{\"answer_type_keywords\": [], \"entities_from_query\": [\"1\",\"2\",\"3\",\"4\",\"5\",\"6\"]}";
+        let (_, ents2) = KgSearch::parse_rewrite_json(big);
+        assert_eq!(ents2.len(), 5);
+    }
+
+    #[test]
+    fn kg_render_query2kwd_substitutes_both_vars() {
+        let pool = json!({"LOCATION": ["中山市"]});
+        let rendered = KgSearch::render_query2kwd("Where is the farm?", &pool);
+        assert!(rendered.contains("Where is the farm?"));
+        assert!(rendered.contains("\"LOCATION\""));
+        assert!(!rendered.contains("{query}"));
+        assert!(!rendered.contains("{TYPE_POOL}"));
+    }
+
+    #[test]
+    fn kg_community_retrieval_matches_entities_and_formats() {
+        let mut reports = HashMap::new();
+        reports.insert(
+            "罗氏沼虾|罗氏沼虾社区|报告内容".to_string(),
+            "report body".to_string(),
+        );
+        reports.insert(
+            "无关实体|其他社区|其他内容".to_string(),
+            "unrelated".to_string(),
+        );
+        let out = KgSearch::community_retrieval(&reports, &["罗氏沼虾".to_string()], 5);
+        assert!(out.contains("---- Community Report ----"));
+        assert!(out.contains("# 1. 罗氏沼虾社区"));
+        assert!(out.contains("## Content"));
+        assert!(!out.contains("其他社区"));
+    }
+
+    #[test]
+    fn kg_n_hop_paths_return_weights() {
+        let g = kg_graph();
+        let paths = g.n_hop_paths("中山市百鲤居", 2, 64);
+        assert!(!paths.is_empty());
+        // every path starts at the query entity and has matching weights
+        for (path, wts) in &paths {
+            assert_eq!(path.first().map(String::as_str), Some("中山市百鲤居"));
+            assert_eq!(path.len() - 1, wts.len());
+        }
+    }
+
+    #[test]
+    fn kg_entity_type_pool_counts_samples() {
+        let g = kg_graph();
+        let pool = g.entity_type_pool();
+        let obj = pool.as_object().expect("object pool");
+        assert!(obj.contains_key("Person"));
+        assert!(obj.contains_key("Organization"));
+    }
+
+    // ── graph extraction ──────────────────────────────────────────
+
+    const SAMPLE_OUTPUT: &str = r#"("entity"<|>"Alex"<|>"person"<|>"Alex is a character.")##("entity"<|>"The Device"<|>"technology"<|>"Central device.")##("relationship"<|>"Alex"<|>"The Device"<|>"Alex interacts with the device."<|>7)<|COMPLETE|>"#;
+
+    #[test]
+    fn parse_extraction_records_extracts_entities_and_edges() {
+        let types = vec!["person".to_string(), "technology".to_string()];
+        let (nodes, edges) = parse_extraction_records(SAMPLE_OUTPUT, &types, "chunk-1");
+        assert_eq!(nodes.len(), 2, "2 entities");
+        assert_eq!(edges.len(), 1, "1 relationship");
+        let alex = nodes.iter().find(|n| n.entity_name == "ALEX").unwrap();
+        assert_eq!(alex.entity_type, "PERSON");
+        assert_eq!(alex.source_id, "chunk-1");
+        let edge = &edges[0];
+        // sorted pair: Alex < The Device
+        assert_eq!(edge.src_id, "ALEX");
+        assert_eq!(edge.tgt_id, "THE DEVICE");
+        assert_eq!(edge.weight, 7.0);
+    }
+
+    #[test]
+    fn parse_extraction_records_filters_by_type() {
+        let types = vec!["person".to_string()]; // technology excluded
+        let (nodes, _) = parse_extraction_records(SAMPLE_OUTPUT, &types, "c");
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].entity_name, "ALEX");
+    }
+
+    #[test]
+    fn parse_extraction_records_skips_garbage() {
+        let out =
+            "no parens here\n##(\"entity\"<|>\"\"<|>\"person\"<|>\"empty name\")##(\"entity\"";
+        let (nodes, edges) = parse_extraction_records(out, &["person".to_string()], "c");
+        assert!(nodes.is_empty(), "empty name entity skipped");
+        assert!(edges.is_empty());
+    }
+
+    #[test]
+    fn split_markers_handles_empty_and_multiple() {
+        assert!(split_string_by_multi_markers("", &["##"]).is_empty());
+        assert!(split_string_by_multi_markers("   ", &[]).is_empty());
+        let parts = split_string_by_multi_markers("a##b<|COMPLETE|>c", &["##", "<|COMPLETE|>"]);
+        assert_eq!(parts, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn is_float_regex_matches_numbers() {
+        assert!(is_float_regex("7"));
+        assert!(is_float_regex("-3.5"));
+        assert!(is_float_regex("+0.25"));
+        assert!(is_float_regex("10."));
+        assert!(!is_float_regex("abc"));
+        assert!(!is_float_regex(""));
+        assert!(!is_float_regex("1e5"));
+    }
+
+    #[test]
+    fn handle_entity_and_relationship_parsers() {
+        let ent = handle_single_entity_extraction(
+            &[
+                "\"entity\"".into(),
+                "  name  ".into(),
+                "person".into(),
+                "desc".into(),
+            ],
+            "k",
+        )
+        .unwrap();
+        assert_eq!(ent.entity_name, "NAME");
+        assert_eq!(ent.entity_type, "PERSON");
+        // wrong first attr → None
+        assert!(
+            handle_single_entity_extraction(
+                &[
+                    "\"relationship\"".into(),
+                    "a".into(),
+                    "b".into(),
+                    "c".into()
+                ],
+                "k",
+            )
+            .is_none()
+        );
+        // relationship parser
+        let rel = handle_single_relationship_extraction(
+            &[
+                "\"relationship\"".into(),
+                "Zeta".into(),
+                "Alpha".into(),
+                "desc".into(),
+                "kw".into(),
+                "4.5".into(),
+            ],
+            "k",
+        )
+        .unwrap();
+        assert_eq!(rel.src_id, "ALPHA");
+        assert_eq!(rel.tgt_id, "ZETA");
+        assert_eq!(rel.weight, 4.5);
+    }
+
+    #[test]
+    fn render_graph_extraction_prompt_substitutes_vars() {
+        let ex = GraphExtractor::new();
+        let rendered = ex.render_prompt(
+            "Some text about 中山市.",
+            &["person".to_string(), "organization".to_string()],
+            "Chinese",
+        );
+        assert!(rendered.contains("Some text about 中山市."));
+        assert!(rendered.contains("person,organization"));
+        assert!(rendered.contains("<|>"));
+        assert!(!rendered.contains("{input_text}"));
+        assert!(!rendered.contains("{entity_types}"));
+    }
+}

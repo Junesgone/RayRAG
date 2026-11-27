@@ -284,4 +284,125 @@ pub fn parse_laws_text(filename: &str, text: &str, depth: usize) -> Result<Vec<S
     Ok(res)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn remove_contents_table_strips_section() {
+        let mut sections = vec![
+            "目录".to_string(),
+            "第一章 总则".to_string(),
+            "第二章 水质".to_string(),
+            "第三条 定义".to_string(),
+        ];
+        remove_contents_table(&mut sections, false);
+        assert!(!sections.iter().any(|s| s == "目录"));
+    }
+
+    #[test]
+    fn remove_contents_table_english_faithful_noop() {
+        // Python: re.sub strips spaces -> "tableofcontents" which does NOT
+        // match the "table of contents" alternative (spaces required).
+        // Faithful port: nothing is removed.
+        let mut sections = vec![
+            "Table of Contents".to_string(),
+            "Chapter One Introduction".to_string(),
+            "1. Overview".to_string(),
+        ];
+        remove_contents_table(&mut sections, true);
+        assert_eq!(
+            sections.len(),
+            3,
+            "Python leaves it untouched: {sections:?}"
+        );
+    }
+
+    #[test]
+    fn remove_contents_table_removes_entries_sharing_prefix() {
+        let mut sections = vec![
+            "目录".to_string(),
+            "第一章".to_string(),
+            "第二章".to_string(),
+            "正文开始".to_string(),
+        ];
+        remove_contents_table(&mut sections, false);
+        // Python pops the header line AND the prefix-source line
+        // ("第一章", first 3 chars "第一"), then looks for another line
+        // starting with "第一" — "第二章" does not match.
+        assert_eq!(sections, vec!["第二章".to_string(), "正文开始".to_string()]);
+    }
+
+    #[test]
+    fn make_colon_as_title_never_inserts_faithful_to_python() {
+        let mut sections = vec![(
+            "第一章：这是总则部分的详细说明内容用于测试标题分割逻辑是否生效。：".to_string(),
+            "text".to_string(),
+        )];
+        let before = sections.len();
+        make_colon_as_title(&mut sections);
+        assert_eq!(
+            sections.len(),
+            before,
+            "Python arr[1] is the separator, always < 32 chars"
+        );
+    }
+
+    #[test]
+    fn tree_merge_groups_by_title_level() {
+        // family 1 (numeric): "1. " → level 1, "1.1 " → level 2, body → 6
+        let sections = vec![
+            ("1. 总则".to_string(), "title".to_string()),
+            ("这是正文内容第一段。".to_string(), "text".to_string()),
+            ("2. 水质标准".to_string(), "title".to_string()),
+            ("这是正文内容第二段。".to_string(), "text".to_string()),
+        ];
+        let bull = bullets_category(&["1. 总则".to_string(), "2. 水质标准".to_string()]);
+        assert_eq!(bull, 1);
+        let family_len = BULLET_PATTERN[1].len();
+        let chunks = tree_merge(bull as i64, &sections, 2, family_len);
+        assert!(!chunks.is_empty(), "{chunks:?}");
+        assert_eq!(chunks.len(), 2);
+        assert!(chunks[0].contains("1. 总则"));
+        assert!(chunks[0].contains("这是正文内容第一段"));
+        assert!(chunks[1].contains("2. 水质标准"));
+    }
+
+    #[test]
+    fn tree_merge_chinese_family() {
+        let sections = vec![
+            ("第一章 总则".to_string(), "title".to_string()),
+            (
+                "第一条 本规定适用于全部范围。".to_string(),
+                "title".to_string(),
+            ),
+            ("第二章 水质".to_string(), "title".to_string()),
+        ];
+        let bull = bullets_category(&[
+            "第一章 总则".to_string(),
+            "第一条 本规定适用于全部范围。".to_string(),
+            "第二章 水质".to_string(),
+        ]);
+        assert_eq!(bull, 0);
+        let family_len = BULLET_PATTERN[0].len();
+        let chunks = tree_merge(bull as i64, &sections, 2, family_len);
+        assert!(!chunks.is_empty(), "{chunks:?}");
+        assert!(chunks.iter().any(|c| c.contains("第一章 总则")));
+        assert!(chunks.iter().any(|c| c.contains("第二章 水质")));
+    }
+
+    #[test]
+    fn parse_laws_text_txt_family() {
+        let text = "目录\n第一章 总则\n第一条 定义\n第二章 水质\n正文内容\n";
+        let chunks = parse_laws_text("laws.txt", text, 2).unwrap();
+        assert!(!chunks.is_empty());
+        // "第一章 总则" is the prefix-source line and gets removed by
+        // remove_contents_table (Python-verified); remaining sections
+        // tree-merge into chunks that include the 第二章 title.
+        assert!(
+            chunks.iter().any(|c| c.contains("第二章 水质")),
+            "{chunks:?}"
+        );
+        assert!(parse_laws_text("laws.pdf", text, 2).is_err());
+    }
+}

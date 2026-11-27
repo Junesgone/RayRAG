@@ -220,7 +220,10 @@ impl AgentCheckpointStore {
         })
     }
 
-    
+    #[cfg(test)]
+    pub fn get(&self, conversation_id: &str) -> Option<AgentCheckpointRecord> {
+        self.records.lock().unwrap().get(conversation_id).cloned()
+    }
 
     fn mutate<T>(
         &self,
@@ -307,4 +310,150 @@ const fn is_zero(value: &u64) -> bool {
     *value == 0
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    fn checkpoint() -> AgentWorkflowCheckpoint {
+        serde_json::from_value(serde_json::json!({
+            "version": 1,
+            "waiting_component_id": "fill",
+            "next_execution_index": 1,
+            "selected": ["begin", "fill"],
+            "runtime": {},
+            "transient": {
+                "last_message": null,
+                "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                "provider_calls": 0,
+                "references": []
+            },
+            "trace": []
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn durable_store_roundtrips_and_consumes_one_claim() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-agent-checkpoints-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("agent-checkpoints.json");
+        let store = AgentCheckpointStore::new(&path).unwrap();
+        let saved = store
+            .save_waiting(
+                "conversation",
+                "owner",
+                "tenant",
+                "agent",
+                "fingerprint",
+                checkpoint(),
+            )
+            .unwrap();
+        drop(store);
+
+        let restored = AgentCheckpointStore::new(&path).unwrap();
+        let _claim = match restored
+            .claim(
+                "conversation",
+                "owner",
+                "tenant",
+                "agent",
+                Some(&saved.checkpoint_id),
+            )
+            .unwrap()
+        {
+            AgentCheckpointClaimResult::Claimed(claim) => claim,
+            result => panic!("unexpected claim result: {result:?}"),
+        };
+        assert!(matches!(
+            restored
+                .claim("conversation", "owner", "tenant", "agent", None)
+                .unwrap(),
+            AgentCheckpointClaimResult::Busy
+        ));
+        drop(restored);
+
+        let recovered_after_claim_crash = AgentCheckpointStore::new(&path).unwrap();
+        let claim = match recovered_after_claim_crash
+            .claim(
+                "conversation",
+                "owner",
+                "tenant",
+                "agent",
+                Some(&saved.checkpoint_id),
+            )
+            .unwrap()
+        {
+            AgentCheckpointClaimResult::Claimed(claim) => claim,
+            result => panic!("unexpected post-restart claim result: {result:?}"),
+        };
+        recovered_after_claim_crash.delete_claimed(&claim).unwrap();
+        assert!(matches!(
+            recovered_after_claim_crash
+                .claim("conversation", "owner", "tenant", "agent", None)
+                .unwrap(),
+            AgentCheckpointClaimResult::Missing
+        ));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn checkpoint_is_scoped_and_resume_token_is_checked() {
+        let store = AgentCheckpointStore::in_memory();
+        let saved = store
+            .save_waiting(
+                "conversation",
+                "owner",
+                "tenant",
+                "agent",
+                "fingerprint",
+                checkpoint(),
+            )
+            .unwrap();
+        assert!(matches!(
+            store
+                .claim("conversation", "intruder", "tenant", "agent", None)
+                .unwrap(),
+            AgentCheckpointClaimResult::Missing
+        ));
+        assert!(matches!(
+            store
+                .claim("conversation", "owner", "tenant", "agent", Some("wrong"))
+                .unwrap(),
+            AgentCheckpointClaimResult::ResumeTokenMismatch
+        ));
+        let claim = match store
+            .claim(
+                "conversation",
+                "owner",
+                "tenant",
+                "agent",
+                Some(&saved.checkpoint_id),
+            )
+            .unwrap()
+        {
+            AgentCheckpointClaimResult::Claimed(claim) => claim,
+            result => panic!("unexpected claim result: {result:?}"),
+        };
+        store.release(&claim).unwrap();
+        assert!(matches!(
+            store
+                .claim("conversation", "owner", "tenant", "agent", None)
+                .unwrap(),
+            AgentCheckpointClaimResult::Claimed(_)
+        ));
+    }
+
+    #[test]
+    fn normalized_dsl_fingerprint_is_stable() {
+        let dsl = serde_json::json!({
+            "components": {
+                "begin": {"obj": {"component_name": "Begin", "params": {}}}
+            }
+        });
+        assert_eq!(
+            agent_dsl_fingerprint(&dsl).unwrap(),
+            agent_dsl_fingerprint(&normalize_agent_dsl_for_run(&dsl)).unwrap()
+        );
+    }
+}

@@ -451,6 +451,121 @@ impl QaMode {
     }
 }
 
+#[cfg(test)]
+mod dispatch_tests {
+    use super::*;
 
+    #[test]
+    fn parser_for_method_routes_domain_parsers_and_returns_none_for_generic() {
+        assert!(parser_for_method("paper").is_some());
+        assert!(parser_for_method("book").is_some());
+        assert!(parser_for_method("laws").is_some());
+        assert!(parser_for_method("qa").is_some());
+        assert!(parser_for_method("table").is_some());
+        assert!(parser_for_method("tag").is_some());
+        assert!(parser_for_method("presentation").is_some());
+        assert!(parser_for_method("picture").is_some());
+        assert!(parser_for_method("audio").is_some());
+        assert!(parser_for_method("email").is_some());
+        // Generic methods and unknown values stay on the MIME pipeline.
+        assert!(parser_for_method("naive").is_none());
+        assert!(parser_for_method("token").is_none());
+        assert!(parser_for_method("title").is_none());
+        assert!(parser_for_method("manual").is_none());
+        assert!(parser_for_method("one").is_none());
+        assert!(parser_for_method("knowledge_graph").is_none());
+        assert!(parser_for_method("nonsense").is_none());
+    }
 
+    #[test]
+    fn email_parser_extracts_headers_and_body() {
+        let parser = EmailParser::new();
+        let raw = b"From: a@b.c\nSubject: test\n\nhello world\n";
+        let doc = parser.parse("mail.eml", raw).unwrap();
+        assert!(doc.content.contains("From: a@b.c"));
+        assert!(doc.content.contains("hello world"));
+    }
+}
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn picture_parser_missing_clients_include_configuration_guidance() {
+        let parser = PictureParser::default();
+        for name in [
+            "image.jpg",
+            "image.jpeg",
+            "image.png",
+            "image.webp",
+            "image.tiff",
+        ] {
+            let error = parser
+                .parse(name, &[0xff, 0xd8, 0xff, 0xe0])
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("no text extracted"), "{name}: {error}");
+            assert!(error.contains("RAYRAG_OCR_PROVIDER"), "{name}: {error}");
+            assert!(error.contains("API base URL/key"), "{name}: {error}");
+            assert!(error.contains("图像转文本模型"), "{name}: {error}");
+        }
+    }
+
+    #[test]
+    fn picture_method_extracts_svg_body_and_rejects_empty_content() {
+        let parser = parser_for_method("picture").unwrap();
+        let document = parser.parse("diagram.svg", br#"<svg xmlns="http://www.w3.org/2000/svg"><text>RayRAG searchable image content</text></svg>"#).unwrap();
+        assert!(document.content.contains("RayRAG searchable image content"));
+        assert!(!document.content.contains("[Format:"));
+        let error = parser
+            .parse("empty.svg", b"<svg></svg>")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("OCR"), "{error}");
+        assert!(error.contains("重新解析"), "{error}");
+    }
+
+    #[test]
+    fn test_qa_mode_resolve_naive_default() {
+        // Mixed / non-KG parsers → naive hybrid retrieval.
+        assert_eq!(QaMode::resolve(&["naive"]), QaMode::Naive);
+        assert_eq!(QaMode::resolve(&["paper", "manual"]), QaMode::Naive);
+        assert_eq!(
+            QaMode::resolve(&["knowledge_graph", "naive"]),
+            QaMode::Naive
+        );
+        assert_eq!(QaMode::resolve(&[]), QaMode::Naive);
+        assert_eq!(QaMode::Naive.as_str(), "naive");
+    }
+
+    #[test]
+    fn test_qa_mode_resolve_graph() {
+        // All KBs must be KG-parsed (RAGFlow `all(kb.parser_id == ParserType.KG)`).
+        assert_eq!(QaMode::resolve(&["knowledge_graph"]), QaMode::Graph);
+        assert_eq!(
+            QaMode::resolve(&["knowledge_graph", "knowledge_graph"]),
+            QaMode::Graph
+        );
+        assert!(QaMode::is_graph_mode(&["knowledge_graph"]));
+        assert!(!QaMode::is_graph_mode(&["knowledge_graph", "naive"]));
+        assert!(!QaMode::is_graph_mode(&[]));
+        assert_eq!(QaMode::Graph.as_str(), "graph");
+    }
+
+    #[test]
+    fn test_qa_mode_resolve_advanced() {
+        // Explicit deep-research marker wins over naive but not over all-KG graph.
+        assert_eq!(QaMode::resolve(&["advanced"]), QaMode::Advanced);
+        assert_eq!(
+            QaMode::resolve(&["deep_researcher", "naive"]),
+            QaMode::Advanced
+        );
+        assert_eq!(QaMode::Advanced.as_str(), "advanced");
+        // Mixed KG + advanced is not "all KG", so the explicit marker wins.
+        assert_eq!(
+            QaMode::resolve(&["knowledge_graph", "advanced"]),
+            QaMode::Advanced
+        );
+    }
+}

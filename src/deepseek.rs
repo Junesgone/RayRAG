@@ -287,4 +287,150 @@ pub async fn tts(api_base: &str, api_key: &str, text: &str, voice: &str) -> Resu
     Ok(response.bytes().await?.to_vec())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn origin_normalizes_openai_compatible_base() {
+        assert_eq!(
+            origin("https://api.deepseek.com/v1"),
+            "https://api.deepseek.com"
+        );
+        assert_eq!(
+            origin("https://api.deepseek.com/v1/"),
+            "https://api.deepseek.com"
+        );
+        assert_eq!(
+            origin("https://api.deepseek.com"),
+            "https://api.deepseek.com"
+        );
+    }
+
+    #[test]
+    fn search_results_map_scores_and_content() {
+        let hits = parse_search_results(&serde_json::json!({
+            "results": [{
+                "title": "T",
+                "url": "https://example.com/a",
+                "snippet": "S",
+                "summary": "Long",
+                "content": "Body",
+                "rerank_score": 2.4
+            }]
+        }));
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].url, "https://example.com/a");
+        assert!((hits[0].score - 0.8).abs() < 1e-9);
+    }
+
+    #[test]
+    fn ocr_pages_join_and_errors_are_explicit() {
+        let text = parse_ocr_pages(&serde_json::json!({
+            "pages": [{"text": "one"}, {"text": "two"}]
+        }))
+        .unwrap();
+        assert_eq!(text, "one\n\ntwo");
+        assert!(
+            parse_ocr_pages(&serde_json::json!({
+                "error": {"message": "blocked"}
+            }))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn voice_names_never_forward_openai_defaults() {
+        assert_eq!(deepseek_voice("alloy"), "stella");
+        assert_eq!(deepseek_voice("tide"), "tide");
+        assert_eq!(deepseek_voice("TIDE"), "tide");
+    }
+
+    /// Live DeepSeek tool API smoke tests. Ignored by default: they make real
+    /// network calls and need DEEPSEEK_API_KEY in the environment. Run with:
+    /// cargo test --lib live_deepseek -- --ignored --test-threads=1
+    fn live_deepseek_key() -> Option<String> {
+        std::env::var("DEEPSEEK_API_KEY")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+    }
+
+    #[tokio::test]
+    #[ignore = "live DeepSeek Search API; set DEEPSEEK_API_KEY"]
+    async fn live_deepseek_search_returns_results() {
+        let Some(key) = live_deepseek_key() else {
+            return;
+        };
+        let hits = search(
+            "https://api.deepseek.com",
+            &key,
+            "DeepSeek V4.1 release",
+            3,
+            false,
+        )
+        .await
+        .unwrap();
+        assert!(!hits.is_empty(), "DeepSeek Search returned no hits");
+    }
+
+    #[tokio::test]
+    #[ignore = "live DeepSeek Fetch API; set DEEPSEEK_API_KEY"]
+    async fn live_deepseek_fetch_returns_markdown() {
+        let Some(key) = live_deepseek_key() else {
+            return;
+        };
+        let page = fetch_page(
+            "https://api.deepseek.com",
+            &key,
+            "https://api-docs.deepseek.com/zh-cn/",
+        )
+        .await
+        .unwrap();
+        assert!(
+            !page.content.trim().is_empty(),
+            "DeepSeek Fetch returned empty content"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "live DeepSeek OCR API; set DEEPSEEK_API_KEY"]
+    async fn live_deepseek_ocr_reads_a_pdf() {
+        let Some(key) = live_deepseek_key() else {
+            return;
+        };
+        let output = ocr(
+            "https://api.deepseek.com",
+            &key,
+            "rayrag-text.pdf",
+            include_bytes!("../tests/fixtures/parsing/rayrag-text.pdf"),
+            false,
+        )
+        .await
+        .unwrap();
+        assert!(!output.trim().is_empty(), "DeepSeek OCR returned no text");
+    }
+
+    #[tokio::test]
+    #[ignore = "live DeepSeek TTS/ASR APIs; set DEEPSEEK_API_KEY"]
+    async fn live_deepseek_tts_then_asr_round_trip() {
+        let Some(key) = live_deepseek_key() else {
+            return;
+        };
+        let audio = tts(
+            "https://api.deepseek.com",
+            &key,
+            "RayRAG live speech test.",
+            "stella",
+        )
+        .await
+        .unwrap();
+        assert!(!audio.is_empty(), "DeepSeek TTS returned no audio");
+        let text = asr("https://api.deepseek.com", &key, "rayrag-live.wav", &audio)
+            .await
+            .unwrap();
+        assert!(
+            text.to_ascii_lowercase().contains("live"),
+            "DeepSeek ASR did not recognize the TTS phrase: {text}"
+        );
+    }
+}

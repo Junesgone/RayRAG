@@ -860,4 +860,86 @@ pub async fn update_document_metadata_config(
     .into_response()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    fn field(key: &str, field_type: &str) -> MetadataField {
+        MetadataField {
+            key: key.into(),
+            field_type: field_type.into(),
+            description: None,
+            enum_values: None,
+        }
+    }
+
+    #[test]
+    fn a_valid_schema_passes_and_every_rule_has_a_message() {
+        assert!(validate_fields(&[field("author", "string"), field("tags", "list")]).is_ok());
+        // An empty key.
+        let error = validate_fields(&[field("   ", "string")]).unwrap_err();
+        assert!(error.contains("at least 1 character"), "{error}");
+        // An unknown type, named as the guide names it.
+        let error = validate_fields(&[field("author", "text")]).unwrap_err();
+        assert!(
+            error.contains("'string', 'list', 'time' or 'number'"),
+            "{error}"
+        );
+        // A duplicate key would make every later filter ambiguous.
+        let error =
+            validate_fields(&[field("author", "string"), field("author", "list")]).unwrap_err();
+        assert!(error.contains("Duplicated metadata key"), "{error}");
+        // A key past the documented limit.
+        let long = "k".repeat(256);
+        assert!(
+            validate_fields(&[field(&long, "string")])
+                .unwrap_err()
+                .contains("255")
+        );
+    }
+
+    #[test]
+    fn the_built_ins_are_the_deployments_and_the_user_list_is_the_clients() {
+        let store = MetadataConfigStore::in_memory();
+        store
+            .replace(
+                "kb-1",
+                AutoMetadataConfig {
+                    metadata: vec![field("author", "string")],
+                    // A body that tries to set the built-ins is overridden.
+                    built_in_metadata: vec![field("mine", "string")],
+                },
+            )
+            .unwrap();
+        let config = store.get("kb-1");
+        assert_eq!(config.metadata.len(), 1);
+        assert_eq!(config.metadata[0].key, "author");
+        assert!(
+            config.built_in_metadata.iter().any(|f| f.key == "author"),
+            "the deployment's built-ins are offered: {config:?}"
+        );
+        assert!(
+            !config.built_in_metadata.iter().any(|f| f.key == "mine"),
+            "a client cannot define the built-ins"
+        );
+    }
+
+    #[test]
+    fn a_document_override_is_stored_per_document() {
+        let store = MetadataConfigStore::in_memory();
+        store
+            .replace_document(
+                "doc-1",
+                DocumentMetadataConfig {
+                    metadata: vec![field("author", "string")],
+                    built_in_metadata: Vec::new(),
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            store.get_document("doc-1").unwrap().metadata[0].key,
+            "author"
+        );
+        assert!(store.get_document("doc-2").is_none());
+    }
+}

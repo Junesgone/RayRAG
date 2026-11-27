@@ -635,4 +635,208 @@ fn kb_f32(flags: &HashMap<String, String>, key: &str) -> Option<f32> {
     flags.get(key).and_then(|v| v.trim().parse().ok())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    fn hits(n: usize) -> Vec<HybridSearchResult> {
+        (0..n)
+            .map(|i| HybridSearchResult {
+                chunk: crate::search::IndexedChunk {
+                    id: format!("chunk-{i}"),
+                    doc_name: format!("doc-{i}"),
+                    content: format!("content number {i}"),
+                    embedding: Vec::new(),
+                    token_count: 3,
+                    position: i,
+                    metadata: HashMap::new(),
+                },
+                score: 1.0 - i as f32 * 0.1,
+                vector_score: 0.0,
+                term_score: 0.0,
+                model_term_score: 0.0,
+                rank_feature_score: 0.0,
+                rank: i,
+            })
+            .collect()
+    }
+
+    fn config_with_flags() -> ChatPipelineConfig {
+        ChatPipelineConfig {
+            full_question: true,
+            multi_queries: true,
+            multi_queries_top_k: 3,
+            citation_plus: true,
+            reflect: true,
+            ..ChatPipelineConfig::default()
+        }
+    }
+
+    #[test]
+    fn defaults_keep_every_feature_off() {
+        let cfg = ChatPipelineConfig::default();
+        assert!(!cfg.full_question);
+        assert!(!cfg.multi_queries);
+        assert!(!cfg.citation_plus);
+        assert!(!cfg.reflect);
+        assert!(!cfg.reflect_regenerate);
+        assert_eq!(cfg.top_k, 4);
+        assert_eq!(cfg.multi_queries_top_k, 0);
+    }
+
+    #[test]
+    fn kb_flags_turn_features_on_and_parse_numbers() {
+        let mut cfg = ChatPipelineConfig::default();
+        let flags = HashMap::from([
+            ("chat_full_question".to_string(), "true".to_string()),
+            ("chat_multi_queries".to_string(), "1".to_string()),
+            ("chat_citation_plus".to_string(), "yes".to_string()),
+            ("chat_multi_queries_top_k".to_string(), "5".to_string()),
+            ("chat_top_k".to_string(), "8".to_string()),
+        ]);
+        cfg.apply_kb_flags(&flags);
+        assert!(cfg.full_question);
+        assert!(cfg.multi_queries);
+        assert!(cfg.citation_plus);
+        assert!(!cfg.reflect);
+        assert_eq!(cfg.multi_queries_top_k, 5);
+        assert_eq!(cfg.top_k, 8);
+    }
+
+    #[test]
+    fn full_question_prompt_embeds_conversation_dates_and_language() {
+        let msgs = vec![
+            ChatMessage::new("user", "What is the name of Donald Trump's father?"),
+            ChatMessage::new("assistant", "Fred Trump."),
+            ChatMessage::new("user", "And his mother?"),
+        ];
+        let conversation = form_conversation(&msgs);
+        assert_eq!(
+            conversation,
+            "USER: What is the name of Donald Trump's father?\n\
+             ASSISTANT: Fred Trump.\n\
+             USER: And his mother?"
+        );
+
+        let rendered = build_full_question_prompt(&conversation, "English");
+        assert!(rendered.contains("USER: What is the name of Donald Trump's father?"));
+        assert!(rendered.contains("ASSISTANT: Fred Trump."));
+        assert!(rendered.contains(&iso_date_shift(0)));
+        assert!(rendered.contains(&iso_date_shift(-1)));
+        assert!(rendered.contains(&iso_date_shift(1)));
+        // All Jinja placeholders must be substituted away.
+        assert!(!rendered.contains("{today}"));
+        assert!(!rendered.contains("{conversation}"));
+        assert!(!rendered.contains("{language}"));
+    }
+
+    #[test]
+    fn multi_queries_prompt_renders_and_parses_branch() {
+        let rendered = build_multi_queries_prompt(
+            "RAGFlow deployment",
+            "How do I deploy RAGFlow?",
+            "ID: 0\n└── Content: nothing useful",
+            "memory requirements",
+        );
+        assert!(rendered.contains("Original query:\nRAGFlow deployment"));
+        assert!(rendered.contains("How do I deploy RAGFlow?"));
+        assert!(rendered.contains("memory requirements"));
+        assert!(rendered.contains("\"questions\""));
+
+        // Documented JSON shape parses into 2-3 queries.
+        let queries = parse_multi_queries(
+            r#"{"reasoning": "split", "questions": [
+                {"question": "Q1", "query": "query one"},
+                {"question": "Q2", "query": "query two"}
+            ]}"#,
+        );
+        assert_eq!(queries.len(), 2);
+        assert_eq!(queries[0].query, "query one");
+        assert_eq!(queries[1].question, "Q2");
+
+        // Embedded-array fallback works when the model adds prose.
+        let queries = parse_multi_queries(
+            "Here are the queries:\n[{\"question\": \"A\", \"query\": \"a\"}, {\"question\": \"B\", \"query\": \"b\"}]",
+        );
+        assert_eq!(queries.len(), 2);
+
+        // Garbage yields an empty branch.
+        assert!(parse_multi_queries("**ERROR**").is_empty());
+        assert!(parse_multi_queries("").is_empty());
+    }
+
+    #[test]
+    fn citation_plus_prompt_contains_guidelines_and_sources() {
+        let sources = format_knowledge(&hits(2));
+        assert!(sources.contains("ID: 0"));
+        assert!(sources.contains("├── Title: doc-0"));
+        assert!(sources.contains("└── Content:\ncontent number 0"));
+
+        let rendered = build_citation_plus_prompt(&sources);
+        assert!(rendered.contains("adding correct citations"));
+        assert!(rendered.contains("content number 1"));
+        assert!(!rendered.contains("{sources}"));
+        assert!(!rendered.contains("{example}"));
+
+        // Answer messages carry the citation guidelines when enabled.
+        let cfg = config_with_flags();
+        let msgs = build_answer_messages(&cfg, "question?", &[], &sources);
+        assert_eq!(msgs[0].role, "system");
+        assert!(msgs[0].content.contains("Relevant document context:"));
+        assert!(msgs[0].content.contains("add citations to the input text"));
+        assert_eq!(msgs[1].role, "user");
+        assert_eq!(msgs[1].content, "question?");
+
+        // With citation formatting off, the guidelines are NOT appended.
+        let msgs =
+            build_answer_messages(&ChatPipelineConfig::default(), "question?", &[], &sources);
+        assert!(!msgs[0].content.contains("add citations to the input text"));
+    }
+
+    #[test]
+    fn answer_post_processing_canonicalizes_citations() {
+        // repair_bad_citation_formats integration (dialog.rs): mixed bad
+        // formats become canonical [ID:n] markers; out-of-range stay verbatim.
+        let (repaired, idx) = repair_bad_citation_formats(
+            "答案见 (ID: 12)、[ID: 3] 与 ref9，但 (ID: 99) 超范围。",
+            20,
+        );
+        assert_eq!(
+            repaired,
+            "答案见 [ID:12]、[ID:3] 与 [ID:9]，但 (ID: 99) 超范围。"
+        );
+        assert_eq!(idx, HashSet::from([12, 3, 9]));
+
+        // extract_cited_indexes picks up canonical markers from raw output;
+        // bad formats must pass through repair first (as in the pipeline).
+        let cited = extract_cited_indexes("参考 [ID:1] 与 [ID:2] 以及 (ID: 7)");
+        assert_eq!(cited, HashSet::from([1, 2]));
+        let (repaired, idx) = repair_bad_citation_formats("参考 (ID: 7)", 20);
+        assert_eq!(repaired, "参考 [ID:7]");
+        assert_eq!(idx, HashSet::from([7]));
+        assert_eq!(extract_cited_indexes(&repaired), HashSet::from([7]));
+    }
+
+    #[test]
+    fn reflect_prompt_renders_goal_and_tool_calls() {
+        let rendered = build_reflect_prompt(
+            "Answer the user question",
+            &[(
+                "retrieval".to_string(),
+                "ID: 0\n└── Content: found it".to_string(),
+            )],
+        );
+        assert!(rendered.contains("To achieve the goal: Answer the user question"));
+        assert!(rendered.contains("Tool call: `retrieval`"));
+        assert!(rendered.contains("found it"));
+        assert!(!rendered.contains("{goal}"));
+        assert!(!rendered.contains("{tool_calls}"));
+    }
+
+    #[test]
+    fn strip_think_removes_leading_think_blocks() {
+        assert_eq!(strip_think("思考中</think>答案"), "答案");
+        assert_eq!(strip_think("no think block"), "no think block");
+        assert_eq!(strip_think("a</think>b</think>c"), "c");
+    }
+}

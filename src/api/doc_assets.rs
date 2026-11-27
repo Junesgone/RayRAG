@@ -265,4 +265,82 @@ pub async fn document_image(
     crate::api::common::stream_stored_file(&path, mime, "inline", "This image is empty.").await
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    fn png_bytes(width: u32, height: u32) -> Vec<u8> {
+        let mut image = image::RgbImage::new(width, height);
+        for (x, y, pixel) in image.enumerate_pixels_mut() {
+            *pixel = image::Rgb([(x % 256) as u8, (y % 256) as u8, 128]);
+        }
+        let mut out = Vec::new();
+        image::DynamicImage::ImageRgb8(image)
+            .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+            .unwrap();
+        out
+    }
+
+    #[test]
+    fn a_thumbnail_is_jpeg_and_fits_the_longest_side() {
+        let thumbnail = make_thumbnail(&png_bytes(800, 400)).unwrap();
+        let decoded = image::load_from_memory(&thumbnail).unwrap();
+        assert_eq!(decoded.width(), THUMBNAIL_MAX_SIDE);
+        assert_eq!(decoded.height(), THUMBNAIL_MAX_SIDE / 2);
+        // A JPEG starts with SOI (0xFFD8), which is what a browser will receive.
+        assert_eq!(&thumbnail[..2], &[0xFF, 0xD8]);
+    }
+
+    #[test]
+    fn a_small_image_keeps_its_size_and_still_becomes_a_thumbnail() {
+        let thumbnail = make_thumbnail(&png_bytes(64, 32)).unwrap();
+        let decoded = image::load_from_memory(&thumbnail).unwrap();
+        assert_eq!(decoded.width(), 64);
+        assert_eq!(decoded.height(), 32);
+    }
+
+    #[test]
+    fn something_that_is_not_an_image_is_refused() {
+        assert!(make_thumbnail(b"not an image").is_err());
+    }
+
+    #[test]
+    fn the_documented_image_id_shape_is_parsed_around_dashed_uuids() {
+        let kbs = vec![
+            "4c09b0a3-ca29-424a-8ef0-43b80a6bf628".to_string(),
+            "4c09b0a3-ca29-424a-8ef0-43b80a6bf629".to_string(),
+        ];
+        // The knowledge base is a dashed UUID, so the split cannot be at the first dash.
+        assert_eq!(
+            split_image_id("4c09b0a3-ca29-424a-8ef0-43b80a6bf628-photo-1.jpg", &kbs),
+            Some((
+                "4c09b0a3-ca29-424a-8ef0-43b80a6bf628".to_string(),
+                "photo-1.jpg"
+            ))
+        );
+        assert_eq!(
+            split_image_id("4c09b0a3-ca29-424a-8ef0-43b80a6bf629-a-b.jpg", &kbs),
+            Some((
+                "4c09b0a3-ca29-424a-8ef0-43b80a6bf629".to_string(),
+                "a-b.jpg"
+            )),
+            "a name may contain dashes"
+        );
+        assert_eq!(split_image_id("unknown-kb-photo.jpg", &kbs), None);
+        assert_eq!(
+            split_image_id("4c09b0a3-ca29-424a-8ef0-43b80a6bf628-", &kbs),
+            None,
+            "an id with no name is not resolvable"
+        );
+    }
+
+    #[test]
+    fn only_decodable_formats_are_offered_a_thumbnail() {
+        for name in ["a.png", "b.JPG", "c.webp", "d.gif", "e.tiff"] {
+            assert!(is_decodable_image(name), "{name}");
+        }
+        for name in ["a.pdf", "b.docx", "c.txt", "d.md", ""] {
+            assert!(!is_decodable_image(name), "{name}");
+        }
+    }
+}

@@ -330,4 +330,75 @@ pub struct LegacyApiKeyRequest {
     pub name: Option<String>,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn beta_secret_matches_the_upstream_shape() {
+        let beta = new_beta();
+        assert_eq!(beta.len(), 32);
+        assert!(beta.chars().all(|value| value.is_ascii_hexdigit()));
+
+        let token = new_token();
+        assert!(token.starts_with("ragflow-"));
+        assert_eq!(token.len(), "ragflow-".len() + 32);
+    }
+
+    #[test]
+    fn backfill_generates_and_persists_a_missing_beta() {
+        let store = ApiTokenStore::in_memory();
+        store
+            .insert(ApiToken {
+                tenant_id: "tenant-a".into(),
+                token: "ragflow-legacy".into(),
+                dialog_id: None,
+                source: None,
+                beta: String::new(),
+                create_time: 1,
+                create_date: "2026-01-01 00:00:00".into(),
+                update_time: None,
+                update_date: None,
+            })
+            .unwrap();
+        let mut rows = store.list_for_tenant("tenant-a");
+        assert_eq!(rows[0].beta, "");
+        store.backfill_beta(&mut rows).unwrap();
+        assert_eq!(rows[0].beta.len(), 32);
+        // The backfill is persisted, so the beta survives a fresh read and the
+        // AUTH_BETA lookup resolves the tenant.
+        let stored = store.list_for_tenant("tenant-a");
+        assert_eq!(stored[0].beta, rows[0].beta);
+        assert_eq!(
+            store.tenant_for_beta(&rows[0].beta).as_deref(),
+            Some("tenant-a")
+        );
+    }
+
+    #[test]
+    fn tokens_are_scoped_to_their_tenant() {
+        let store = ApiTokenStore::in_memory();
+        let row = |tenant: &str, token: &str, beta: &str| ApiToken {
+            tenant_id: tenant.into(),
+            token: token.into(),
+            dialog_id: None,
+            source: None,
+            beta: beta.into(),
+            create_time: 1,
+            create_date: "2026-01-01 00:00:00".into(),
+            update_time: None,
+            update_date: None,
+        };
+        store.insert(row("tenant-a", "token-a", "beta-a")).unwrap();
+        store.insert(row("tenant-b", "token-b", "beta-b")).unwrap();
+        assert_eq!(store.list_for_tenant("tenant-a").len(), 1);
+        assert_eq!(store.tenant_for_beta("beta-b").as_deref(), Some("tenant-b"));
+        assert!(store.tenant_for_beta("").is_none());
+        assert!(store.tenant_for_beta("unknown").is_none());
+        // Deleting through the wrong tenant leaves the row in place.
+        assert!(!store.delete("tenant-b", "token-a").unwrap());
+        assert_eq!(store.list_for_tenant("tenant-a").len(), 1);
+        assert!(store.delete("tenant-a", "token-a").unwrap());
+        assert!(store.list_for_tenant("tenant-a").is_empty());
+    }
+}

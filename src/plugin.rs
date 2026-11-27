@@ -341,4 +341,174 @@ impl LLMToolPlugin for TextReversePlugin {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
 
+    fn manager_with_embedded() -> PluginManager {
+        let mut manager = PluginManager::new();
+        manager.load_embedded_plugins();
+        manager
+    }
+
+    #[test]
+    fn embedded_plugins_register_and_query_by_name() {
+        let manager = manager_with_embedded();
+        assert!(manager.get_llm_tool_by_name("bad_calculator").is_some());
+        assert!(manager.get_llm_tool_by_name("text_reverse").is_some());
+        assert!(manager.get_llm_tool_by_name("missing").is_none());
+        assert_eq!(manager.get_llm_tools().len(), 2);
+        // 按名称列表过滤（对齐 get_llm_tools_by_names：缺失名称跳过）
+        let tools =
+            manager.get_llm_tools_by_names(&["bad_calculator".to_string(), "missing".to_string()]);
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].metadata().name.as_str(), "bad_calculator");
+    }
+
+    #[test]
+    fn bad_calculator_invoke_matches_upstream_and_isolates_errors() {
+        let manager = manager_with_embedded();
+        let env = PluginEnv::new();
+        // 1 + 2 + 100 = 103（对齐 bad_calculator.py：str(a + b + 100)）
+        let args = Map::from_iter([("a".into(), json!(1)), ("b".into(), json!(2))]);
+        assert_eq!(
+            manager
+                .invoke_llm_tool("bad_calculator", &args, &env)
+                .unwrap(),
+            "103"
+        );
+        // 缺参 → Err（错误隔离，不 panic）
+        let error = manager
+            .invoke_llm_tool("bad_calculator", &Map::new(), &env)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("'a' is required"));
+        // 失败后管理器与其他插件不受影响
+        let args = Map::from_iter([("text".into(), json!("abc"))]);
+        assert_eq!(
+            manager
+                .invoke_llm_tool("text_reverse", &args, &env)
+                .unwrap(),
+            "cba"
+        );
+        // 未知插件名 → Err
+        assert!(manager.invoke_llm_tool("nope", &Map::new(), &env).is_err());
+    }
+
+    #[test]
+    fn metadata_to_openai_tool_matches_contract() {
+        let manager = manager_with_embedded();
+        let plugin = manager.get_llm_tool_by_name("bad_calculator").unwrap();
+        assert_eq!(plugin.version(), "1.0.0");
+        let tool = llm_tool_metadata_to_openai_tool(plugin.metadata());
+        assert_eq!(tool["type"].as_str(), Some("function"));
+        assert_eq!(tool["function"]["name"].as_str(), Some("bad_calculator"));
+        assert_eq!(
+            tool["function"]["description"].as_str(),
+            Some("A tool to calculate the sum of two numbers (will give wrong answer)")
+        );
+        assert_eq!(
+            tool["function"]["parameters"]["type"].as_str(),
+            Some("object")
+        );
+        assert_eq!(
+            tool["function"]["parameters"]["properties"]["a"]["type"].as_str(),
+            Some("number")
+        );
+        let required = tool["function"]["parameters"]["required"]
+            .as_array()
+            .unwrap();
+        assert!(required.contains(&json!("a")) && required.contains(&json!("b")));
+        // 参数元数据（对齐 LLMToolParameter / LLMToolMetadata 语义）
+        let metadata = plugin.metadata();
+        assert!(metadata.get_parameter("a").unwrap().required);
+        assert_eq!(
+            metadata.get_parameter("b").unwrap().r#type.as_str(),
+            "number"
+        );
+        assert_eq!(metadata.display_name.as_str(), "$t:bad_calculator.name");
+        assert_eq!(metadata.get_parameter("z"), None);
+    }
+
+    #[test]
+    fn env_injection_reaches_plugin_and_snapshot_filters() {
+        // 测试插件：读取注入的 PluginEnv
+        struct SuffixPlugin {
+            metadata: LLMToolMetadata,
+        }
+        impl LLMToolPlugin for SuffixPlugin {
+            fn metadata(&self) -> &LLMToolMetadata {
+                &self.metadata
+            }
+            fn invoke(&self, arguments: &Map<String, Value>, env: &PluginEnv) -> Result<String> {
+                let text = arguments.get("text").and_then(Value::as_str).unwrap_or("");
+                let suffix = env.get("RAYRAG_TEST_SUFFIX").unwrap_or("");
+                Ok(format!("{text}{suffix}"))
+            }
+        }
+        let mut manager = PluginManager::new();
+        manager.register_plugin(Arc::new(SuffixPlugin {
+            metadata: LLMToolMetadata {
+                name: "suffix".to_string(),
+                display_name: "Suffix".to_string(),
+                description: "Append env-injected suffix".to_string(),
+                display_description: None,
+                parameters: Vec::new(),
+            },
+        }));
+        let mut env = PluginEnv::new();
+        env.insert("RAYRAG_TEST_SUFFIX", "!");
+        let args = Map::from_iter([("text".into(), json!("hi"))]);
+        assert_eq!(
+            manager.invoke_llm_tool("suffix", &args, &env).unwrap(),
+            "hi!"
+        );
+        // 全量快照包含进程环境（如 PATH/HOME）；不存在的前缀 → 空快照
+        let snapshot = PluginEnv::snapshot(None);
+        assert!(snapshot.get("PATH").is_some() || snapshot.get("HOME").is_some());
+        assert_eq!(
+            PluginEnv::snapshot(Some("RAYRAG_NO_SUCH_PREFIX_")),
+            PluginEnv::new()
+        );
+    }
+
+    #[test]
+    fn plugin_panic_is_isolated_from_manager() {
+        struct PanicPlugin {
+            metadata: LLMToolMetadata,
+        }
+        impl LLMToolPlugin for PanicPlugin {
+            fn metadata(&self) -> &LLMToolMetadata {
+                &self.metadata
+            }
+            fn invoke(&self, _arguments: &Map<String, Value>, _env: &PluginEnv) -> Result<String> {
+                panic!("boom")
+            }
+        }
+        let mut manager = PluginManager::new();
+        manager.register_plugin(Arc::new(PanicPlugin {
+            metadata: LLMToolMetadata {
+                name: "panic".to_string(),
+                display_name: "Panic".to_string(),
+                description: "Always panics".to_string(),
+                display_description: None,
+                parameters: Vec::new(),
+            },
+        }));
+        let error = manager
+            .invoke_llm_tool("panic", &Map::new(), &PluginEnv::new())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("panicked"));
+        // 管理器未被污染：加载内置插件后照常工作
+        manager.load_embedded_plugins();
+        let args = Map::from_iter([("text".into(), json!("ab"))]);
+        assert_eq!(
+            manager
+                .invoke_llm_tool("text_reverse", &args, &PluginEnv::new())
+                .unwrap(),
+            "ba"
+        );
+    }
+}

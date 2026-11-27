@@ -2097,6 +2097,806 @@ pub async fn run_agentic_rag(
     tokens
 }
 
+#[cfg(test)]
+mod graph_core_tests {
+    use super::*;
+    use serde_json::json;
 
+    #[test]
+    fn snip_collapses_and_truncates() {
+        assert_eq!(snip(&json!("a   b\nc"), 240), "a b c");
+        let long = "x".repeat(300);
+        let out = snip(&json!(long), 240);
+        assert!(out.ends_with("...(+60 chars)"));
+        assert_eq!(snip(&json!({"k": 1}), 240), "{\"k\":1}");
+        assert_eq!(snip(&Value::Null, 240), "");
+    }
 
+    #[test]
+    fn safe_list_matrix() {
+        assert!(safe_list(&Value::Null).is_empty());
+        assert_eq!(safe_list(&json!([1, 2])).len(), 2);
+        assert!(safe_list(&json!(5)).is_empty(), "scalars degrade to empty");
+        assert!(!is_poisoned(&json!("x")));
+    }
 
+    #[test]
+    fn sca_view_ranks_relevance_coverage_and_freshness() {
+        let chunks = vec![
+            json!({"chunk_id": "a", "content": "unrelated", "similarity": 0.1}),
+            json!({"chunk_id": "b", "content": "paris population", "similarity": 0.2}),
+            json!({"chunk_id": "c", "content": "paris", "similarity": 0.9}),
+        ];
+        let (view, _identity) = select_sca_view(&chunks, &["paris".to_string()], None);
+        assert_eq!(view[0]["chunk_id"], "c", "relevance dominates");
+        assert_eq!(view[1]["chunk_id"], "b", "coverage beats none");
+        assert_eq!(view[2]["chunk_id"], "a");
+        let (capped, _) = select_sca_view(&chunks, &[], Some(1));
+        assert_eq!(capped.len(), 1);
+    }
+
+    #[test]
+    fn sca_view_identity_changes_with_membership() {
+        let first = vec![json!({"chunk_id": "a"}), json!({"chunk_id": "b"})];
+        let second = vec![json!({"chunk_id": "a"}), json!({"chunk_id": "c"})];
+        let (_, identity_a) = select_sca_view(&first, &[], None);
+        let (_, identity_b) = select_sca_view(&second, &[], None);
+        let (_, identity_a2) = select_sca_view(&first, &[], None);
+        assert_ne!(identity_a, identity_b);
+        assert_eq!(identity_a, identity_a2, "stable within a process");
+    }
+
+    #[test]
+    fn view_terms_dedupes_question_and_queries() {
+        let mut state = AgenticState::default();
+        state.question = "paris population".to_string();
+        state.current_queries = vec![json!("paris growth"), json!(7)];
+        let terms = view_terms(&state);
+        assert!(terms.contains(&"paris".to_string()));
+        assert!(terms.contains(&"population".to_string()));
+        assert!(terms.contains(&"growth".to_string()));
+        assert_eq!(
+            terms.iter().filter(|term| *term == "paris").count(),
+            1,
+            "deduped"
+        );
+    }
+
+    #[tokio::test]
+    async fn bounded_returns_none_on_timeout() {
+        let slow = async {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            7
+        };
+        assert_eq!(bounded(slow, 0.05).await, None);
+        let fast = async { 7 };
+        assert_eq!(bounded(fast, 1.0).await, Some(7));
+    }
+
+    #[test]
+    fn partial_tag_tail_matches_suffixes() {
+        assert_eq!(partial_tag_tail("abc<th", "<think>"), 3);
+        assert_eq!(partial_tag_tail("abc", "<think>"), 0);
+        assert_eq!(partial_tag_tail("</thi", "</think>"), 5);
+        assert_eq!(
+            partial_tag_tail("<think>", "<think>"),
+            0,
+            "a full tag is not a tail of itself (the leading char drops)"
+        );
+    }
+
+    #[test]
+    fn think_splitter_handles_plain_blocks() {
+        let mut splitter = ThinkSplitter::default();
+        let mut pieces = splitter.push("hello <think>reason</think> world");
+        pieces.extend(splitter.finish());
+        let kinds: Vec<ThinkKind> = pieces.iter().map(|(kind, _)| *kind).collect();
+        assert_eq!(
+            kinds,
+            vec![ThinkKind::Answer, ThinkKind::Think, ThinkKind::Answer]
+        );
+        assert_eq!(pieces[0].1, "hello ");
+        assert_eq!(pieces[1].1, "reason");
+        assert_eq!(pieces[2].1, " world");
+    }
+
+    #[test]
+    fn think_splitter_handles_unmatched_close_and_holds() {
+        let mut splitter = ThinkSplitter::default();
+        let mut pieces = splitter.push("oops</think>tail");
+        assert_eq!(pieces[0], (ThinkKind::Think, "oops".to_string()));
+        assert_eq!(pieces[1], (ThinkKind::Answer, "tail".to_string()));
+
+        let mut holding = ThinkSplitter::default();
+        assert!(holding.push("<thi").is_empty(), "partial tag held back");
+        let pieces = holding.push("nk>x</think>");
+        assert_eq!(pieces[0], (ThinkKind::Think, "x".to_string()));
+
+        let mut answer_hold = ThinkSplitter::default();
+        let first = answer_hold.push("ab<thi");
+        assert_eq!(first[0], (ThinkKind::Answer, "ab".to_string()));
+        let pieces = answer_hold.push("nk>y</think>");
+        assert_eq!(pieces[0], (ThinkKind::Think, "y".to_string()));
+    }
+
+    #[test]
+    fn think_splitter_finish_strips_residual_tags() {
+        let mut splitter = ThinkSplitter::default();
+        let first = splitter.push("tail<thi");
+        assert_eq!(first[0], (ThinkKind::Answer, "tail".to_string()));
+        let flushed = splitter.finish();
+        assert_eq!(flushed[0].0, ThinkKind::Answer);
+        assert_eq!(flushed[0].1, "<thi");
+        assert!(splitter.finish().is_empty());
+    }
+}
+#[cfg(test)]
+mod fanout_tests {
+    use super::*;
+    use crate::harness::tools::search::{HarnessRetriever, RetrievalRequest, SearchSettings};
+    use async_trait::async_trait;
+    use serde_json::json;
+    use std::sync::Mutex;
+
+    #[test]
+    fn sca_gaps_prefers_sub_queries_then_claims() {
+        let sca = json!({
+            "sub_queries": [
+                {"satisfied": true, "missing_fact": "skip me"},
+                {"missing_fact": "purchaser death date", "search_hint": "1933 buyer"},
+                {"missing_fact": "purchaser death date", "search_hint": "1933 buyer"},
+                {"sub_query": "fallback sub", "search_hint": "hint"},
+            ],
+        });
+        let gaps = sca_gaps_to_rewrite(&sca);
+        assert_eq!(gaps.len(), 2, "satisfied skipped + deduped");
+        assert_eq!(
+            gaps[0],
+            ("purchaser death date".to_string(), "1933 buyer".to_string())
+        );
+        assert_eq!(gaps[1].0, "fallback sub");
+
+        let claims = json!({
+            "claims": {
+                "c1": {"missing_information": [
+                    {"what": "release year", "search_hint": "released"},
+                    "plain string gap",
+                ]},
+            },
+        });
+        let gaps = sca_gaps_to_rewrite(&claims);
+        assert_eq!(gaps.len(), 2);
+        assert_eq!(
+            gaps[0],
+            ("release year".to_string(), "released".to_string())
+        );
+        assert_eq!(
+            gaps[1],
+            (
+                "plain string gap".to_string(),
+                "plain string gap".to_string()
+            )
+        );
+
+        assert!(sca_gaps_to_rewrite(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn extract_json_object_takes_first_parseable() {
+        let text = "prose {\"fanouts\": [\"a\"]} trailing {\"b\": 1}";
+        let value = extract_json_object(text).unwrap();
+        assert_eq!(value["fanouts"], json!(["a"]));
+        assert!(extract_json_object("no braces here").is_none());
+        assert!(extract_json_object("{broken} {\"ok\": true}").is_some());
+        assert!(extract_json_object("{unterminated").is_none());
+    }
+
+    #[test]
+    fn parse_fanouts_validates_shapes() {
+        let json_reply = json!({"fanouts": ["Culdect Saga entities", "how many days after", "Culdect Saga entities"]}).to_string();
+        let fanouts = parse_fanouts(&json_reply);
+        assert_eq!(
+            fanouts,
+            vec![
+                "Culdect Saga entities".to_string(),
+                "how many days after".to_string()
+            ]
+        );
+
+        let prose = "1. The woman was **Rocio Restrepo** here\n2. Culdect Saga release year?\n- short query about saga\nhttp://source.example";
+        let fanouts = parse_fanouts(prose);
+        assert_eq!(
+            fanouts,
+            vec![
+                "Culdect Saga release year?".to_string(),
+                "short query about saga".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn fanout_shape_guards() {
+        assert!(!fanout_looks_like_query("", false));
+        assert!(!fanout_looks_like_query("see http://x", false));
+        assert!(!fanout_looks_like_query("a **b** c", false));
+        assert!(!fanout_looks_like_query(&"word ".repeat(21), false));
+        assert!(fanout_looks_like_query(&"word ".repeat(20), false));
+        assert!(!fanout_looks_like_query(&"word ".repeat(11), true));
+        assert!(
+            fanout_looks_like_query(&format!("{}?", "word ".repeat(11)), true,),
+            "question mark exempts the loose cap"
+        );
+        assert!(!fanout_looks_like_query(&"x".repeat(161), false));
+    }
+
+    struct MockChat {
+        replies: Mutex<Vec<String>>,
+        calls: Mutex<usize>,
+    }
+
+    #[async_trait]
+    impl crate::harness::HarnessChat for MockChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            _history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            *self.calls.lock().unwrap() += 1;
+            let mut replies = self.replies.lock().unwrap();
+            if replies.is_empty() {
+                Ok(String::new())
+            } else {
+                Ok(replies.remove(0))
+            }
+        }
+        fn max_length(&self) -> usize {
+            4096
+        }
+    }
+
+    #[tokio::test]
+    async fn expand_fanouts_paths() {
+        let chat = MockChat {
+            replies: Mutex::new(vec![json!({"fanouts": ["alpha", "beta"]}).to_string()]),
+            calls: Mutex::new(0),
+        };
+        let fanouts = expand_fanouts(&chat, "q", &json!({})).await;
+        assert_eq!(fanouts, vec!["alpha".to_string(), "beta".to_string()]);
+        assert_eq!(*chat.calls.lock().unwrap(), 1);
+
+        let retry = MockChat {
+            replies: Mutex::new(vec![
+                "The woman was **Rocio Restrepo**".to_string(),
+                json!({"fanouts": ["strict query"]}).to_string(),
+            ]),
+            calls: Mutex::new(0),
+        };
+        let fanouts = expand_fanouts(&retry, "q", &json!({})).await;
+        assert_eq!(fanouts, vec!["strict query".to_string()]);
+        assert_eq!(*retry.calls.lock().unwrap(), 2, "one strict retry");
+
+        let fallback = MockChat {
+            replies: Mutex::new(vec![
+                "**not a query**".to_string(),
+                "http://still.bad".to_string(),
+            ]),
+            calls: Mutex::new(0),
+        };
+        assert_eq!(
+            expand_fanouts(&fallback, "raw question", &json!({})).await,
+            vec!["raw question".to_string()]
+        );
+        assert!(expand_fanouts(&fallback, "", &json!({})).await.is_empty());
+    }
+
+    struct MockRetriever {
+        bm25: Vec<Value>,
+        hybrid: Vec<Value>,
+    }
+
+    #[async_trait]
+    impl HarnessRetriever for MockRetriever {
+        async fn retrieval(&self, request: RetrievalRequest) -> Result<Kbinfos, String> {
+            let chunks = if request.use_embedding {
+                self.hybrid.clone()
+            } else {
+                self.bm25.clone()
+            };
+            Ok(Kbinfos {
+                chunks,
+                doc_aggs: Vec::new(),
+                pre_summary: None,
+            })
+        }
+    }
+
+    fn chunk(id: &str, content: &str) -> Value {
+        json!({"chunk_id": id, "content_with_weight": content, "doc_id": "d1"})
+    }
+
+    fn search_ctx<'a>(retriever: &'a MockRetriever) -> SearchContext<'a> {
+        SearchContext {
+            kb_ids: vec!["kb1".to_string()],
+            sql_kb_ids: Vec::new(),
+            tenant_ids: vec!["t1".to_string()],
+            has_embed_model: true,
+            settings: SearchSettings {
+                top_n: None,
+                top_k: None,
+                rerank_candidates_count: None,
+                vector_similarity_weight: None,
+                similarity_threshold: None,
+            },
+            retriever,
+            scoped_doc_ids: None,
+            search_cache: None,
+        }
+    }
+
+    fn tools_fixture() -> RagTools {
+        RagTools::new(crate::advanced_rag::agentic_rag::RagToolsConfig {
+            kbs: vec![crate::advanced_rag::agentic_rag::KbRef {
+                id: "kb1".to_string(),
+                tenant_id: "t1".to_string(),
+                field_map: None,
+            }],
+            chat_max_length: 4096,
+            ..crate::advanced_rag::agentic_rag::RagToolsConfig::default()
+        })
+    }
+
+    #[tokio::test]
+    async fn fanout_search_merges_both_channels() {
+        let retriever = MockRetriever {
+            bm25: vec![chunk("a1", "alpha topic exact")],
+            hybrid: vec![
+                chunk("b1", "unrelated semantic hit"),
+                chunk("b2", "second semantic"),
+            ],
+        };
+        let ctx = search_ctx(&retriever);
+        let tools = tools_fixture();
+        let mut kbinfos = Kbinfos::default();
+        let added = fanout_search(
+            &tools,
+            &ctx,
+            &mut kbinfos,
+            &["alpha topic".to_string()],
+            8,
+            None,
+        )
+        .await;
+        assert_eq!(added, 3, "one exact + two semantic");
+        assert_eq!(kbinfos.chunks.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn fanout_search_respects_capacity_and_seen() {
+        let retriever = MockRetriever {
+            bm25: vec![chunk("a1", "alpha topic exact")],
+            hybrid: vec![chunk("b1", "semantic")],
+        };
+        let ctx = search_ctx(&retriever);
+        let tools = tools_fixture();
+        let mut kbinfos = Kbinfos::default();
+        let added = fanout_search(
+            &tools,
+            &ctx,
+            &mut kbinfos,
+            &["alpha topic".to_string()],
+            8,
+            Some(1),
+        )
+        .await;
+        assert_eq!(added, 1, "the global ceiling admits only the exact hit");
+        assert_eq!(kbinfos.chunks[0]["chunk_id"], "a1");
+
+        let mut seeded = Kbinfos::default();
+        seeded.chunks.push(chunk("a1", "alpha topic exact"));
+        let added = fanout_search(
+            &tools,
+            &ctx,
+            &mut seeded,
+            &["alpha topic".to_string()],
+            8,
+            None,
+        )
+        .await;
+        assert_eq!(added, 1, "the already-seen exact hit is skipped");
+        assert_eq!(seeded.chunks.len(), 2);
+    }
+}
+#[cfg(test)]
+mod graph_node_tests {
+    use super::*;
+    use crate::advanced_rag::agentic_rag::{KbRef, RagRetrievalBackend, RagToolsConfig};
+    use crate::harness::action_session::{
+        ActionLlmBackend, ActionSearchBackend, ActionToolBackend, LlmReply, Variable,
+    };
+    use crate::harness::chunk_utils;
+    use crate::harness::tools::navigation::NavResult;
+    use crate::harness::tools::search::{HarnessRetriever, RetrievalRequest, SearchSettings};
+    use async_trait::async_trait;
+    use serde_json::json;
+
+    fn variable(id: i64, kind: &str, candidate: Option<&str>, strength: Option<f64>) -> Variable {
+        Variable {
+            id,
+            r#type: kind.to_string(),
+            question_clues: vec![format!("clue {id}")],
+            discovered_clues: vec![format!("found {id}")],
+            candidate: candidate.map(str::to_string),
+            candidate_strength: strength,
+        }
+    }
+
+    #[test]
+    fn render_slot_draft_shows_candidates_and_gaps() {
+        let table = SlotState::new(
+            vec![
+                variable(0, "person", Some("Ada"), Some(0.95)),
+                variable(1, "date", None, None),
+            ],
+            0,
+        );
+        let evidence = json!({"0": {"evidence_ids": ["c1"], "terminal_type": "state"}});
+        let draft = render_slot_draft(&table, Some("Ada"), Some(&evidence));
+        assert!(draft.contains("Candidate answer: Ada"));
+        assert!(draft.contains("- slot 0 [person]: Ada (strength=0.95) [terminal=state, evidence_ids=[\"c1\"]] — found 0"));
+        assert!(draft.contains("- slot 1 [date]: NOT RESOLVED (clue 1)"));
+        assert!(render_slot_draft(&SlotState::new(vec![], 0), None, None).is_empty());
+    }
+
+    #[test]
+    fn merge_slot_patch_prefers_the_stronger_candidate() {
+        let base = SlotState::new(vec![variable(0, "person", Some("Weak"), Some(0.3))], 0);
+        let stronger = SlotState::new(vec![variable(0, "person", Some("Strong"), Some(0.9))], 1);
+        let merged = merge_slot_patch(&base, &stronger).expect("changed");
+        assert_eq!(merged.state[0].candidate.as_deref(), Some("Strong"));
+        assert_eq!(merged.state[0].candidate_strength, Some(0.9));
+        assert!(
+            merged.state[0]
+                .discovered_clues
+                .contains(&"found 0".to_string())
+        );
+        assert_eq!(merged.depth, 1);
+
+        let weaker = SlotState::new(vec![variable(0, "person", Some("Meh"), Some(0.1))], 1);
+        assert!(
+            merge_slot_patch(&base, &weaker).is_none(),
+            "no change -> None"
+        );
+        let filled = SlotState::new(vec![variable(0, "person", Some("Filled"), None)], 1);
+        assert!(
+            merge_slot_patch(&base, &filled).is_none(),
+            "a None strength never upgrades a stronger base"
+        );
+    }
+
+    fn base_state() -> AgenticState {
+        let mut state = AgenticState::default();
+        state.question = "q".to_string();
+        state.deadline = Some(Instant::now() + std::time::Duration::from_secs(120));
+        state
+    }
+
+    #[test]
+    fn route_matrix() {
+        let config = GraphConfig {
+            enable_sca: true,
+            use_fanout: false,
+            sca_max_rounds: 3,
+            max_loops: 3,
+        };
+        let pool = Kbinfos::default();
+        let mut state = base_state();
+        state.verdict = json!({"status": "INSUFFICIENT"});
+        assert_eq!(route_sca(&state, &pool, &config), GraphRoute::QueryRewrite);
+        state.search_rounds = 3;
+        assert_eq!(
+            route_sca(&state, &pool, &config),
+            GraphRoute::FormalizeAnswer
+        );
+        state.search_rounds = 0;
+        state.no_progress = true;
+        assert_eq!(
+            route_sca(&state, &pool, &config),
+            GraphRoute::FormalizeAnswer
+        );
+        state.no_progress = false;
+        let mut full = Kbinfos::default();
+        for index in 0..SCA_VIEW_CAP {
+            full.chunks.push(json!({"chunk_id": format!("c{index}")}));
+        }
+        assert_eq!(
+            route_sca(&state, &full, &config),
+            GraphRoute::FormalizeAnswer
+        );
+        let no_sca = GraphConfig {
+            enable_sca: false,
+            ..config.clone()
+        };
+        assert_eq!(
+            route_sca(&state, &pool, &no_sca),
+            GraphRoute::FormalizeAnswer
+        );
+
+        assert_eq!(route_rewrite(&state, &config), GraphRoute::RagAgent);
+        state.no_progress = true;
+        assert_eq!(route_rewrite(&state, &config), GraphRoute::FormalizeAnswer);
+        state.no_progress = false;
+        state.search_rounds = 3;
+        assert_eq!(route_rewrite(&state, &config), GraphRoute::FormalizeAnswer);
+        state.search_rounds = 0;
+        state.deadline = Some(Instant::now());
+        assert_eq!(route_rewrite(&state, &config), GraphRoute::FormalizeAnswer);
+    }
+
+    // ── Mock runtime plumbing ─────────────────────────────────────────────
+
+    struct MockChat;
+
+    #[async_trait]
+    impl HarnessChat for MockChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            _history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            Ok(String::new())
+        }
+        fn max_length(&self) -> usize {
+            4096
+        }
+    }
+
+    struct MockRetriever;
+
+    #[async_trait]
+    impl HarnessRetriever for MockRetriever {
+        async fn retrieval(&self, _request: RetrievalRequest) -> Result<Kbinfos, String> {
+            Ok(Kbinfos::default())
+        }
+    }
+
+    struct MockKbReads;
+
+    #[async_trait]
+    impl RagRetrievalBackend for MockKbReads {
+        async fn retrieval(
+            &self,
+            _request: &crate::advanced_rag::agentic_rag::RagRetrievalRequest,
+        ) -> Option<Value> {
+            None
+        }
+        fn retrieval_by_children(&self, chunks: &[Value], _tenant_ids: &[String]) -> Vec<Value> {
+            chunks.to_vec()
+        }
+        fn rank_feature(&self, _question: &str) -> Value {
+            json!({})
+        }
+        fn filter_known_doc_ids(&self, _candidates: &[String]) -> HashSet<String> {
+            HashSet::new()
+        }
+        async fn web_retrieve_chunks(&self, _query: &str) -> Option<Value> {
+            None
+        }
+        async fn use_sql(
+            &self,
+            _question: &str,
+            _field_map: &serde_json::Map<String, Value>,
+            _tenant_id: &str,
+            _chat: &dyn HarnessChat,
+            _kb_ids: &[String],
+            _doc_ids: Option<Vec<String>>,
+        ) -> Option<Value> {
+            None
+        }
+        fn flattened_meta_by_kbs(&self, _kb_ids: &[String]) -> Value {
+            json!({})
+        }
+        fn doc_titles_for_kb(&self, _kb_id: &str) -> Vec<(String, String)> {
+            Vec::new()
+        }
+        fn doc_kb_id(&self, _doc_id: &str) -> Option<String> {
+            None
+        }
+        async fn chunk_list(
+            &self,
+            _doc_id: &str,
+            _tenant_id: &str,
+            _kb_id: &str,
+            _max_count: usize,
+            _offset: usize,
+        ) -> Vec<Value> {
+            Vec::new()
+        }
+    }
+
+    struct MockActionSearch;
+
+    #[async_trait]
+    impl ActionSearchBackend for MockActionSearch {
+        async fn grep_search(
+            &self,
+            _q: &str,
+            _t: usize,
+            _s: Option<&[String]>,
+            _k: Option<&str>,
+        ) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+        async fn hybrid_search(&self, _q: &str, _t: usize, _c: bool) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+        async fn list_chunks(&self, _d: &str) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+        fn has_web(&self) -> bool {
+            false
+        }
+        async fn web_search(&self, _q: &str) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+    }
+
+    struct MockActionTools;
+
+    #[async_trait]
+    impl ActionToolBackend for MockActionTools {
+        async fn navigate_tree(&self, _q: &str) -> NavResult {
+            NavResult::default()
+        }
+        async fn navigate_structure(&self, _d: &str, _q: &str, _k: &str) -> NavResult {
+            NavResult::default()
+        }
+        async fn calculate(&self, _q: &str, _f: &[String]) -> Option<Value> {
+            None
+        }
+        async fn graph_explore(&self, _q: &str, _s: &[String]) -> Value {
+            json!({"answer": "", "chunks": []})
+        }
+    }
+
+    struct MockActionLlm;
+
+    #[async_trait]
+    impl ActionLlmBackend for MockActionLlm {
+        async fn complete_with_tools(
+            &self,
+            _messages: &[Value],
+            _schemas: &[Value],
+            _timeout_s: f64,
+        ) -> Option<LlmReply> {
+            None
+        }
+        async fn complete_plain(&self, _messages: &[Value], _timeout_s: f64) -> Option<LlmReply> {
+            None
+        }
+    }
+
+    struct RuntimeFixture {
+        tools: RagTools,
+        retriever: MockRetriever,
+        kb_reads: MockKbReads,
+        chat: MockChat,
+        action_search: MockActionSearch,
+        action_tools: MockActionTools,
+        action_llm: MockActionLlm,
+    }
+
+    impl RuntimeFixture {
+        fn new() -> Self {
+            Self {
+                tools: RagTools::new(RagToolsConfig {
+                    kbs: vec![KbRef {
+                        id: "kb1".to_string(),
+                        tenant_id: "t1".to_string(),
+                        field_map: None,
+                    }],
+                    empty_response: "NO EVIDENCE".to_string(),
+                    thinking_mode: "high".to_string(),
+                    chat_max_length: 4096,
+                    ..RagToolsConfig::default()
+                }),
+                retriever: MockRetriever,
+                kb_reads: MockKbReads,
+                chat: MockChat,
+                action_search: MockActionSearch,
+                action_tools: MockActionTools,
+                action_llm: MockActionLlm,
+            }
+        }
+
+        fn runtime<'a>(&'a self, search: &'a SearchContext<'a>) -> AgenticRuntime<'a> {
+            AgenticRuntime {
+                tools: &self.tools,
+                search,
+                retrieval: &self.kb_reads,
+                chat: &self.chat,
+                action_search: &self.action_search,
+                action_tools: &self.action_tools,
+                action_llm: &self.action_llm,
+                direct: None,
+                stats: StatsHandle::new(),
+            }
+        }
+    }
+
+    fn search_ctx(retriever: &MockRetriever) -> SearchContext<'_> {
+        SearchContext {
+            kb_ids: vec!["kb1".to_string()],
+            sql_kb_ids: Vec::new(),
+            tenant_ids: vec!["t1".to_string()],
+            has_embed_model: false,
+            settings: SearchSettings {
+                top_n: None,
+                top_k: None,
+                rerank_candidates_count: None,
+                vector_similarity_weight: None,
+                similarity_threshold: None,
+            },
+            retriever,
+            scoped_doc_ids: None,
+            search_cache: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn agentic_graph_pipeline_reaches_empty_response() {
+        let fixture = RuntimeFixture::new();
+        let ctx = search_ctx(&fixture.retriever);
+        let runtime = fixture.runtime(&ctx);
+        let mut kbinfos = Kbinfos::default();
+        let messages = vec![json!({"role": "user", "content": "Who?"})];
+        let config = GraphConfig {
+            enable_sca: false,
+            use_fanout: false,
+            sca_max_rounds: 3,
+            max_loops: 3,
+        };
+        let mut state = AgenticState {
+            messages: messages.clone(),
+            ..AgenticState::default()
+        };
+        let mut tokens: Vec<String> = Vec::new();
+        run_agentic_graph(
+            &runtime,
+            &mut kbinfos,
+            &mut state,
+            &mut tokens,
+            &json!({}),
+            &config,
+        )
+        .await;
+        assert_eq!(
+            state.question, "Who?",
+            "single-turn formalize keeps the question"
+        );
+        assert_eq!(state.verdict["status"], json!("INSUFFICIENT"));
+        assert_eq!(
+            tokens,
+            vec!["NO EVIDENCE".to_string()],
+            "empty response path"
+        );
+        assert!(kbinfos.chunks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn low_graph_pipeline_without_direct_tool() {
+        let fixture = RuntimeFixture::new();
+        let ctx = search_ctx(&fixture.retriever);
+        let runtime = fixture.runtime(&ctx);
+        let mut kbinfos = Kbinfos::default();
+        let mut state = AgenticState {
+            messages: vec![json!({"role": "user", "content": "Who?"})],
+            ..AgenticState::default()
+        };
+        let mut tokens: Vec<String> = Vec::new();
+        run_low_graph(&runtime, &mut kbinfos, &mut state, &mut tokens, &json!({})).await;
+        assert!(state.empty_result);
+        assert_eq!(tokens, vec!["NO EVIDENCE".to_string()]);
+    }
+}

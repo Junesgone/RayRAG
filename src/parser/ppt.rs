@@ -378,4 +378,102 @@ fn slide_number(name: &str) -> Option<usize> {
         .ok()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn slide_xml_parses_into_tree() {
+        let root = parse_xml(
+            r#"<p:sld xmlns:p="x"><p:sp><p:xfrm><a:off x="100" y="200"/></p:xfrm></p:sp></p:sld>"#,
+        )
+        .unwrap();
+        assert_eq!(root.name, "sld");
+        let sp = root.first_child("sp").unwrap();
+        let off = sp.first_child("xfrm").unwrap().first_child("off").unwrap();
+        assert_eq!(off.attr("x"), Some("100"));
+        assert_eq!(off.attr("y"), Some("200"));
+    }
+
+    #[test]
+    fn malformed_slide_attributes_fail_the_pptx_parse_instead_of_being_dropped() {
+        use std::io::Write;
+
+        for (slide_xml, bad_attribute) in [
+            ("<p:sld broken=><p:sp/></p:sld>", "broken="),
+            ("<p:sld><p:sp broken=/></p:sld>", "broken="),
+        ] {
+            let mut archive = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            archive
+                .start_file(
+                    "ppt/slides/slide1.xml",
+                    zip::write::SimpleFileOptions::default(),
+                )
+                .unwrap();
+            archive.write_all(slide_xml.as_bytes()).unwrap();
+            let bytes = archive.finish().unwrap().into_inner();
+            let error = slide_texts(&bytes).unwrap_err().to_string();
+            assert!(error.contains("attribute"), "{bad_attribute}: {error}");
+            assert!(error.contains("slide1.xml"), "{error}");
+        }
+    }
+
+    #[test]
+    fn bullet_detection_prefixes_level() {
+        // Bulleted paragraph at level 2.
+        let root = parse_xml(
+            r#"<p:p><p:pPr lvl="2"><a:buChar char="&#8226;"/></p:pPr><a:r><a:t>item</a:t></a:r></p:p>"#,
+        )
+        .unwrap();
+        let text = get_paragraph_text(&root);
+        assert_eq!(text, "    .item");
+
+        // Plain paragraph, no pPr → no prefix.
+        let root2 = parse_xml(r#"<p:p><a:r><a:t>plain</a:t></a:r></p:p>"#).unwrap();
+        assert_eq!(get_paragraph_text(&root2), "plain");
+    }
+
+    #[test]
+    fn table_extraction_uses_header_row() {
+        let root = parse_xml(
+            r#"<a:tbl><a:tr><a:tc><a:txBody><a:p><a:r><a:t>name</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>age</a:t></a:r></a:p></a:txBody></a:tc></a:tr><a:tr><a:tc><a:txBody><a:p><a:r><a:t>Alice</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>30</a:t></a:r></a:p></a:txBody></a:tc></a:tr></a:tbl>"#,
+        )
+        .unwrap();
+        let text = extract_table(&root);
+        assert_eq!(text, "name: Alice; age: 30");
+    }
+
+    #[test]
+    fn shapes_sort_by_top_then_left() {
+        let mut shapes = vec![
+            Shape {
+                top: 300,
+                left: 10,
+                text: "late".into(),
+            },
+            Shape {
+                top: 100,
+                left: 500,
+                text: "top".into(),
+            },
+            Shape {
+                top: 100,
+                left: 10,
+                text: "top-left".into(),
+            },
+        ];
+        shapes.sort_by_key(Shape::sort_key);
+        let order: Vec<&str> = shapes.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(order, ["top-left", "top", "late"]);
+    }
+
+    #[test]
+    fn group_shape_recurses_and_sorts_children() {
+        let root = parse_xml(
+            r#"<p:grpSp><p:sp><p:xfrm><a:off x="0" y="300"/></p:xfrm><p:txBody><a:p><a:r><a:t>B</a:t></a:r></a:p></p:txBody></p:sp><p:sp><p:xfrm><a:off x="0" y="100"/></p:xfrm><p:txBody><a:p><a:r><a:t>A</a:t></a:r></a:p></p:txBody></p:sp></p:grpSp>"#,
+        )
+        .unwrap();
+        let text = extract_shape(&root);
+        assert_eq!(text, "A\nB");
+    }
+}

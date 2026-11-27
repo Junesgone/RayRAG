@@ -101,4 +101,44 @@ pub fn snippet(text: &str, n: usize) -> String {
     format!("{}...", head.trim_end())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
 
+    #[test]
+    fn accessors_mirror_upstream_aliases() {
+        let chunk = json!({
+            "docid": "d-1",
+            "kb_id": "kb-9",
+            "docnm_kwd": "Title A",
+            "id": 42,
+            "content": "body text"
+        });
+        assert_eq!(doc_id(&chunk), "d-1");
+        assert_eq!(dataset_id(&chunk), "kb-9");
+        assert_eq!(doc_title(&chunk), "Title A");
+        assert_eq!(chunk_id(&chunk), "42");
+        assert_eq!(chunk_text(&chunk), "body text");
+
+        // content_with_weight wins; a falsy first alias falls through.
+        let chunk = json!({"content_with_weight": "", "text": "fallback"});
+        assert_eq!(chunk_text(&chunk), "fallback");
+        // chunk_attr only skips None/"", so 0 is a value.
+        let chunk = json!({"chunk_id": 0});
+        assert_eq!(chunk_id(&chunk), "0");
+    }
+
+    #[test]
+    fn escaping_and_snippets() {
+        assert_eq!(
+            xml_escape(&json!("a & b < c > d \"e\"")),
+            "a &amp; b &lt; c &gt; d &quot;e&quot;"
+        );
+        assert_eq!(xml_escape(&Value::Null), "");
+
+        assert_eq!(snippet("  hello  ", 10), "hello");
+        assert_eq!(snippet("abcdefghij", 4), "abcd...");
+        assert_eq!(snippet("abc   def", 4), "abc...");
+    }
+}

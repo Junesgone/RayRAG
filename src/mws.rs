@@ -63,4 +63,52 @@ pub fn require_mws_token(token: Option<&str>) -> Result<String> {
     Ok(value.to_owned())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn normalizes_project_root_urls() {
+        assert_eq!(
+            normalize_mws_project_url(Some("https://gpt.mwsapis.ru/projects/demo/")).unwrap(),
+            "https://gpt.mwsapis.ru/projects/demo"
+        );
+        assert_eq!(
+            normalize_mws_project_url(Some(" http://host:8080/projects/p ")).unwrap(),
+            "http://host:8080/projects/p"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_project_root_urls() {
+        for value in [
+            None,
+            Some(""),
+            Some("gpt.mwsapis.ru/projects/demo"),
+            Some("ftp://gpt.mwsapis.ru/projects/demo"),
+            Some("https://gpt.mwsapis.ru"),
+            Some("https://gpt.mwsapis.ru/projects"),
+            Some("https://gpt.mwsapis.ru/projects/demo/chat"),
+            Some("https://user:pass@gpt.mwsapis.ru/projects/demo"),
+            Some("https://gpt.mwsapis.ru/projects/demo?x=1"),
+            Some("https://gpt.mwsapis.ru/projects/demo#frag"),
+        ] {
+            assert!(normalize_mws_project_url(value).is_err(), "{value:?}");
+        }
+    }
+
+    #[test]
+    fn builds_endpoints_and_requires_token() {
+        assert_eq!(
+            mws_api_url(
+                Some("https://gpt.mwsapis.ru/projects/demo"),
+                "/v1/chat/completions"
+            )
+            .unwrap(),
+            "https://gpt.mwsapis.ru/projects/demo/v1/chat/completions"
+        );
+        assert_eq!(require_mws_token(Some("  tok ")).unwrap(), "tok");
+        assert!(require_mws_token(None).is_err());
+        assert!(require_mws_token(Some("   ")).is_err());
+    }
+}

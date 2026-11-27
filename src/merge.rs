@@ -244,4 +244,102 @@ fn union_chunk_ids(merged: &mut Value, existing: &Value) {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
 
+    #[test]
+    fn cosine_similarity_basic() {
+        assert_eq!(cosine_similarity(&[1.0, 0.0], &[1.0, 0.0]), 1.0);
+        assert_eq!(cosine_similarity(&[1.0, 0.0], &[0.0, 1.0]), 0.0);
+        assert_eq!(cosine_similarity(&[], &[1.0]), 0.0);
+        assert_eq!(cosine_similarity(&[1.0, 0.0], &[1.0]), 0.0);
+        let v = cosine_similarity(&[1.0, 2.0, 3.0], &[2.0, 4.0, 6.0]);
+        assert!((v - 1.0).abs() < 1e-6, "parallel vectors: {v}");
+    }
+
+    #[test]
+    fn merge_invariants_preserve_relation_endpoints() {
+        let existing = json!({
+            "source": "A", "target": "B", "type": "works_at",
+            "description": "old"
+        });
+        let merged = json!({
+            "source": "X", "target": "Y", "type": "works_at",
+            "description": "new evidence"
+        });
+        let out = apply_merge_invariants(&existing, merged);
+        assert_eq!(out["source"], "A");
+        assert_eq!(out["target"], "B");
+        assert_eq!(out["description"], "new evidence");
+        // Entities are untouched.
+        let ent = json!({"name": "A", "description": "d"});
+        let out2 = apply_merge_invariants(&ent, json!({"name": "A", "description": "d2"}));
+        assert_eq!(out2["description"], "d2");
+    }
+
+    #[test]
+    fn embedding_fallback_and_threshold() {
+        let a = json!({"name": "张三", "embedding": [1.0, 0.0, 0.0]});
+        let b = json!({"name": "张三", "embedding": [0.98, 0.02, 0.0]});
+        let c = json!({"name": "李四", "embedding": [0.0, 1.0, 0.0]});
+        assert!(payloads_similar(&a, &b, DEFAULT_MERGE_THRESHOLD));
+        assert!(!payloads_similar(&a, &c, DEFAULT_MERGE_THRESHOLD));
+        // q_<dim>_vec naming.
+        let d = json!({"name": "王五", "q_3_vec": [1.0, 0.0, 0.0]});
+        assert!(payloads_similar(&a, &d, DEFAULT_MERGE_THRESHOLD));
+        // Name-equality fallback without vectors.
+        let e = json!({"name": "张三"});
+        let f = json!({"name": "张三"});
+        assert!(payloads_similar(&e, &f, DEFAULT_MERGE_THRESHOLD));
+    }
+
+    #[test]
+    fn union_chunk_ids_dedupes() {
+        let mut merged = json!({"name": "A", "source_chunk_ids": ["c1", "c2"]});
+        let existing = json!({"name": "A", "source_chunk_ids": ["c2", "c3"]});
+        union_chunk_ids(&mut merged, &existing);
+        let ids: Vec<&str> = merged["source_chunk_ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert_eq!(ids, vec!["c1", "c2", "c3"]);
+    }
+
+    // Real GPU merge judgement (ignored; requires RAYRAG_TEST_LLM_BASE/MODEL).
+    #[tokio::test]
+    #[ignore]
+    async fn gpu_merge_pair_judges_duplicate_and_merges() {
+        let base = std::env::var("RAYRAG_TEST_LLM_BASE").expect("RAYRAG_TEST_LLM_BASE");
+        let model = std::env::var("RAYRAG_TEST_LLM_MODEL").expect("RAYRAG_TEST_LLM_MODEL");
+        let client = crate::llm::LlmClient::new(crate::llm::LlmConfig {
+            api_base: base,
+            api_key: String::new(),
+            model,
+            generation: Default::default(),
+            system_prompt: String::new(),
+            deepseek: Default::default(),
+        });
+        // Same logical entity, different descriptions.
+        let existing =
+            json!({"type": "organization", "name": "百鲤居水产养殖场", "description": "位于中山"});
+        let incoming = json!({"type": "organization", "name": "百鲤居水产养殖场", "description": "主营四大家鱼"});
+        let merged = merge_pair(&existing, &incoming, &client)
+            .await
+            .expect("merge")
+            .expect("duplicated");
+        assert_eq!(merged["name"], "百鲤居水产养殖场");
+        // Different entities → None.
+        let other = json!({"type": "person", "name": "李锦澎", "description": "负责人"});
+        assert!(
+            merge_pair(&existing, &other, &client)
+                .await
+                .unwrap()
+                .is_none(),
+            "unrelated items must not merge"
+        );
+    }
+}

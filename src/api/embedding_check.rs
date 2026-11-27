@@ -248,4 +248,63 @@ pub async fn check_dataset_embedding(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn cosine_similarity_is_one_for_identical_and_zero_for_orthogonal_or_mismatched() {
+        let a = vec![1.0f32, 2.0, 3.0];
+        assert!((cosine_similarity(&a, &a) - 1.0).abs() < 1e-9);
+        assert!(cosine_similarity(&[1.0, 0.0], &[0.0, 1.0]).abs() < 1e-9);
+        // A different width is not comparable: reported as zero rather than guessed.
+        assert_eq!(cosine_similarity(&[1.0, 2.0], &[1.0, 2.0, 3.0]), 0.0);
+        assert_eq!(cosine_similarity(&[], &[]), 0.0);
+        // Opposite directions are -1, which must not be confused with a mismatch.
+        assert!((cosine_similarity(&[1.0, 0.0], &[-1.0, 0.0]) + 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_sample_is_evenly_spaced_and_reproducible() {
+        assert_eq!(sample_positions(10, 3), vec![0, 3, 6]);
+        assert_eq!(sample_positions(10, 3), sample_positions(10, 3));
+        // Fewer items than asked for means all of them, in order.
+        assert_eq!(sample_positions(3, 8), vec![0, 1, 2]);
+        // No items, or nothing asked for.
+        assert!(sample_positions(0, 5).is_empty());
+        assert!(sample_positions(5, 0).is_empty());
+        // Never out of range, never duplicated.
+        for (total, count) in [(1, 1), (7, 2), (100, 64), (1000, 8)] {
+            let picked = sample_positions(total, count);
+            assert!(
+                picked.len() <= count && picked.len() <= total,
+                "{total}/{count}"
+            );
+            assert!(
+                picked.windows(2).all(|pair| pair[0] < pair[1]),
+                "{picked:?}"
+            );
+            assert!(picked.iter().all(|index| *index < total), "{picked:?}");
+        }
+    }
+
+    #[test]
+    fn the_default_alias_resolves_to_the_configured_model() {
+        // The environment is read, never invented: an unset key reports `default` rather than a name
+        // that would not match anything.
+        let resolved = configured_embedding_model();
+        assert!(!resolved.trim().is_empty());
+        if let Ok(configured) = std::env::var("EMBED_MODEL") {
+            if !configured.trim().is_empty() {
+                assert_eq!(resolved, configured.trim());
+            }
+        }
+    }
+
+    #[test]
+    fn the_threshold_is_upstreams_ninety_percent() {
+        assert_eq!(EFFECTIVE_THRESHOLD, 0.9);
+        assert_eq!(DEFAULT_SAMPLE, 8);
+        assert_eq!(MAX_SAMPLE, 64);
+    }
+}

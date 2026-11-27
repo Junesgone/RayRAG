@@ -283,4 +283,85 @@ impl ChunkStrategy for TokenChunker {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Document, ParserConfig};
+    use uuid::Uuid;
 
+    fn doc(content: &str) -> Document {
+        Document {
+            id: Uuid::new_v4(),
+            name: "test.txt".into(),
+            content: content.into(),
+            mime_type: "text/plain".into(),
+            size: content.len(),
+            metadata: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn one_mode_returns_single_chunk() {
+        let d = doc("hello world");
+        let mut cfg = ParserConfig::default();
+        cfg.delimiter_mode = "one".into();
+        let out = TokenChunker.chunk(&d, &cfg).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].content, "hello world");
+    }
+
+    #[test]
+    fn token_size_merges_until_limit() {
+        // 每行一段（~1 token/段），阈值 2 → 每块 2 段 → 3 块
+        let d = doc("aaa\nbbb\nccc\nddd\neee\nfff");
+        let mut cfg = ParserConfig::default();
+        cfg.delimiter_mode = "token_size".into();
+        cfg.chunk_token_num = 2;
+        cfg.overlapped_percent = 0.0;
+        let out = TokenChunker.chunk(&d, &cfg).unwrap();
+        assert_eq!(out.len(), 3);
+        assert!(out[0].content.contains("aaa"));
+        assert!(out[0].content.contains("bbb"));
+        assert!(out[2].content.contains("fff"));
+    }
+    #[test]
+    fn delimiter_mode_splits_keeping_delimiters() {
+        let d = doc("第一节内容。第二节内容。第三节内容。");
+        let mut cfg = ParserConfig::default();
+        cfg.delimiter_mode = "delimiter".into();
+        cfg.delimiters = vec!["`。`".into()];
+        let out = TokenChunker.chunk(&d, &cfg).unwrap();
+        assert!(out.len() >= 3);
+        assert!(out[0].content.ends_with("。"));
+    }
+
+    #[test]
+    fn normalize_overlapped_clamps() {
+        assert_eq!(TokenChunker::normalize_overlapped(0.5), 50);
+        assert_eq!(TokenChunker::normalize_overlapped(0.0), 0);
+        assert_eq!(TokenChunker::normalize_overlapped(0.95), 90);
+        assert_eq!(TokenChunker::normalize_overlapped(1.5), 1);
+        assert_eq!(TokenChunker::normalize_overlapped(-1.0), 0);
+    }
+
+    #[test]
+    fn children_delimiters_attach_mom() {
+        let d = doc("甲、内容一。乙、内容二。");
+        let mut cfg = ParserConfig::default();
+        cfg.delimiter_mode = "one".into();
+        cfg.children_delimiters = vec!["。".into()];
+        let out = TokenChunker.chunk(&d, &cfg).unwrap();
+        assert!(out.len() >= 2);
+        assert!(out[0].metadata.contains_key("mom"));
+    }
+
+    #[test]
+    fn backtick_pattern_longest_first() {
+        let re = TokenChunker::compile_delimiters(&["`ab` `abc`".into()]).unwrap();
+        // 长匹配优先：abc 而非 ab；分隔符并入前一段
+        let parts = TokenChunker::split_keep_delimiters("xxabcyy", Some(&re));
+        assert_eq!(parts.len(), 2);
+        assert!(parts[0].ends_with("abc"));
+        assert_eq!(parts[1], "yy");
+    }
+}

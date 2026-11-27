@@ -289,8 +289,20 @@ impl Pipeline {
             .unwrap_or(file_path);
 
         // 1. Detect MIME type and parse
-        let mime = parser::mime_from_extension(name)
-            .ok_or_else(|| anyhow::anyhow!("Unsupported file type: {name}. Convert legacy Word .doc to .docx; upload a supported document format. 旧版 Word 请先另存为 DOCX。"))?;
+        let mime = parser::mime_from_extension(name).ok_or_else(|| {
+            let extension = std::path::Path::new(name)
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or("");
+            let hint = match extension.to_ascii_lowercase().as_str() {
+                "doc" => "Open the file in Word, WPS or LibreOffice and save it as DOCX (.docx), then upload it again. 旧版 Word 请另存为 DOCX 后重新上传。",
+                "xls" => "Open the file in Excel, WPS or LibreOffice and save it as XLSX (.xlsx), then upload it again. 旧版 Excel 请另存为 XLSX 后重新上传。",
+                "ppt" => "Open the file in PowerPoint, WPS or LibreOffice and save it as PPTX (.pptx), then upload it again. 旧版演示文稿请另存为 PPTX 后重新上传。",
+                "" => "The file has no extension, so its format cannot be detected. Add the correct extension (for example .pdf, .docx, .md or .txt) and upload it again. 文件没有扩展名，无法识别格式，请补全扩展名后重新上传。",
+                _ => "Convert the file to a supported format such as PDF, DOCX, XLSX, PPTX, MD or TXT, then upload it again. 请转换为支持的文档格式后重新上传。",
+            };
+            anyhow::anyhow!("Unsupported file type: {name}. {hint}")
+        })?;
 
         let data = std::fs::read(file_path)?;
         let parse_started = std::time::Instant::now();
@@ -591,7 +603,9 @@ impl Pipeline {
             return Ok(parser::new_document(name, output.content, mime, data.len()));
         }
 
-        if is_docling_layout(&self.config.layout_recognize) && mime == "application/pdf" {
+        if is_docling_layout(&self.config.layout_recognize)
+            && crate::parser::docling::is_supported_document(name)
+        {
             let guidance = "Check DOCLING_SERVER_URL and DOCLING_API_KEY (if authentication is required), verify access to /v1/convert/source and that the Docling parsing models are loaded, then reparse. 请检查 Docling 客户端地址、密钥、服务连接和模型加载状态，修复后重新解析。";
             if let Some(client) = self.docling.as_ref() {
                 if !client.check_installation().await {
@@ -599,16 +613,33 @@ impl Pipeline {
                         "Docling availability check failed. Check DOCLING_SERVER_URL, DOCLING_API_KEY (if authentication is required), and access to /health, /openapi.json, /docs or /v1/convert/source from RayRAG, then reparse. 请检查 Docling 客户端地址、密钥及服务连接，修复后重新解析。"
                     );
                 }
-                let output = client.parse_pdf(name, data).await.map_err(|error| {
+                let output = client.parse_file(name, data).await.map_err(|error| {
                     anyhow::anyhow!("Docling parsing failed for {name}: {error}. {guidance}")
                 })?;
                 return Ok(parser::new_document(name, output.content, mime, data.len()));
             }
-            tracing::warn!(
+            // No remote service: use the embedded Rust port of Docling. It
+            // handles the PDF text layer and every declarative format (DOCX,
+            // PPTX, XLSX, HTML, Markdown) without Python, ONNX or network access.
+            tracing::info!(
                 %name,
-                "Docling layout requested without DOCLING_SERVER_URL; using the native fallback"
+                %mime,
+                "Docling layout: using the embedded Rust Docling converter"
             );
-            return crate::parser::docling::DoclingParser::new().parse(name, data);
+            match crate::parser::docling::DoclingParser::new().parse(name, data) {
+                Ok(document) => return Ok(document),
+                Err(error) => {
+                    // Fall through to the normal native/OCR pipeline instead of
+                    // returning a plain PDF or DOCX parser result: a scanned PDF
+                    // with an OCR provider configured must still be OCR'd.
+                    tracing::warn!(
+                        %name,
+                        %mime,
+                        error = %error,
+                        "embedded Docling could not parse this document; continuing with the native parser/OCR pipeline"
+                    );
+                }
+            }
         }
 
         if is_oxr_layout(&self.config.layout_recognize)
@@ -895,6 +926,582 @@ fn is_mistral_ocr_layout(layout_recognize: &str) -> bool {
     normalized == "mistral ocr" || normalized.ends_with("@mistral ocr")
 }
 
+#[cfg(test)]
+mod ingestion_tests;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        Json, Router,
+        http::StatusCode,
+        routing::{get, post},
+    };
+    use serde_json::json;
 
+    #[test]
+    fn paddleocr_layout_accepts_fixed_provider_instance_suffix() {
+        assert!(is_paddleocr_layout("PaddleOCR"));
+        assert!(is_paddleocr_layout(
+            "PaddleOCR-VL@primary-instance@PaddleOCR"
+        ));
+        assert!(!is_paddleocr_layout("DeepDOC"));
+        assert!(!is_paddleocr_layout("PaddleOCR-VL"));
+    }
 
+    #[test]
+    fn docling_layout_accepts_fixed_provider_instance_suffix() {
+        assert!(is_docling_layout("Docling"));
+        assert!(is_docling_layout("docling-model@primary-instance@Docling"));
+        assert!(!is_docling_layout("DeepDOC"));
+        assert!(!is_docling_layout(
+            "docling-fast@primary-instance@OpenDataLoader"
+        ));
+    }
+
+    #[test]
+    fn oxr_layout_accepts_fixed_provider_instance_suffix() {
+        assert!(is_oxr_layout("OXR"));
+        assert!(is_oxr_layout("oxr-1.0@primary-instance@OXR"));
+        assert!(!is_oxr_layout("DeepDOC"));
+        assert!(!is_oxr_layout("oxr-1.0"));
+    }
+
+    #[test]
+    fn opendataloader_layout_accepts_fixed_provider_instance_suffix() {
+        assert!(is_opendataloader_layout("OpenDataLoader"));
+        assert!(is_opendataloader_layout(
+            "docling-fast@primary-instance@OpenDataLoader"
+        ));
+        assert!(!is_opendataloader_layout("DeepDOC"));
+        assert!(!is_opendataloader_layout("docling-fast"));
+    }
+
+    #[test]
+    fn normalize_first_chunk_metadata_keeps_outline_on_first_only() {
+        fn chunk_with_outline() -> crate::Chunk {
+            let mut c = crate::Chunk {
+                id: "c".into(),
+                content: "text".into(),
+                content_type: "text".into(),
+                doc_id: uuid::Uuid::new_v4(),
+                position: 0,
+                token_count: 1,
+                embedding: None,
+                metadata: std::collections::HashMap::new(),
+            };
+            c.metadata
+                .insert("__outline__".into(), "[{\"title\":\"ch1\"}]".into());
+            c.metadata.insert("file_name".into(), "a.pdf".into());
+            c
+        }
+
+        let mut chunks = vec![
+            chunk_with_outline(),
+            chunk_with_outline(),
+            chunk_with_outline(),
+        ];
+        Pipeline::normalize_first_chunk_metadata(&mut chunks);
+        assert!(chunks[0].metadata.contains_key("__outline__"));
+        assert!(!chunks[1].metadata.contains_key("__outline__"));
+        assert!(!chunks[2].metadata.contains_key("__outline__"));
+        // Non-transient metadata is preserved on every chunk.
+        assert!(chunks[1].metadata.contains_key("file_name"));
+        assert!(chunks[2].metadata.contains_key("file_name"));
+    }
+
+    #[test]
+    fn normalize_first_chunk_metadata_handles_empty() {
+        let mut chunks: Vec<crate::Chunk> = vec![];
+        Pipeline::normalize_first_chunk_metadata(&mut chunks);
+        assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn mineru_layout_accepts_fixed_provider_instance_suffix() {
+        assert!(is_mineru_layout("MinerU"));
+        assert!(is_mineru_layout("pipeline@primary-instance@MinerU"));
+        assert!(!is_mineru_layout("DeepDOC"));
+        assert!(!is_mineru_layout("pipeline"));
+    }
+
+    #[test]
+    fn somark_layout_accepts_fixed_provider_instance_suffix() {
+        assert!(is_somark_layout("SoMark"));
+        assert!(is_somark_layout("somark-model@primary-instance@SoMark"));
+        assert!(!is_somark_layout("DeepDOC"));
+        assert!(!is_somark_layout("somark-model"));
+    }
+
+    #[tokio::test]
+    async fn configured_paddleocr_is_used_by_the_image_pipeline() {
+        let app = Router::new().route(
+            "/ocr",
+            post(|| async {
+                Json(json!({
+                    "texts": ["invoice", "total"],
+                    "full_text": "invoice\ntotal",
+                    "count": 2
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let pipeline = Pipeline::new(ParserConfig {
+            layout_recognize: "PaddleOCR".into(),
+            ..ParserConfig::default()
+        })
+        .with_ocr_client(crate::ocr::OcrClient::new(&format!("http://{address}")));
+
+        let document = pipeline
+            .parse_document("invoice.png", "image/png", b"fake-png")
+            .await
+            .unwrap();
+        server.abort();
+
+        assert!(document.content.contains("[DOCUMENT_LAYOUT: PaddleOCR]"));
+        assert!(document.content.contains("invoice\ntotal"));
+    }
+
+    #[tokio::test]
+    async fn opendataloader_health_failure_has_configuration_guidance_and_can_recover() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+        };
+
+        let ready = Arc::new(AtomicBool::new(false));
+        let parse_calls = Arc::new(AtomicUsize::new(0));
+        let health_ready = Arc::clone(&ready);
+        let received_parse_calls = Arc::clone(&parse_calls);
+        let app = Router::new()
+            .route(
+                "/health",
+                get(move || {
+                    let ready = Arc::clone(&health_ready);
+                    async move {
+                        if ready.load(Ordering::SeqCst) {
+                            StatusCode::OK
+                        } else {
+                            StatusCode::UNAUTHORIZED
+                        }
+                    }
+                }),
+            )
+            .route(
+                "/file_parse",
+                post(move || {
+                    let parse_calls = Arc::clone(&received_parse_calls);
+                    async move {
+                        parse_calls.fetch_add(1, Ordering::SeqCst);
+                        Json(json!({"md_text": "Recovered PDF body"}))
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let config = crate::parser::opendataloader::OpenDataLoaderConfig::from_ragflow_key(
+            &json!({"opendataloader_apiserver": format!("http://{address}")}).to_string(),
+            None,
+        )
+        .unwrap();
+        let pipeline = Pipeline::new(ParserConfig {
+            layout_recognize: "OpenDataLoader".into(),
+            ..ParserConfig::default()
+        })
+        .with_opendataloader_client(
+            crate::parser::opendataloader::OpenDataLoaderClient::new(config).unwrap(),
+        );
+
+        let error = pipeline
+            .parse_document("sample.pdf", "application/pdf", b"%PDF-1.4\nmock")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("OPENDATALOADER_APISERVER"), "{error}");
+        assert!(error.contains("OPENDATALOADER_API_KEY"), "{error}");
+        assert!(error.contains("/health"), "{error}");
+        assert!(error.contains("reparse"), "{error}");
+        assert_eq!(parse_calls.load(Ordering::SeqCst), 0);
+
+        ready.store(true, Ordering::SeqCst);
+        let document = pipeline
+            .parse_document("sample.pdf", "application/pdf", b"%PDF-1.4\nmock")
+            .await
+            .unwrap();
+        server.abort();
+        assert!(document.content.contains("Recovered PDF body"));
+        assert_eq!(parse_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn configured_opendataloader_is_used_by_the_pdf_pipeline() {
+        let app = Router::new()
+            .route("/health", get(|| async { StatusCode::OK }))
+            .route(
+                "/file_parse",
+                post(|| async {
+                    Json(json!({
+                        "json_doc": {
+                            "type": "document",
+                            "children": [
+                                {"type": "title", "content": "ODL title"},
+                                {"type": "table", "html": "<table><tr><td>1</td></tr></table>"}
+                            ]
+                        },
+                        "md_text": null
+                    }))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let config = crate::parser::opendataloader::OpenDataLoaderConfig::from_ragflow_key(
+            &format!(r#"{{"opendataloader_apiserver":"http://{address}"}}"#),
+            None,
+        )
+        .unwrap();
+        let client = crate::parser::opendataloader::OpenDataLoaderClient::new(config).unwrap();
+        let pipeline = Pipeline::new(ParserConfig {
+            layout_recognize: "docling@primary@OpenDataLoader".into(),
+            ..ParserConfig::default()
+        })
+        .with_opendataloader_client(client);
+
+        let document = pipeline
+            .parse_document("sample.pdf", "application/pdf", b"%PDF-1.4\nmock")
+            .await
+            .unwrap();
+        server.abort();
+
+        assert!(document.content.contains("ODL title"));
+        assert!(document.content.contains("<!--TABLE_START-->"));
+        assert!(document.content.contains("<table>"));
+    }
+
+    #[tokio::test]
+    async fn configured_mineru_is_used_by_the_pdf_pipeline() {
+        let app = Router::new()
+            .route(
+                "/openapi.json",
+                axum::routing::head(|| async { StatusCode::OK }),
+            )
+            .route(
+                "/file_parse",
+                post(|| async {
+                    (
+                        StatusCode::ACCEPTED,
+                        Json(json!({"data":{"task_id":"pipeline-task"}})),
+                    )
+                }),
+            )
+            .route(
+                "/tasks/pipeline-task/result",
+                get(|| async {
+                    Json(json!({
+                        "results": {
+                            "doc": {"md_content":"# MinerU pipeline\n\nParsed body.\n"}
+                        }
+                    }))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let config = crate::parser::mineru::MinerUConfig::from_ragflow_key(
+            &format!(r#"{{"mineru_apiserver":"http://{address}"}}"#),
+            None,
+        )
+        .unwrap();
+        let client = crate::parser::mineru::MinerUClient::new(config).unwrap();
+        let pipeline = Pipeline::new(ParserConfig {
+            layout_recognize: "pipeline@primary@MinerU".into(),
+            ..ParserConfig::default()
+        })
+        .with_mineru_client(client);
+
+        let document = pipeline
+            .parse_document("sample.pdf", "application/pdf", b"%PDF-1.4\nmock")
+            .await
+            .unwrap();
+        server.abort();
+
+        assert!(document.content.contains("# MinerU pipeline"));
+        assert!(document.content.contains("Parsed body."));
+    }
+
+    #[tokio::test]
+    async fn configured_somark_is_used_by_the_pdf_pipeline() {
+        let app = Router::new()
+            .route("/", axum::routing::head(|| async { StatusCode::NOT_FOUND }))
+            .route(
+                "/parse/async",
+                post(|| async { Json(json!({"code":0,"data":{"task_id":"pipeline-task"}})) }),
+            )
+            .route(
+                "/parse/async_check",
+                post(|| async {
+                    Json(json!({
+                        "code":0,
+                        "data":{
+                            "status":"SUCCESS",
+                            "result":{
+                                "outputs":{
+                                    "json":{
+                                        "pages":[{
+                                            "page_num":0,
+                                            "page_size":{"w":600,"h":800},
+                                            "blocks":[
+                                                {
+                                                    "type":"title",
+                                                    "content":"SoMark pipeline",
+                                                    "title_level":1,
+                                                    "bbox":[1,2,3,4]
+                                                },
+                                                {
+                                                    "type":"table",
+                                                    "content":"<table><tr><td>ok</td></tr></table>",
+                                                    "bbox":[1,2,3,4]
+                                                }
+                                            ]
+                                        }]
+                                    }
+                                }
+                            }
+                        }
+                    }))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let config = crate::parser::somark::SoMarkConfig::from_ragflow_key(
+            &format!(
+                r#"{{
+                    "somark_base_url":"http://{address}",
+                    "somark_poll_interval_base_ms":1,
+                    "somark_poll_interval_max_ms":1
+                }}"#
+            ),
+            None,
+        )
+        .unwrap();
+        let client = crate::parser::somark::SoMarkClient::new(config).unwrap();
+        let pipeline = Pipeline::new(ParserConfig {
+            layout_recognize: "somark-model@primary@SoMark".into(),
+            ..ParserConfig::default()
+        })
+        .with_somark_client(client);
+
+        let document = pipeline
+            .parse_document("sample.pdf", "application/pdf", b"%PDF-1.4\nmock")
+            .await
+            .unwrap();
+        server.abort();
+
+        assert!(document.content.contains("# SoMark pipeline"));
+        assert!(document.content.contains("<!--TABLE_START-->"));
+        assert!(document.content.contains("<table>"));
+        assert!(document.content.contains("@@1\t1.0\t3.0\t2.0\t4.0##"));
+
+        let mut chunks = pipeline.chunker.chunk(&document, &pipeline.config).unwrap();
+        Pipeline::annotate_chunks(&mut chunks, &pipeline.config);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].content_type, "table");
+        assert!(!chunks[0].content.contains("@@"));
+        assert_eq!(
+            chunks[0].metadata.get("position_int").map(String::as_str),
+            Some("[[1,1,3,2,4],[1,1,3,2,4]]")
+        );
+        assert!(
+            !chunks[0]
+                .metadata
+                .contains_key(crate::chunk::RAGFLOW_POSITION_TAGS_METADATA)
+        );
+    }
+
+    #[tokio::test]
+    async fn configured_monkeyocrv2_is_used_by_the_pdf_pipeline() {
+        use std::io::Write;
+
+        let records = serde_json::json!({
+            "layouts": [{
+                "content": "MonkeyOCRv2 pipeline",
+                "label": "text",
+                "page_num": 1,
+                "bbox": [1, 2, 3, 4]
+            }]
+        });
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        writer.start_file("doc/doc.json", options).unwrap();
+        writer.write_all(records.to_string().as_bytes()).unwrap();
+        let archive = writer.finish().unwrap().into_inner();
+
+        let app = Router::new()
+            .route("/health", axum::routing::get(|| async { StatusCode::OK }))
+            .route(
+                "/parse",
+                axum::routing::post(move || {
+                    let archive = archive.clone();
+                    async move {
+                        axum::response::Response::builder()
+                            .status(StatusCode::OK)
+                            .header(axum::http::header::CONTENT_TYPE, "application/zip")
+                            .body(axum::body::Body::from(archive))
+                            .unwrap()
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = crate::parser::monkeyocrv2::MonkeyOcrV2Client::new(
+            crate::parser::monkeyocrv2::MonkeyOcrV2Config::new(&format!("http://{address}"))
+                .unwrap(),
+        )
+        .unwrap();
+        let pipeline = Pipeline::new(ParserConfig {
+            layout_recognize: "monkeyocrv2-model@primary@MonkeyOCRv2".into(),
+            ..ParserConfig::default()
+        })
+        .with_monkeyocrv2_client(client);
+
+        let document = pipeline
+            .parse_document("sample.pdf", "application/pdf", b"%PDF-1.4\n mock")
+            .await
+            .unwrap();
+        server.abort();
+
+        assert!(document.content.contains("MonkeyOCRv2 pipeline"));
+        assert!(document.content.contains("@@1\t1\t3\t2\t4##"));
+        assert_eq!(
+            document
+                .metadata
+                .get(crate::chunk::RAGFLOW_POSITION_TAGS_METADATA)
+                .map(String::as_str),
+            Some("true")
+        );
+        let mut chunks = pipeline.chunker.chunk(&document, &pipeline.config).unwrap();
+        Pipeline::annotate_chunks(&mut chunks, &pipeline.config);
+        assert_eq!(chunks.len(), 1);
+        assert!(!chunks[0].content.contains("@@"));
+        assert_eq!(
+            chunks[0].metadata.get("position_int").map(String::as_str),
+            Some("[[1,1,3,2,4]]")
+        );
+    }
+
+    #[tokio::test]
+    async fn configured_mistral_ocr_is_used_by_the_pdf_pipeline() {
+        let app = Router::new()
+            .route("/models", axum::routing::get(|| async { StatusCode::OK }))
+            .route(
+                "/ocr",
+                axum::routing::post(|| async {
+                    axum::Json(serde_json::json!({
+                        "pages": [{
+                            "index": 0,
+                            "blocks": [{
+                                "type": "text",
+                                "content": "Mistral OCR pipeline",
+                                "top_left_x": 1,
+                                "top_left_y": 2,
+                                "bottom_right_x": 3,
+                                "bottom_right_y": 4
+                            }]
+                        }]
+                    }))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = crate::parser::mistral_ocr::MistralOcrClient::new(
+            crate::parser::mistral_ocr::MistralOcrConfig::new(
+                &format!("http://{address}"),
+                "sk-test",
+                "mistral-ocr-latest",
+                "html",
+                false,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let pipeline = Pipeline::new(ParserConfig {
+            layout_recognize: "mistral-ocr-latest@primary@Mistral OCR".into(),
+            ..ParserConfig::default()
+        })
+        .with_mistral_ocr_client(client);
+
+        let document = pipeline
+            .parse_document("sample.pdf", "application/pdf", b"%PDF-1.4\n mock")
+            .await
+            .unwrap();
+        server.abort();
+
+        assert!(document.content.contains("Mistral OCR pipeline"));
+        assert!(document.content.contains("@@1\t1.0\t3.0\t2.0\t4.0##"));
+        assert_eq!(
+            document
+                .metadata
+                .get(crate::chunk::RAGFLOW_POSITION_TAGS_METADATA)
+                .map(String::as_str),
+            Some("true")
+        );
+        let mut chunks = pipeline.chunker.chunk(&document, &pipeline.config).unwrap();
+        Pipeline::annotate_chunks(&mut chunks, &pipeline.config);
+        assert_eq!(chunks.len(), 1);
+        assert!(!chunks[0].content.contains("@@"));
+        assert_eq!(
+            chunks[0].metadata.get("position_int").map(String::as_str),
+            Some("[[1,1,3,2,4]]")
+        );
+    }
+
+    #[tokio::test]
+    async fn vision_client_describes_raster_images_when_configured() {
+        use axum::routing::post;
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(|| async {
+                Json(json!({
+                    "choices": [{
+                        "message": {
+                            "content": "溶解氧低于3毫克每升时鱼类会浮头。"
+                        }
+                    }]
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let vision = crate::vision::VisionClient::new(crate::vision::VisionConfig {
+            api_base: format!("http://{address}/v1"),
+            api_key: String::new(),
+            model: "mock-vision".into(),
+            lang: "Chinese".into(),
+        });
+        let pipeline = Pipeline::new(ParserConfig::default()).with_vision_client(vision);
+        // 1x1 PNG (68 bytes) padded to 128 with trailing zeros — the vision
+        // branch only checks `data.len() >= 100`; the mock server ignores bytes.
+        use base64::Engine;
+        let mut png = base64::engine::general_purpose::STANDARD
+            .decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+            )
+            .unwrap();
+        png.resize(128, 0);
+        let document = pipeline
+            .parse_document("sample.png", "image/png", &png)
+            .await
+            .unwrap();
+        server.abort();
+        assert!(document.content.contains("[DOCUMENT_LAYOUT: VisionLLM]"));
+        assert!(document.content.contains("溶解氧低于3毫克"));
+    }
+}

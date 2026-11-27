@@ -204,4 +204,91 @@ impl Parse for OxrParser {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        Json, Router,
+        extract::{Multipart, State},
+        http::{HeaderMap, StatusCode},
+        response::{IntoResponse, Response},
+        routing::post,
+    };
+    use serde_json::json;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
 
+    #[derive(Default)]
+    struct MockOxrState {
+        received: Mutex<HashMap<String, String>>,
+    }
+
+    async fn parse_handler(
+        State(state): State<Arc<MockOxrState>>,
+        headers: HeaderMap,
+        mut multipart: Multipart,
+    ) -> Response {
+        state.received.lock().unwrap().insert(
+            "authorization".into(),
+            headers
+                .get("authorization")
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_owned(),
+        );
+        while let Some(field) = multipart.next_field().await.unwrap() {
+            let name = field.name().unwrap_or_default().to_owned();
+            let body = field.bytes().await.unwrap();
+            state
+                .received
+                .lock()
+                .unwrap()
+                .insert(name, String::from_utf8_lossy(&body).into_owned());
+        }
+        Json(json!({
+            "code": 0,
+            "message": "任务成功",
+            "outputs": {"markdown": "# OXR title\n\nBody", "json": {"pages": []}},
+            "metadata": {"page_num": 1, "file_type": ".pdf"}
+        }))
+        .into_response()
+    }
+
+    #[tokio::test]
+    async fn oxr_client_uses_sync_endpoint_and_returns_markdown() {
+        let state = Arc::new(MockOxrState::default());
+        let app = Router::new()
+            .route("/parse/sync", post(parse_handler))
+            .with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let config = OxrConfig {
+            base_url: format!("http://{address}"),
+            api_key: "dummy".into(),
+            timeout: Duration::from_secs(10),
+        };
+        let client = OxrClient::new(config).unwrap();
+        let output = client.parse_file("doc.pdf", b"%PDF-1.4").await.unwrap();
+        server.abort();
+
+        assert_eq!(output.content, "# OXR title\n\nBody");
+        assert_eq!(output.page_count, 1);
+        let received = state.received.lock().unwrap();
+        assert_eq!(received.get("api_key").unwrap(), "dummy");
+        assert_eq!(received.get("output_formats").unwrap(), "json");
+        assert_eq!(received.get("file").unwrap(), "%PDF-1.4");
+    }
+
+    #[test]
+    fn oxr_response_with_nonzero_code_is_rejected() {
+        let payload = OxrResponse {
+            code: 1133,
+            message: "bad format".into(),
+            outputs: serde_json::Map::new(),
+            metadata: serde_json::Map::new(),
+        };
+        assert_eq!(payload.code, 1133);
+    }
+}

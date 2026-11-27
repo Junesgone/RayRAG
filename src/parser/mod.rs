@@ -132,9 +132,12 @@ pub fn mime_from_extension(name: &str) -> Option<&'static str> {
         "pdf" => Some("application/pdf"),
         "docx" => Some("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
         "txt" => Some("text/plain"),
-        "md" | "markdown" => Some("text/markdown"),
+        "md" | "markdown" | "mdx" => Some("text/markdown"),
         "html" | "htm" => Some("text/html"),
         "csv" => Some("text/csv"),
+        // RAGFlow's data-source text allowlist includes these; treating them as
+        // plain text keeps a synced `.sql`/`.conf`/`.log`/`.tsv` parseable.
+        "conf" | "log" | "sql" | "tsv" => Some("text/plain"),
         "xls" => Some("application/vnd.ms-excel"),
         "xlsx" => Some("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
         "epub" => Some("application/epub+zip"),
@@ -165,4 +168,63 @@ pub fn mime_from_extension(name: &str) -> Option<&'static str> {
     }
 }
 
+#[cfg(test)]
+mod mime_tests {
+    use super::{get_parser, mime_from_extension};
 
+    #[test]
+    fn ragflow_data_source_text_extensions_reach_a_parser() {
+        for (name, mime) in [
+            ("notes.mdx", "text/markdown"),
+            ("app.conf", "text/plain"),
+            ("server.log", "text/plain"),
+            ("query.sql", "text/plain"),
+            ("table.tsv", "text/plain"),
+        ] {
+            assert_eq!(mime_from_extension(name), Some(mime), "{name}");
+            assert!(
+                get_parser(mime).is_some(),
+                "{name} has no parser for {mime}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod zip_member_limit_tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn oversized_members_are_refused_before_reading() {
+        // A member that *declares* more than the limit is rejected up front: the
+        // allocation never happens, which is the whole point (a few kilobytes on
+        // disk can claim gigabytes).
+        let mut reader = Cursor::new(vec![0u8; 32]);
+        let error = read_member_limited(&mut reader, 8 << 30, MAX_ZIP_MEMBER_BYTES, "test part")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("safety limit"), "{error}");
+        assert!(error.contains("declares"), "{error}");
+    }
+
+    #[test]
+    fn members_that_lie_about_their_size_are_still_bounded() {
+        // The header claims 1 byte, the stream keeps going: `take(limit + 1)` stops it
+        // and the post-check reports the overflow instead of returning a giant buffer.
+        let mut reader = Cursor::new(vec![b'x'; 4096]);
+        let error = read_member_limited(&mut reader, 1, 1024, "lying part")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("while decompressing"), "{error}");
+    }
+
+    #[test]
+    fn members_within_the_limit_are_returned_whole() {
+        let payload = vec![b'y'; 2048];
+        let mut reader = Cursor::new(payload.clone());
+        let bytes =
+            read_member_limited(&mut reader, payload.len() as u64, 4096, "small part").unwrap();
+        assert_eq!(bytes, payload);
+    }
+}

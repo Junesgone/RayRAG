@@ -133,4 +133,48 @@ fn optional_u32(
     Ok(Some(value))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn extracts_only_non_null_generation_keys_and_merges_defaults() {
+        let patch = GenerationParamsPatch::from_request(&serde_json::json!({
+            "temperature": 0.8,
+            "top_p": null,
+            "max_tokens": 2048,
+            "stream": true,
+            "unknown": "ignored"
+        }))
+        .unwrap();
+        let params = GenerationParams::default().merged(patch);
+        assert_eq!(params.temperature, 0.8);
+        assert_eq!(params.top_p, 0.3);
+        assert_eq!(params.max_tokens, 2048);
+        assert_eq!(params.frequency_penalty, 0.7);
+    }
+
+    #[test]
+    fn rejects_wrong_types_and_out_of_range_values() {
+        let type_error = GenerationParamsPatch::from_request(&serde_json::json!({
+            "temperature": "0.5"
+        }))
+        .unwrap_err();
+        assert!(type_error.to_string().contains("finite number"));
+        let range_error = GenerationParamsPatch::from_request(&serde_json::json!({
+            "max_tokens": 0
+        }))
+        .unwrap_err();
+        assert!(range_error.to_string().contains("[1, 128000]"));
+    }
+
+    #[test]
+    fn effective_params_round_trip() {
+        let params = GenerationParams::default();
+        let json = serde_json::to_value(params).unwrap();
+        assert_eq!(
+            serde_json::from_value::<GenerationParams>(json).unwrap(),
+            params
+        );
+    }
+}

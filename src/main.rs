@@ -35,7 +35,7 @@ enum Commands {
         overlap: f32,
 
         /// Layout selector, including PaddleOCR/OpenDataLoader/MinerU/SoMark suffixes
-        #[arg(long, default_value = "DeepDOC")]
+        #[arg(long, default_value = "Docling")]
         layout_recognize: String,
 
         /// Enable embedding generation

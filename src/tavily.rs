@@ -144,4 +144,171 @@ async fn read_bounded_body(response: reqwest::Response) -> Result<Vec<u8>> {
     Ok(body)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{Json, Router, extract::State, http::HeaderMap, routing::post};
+    use serde_json::{Map, json};
+    use std::sync::{Arc, Mutex};
 
+    #[derive(Clone, Default)]
+    struct Recorded(Arc<Mutex<Vec<(String, HeaderMap, Value)>>>);
+
+    async fn record(
+        State(recorded): State<Recorded>,
+        headers: HeaderMap,
+        Json(body): Json<Value>,
+    ) -> Json<Value> {
+        let path = if body.get("query").is_some() {
+            "search"
+        } else {
+            "extract"
+        };
+        recorded
+            .0
+            .lock()
+            .unwrap()
+            .push((path.into(), headers, body));
+        Json(
+            json!({"results": [{"url": "https://example.test", "title": "A", "content": "alpha", "score": 0.9}]}),
+        )
+    }
+
+    async fn mock_server(recorded: Recorded) -> (String, tokio::task::JoinHandle<()>) {
+        let app = Router::new()
+            .route("/search", post(record))
+            .route("/extract", post(record))
+            .with_state(recorded);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{address}"), handle)
+    }
+
+    #[tokio::test]
+    async fn search_and_extract_use_bearer_json_and_preserve_results() {
+        let recorded = Recorded::default();
+        let (base, server) = mock_server(recorded.clone()).await;
+        let client =
+            TavilyClient::new_with_endpoints(&format!("{base}/search"), &format!("{base}/extract"))
+                .unwrap();
+        let search = TavilySearchRequest {
+            query: "rust rag".into(),
+            search_depth: "advanced".into(),
+            topic: "news".into(),
+            max_results: 3,
+            days: 7,
+            include_answer: true,
+            include_raw_content: false,
+            include_images: false,
+            include_image_descriptions: true,
+            include_domains: vec!["rust-lang.org".into()],
+            exclude_domains: Vec::new(),
+        };
+        let results = client.search("secret", &search).await.unwrap();
+        assert_eq!(results[0]["content"], "alpha");
+        let extract = TavilyExtractRequest {
+            urls: vec!["https://example.test".into()],
+            extract_depth: "basic".into(),
+            format: "markdown".into(),
+            include_images: false,
+        };
+        client.extract("secret", &extract).await.unwrap();
+
+        let calls = recorded.0.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        for (_, headers, _) in calls.iter() {
+            assert_eq!(headers["authorization"], "Bearer secret");
+            assert!(
+                headers["content-type"]
+                    .to_str()
+                    .unwrap()
+                    .starts_with("application/json")
+            );
+        }
+        assert_eq!(calls[0].0, "search");
+        assert_eq!(calls[0].2["query"], "rust rag");
+        assert_eq!(calls[0].2["max_results"], 3);
+        assert_eq!(calls[1].0, "extract");
+        assert_eq!(calls[1].2["urls"], json!(["https://example.test"]));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn response_shape_status_and_missing_key_fail_closed() {
+        async fn bad(State(response): State<Value>) -> (axum::http::StatusCode, Json<Value>) {
+            let status = response
+                .get("status")
+                .and_then(Value::as_u64)
+                .and_then(|status| axum::http::StatusCode::from_u16(status as u16).ok())
+                .unwrap_or(axum::http::StatusCode::OK);
+            (status, Json(response))
+        }
+        async fn serve(response: Value) -> (String, tokio::task::JoinHandle<()>) {
+            let app = Router::new().route("/", post(bad)).with_state(response);
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let handle = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            (format!("http://{address}/"), handle)
+        }
+        let request = TavilySearchRequest {
+            query: "x".into(),
+            search_depth: "basic".into(),
+            topic: "general".into(),
+            max_results: 5,
+            days: 14,
+            include_answer: false,
+            include_raw_content: false,
+            include_images: false,
+            include_image_descriptions: false,
+            include_domains: Vec::new(),
+            exclude_domains: Vec::new(),
+        };
+        for (response, expected) in [
+            (json!({"answer": "missing"}), "results must be an array"),
+            (json!({"status": 401, "detail": "denied"}), "HTTP 401"),
+        ] {
+            let (endpoint, server) = serve(response).await;
+            let client = TavilyClient::new_with_endpoints(&endpoint, &endpoint).unwrap();
+            let error = client.search("k", &request).await.unwrap_err();
+            assert!(error.to_string().contains(expected), "{error:#}");
+            server.abort();
+        }
+        let (endpoint, server) = serve(json!({"results": []})).await;
+        let client = TavilyClient::new_with_endpoints(&endpoint, &endpoint).unwrap();
+        assert!(
+            client
+                .search("", &request)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("api_key")
+        );
+        server.abort();
+    }
+
+    #[test]
+    fn request_debug_does_not_contain_credentials() {
+        let request = TavilySearchRequest {
+            query: "x".into(),
+            search_depth: "basic".into(),
+            topic: "general".into(),
+            max_results: 5,
+            days: 14,
+            include_answer: false,
+            include_raw_content: false,
+            include_images: false,
+            include_image_descriptions: false,
+            include_domains: Vec::new(),
+            exclude_domains: Vec::new(),
+        };
+        let object: Map<String, Value> = serde_json::to_value(request)
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .clone();
+        assert!(!object.contains_key("api_key"));
+    }
+}

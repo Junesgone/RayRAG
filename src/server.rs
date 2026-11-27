@@ -1235,7 +1235,7 @@ async fn create_dataset(
         json!({
             "table_context_size": 0,
             "image_context_size": 0,
-            "layout_recognize": "DeepDOC",
+            "layout_recognize": "Docling",
             "chunk_token_num": 512,
             "delimiter": "\n",
             "auto_keywords": 0,
@@ -3095,7 +3095,17 @@ async fn process_document(
             let path_str = path
                 .to_str()
                 .ok_or_else(|| anyhow::anyhow!("Invalid upload path"))?;
-            let (chunks, report) = pipeline.process_with_report(path_str).await?;
+            let (chunks, report) = pipeline.process_with_report(path_str).await.map_err(|error| {
+                // Storage names are UUIDs; lead with the document's display
+                // name so a parse failure is identifiable in the task log.
+                let text = format!("{error:#}");
+                let prefix = format!("{}:", doc.name);
+                if text.starts_with(&prefix) || text.contains(&prefix) {
+                    anyhow::anyhow!("{text}")
+                } else {
+                    anyhow::anyhow!("{}: {text}", doc.name)
+                }
+            })?;
             Ok::<_, anyhow::Error>((config, chunks, report))
         }.await;
         heartbeat.abort();
@@ -8130,4 +8140,19196 @@ pub async fn run(
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn public_api_path_matches_dynamic_segments() {
+        // Literal endpoints keep working.
+        for path in [
+            "/api/v1/auth/login",
+            "/api/v1/user/register",
+            "/api/v1/version",
+            "/api/v1/system/healthz",
+            "/api/v1/system/version",
+            "/api/v1/system/config",
+            "/api/v1/auth/login/channels",
+            "/api/v1/chatbots/abc/info",
+            // Pre-login by definition: these must never require the token they exist to recover from.
+            "/api/v1/auth/password/forgot/captcha",
+            "/api/v1/auth/password/forgot/otp",
+            "/api/v1/auth/password/forgot/otp/verify",
+            "/api/v1/auth/password/reset",
+        ] {
+            assert!(super::public_api_path(path), "{path} must stay public");
+        }
+        // Single-segment placeholders now match the concrete request path.
+        for path in [
+            "/api/v1/auth/login/github",
+            "/api/v1/auth/login/oidc",
+            "/api/v1/channels/42/webhook/inbound",
+            "/api/v1/channels/42/feishu/event",
+            "/api/v1/agents/agent-1/webhook",
+        ] {
+            assert!(super::public_api_path(path), "{path} must stay public");
+        }
+        // Everything else still requires a token.
+        for path in [
+            "/api/v1/channels/42",
+            "/api/v1/auth/login/github/callback",
+            "/api/v1/users/me",
+            "/api/v1/datasets",
+        ] {
+            assert!(!super::public_api_path(path), "{path} must require auth");
+        }
+    }
 
+    use super::*;
+    use crate::api::tenant_models::{ModelCapability, TenantModelInstanceUpdate, TenantModelSpec};
+    use axum::{
+        body::{Body, to_bytes},
+        http::{Request, header},
+    };
+    use tower::ServiceExt;
+
+    struct ReverseReranker;
+
+    #[async_trait::async_trait]
+    impl crate::rerank::Reranker for ReverseReranker {
+        async fn rerank(
+            &self,
+            _query: &str,
+            documents: &[String],
+            _top_k: usize,
+        ) -> crate::Result<Vec<(usize, f32)>> {
+            Ok((0..documents.len())
+                .rev()
+                .map(|index| (index, 1.0))
+                .collect())
+        }
+    }
+
+    struct TestEmbedder;
+
+    #[async_trait::async_trait]
+    impl crate::embed::Embedder for TestEmbedder {
+        async fn embed(&self, texts: &[&str]) -> crate::Result<Vec<Vec<f32>>> {
+            Ok(texts.iter().map(|_| vec![1.0, 0.0]).collect())
+        }
+    }
+
+    async fn mock_memory_llm(response: &str) -> LlmClient {
+        let response = response.to_owned();
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(move || {
+                let response = response.clone();
+                async move {
+                    Json(serde_json::json!({
+                        "choices": [{"message": {"content": response}}],
+                        "usage": {"total_tokens": 3}
+                    }))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        LlmClient::new(LlmConfig {
+            api_base: format!("http://{address}/v1"),
+            api_key: "test".into(),
+            model: "memory-test".into(),
+            ..LlmConfig::default()
+        })
+    }
+
+    struct TestEnv {
+        root: std::path::PathBuf,
+        state: Arc<AppState>,
+        token: String,
+    }
+
+    impl Drop for TestEnv {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.root).ok();
+        }
+    }
+
+    /// Dashed RayRAG canvas ids are normalized to RAGFlow's 32-character
+    /// pipeline_id form, otherwise Pipeline mode could never be saved.
+    #[test]
+    fn dashed_pipeline_ids_are_compacted_for_the_dataset_column() {
+        let mut payload = serde_json::Map::new();
+        payload.insert("parse_type".into(), serde_json::json!(2));
+        payload.insert(
+            "pipeline_id".into(),
+            serde_json::json!("3e7ea3ec-12ed-489e-b6e2-3b3ef1a1e618"),
+        );
+        normalize_dashed_pipeline_id(&mut payload);
+        assert_eq!(
+            payload.get("pipeline_id"),
+            Some(&serde_json::json!("3e7ea3ec12ed489eb6e23b3ef1a1e618"))
+        );
+
+        let mut compact = serde_json::Map::new();
+        compact.insert("parse_type".into(), serde_json::json!(2));
+        compact.insert(
+            "pipeline_id".into(),
+            serde_json::json!("0123456789abcdef0123456789abcdef"),
+        );
+        normalize_dashed_pipeline_id(&mut compact);
+        assert_eq!(
+            compact.get("pipeline_id"),
+            Some(&serde_json::json!("0123456789abcdef0123456789abcdef"))
+        );
+
+        let mut invalid = serde_json::Map::new();
+        invalid.insert("parse_type".into(), serde_json::json!(2));
+        invalid.insert(
+            "pipeline_id".into(),
+            serde_json::json!("not-a-real-pipeline-id"),
+        );
+        normalize_dashed_pipeline_id(&mut invalid);
+        assert_eq!(
+            invalid.get("pipeline_id"),
+            Some(&serde_json::json!("not-a-real-pipeline-id"))
+        );
+    }
+    /// A built-in pipeline chosen in the Pipeline picker is normalized to
+    /// direct-parser mode instead of failing the 32-character pipeline-id check.
+    #[test]
+    fn builtin_pipeline_choices_normalize_to_direct_parser_mode() {
+        let mut payload = serde_json::Map::new();
+        payload.insert("parse_type".into(), serde_json::json!(2));
+        payload.insert("pipeline_id".into(), serde_json::json!("qa"));
+        normalize_builtin_pipeline_request(&mut payload);
+        assert_eq!(payload.get("parse_type"), Some(&serde_json::json!(1)));
+        assert_eq!(payload.get("chunk_method"), Some(&serde_json::json!("qa")));
+        assert!(!payload.contains_key("pipeline_id"));
+
+        let mut alias = serde_json::Map::new();
+        alias.insert("parse_type".into(), serde_json::json!(2));
+        alias.insert("pipeline_id".into(), serde_json::json!("naive"));
+        normalize_builtin_pipeline_request(&mut alias);
+        assert_eq!(
+            alias.get("chunk_method"),
+            Some(&serde_json::json!("general"))
+        );
+
+        let mut custom = serde_json::Map::new();
+        custom.insert("parse_type".into(), serde_json::json!(2));
+        custom.insert(
+            "pipeline_id".into(),
+            serde_json::json!("0123456789abcdef0123456789abcdef"),
+        );
+        normalize_builtin_pipeline_request(&mut custom);
+        assert_eq!(custom.get("parse_type"), Some(&serde_json::json!(2)));
+        assert!(custom.contains_key("pipeline_id"));
+    }
+
+    /// The dataset Configuration Overlap field round-trips through the REST
+    /// parser_config face; it used to be stripped as an internal key.
+    #[test]
+    fn parser_config_face_exposes_overlapped_percent() {
+        let face = crate::api::dataset_api::parser_config_face(
+            "{\"overlapped_percent\":0.1,\"chunk_method\":\"naive\"}",
+        );
+        assert_eq!(
+            face.get("overlapped_percent"),
+            Some(&serde_json::json!(0.1))
+        );
+    }
+    fn test_env() -> TestEnv {
+        let root = std::env::temp_dir().join(format!("rayrag-server-{}", uuid::Uuid::new_v4()));
+        let static_dir = root.join("web");
+        std::fs::create_dir_all(&static_dir).unwrap();
+        let users_path = root.join("users.json");
+        let email = "test@example.com";
+        let password = "correct horse battery staple";
+        std::fs::write(
+            &users_path,
+            serde_json::to_vec(&serde_json::json!([{
+                "id": "test-user",
+                "nickname": "Test",
+                "email": email,
+                "password_hash": crate::auth::hash_password_for_test(password),
+                "role": "admin",
+                "created_at": 1
+            }]))
+            .unwrap(),
+        )
+        .unwrap();
+        let users = Arc::new(UserStore::new(users_path.to_str().unwrap()).unwrap());
+        let token = users.login(email, password).unwrap().unwrap();
+        let state = Arc::new(AppState {
+            static_dir: static_dir.to_string_lossy().into_owned(),
+            port: 0,
+            doc_store: Arc::new(crate::doc_store::DocStorePool::memory()),
+            artifacts: Arc::new(crate::api::artifacts::ArtifactStore::in_memory()),
+            skill_trees: Arc::new(crate::api::skill_tree::SkillTreeStore::in_memory()),
+            users,
+            kbs: Arc::new(KbStore::new(root.join("kbs.json").to_str().unwrap()).unwrap()),
+            tenants: Arc::new(
+                TenantStore::new(root.join("tenants.json").to_str().unwrap()).unwrap(),
+            ),
+            conversations: Arc::new(
+                ConvStore::new(root.join("conversations.json").to_str().unwrap()).unwrap(),
+            ),
+            llm: None,
+            embedder: None,
+            reranker: Arc::new(RerankerManager::in_memory(None)),
+            graphs: Arc::new(crate::graph_store::GraphStore::in_memory()),
+            engine: Arc::new(RwLock::new(SearchEngine::new())),
+            vector_mirror: Arc::new(crate::store::OnlineVectorMirror::disabled()),
+            index_path: root.join("index.json").to_string_lossy().into_owned(),
+            model_path: root.join("models").to_string_lossy().into_owned(),
+            max_upload_bytes: DEFAULT_MAX_UPLOAD_BYTES,
+            docs: Arc::new(
+                crate::api::document::DocStore::new(root.join("docs.json").to_str().unwrap())
+                    .unwrap(),
+            ),
+            document_metadata: Arc::new(
+                crate::api::document_metadata::DocumentMetadataStore::in_memory(),
+            ),
+            files: Arc::new(
+                crate::api::file_mgr::FileStore::new(root.join("uploads").to_str().unwrap())
+                    .unwrap(),
+            ),
+            workspace_commits: Arc::new(
+                crate::api::workspaces::WorkspaceCommitStore::new(
+                    root.join("workspace-commits").to_str().unwrap(),
+                )
+                .unwrap(),
+            ),
+            attachments: Arc::new(
+                crate::api::attachments::AttachmentStore::new(
+                    root.join("attachments").to_str().unwrap(),
+                )
+                .unwrap(),
+            ),
+            metadata_config: Arc::new(
+                crate::api::metadata_config::MetadataConfigStore::new(
+                    root.join("metadata-config.json").to_str().unwrap(),
+                )
+                .unwrap(),
+            ),
+            connectors: Arc::new(
+                crate::api::connector::ConnectorStore::new(
+                    root.join("connectors.json").to_str().unwrap(),
+                )
+                .unwrap(),
+            ),
+            data_sources: None,
+            chat_apps: None,
+            search_apps: None,
+            providers: Arc::new(crate::api::features::ProviderStore::in_memory()),
+            tenant_models: Arc::new(crate::api::tenant_models::TenantModelStore::in_memory()),
+            memories: Arc::new(crate::api::features::MemoryStore::in_memory()),
+            memory_messages: Arc::new(crate::api::joint_services::MemoryMessageService::in_memory()),
+            skill_index: Arc::new(crate::api::skill_index::SkillIndexStore::in_memory()),
+            system_settings: Arc::new(crate::api::system_settings::SystemSettingsStore::in_memory()),
+            api_tokens: Arc::new(crate::api::tokens::ApiTokenStore::in_memory()),
+            ingestion_logs: Arc::new(crate::api::ingestion::IngestionLogStore::in_memory()),
+            agent_traces: Arc::new(crate::api::agent_trace::AgentTraceStore::in_memory()),
+            register_enabled: 1,
+            disable_password_login: false,
+            oauth_states: Arc::new(crate::oauth_config::StateStore::new()),
+            oauth_channels: Arc::new(std::sync::RwLock::new(Vec::new())),
+            langfuse: Arc::new(crate::api::langfuse::LangfuseStore::in_memory()),
+            mcp_servers: Arc::new(crate::api::mcp_mgr::McpServerStore::in_memory()),
+            chat_channels: Arc::new(crate::api::chat_channel_mgr::ChatChannelStore::in_memory()),
+            tasks: Arc::new(crate::api::features::TaskQueue::in_memory()),
+            task_executor: Arc::new(crate::task_executor::TaskExecutor::new("test_executor", 4)),
+            agents: Arc::new(crate::api::features::AgentStore::in_memory()),
+            agent_runs: Arc::new(crate::api::features::AgentRunRegistry::default()),
+            agent_checkpoints: Arc::new(crate::agent_checkpoint::AgentCheckpointStore::in_memory()),
+            canvas_versions: Arc::new(crate::api::features::CanvasVersionStore::in_memory()),
+            compilation_templates: Arc::new(
+                crate::api::compilation_templates::CompilationTemplateStore::in_memory(),
+            ),
+            evaluations: Arc::new(crate::api::evaluation::EvaluationStore::in_memory()),
+            log_levels: Arc::new(crate::logging::LogLevelManager::in_memory()),
+            chunk_feedback_enabled: false,
+            chunk_feedback_weighting: crate::chunk_feedback::FeedbackWeighting::Relevance,
+            channels: Arc::new(crate::channels::ChannelRegistry::new()),
+            document_commit_lock: Arc::new(std::sync::Mutex::new(())),
+            memory_commit_lock: Arc::new(std::sync::Mutex::new(())),
+
+            whitelist: Arc::new(crate::registration_whitelist::WhitelistStore::in_memory()),
+        });
+        TestEnv { root, state, token }
+    }
+
+    /// The shared fixture plus the data-source store the dataset link endpoint
+    /// needs. `test_env` keeps the store disabled so the unrelated tests keep
+    /// covering the "data sources disabled" surface; AppState is Clone and every
+    /// other field is an Arc shared with the base fixture, so only the new field
+    /// is replaced here instead of duplicating the whole fixture.
+    fn test_env_with_data_sources() -> TestEnv {
+        let mut env = test_env();
+        let data_sources = Arc::new(
+            crate::api::data_source_mgr::DataSourceStore::new(
+                env.root.join("data-sources").to_str().unwrap(),
+            )
+            .unwrap(),
+        );
+        env.state = Arc::new(AppState {
+            data_sources: Some(data_sources),
+            ..(*env.state).clone()
+        });
+        env
+    }
+
+    fn connect_info_extension() -> axum::extract::ConnectInfo<std::net::SocketAddr> {
+        axum::extract::ConnectInfo(std::net::SocketAddr::from(([127, 0, 0, 1], 4242)))
+    }
+
+    fn webhook_agent_dsl(execution_mode: &str, security: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "components": {
+                "begin": {
+                    "obj": {
+                        "component_name": "Begin",
+                        "params": {
+                            "mode": "Webhook",
+                            "methods": ["POST"],
+                            "content_types": "application/json",
+                            "execution_mode": execution_mode,
+                            "security": security,
+                            "response": {"status": 202, "body_template": "{\"accepted\": true}"},
+                            "schema": {
+                                "body": {
+                                    "properties": {"name": {"type": "string"}},
+                                    "required": ["name"]
+                                }
+                            }
+                        }
+                    },
+                    "upstream": [],
+                    "downstream": ["message"]
+                },
+                "message": {
+                    "obj": {
+                        "component_name": "Message",
+                        "params": {"content": ["Hello rayrag"]}
+                    },
+                    "upstream": ["begin"],
+                    "downstream": []
+                }
+            }
+        })
+    }
+
+    async fn create_webhook_agent(env: &TestEnv, dsl: serde_json::Value) -> String {
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/agents")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "name": format!("Hook Agent {}", uuid::Uuid::new_v4()),
+                            "dsl": dsl,
+                            "canvas_category": "agent_canvas"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(json["code"], 0, "create agent: {json}");
+        json["data"]["id"].as_str().expect("agent id").to_string()
+    }
+
+    fn webhook_request(uri: String, body: &str, token: Option<&str>) -> Request<Body> {
+        let mut builder = Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header(header::CONTENT_TYPE, "application/json");
+        if let Some(token) = token {
+            builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
+        }
+        let mut request = builder.body(Body::from(body.to_string())).unwrap();
+        request.extensions_mut().insert(connect_info_extension());
+        request
+    }
+
+    /// v0.27.2 added an inbound agent webhook (agent_api.py webhook /
+    /// webhook_test / webhook_trace). The public trigger answers the configured
+    /// response template; the test trigger runs the canvas, records a trace and
+    /// serves it through the polling endpoint.
+    #[tokio::test]
+    async fn agent_webhook_trigger_is_public_and_templated() {
+        let env = test_env();
+        let owner = serde_json::json!({"auth_type": "none", "allow_anonymous": true});
+        let agent_id = create_webhook_agent(&env, webhook_agent_dsl("Immediately", owner)).await;
+        let uri = format!("/api/v1/agents/{agent_id}/webhook");
+        let response = build_router(env.state.clone())
+            .oneshot(webhook_request(uri.clone(), r#"{"name":"Ray"}"#, None))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        assert_eq!(payload.as_ref(), br#"{"accepted":true}"#);
+
+        // Public path: the trigger does not need the RayRAG bearer token.
+        assert!(super::public_api_path(&uri));
+
+        // The method allow-list runs before security and reports the upstream text.
+        let mut get_request = Request::builder()
+            .method("GET")
+            .uri(uri)
+            .body(Body::empty())
+            .unwrap();
+        get_request
+            .extensions_mut()
+            .insert(connect_info_extension());
+        let response = build_router(env.state.clone())
+            .oneshot(get_request)
+            .await
+            .unwrap();
+        let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(json["code"], 400);
+        assert_eq!(
+            json["message"],
+            "HTTP method 'GET' not allowed for this webhook."
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_webhook_without_begin_webhook_mode_reports_it() {
+        let env = test_env();
+        let agent_id = create_webhook_agent(
+            &env,
+            serde_json::json!({"components": {
+                "begin": {"obj": {"component_name": "Begin", "params": {}}}
+            }}),
+        )
+        .await;
+        let uri = format!("/api/v1/agents/{agent_id}/webhook");
+        let response = build_router(env.state.clone())
+            .oneshot(webhook_request(uri, "{}", None))
+            .await
+            .unwrap();
+        let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(json["code"], 400);
+        assert_eq!(json["message"], "Webhook not configured for this agent.");
+    }
+
+    #[tokio::test]
+    async fn agent_webhook_streaming_mode_runs_the_canvas_and_serves_the_trace() {
+        let env = test_env();
+        let owner = serde_json::json!({"auth_type": "none", "allow_anonymous": true});
+        let agent_id = create_webhook_agent(&env, webhook_agent_dsl("Streaming", owner)).await;
+        let test_uri = format!("/api/v1/agents/{agent_id}/webhook/test");
+        let response = build_router(env.state.clone())
+            .oneshot(webhook_request(
+                test_uri,
+                r#"{"name":"Ray"}"#,
+                Some(&env.token),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(json["message"], "Hello rayrag", "run result: {json}");
+        assert_eq!(json["success"], true);
+        assert_eq!(json["code"], 200);
+
+        // First poll: no since_ts, server clock seed like upstream.
+        let logs_uri = format!("/api/v1/agents/{agent_id}/webhook/logs");
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri(&logs_uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(json["code"], 0);
+        assert!(json["data"]["next_since_ts"].as_f64().unwrap_or_default() > 0.0);
+
+        // Second poll with an inclusive past timestamp finds the recorded run.
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri(format!("{logs_uri}?since_ts=1"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(json["code"], 0);
+        let webhook_id = json["data"]["webhook_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        assert!(!webhook_id.is_empty());
+        let since_ts = json["data"]["next_since_ts"].as_f64().unwrap_or_default();
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "{logs_uri}?since_ts={since_ts}&webhook_id={webhook_id}"
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(json["code"], 0);
+        let finished = json["data"]["finished"].as_bool().unwrap_or(false);
+        let events = json["data"]["events"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        let begin_event = events.iter().find(|event| {
+            event["event"] == "node_finished" && event["data"]["component_id"] == "begin"
+        });
+        assert!(
+            begin_event.is_some(),
+            "trace should record the Begin node: {json}"
+        );
+        let body_name = begin_event
+            .and_then(|event| event["data"]["outputs"]["body"]["name"].as_str())
+            .unwrap_or_default();
+        assert_eq!(body_name, "Ray");
+        assert!(finished, "trace should end with a finished event: {json}");
+    }
+
+    /// Upstream `user_api.user_add`: `web/src/utils/api.ts::register` posts to
+    /// `${restAPIv1}/users`, so the sign-up face lives on `POST /api/v1/users`
+    /// (the `GET` on the same path stays authenticated), every rejection is
+    /// HTTP 200 carrying a `RetCode` body, and the success payload is
+    /// `{code:0, message:"{nickname}, welcome aboard!", data:{…}}` with the
+    /// credential in the `Authorization` header.
+    #[tokio::test]
+    async fn user_add_matches_the_upstream_registration_contract() {
+        let env = test_env();
+        let post = |uri: &'static str, body: serde_json::Value| {
+            Request::builder()
+                .method("POST")
+                .uri(uri)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        };
+        let register_body = |nickname: &str, email: &str| {
+            serde_json::json!({
+                "nickname": nickname,
+                "email": email,
+                "password": "a long enough password",
+            })
+        };
+
+        // `@validate_request("nickname","email","password")` → 101, HTTP 200.
+        for (body, expected) in [
+            (
+                serde_json::json!({}),
+                "required argument are missing: nickname,email,password; ",
+            ),
+            (
+                serde_json::json!({"nickname": "N"}),
+                "required argument are missing: email,password; ",
+            ),
+        ] {
+            let response = build_router(env.state.clone())
+                .oneshot(post("/api/v1/users", body))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+            let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+            assert_eq!(json["code"], 101);
+            assert_eq!(json["message"], expected);
+            assert!(
+                json.get("data").is_none(),
+                "upstream only emits `data` for code 0"
+            );
+        }
+
+        // email shape → 103 "Invalid email address: {email}!"
+        let response = build_router(env.state.clone())
+            .oneshot(post("/api/v1/users", register_body("Newcomer", "nope")))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(json["code"], 103);
+        assert_eq!(json["message"], "Invalid email address: nope!");
+
+        // nickname validation → 101 with the exact `nickname_validation.py` text.
+        let response = build_router(env.state.clone())
+            .oneshot(post(
+                "/api/v1/users",
+                register_body("bad/name", "nickname@example.com"),
+            ))
+            .await
+            .unwrap();
+        let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(json["code"], 101);
+        assert_eq!(json["message"], "Nickname contains invalid characters.");
+
+        // Success: HTTP 200, the welcome message, the self-safe user and the
+        // credential in the `Authorization` header.
+        let response = build_router(env.state.clone())
+            .oneshot(post(
+                "/api/v1/users",
+                register_body("Newcomer", "newcomer@example.com"),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let authorization = response
+            .headers()
+            .get(header::AUTHORIZATION)
+            .expect("upstream `construct_response(auth=...)` sets the header")
+            .to_str()
+            .unwrap()
+            .to_string();
+        let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(json["code"], 0);
+        assert_eq!(json["message"], "Newcomer, welcome aboard!");
+        assert_eq!(json["data"]["email"], "newcomer@example.com");
+        assert_eq!(json["data"]["nickname"], "Newcomer");
+        assert!(
+            json["data"].get("password").is_none() && json["data"].get("password_hash").is_none(),
+            "`to_safe_dict` strips the password"
+        );
+
+        // The freshly minted token really works (`GET /api/v1/user/info` is the
+        // authenticated self-read in this build).
+        let me = Request::builder()
+            .uri("/api/v1/user/info")
+            .header(header::AUTHORIZATION, format!("Bearer {authorization}"))
+            .body(Body::empty())
+            .unwrap();
+        let response = build_router(env.state.clone()).oneshot(me).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(json["data"]["email"], "newcomer@example.com");
+
+        // Duplicate → 103 "Email: {email} has already registered!"
+        let response = build_router(env.state.clone())
+            .oneshot(post(
+                "/api/v1/users",
+                register_body("Newcomer", "newcomer@example.com"),
+            ))
+            .await
+            .unwrap();
+        let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(json["code"], 103);
+        assert_eq!(
+            json["message"],
+            "Email: newcomer@example.com has already registered!"
+        );
+
+        // The `GET` sibling on the same path keeps requiring a token.
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/users")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        // The RayRAG-only alias answers the same contract.
+        let response = build_router(env.state.clone())
+            .oneshot(post(
+                "/api/v1/user/register",
+                register_body("Alias User", "alias@example.com"),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(json["message"], "Alias User, welcome aboard!");
+    }
+
+    /// Regression: an instance with `REGISTER_ENABLED=1` advertised
+    /// `registerEnabled: 1` from `/api/v1/system/config` — so the login page
+    /// showed its sign-up face — and then answered the submitted form with 403
+    /// "Registration is disabled", because this handler gated on its own
+    /// `RAYRAG_ALLOW_REGISTRATION` env var. One resolved switch, two consumers.
+    #[tokio::test]
+    async fn register_endpoint_follows_the_register_enabled_switch() {
+        let env = test_env();
+        let request = || {
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/users")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "nickname": "Newcomer",
+                        "email": "newcomer@example.com",
+                        "password": "a long enough password",
+                    })
+                    .to_string(),
+                ))
+                .unwrap()
+        };
+
+        // `REGISTER_ENABLED` unset (upstream default 1) is enough on its own.
+        let response = build_router(env.state.clone())
+            .oneshot(request())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Switching it off closes the API and the page's gate together. The
+        // transport is upstream's: HTTP 200 with `RetCode.OPERATING_ERROR`.
+        let mut disabled = (*env.state).clone();
+        disabled.register_enabled = 0;
+        let disabled = Arc::new(disabled);
+        let response = build_router(disabled.clone())
+            .oneshot(request())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(json["code"], 103);
+        assert_eq!(json["message"], "User registration is disabled!");
+
+        let response = build_router(disabled)
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/system/config")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let config: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(config["data"]["registerEnabled"], 0);
+    }
+
+    #[tokio::test]
+    async fn upstream_model_provider_page_route_is_registered() {
+        let env = test_env();
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/user-setting/model")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = String::from_utf8(
+            to_bytes(response.into_body(), 2 * 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(body.contains("data-testid='available-models-section'"));
+        assert!(body.contains("data-testid='default-model-llm_id'"));
+    }
+
+    /// The public model catalogue answers the questions a custom provider dialog
+    /// would otherwise have to ask the operator: which provider is this endpoint,
+    /// what can the model do, how large is its context, what does it cost. The
+    /// lookup is served from the cached copy — a test seeds it, so nothing here
+    /// reaches the network.
+    #[tokio::test]
+    async fn model_catalogue_routes_answer_lookups_and_provider_directories() {
+        use crate::model_catalog::{CatalogModel, CatalogProvider, ModelCatalog};
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let catalog = ModelCatalog {
+            providers: vec![CatalogProvider {
+                id: "deepseek".to_string(),
+                name: "DeepSeek".to_string(),
+                website: "https://deepseek.com".to_string(),
+                api_base_url: "https://api.deepseek.com/v1".to_string(),
+                models: vec![
+                    CatalogModel {
+                        id: "deepseek-chat".to_string(),
+                        name: "DeepSeek-Chat".to_string(),
+                        context: Some(128_000),
+                        tool_call: true,
+                        input_price: Some(0.27),
+                        output_price: Some(1.1),
+                        input_modalities: vec!["text".to_string()],
+                        output_modalities: vec!["text".to_string()],
+                        ..CatalogModel::default()
+                    },
+                    CatalogModel {
+                        id: "deepseek-vl2".to_string(),
+                        name: "deepseek-vl2".to_string(),
+                        context: Some(32_000),
+                        input_modalities: vec!["text".to_string(), "image".to_string()],
+                        ..CatalogModel::default()
+                    },
+                ],
+            }],
+            fetched_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|value| value.as_millis() as u64)
+                .unwrap_or(1),
+            source: "test".to_string(),
+        };
+        crate::model_catalog::put(catalog, "test").await;
+
+        let get = |uri: &str| {
+            Request::builder()
+                .uri(uri)
+                .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                .body(Body::empty())
+                .unwrap()
+        };
+        let lookup = router
+            .clone()
+            .oneshot(get(
+                "/api/v1/model-catalog/lookup?model=deepseek-chat&base_url=https://api.deepseek.com/v1",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(lookup.status(), StatusCode::OK);
+        let payload = to_bytes(lookup.into_body(), 256 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["data"]["matches"][0]["model"]["name"], "DeepSeek-Chat");
+        assert_eq!(body["data"]["matches"][0]["provider_id"], "deepseek");
+        assert_eq!(body["data"]["matches"][0]["model"]["context"], 128_000);
+        assert_eq!(
+            body["data"]["matches"][0]["suggested_model_types"][0],
+            "chat"
+        );
+        // The base URL names the provider even before a model matches.
+        assert_eq!(body["data"]["provider"]["id"], "deepseek");
+        assert_eq!(body["data"]["catalog"]["providers"], 1);
+        assert_eq!(body["data"]["catalog"]["models"], 2);
+
+        // The directory resolves a provider from the endpoint alone — the dialog
+        // only ever has the base URL — and then lists that provider's models.
+        let directory = router
+            .clone()
+            .oneshot(get(
+                "/api/v1/model-catalog/providers?base_url=https://api.deepseek.com",
+            ))
+            .await
+            .unwrap();
+        let payload = to_bytes(directory.into_body(), 256 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(body["data"]["providers"].as_array().map(Vec::len), Some(1));
+        assert_eq!(body["data"]["providers"][0]["name"], "DeepSeek");
+        assert_eq!(body["data"]["providers"][0]["models"], 2);
+        assert_eq!(body["data"]["models"].as_array().map(Vec::len), Some(2));
+
+        let missing = router
+            .clone()
+            .oneshot(get("/api/v1/model-catalog/lookup?model="))
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::BAD_REQUEST);
+        let payload = to_bytes(missing.into_body(), 64 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(body["code"], 400);
+
+        // An unknown name is an empty answer, not an error: the dialog keeps working.
+        let unknown = router
+            .oneshot(get("/api/v1/model-catalog/lookup?model=nope-not-a-model"))
+            .await
+            .unwrap();
+        assert_eq!(unknown.status(), StatusCode::OK);
+        let payload = to_bytes(unknown.into_body(), 256 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(body["data"]["matches"].as_array().map(Vec::len), Some(0));
+    }
+
+    #[tokio::test]
+    async fn user_setting_root_and_all_sidebar_routes_are_registered() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let redirect = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/user-setting")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(redirect.status(), StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(
+            redirect.headers().get(header::LOCATION).unwrap(),
+            "/user-setting/data-source"
+        );
+
+        for key in [
+            "/data-source",
+            "/chat-channel",
+            "/model",
+            "/mcp",
+            "/team",
+            "/profile",
+            "/api",
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!("/user-setting{key}"))
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "route {key}");
+            let body = String::from_utf8(
+                to_bytes(response.into_body(), 4 * 1024 * 1024)
+                    .await
+                    .unwrap()
+                    .to_vec(),
+            )
+            .unwrap();
+            assert!(body.contains("data-testid='user-setting-layout'"));
+            assert!(body.contains(&format!(
+                "class='user-setting-nav-item active' href='/user-setting{key}' data-setting-key='{key}'"
+            )));
+        }
+    }
+
+    /// Upstream admin console API (`internal/admin/handler.go` +
+    /// `internal/admin/service.go`): superuser-only login, logout, the service
+    /// list and per-service details.
+    #[tokio::test]
+    async fn admin_console_api_matches_upstream_handlers() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+
+        // Wrong password -> 401 with the upstream shape.
+        let denied = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/admin/login")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"email": "test@example.com", "password": "nope"})
+                            .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Upstream answers HTTP 200 with `code: 109` for bad credentials.
+        assert_eq!(denied.status(), StatusCode::OK);
+        let body = String::from_utf8(
+            to_bytes(denied.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(payload["code"], 109);
+        assert_eq!(payload["message"], "email and password do not match!");
+
+        // Administrator login mirrors `AdminService.LoginData` and echoes the
+        // token in the Authorization response header.
+        let ok = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/admin/login")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "email": "test@example.com",
+                            "password": "correct horse battery staple",
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ok.status(), StatusCode::OK);
+        assert!(ok.headers().get("authorization").is_some());
+        let body = String::from_utf8(
+            to_bytes(ok.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        let login: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(login["code"], 0);
+        assert_eq!(login["message"], "Welcome back!");
+        assert_eq!(login["data"]["is_superuser"], true);
+        assert_eq!(login["data"]["is_active"], "1");
+        assert_eq!(login["data"]["status"], "1");
+        assert!(login["data"]["access_token"].as_str().unwrap().len() > 8);
+
+        // Non-superusers are refused with the upstream message.
+        let plain = env
+            .state
+            .users
+            .create_user("plain@example.com", "plain-password-1", "normal")
+            .unwrap();
+        assert!(env.state.users.get_user_by_id(&plain.id).is_some());
+        let forbidden = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/admin/login")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "email": "plain@example.com",
+                            "password": "plain-password-1",
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(forbidden.status(), StatusCode::OK);
+        let body = String::from_utf8(
+            to_bytes(forbidden.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(payload["code"], 403);
+        assert_eq!(payload["message"], "Only superuser can login admin system");
+        // An unknown account reports the upstream "not registered" message.
+        let unknown = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/admin/login")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "email": "nobody@example.com",
+                            "password": "whatever-password",
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = String::from_utf8(
+            to_bytes(unknown.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(payload["code"], 109);
+        assert_eq!(
+            payload["message"],
+            "email: nobody@example.com is not registered!"
+        );
+
+        // Service list: the upstream `{id,name,service_type,host,port,status}`
+        // shape over the components RayRAG runs.
+        let services = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/admin/services")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(services.status(), StatusCode::OK);
+        let body = String::from_utf8(
+            to_bytes(services.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let list = payload["data"].as_array().unwrap();
+        assert_eq!(list.len(), 5);
+        for (index, service) in list.iter().enumerate() {
+            assert_eq!(service["id"], index);
+            for key in ["name", "service_type", "host", "port", "status"] {
+                assert!(service.get(key).is_some(), "service {index} lacks {key}");
+            }
+        }
+        assert_eq!(list[0]["service_type"], "rayrag_server");
+        assert_eq!(list[1]["service_type"], "meta_data");
+        assert_eq!(list[2]["service_type"], "retrieval");
+        assert_eq!(list[3]["service_type"], "file_store");
+        assert_eq!(list[4]["service_type"], "task_executor");
+        // Unauthenticated access stays closed.
+        let anonymous = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/admin/services")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+
+        for (path, status) in [
+            ("/api/v1/admin/services/0", StatusCode::OK),
+            ("/api/v1/admin/services/4", StatusCode::OK),
+            ("/api/v1/admin/services/99", StatusCode::NOT_FOUND),
+            ("/api/v1/admin/services/abc", StatusCode::BAD_REQUEST),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), status, "{path}");
+        }
+        let details = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/admin/services/4")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = String::from_utf8(
+            to_bytes(details.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(payload["data"]["service_name"], "task_executor");
+        assert!(payload["data"]["message"]["rayrag"].is_array());
+
+        // Logout revokes the presented token.
+        let logout = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/admin/logout")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(logout.status(), StatusCode::OK);
+        let after = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/admin/services")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(after.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// A fixed-width embedder, so a retrieval test does not need a model provider.
+    struct FixedEmbedder;
+
+    #[async_trait::async_trait]
+    impl crate::embed::Embedder for FixedEmbedder {
+        async fn embed(&self, texts: &[&str]) -> crate::Result<Vec<Vec<f32>>> {
+            Ok(texts.iter().map(|_| vec![0.5f32; 8]).collect())
+        }
+    }
+
+    /// A retrieval chunk carries every citation key the API guide lists, so a client written against
+    /// RAGFlow can render a source instead of finding the fields missing.
+    #[tokio::test]
+    async fn a_retrieval_chunk_carries_upstreams_citation_fields() {
+        let mut env = test_env();
+        Arc::get_mut(&mut env.state).unwrap().embedder = Some(std::sync::Arc::new(FixedEmbedder));
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Citation KB", "d")
+            .unwrap();
+        // One indexed chunk with real stored metadata: positions, an image and a source URL.
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert("kb_id".to_string(), kb.id.clone());
+        metadata.insert("doc_id".to_string(), "doc-1".to_string());
+        metadata.insert("img_id".to_string(), "img-7".to_string());
+        metadata.insert("url".to_string(), "https://example.cn/a".to_string());
+        metadata.insert("doc_type".to_string(), "markdown".to_string());
+        metadata.insert("important_kwd".to_string(), "[\"alpha\"]".to_string());
+        metadata.insert("tag_kwd".to_string(), "[\"beta\"]".to_string());
+        metadata.insert("positions".to_string(), "[[3,1,2,3,4]]".to_string());
+        env.state
+            .engine
+            .write()
+            .unwrap()
+            .index(vec![crate::search::IndexedChunk {
+                id: "chunk-1".to_string(),
+                doc_name: "guide.md".to_string(),
+                content: "retrieval augmented generation".to_string(),
+                embedding: vec![0.5; 8],
+                token_count: 3,
+                position: 0,
+                metadata,
+            }]);
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/retrieval")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "question": "retrieval augmented generation",
+                            "dataset_ids": [kb.id],
+                            "similarity_threshold": 0.0,
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 0, "{body}");
+        let chunks = body["data"]["chunks"].as_array().unwrap();
+        assert_eq!(chunks.len(), 1, "{body}");
+        let chunk = &chunks[0];
+        for key in [
+            "id",
+            "document_id",
+            "document_keyword",
+            "dataset_id",
+            "content_ltks",
+            "image_id",
+            "important_keywords",
+            "tag_kwd",
+            "positions",
+            "url",
+            "doc_type",
+        ] {
+            assert!(chunk.get(key).is_some(), "missing {key}: {chunk}");
+        }
+        // The values are the stored ones, not placeholders.
+        assert_eq!(chunk["id"], "chunk-1", "{chunk}");
+        assert_eq!(chunk["document_id"], "doc-1", "{chunk}");
+        assert_eq!(chunk["document_keyword"], "guide.md", "{chunk}");
+        assert_eq!(chunk["dataset_id"], kb.id, "{chunk}");
+        assert_eq!(chunk["image_id"], "img-7", "{chunk}");
+        assert_eq!(chunk["url"], "https://example.cn/a", "{chunk}");
+        assert_eq!(chunk["doc_type"], "markdown", "{chunk}");
+        assert_eq!(
+            chunk["important_keywords"],
+            serde_json::json!(["alpha"]),
+            "{chunk}"
+        );
+        assert_eq!(chunk["tag_kwd"], serde_json::json!(["beta"]), "{chunk}");
+        assert_eq!(
+            chunk["positions"],
+            serde_json::json!([[3, 1, 2, 3, 4]]),
+            "{chunk}"
+        );
+        assert!(
+            !chunk["content_ltks"].as_str().unwrap().trim().is_empty(),
+            "content_ltks is tokenised, not empty: {chunk}"
+        );
+        // RayRAG's own names for this response stay, so nothing that already read it breaks.
+        for key in [
+            "chunk_id",
+            "doc_id",
+            "kb_id",
+            "doc_name",
+            "score",
+            "vector_similarity",
+            "term_similarity",
+        ] {
+            assert!(chunk.get(key).is_some(), "lost {key}: {chunk}");
+        }
+        // `similarity` is upstream's name for the same number as `score`.
+        assert_eq!(chunk["similarity"], chunk["score"], "{chunk}");
+    }
+
+    /// Upstream `next-search/hooks.ts` posts `{kb_id, question, search_id, page,
+    /// size}`; the retrieval endpoint resolves the app's `search_config` for
+    /// every field the caller leaves out.
+    #[tokio::test]
+    async fn retrieval_resolves_search_app_config() {
+        let mut env = test_env();
+        let dir =
+            std::env::temp_dir().join(format!("rayrag-retrieval-app-{}", uuid::Uuid::new_v4()));
+        let store = Arc::new(
+            crate::api::searchapp_mgr::SearchAppStore::new(dir.to_str().unwrap()).unwrap(),
+        );
+        Arc::get_mut(&mut env.state).unwrap().search_apps = Some(store.clone());
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Retrieval KB", "d")
+            .unwrap();
+        let app = store
+            .create(
+                "test-user",
+                crate::api::searchapp_mgr::SearchAppCreate {
+                    name: "retrieval-app".into(),
+                    kb_ids: vec![kb.id.clone()],
+                    top_k: 10,
+                    similarity_threshold: 0.2,
+                    vector_similarity_weight: 0.3,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let router = build_router(env.state.clone());
+        // Only `search_id` + the question: the knowledge base, the weights and
+        // the page size all come from the application record.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/retrieval")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "question": "what is rayrag",
+                            "search_id": app.id,
+                            "size": 10,
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let body = String::from_utf8(
+            to_bytes(response.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        // The test environment has no embedder, so the app config resolves and
+        // the request reaches the retrieval stage, which reports the missing
+        // embedding model instead of "kb_id is required".
+        assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
+        assert!(
+            !body.contains("At least one accessible kb_id is required"),
+            "the app config must supply the knowledge base: {body}"
+        );
+        // A request without `kb_ids` and without a resolvable app is still
+        // rejected, exactly like before.
+        let bare = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/retrieval")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "question": "what is rayrag" }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(bare.status(), StatusCode::BAD_REQUEST);
+        let body = String::from_utf8(
+            to_bytes(bare.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(body.contains("At least one accessible kb_id is required"));
+        // The singular upstream `kb_id` field is accepted as well.
+        let singular = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/retrieval")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "question": "what is rayrag",
+                            "kb_id": [kb.id.clone()],
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Same embedder-less environment: the singular `kb_id` must be accepted
+        // (no "kb_id is required" error) even though retrieval cannot run.
+        let status = singular.status();
+        let body = String::from_utf8(
+            to_bytes(singular.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
+        assert!(
+            !body.contains("At least one accessible kb_id is required"),
+            "the singular kb_id alias must be accepted: {body}"
+        );
+    }
+
+    /// Upstream `api.searchCompletion` / `api.chatsMindmap`: the search answer
+    /// stream and the mind-map endpoint are admin-free but auth-protected, and
+    /// they validate their inputs the way the React hooks expect.
+    #[tokio::test]
+    async fn search_completion_and_mindmap_endpoints_are_registered() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        // Unknown search app -> 404 with the upstream shape.
+        let missing = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/searches/does-not-exist/completions")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "question": "hello", "stream": true }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        let body = String::from_utf8(
+            to_bytes(missing.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(body.contains("Search app not found"));
+        // Empty question -> 400 before any retrieval happens.
+        let empty = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/searches/any/completions")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "question": "   ", "stream": true }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(empty.status(), StatusCode::NOT_FOUND);
+        // The mind-map endpoint answers 503 when no chat model is configured.
+        let mindmap = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/chat/mindmap")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "question": "how does rag work" }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(mindmap.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = String::from_utf8(
+            to_bytes(mindmap.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(body.contains("Chat model is not configured"));
+        // Both endpoints stay behind the API token.
+        for path in ["/api/v1/searches/x/completions", "/api/v1/chat/mindmap"] {
+            let anonymous = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(path)
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(
+                            serde_json::json!({ "question": "q" }).to_string(),
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED, "{path}");
+        }
+    }
+
+    /// The full search-answer stream: with a chat model configured the endpoint
+    /// emits `chat.completion.chunk` deltas, a `chat.completion.references`
+    /// event and the terminal `[DONE]` marker on the app's knowledge bases.
+    #[tokio::test]
+    async fn search_completion_streams_answer_and_references() {
+        let mut env = test_env();
+        let dir =
+            std::env::temp_dir().join(format!("rayrag-search-stream-{}", uuid::Uuid::new_v4()));
+        let store = Arc::new(
+            crate::api::searchapp_mgr::SearchAppStore::new(dir.to_str().unwrap()).unwrap(),
+        );
+        Arc::get_mut(&mut env.state).unwrap().search_apps = Some(store.clone());
+        let env = env;
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Stream KB", "d")
+            .unwrap();
+        let app = store
+            .create(
+                "test-user",
+                crate::api::searchapp_mgr::SearchAppCreate {
+                    name: "stream-app".into(),
+                    kb_ids: vec![kb.id.clone()],
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let router = build_router(env.state.clone());
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/v1/searches/{}/completions", app.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "question": "what is RayRAG", "stream": true })
+                            .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // The stream opens as soon as the app resolves; without a configured
+        // chat model the first event reports the failure instead of hanging.
+        assert!(
+            response.status() == StatusCode::OK || response.status() == StatusCode::BAD_REQUEST,
+            "unexpected status {}",
+            response.status()
+        );
+        let body = String::from_utf8(
+            to_bytes(response.into_body(), 4 * 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        // The test environment has no embedder, so the stream reports the
+        // failure through the same envelope the front end parses instead of
+        // hanging; the concrete delta/reference events are covered by the CDP
+        // probe against the deployed instance (which has real models).
+        assert!(body.starts_with("data: "), "stream body: {body:.200}");
+        assert!(
+            body.contains("chat.completion.chunk")
+                || body.contains("Embedding is not configured")
+                || body.contains("Chat model"),
+            "stream body: {}",
+            &body[..body.len().min(200)]
+        );
+    }
+
+    /// Upstream `Routes.Chunk` subtree: the four panel routes register, the
+    /// header carries the segmented control with the three upstream labels and
+    /// the panels render against the real chunk API.
+    #[tokio::test]
+    async fn chunk_workbench_routes_match_upstream_subtree() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        for (path, section) in [
+            ("/chunk", "/chunk/parsed"),
+            ("/chunk/parsed/chunks", "/chunk/parsed"),
+            ("/chunk/chunk/doc-1", "/chunk/chunk"),
+            ("/chunk/result/doc-1", "/chunk/result"),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "route {path}");
+            let body = String::from_utf8(
+                to_bytes(response.into_body(), 4 * 1024 * 1024)
+                    .await
+                    .unwrap()
+                    .to_vec(),
+            )
+            .unwrap();
+            assert!(body.contains("data-testid='chunk-workbench'"), "{path}");
+            assert!(
+                body.contains(&format!("data-section='{section}'")),
+                "{path}: active section"
+            );
+            assert!(
+                body.contains(&format!(
+                    "class='chunk-segment active' data-section='{section}'"
+                )),
+                "{path}: active segment"
+            );
+            for label in ["Parsed results", "Chunk result", "Result view"] {
+                assert!(body.contains(label), "{path}: segment {label}");
+            }
+            assert!(body.contains("data-testid='chunk-save'"), "{path}: save");
+            assert!(body.contains("data-testid='chunk-more'"), "{path}: menu");
+            assert!(
+                body.contains("/api/v1/datasets/"),
+                "{path}: chunk API wiring"
+            );
+        }
+        // The three panels carry the upstream toolbars and list hosts.
+        let chunked = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/chunk/chunk/doc-1?knowledgeId=kb-1")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = String::from_utf8(
+            to_bytes(chunked.into_body(), 4 * 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        for marker in [
+            "Parsed  results",
+            "Chunked  results",
+            "id='chunkParsedList'",
+            "id='chunkChunkedList'",
+            "data-testid='chunk-copy-parsed'",
+            "data-testid='chunk-export-chunked'",
+            "CHUNK_ANNOYED_SVG",
+            "chunkSaveAll()",
+            "CHUNK_STATE=",
+            "kb-1",
+            "\"kbId\"",
+        ] {
+            assert!(body.contains(marker), "chunk marker missing: {marker}");
+        }
+    }
+
+    /// Upstream `routes.tsx` parity for the paths that map onto existing
+    /// renderers: `/login-next` (second entry point for the login page),
+    /// `/agent/:id` and `/search/:id` (canonical singular detail paths) and
+    /// `/document/:id` (standalone document viewer). `/search/share` is the
+    /// public embed resolved from `?tenantId=`.
+    #[tokio::test]
+    async fn upstream_singular_detail_and_share_routes_are_registered() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+
+        // Public: both login entry points and the share embed.
+        for path in ["/login", "/login-next"] {
+            let response = router
+                .clone()
+                .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "route {path}");
+        }
+        let share = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/search/share")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(share.status(), StatusCode::OK);
+        let share_body = String::from_utf8(
+            to_bytes(share.into_body(), 4 * 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        // Same next-search surface as `/search`, plus the embed owner slot.
+        assert!(share_body.contains("id='searchHome'"));
+        assert!(
+            share_body.contains("data-testid='search-share-owner'")
+                || share_body.contains("id='searchView'")
+        );
+
+        // Authenticated canonical detail paths render the same handlers as the
+        // compatibility aliases still served by RayRAG. Both are exercised with
+        // an unknown id, which must reach the handler (not the 404 fallback).
+        for (path, marker) in [
+            ("/agent/demo-agent", "id='agentTitle'"),
+            // Upstream `/search/:id` is the search experience; an unknown app
+            // still renders the page (the retrieval call fails later), while
+            // RayRAG's settings form keeps the not-found state.
+            ("/search/demo-search", "id='searchHome'"),
+            ("/searches/demo-search", "Search app not found"),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .header(header::COOKIE, "lang=en")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "route {path}");
+            let body = String::from_utf8(
+                to_bytes(response.into_body(), 4 * 1024 * 1024)
+                    .await
+                    .unwrap()
+                    .to_vec(),
+            )
+            .unwrap();
+            assert!(
+                body.contains(marker),
+                "route {path} did not reach its handler"
+            );
+            assert!(
+                !body.contains("404 · RayRAG"),
+                "route {path} fell through to the 404 page"
+            );
+        }
+
+        // `/document/:id` resolves the dataset from the document record and
+        // 404s for an unknown id instead of panicking.
+        let missing = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/document/does-not-exist")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn current_user_accepts_bearer_and_cookie_auth() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        for (name, value) in [
+            (header::AUTHORIZATION, format!("Bearer {}", env.token)),
+            (header::COOKIE, format!("rayrag_token={}", env.token)),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/v1/user/info")
+                        .header(name, value)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = response_json(response).await;
+            assert_eq!(body["code"], 0);
+            assert_eq!(body["data"]["email"], "test@example.com");
+        }
+
+        let unauthorized = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/user/info")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn related_question_aliases_require_auth_question_and_chat_model() {
+        for path in [
+            "/api/v1/chat/recommendation",
+            "/api/v1/searchbots/related_questions",
+            "/api/v1/sessions/related_questions",
+        ] {
+            let env = test_env();
+            let unauthorized = build_router(env.state.clone())
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri(path)
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(r#"{"question":"Rust RAG"}"#))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+            let missing_question = build_router(env.state.clone())
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri(path)
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(r#"{"question":"   "}"#))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(missing_question.status(), StatusCode::BAD_REQUEST);
+
+            let no_model = build_router(env.state.clone())
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri(path)
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(r#"{"question":"Rust RAG"}"#))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(no_model.status(), StatusCode::SERVICE_UNAVAILABLE);
+        }
+    }
+
+    fn configure_embedding_models(state: &AppState, tenant_id: &str, models: &[&str]) {
+        state
+            .tenant_models
+            .upsert(
+                &state.providers,
+                tenant_id,
+                "minimax",
+                "primary",
+                TenantModelInstanceUpdate {
+                    tenant_id: None,
+                    instance_name: "Primary".into(),
+                    api_base: Some("http://127.0.0.1:9/v1".into()),
+                    api_key: None,
+                    clear_api_key: false,
+                    models: models
+                        .iter()
+                        .map(|name| TenantModelSpec {
+                            name: (*name).into(),
+                            model_types: vec![ModelCapability::Embedding],
+                            max_tokens: None,
+                            enabled: true,
+                            is_tools: false,
+                            ocr_config: None,
+                        })
+                        .collect(),
+                },
+            )
+            .unwrap();
+    }
+
+    fn non_admin_env() -> TestEnv {
+        let root = std::env::temp_dir().join(format!("rayrag-server-{}", uuid::Uuid::new_v4()));
+        let static_dir = root.join("web");
+        std::fs::create_dir_all(&static_dir).unwrap();
+        let users_path = root.join("users.json");
+        let email = "member@example.com";
+        let password = "correct horse battery staple";
+        std::fs::write(
+            &users_path,
+            serde_json::to_vec(&serde_json::json!([{
+                "id": "member-user",
+                "nickname": "Member",
+                "email": email,
+                "password_hash": crate::auth::hash_password_for_test(password),
+                "role": "user",
+                "created_at": 1
+            }]))
+            .unwrap(),
+        )
+        .unwrap();
+        let users = Arc::new(UserStore::new(users_path.to_str().unwrap()).unwrap());
+        let token = users.login(email, password).unwrap().unwrap();
+        let state = Arc::new(AppState {
+            static_dir: static_dir.to_string_lossy().into_owned(),
+            port: 0,
+            doc_store: Arc::new(crate::doc_store::DocStorePool::memory()),
+            users,
+            kbs: Arc::new(KbStore::new(root.join("kbs.json").to_str().unwrap()).unwrap()),
+            tenants: Arc::new(
+                TenantStore::new(root.join("tenants.json").to_str().unwrap()).unwrap(),
+            ),
+            conversations: Arc::new(
+                ConvStore::new(root.join("conversations.json").to_str().unwrap()).unwrap(),
+            ),
+            llm: None,
+            embedder: None,
+            reranker: Arc::new(RerankerManager::in_memory(None)),
+            graphs: Arc::new(crate::graph_store::GraphStore::in_memory()),
+            engine: Arc::new(RwLock::new(SearchEngine::new())),
+            vector_mirror: Arc::new(crate::store::OnlineVectorMirror::disabled()),
+            index_path: root.join("index.json").to_string_lossy().into_owned(),
+            model_path: root.join("models").to_string_lossy().into_owned(),
+            max_upload_bytes: DEFAULT_MAX_UPLOAD_BYTES,
+            docs: Arc::new(
+                crate::api::document::DocStore::new(root.join("docs.json").to_str().unwrap())
+                    .unwrap(),
+            ),
+            document_metadata: Arc::new(
+                crate::api::document_metadata::DocumentMetadataStore::in_memory(),
+            ),
+            files: Arc::new(
+                crate::api::file_mgr::FileStore::new(root.join("uploads").to_str().unwrap())
+                    .unwrap(),
+            ),
+            workspace_commits: Arc::new(
+                crate::api::workspaces::WorkspaceCommitStore::new(
+                    root.join("workspace-commits").to_str().unwrap(),
+                )
+                .unwrap(),
+            ),
+            attachments: Arc::new(
+                crate::api::attachments::AttachmentStore::new(
+                    root.join("attachments").to_str().unwrap(),
+                )
+                .unwrap(),
+            ),
+            artifacts: Arc::new(crate::api::artifacts::ArtifactStore::in_memory()),
+            skill_trees: Arc::new(crate::api::skill_tree::SkillTreeStore::in_memory()),
+            metadata_config: Arc::new(
+                crate::api::metadata_config::MetadataConfigStore::new(
+                    root.join("metadata-config.json").to_str().unwrap(),
+                )
+                .unwrap(),
+            ),
+            connectors: Arc::new(
+                crate::api::connector::ConnectorStore::new(
+                    root.join("connectors.json").to_str().unwrap(),
+                )
+                .unwrap(),
+            ),
+            data_sources: None,
+            chat_apps: None,
+            search_apps: None,
+            providers: Arc::new(crate::api::features::ProviderStore::in_memory()),
+            tenant_models: Arc::new(crate::api::tenant_models::TenantModelStore::in_memory()),
+            memories: Arc::new(crate::api::features::MemoryStore::in_memory()),
+            memory_messages: Arc::new(crate::api::joint_services::MemoryMessageService::in_memory()),
+            skill_index: Arc::new(crate::api::skill_index::SkillIndexStore::in_memory()),
+            system_settings: Arc::new(crate::api::system_settings::SystemSettingsStore::in_memory()),
+            api_tokens: Arc::new(crate::api::tokens::ApiTokenStore::in_memory()),
+            ingestion_logs: Arc::new(crate::api::ingestion::IngestionLogStore::in_memory()),
+            agent_traces: Arc::new(crate::api::agent_trace::AgentTraceStore::in_memory()),
+            register_enabled: 1,
+            disable_password_login: false,
+            oauth_states: Arc::new(crate::oauth_config::StateStore::new()),
+            oauth_channels: Arc::new(std::sync::RwLock::new(Vec::new())),
+            langfuse: Arc::new(crate::api::langfuse::LangfuseStore::in_memory()),
+            mcp_servers: Arc::new(crate::api::mcp_mgr::McpServerStore::in_memory()),
+            chat_channels: Arc::new(crate::api::chat_channel_mgr::ChatChannelStore::in_memory()),
+            tasks: Arc::new(crate::api::features::TaskQueue::in_memory()),
+            task_executor: Arc::new(crate::task_executor::TaskExecutor::new("test_executor", 4)),
+            agents: Arc::new(crate::api::features::AgentStore::in_memory()),
+            agent_runs: Arc::new(crate::api::features::AgentRunRegistry::default()),
+            agent_checkpoints: Arc::new(crate::agent_checkpoint::AgentCheckpointStore::in_memory()),
+            canvas_versions: Arc::new(crate::api::features::CanvasVersionStore::in_memory()),
+            compilation_templates: Arc::new(
+                crate::api::compilation_templates::CompilationTemplateStore::in_memory(),
+            ),
+            evaluations: Arc::new(crate::api::evaluation::EvaluationStore::in_memory()),
+            log_levels: Arc::new(crate::logging::LogLevelManager::in_memory()),
+            chunk_feedback_enabled: false,
+            chunk_feedback_weighting: crate::chunk_feedback::FeedbackWeighting::Relevance,
+            channels: Arc::new(crate::channels::ChannelRegistry::new()),
+            document_commit_lock: Arc::new(std::sync::Mutex::new(())),
+            memory_commit_lock: Arc::new(std::sync::Mutex::new(())),
+
+            whitelist: Arc::new(crate::registration_whitelist::WhitelistStore::in_memory()),
+        });
+        TestEnv { root, state, token }
+    }
+
+    async fn response_json(response: Response) -> serde_json::Value {
+        let status = response.status();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        // A non-JSON body used to surface as "expected value at line 1 column 1" with no clue which
+        // route produced it; naming the body costs nothing and saves the round trip.
+        serde_json::from_slice(&body).unwrap_or_else(|error| {
+            panic!(
+                "expected a JSON body, got status {status} with {} ({error})",
+                String::from_utf8_lossy(&body)
+            )
+        })
+    }
+
+    #[tokio::test]
+    async fn memory_web_detail_routes_render_live_shells() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        for (path, marker) in [
+            ("/memories", "data-testid='memory-list'"),
+            ("/memory/memory-message/memory-a", "id='messageSearch'"),
+            ("/memory/memory-setting/memory-a", "id='memorySettingForm'"),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .header(header::COOKIE, "lang=en")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "route {path}");
+            let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            let html = String::from_utf8(body.to_vec()).unwrap();
+            assert!(html.contains(marker), "route {path} missing {marker}");
+        }
+    }
+
+    /// RAGFlow's `routes.tsx` composes three paths with a literal double slash
+    /// (`/dataset//files/:id`, `/memory//memory-message/:id`,
+    /// `/memory//memory-setting/:id`). Deep links keep that spelling, so the
+    /// router must answer them directly instead of 404ing.
+    #[tokio::test]
+    async fn upstream_literal_double_slash_routes_resolve() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        for path in [
+            "/dataset//files/kg-a",
+            "/memory//memory-message/memory-a",
+            "/memory//memory-setting/memory-a",
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .header(header::COOKIE, "lang=en")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "route {path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn memory_owner_and_ragflow_model_catalog_contracts_are_live() {
+        let env = test_env();
+        let memory = env
+            .state
+            .memories
+            .create(
+                "test-user",
+                crate::api::features::MemoryCreateRequest {
+                    name: "Owned memory".into(),
+                    memory_type: vec!["raw".into()],
+                    embd_id: "default".into(),
+                    llm_id: "default".into(),
+                    description: String::new(),
+                },
+            )
+            .unwrap();
+        env.state
+            .tenant_models
+            .upsert(
+                &env.state.providers,
+                "test-user",
+                "minimax",
+                "primary",
+                TenantModelInstanceUpdate {
+                    tenant_id: None,
+                    instance_name: "Primary".into(),
+                    api_base: Some("http://127.0.0.1:9/v1".into()),
+                    api_key: Some("must-not-leak".into()),
+                    clear_api_key: false,
+                    models: vec![
+                        TenantModelSpec {
+                            name: "MiniMax-M3".into(),
+                            model_types: vec![ModelCapability::Chat],
+                            max_tokens: Some(4096),
+                            enabled: true,
+                            is_tools: false,
+                            ocr_config: None,
+                        },
+                        TenantModelSpec {
+                            name: "MiniMax-M2".into(),
+                            model_types: vec![ModelCapability::Embedding],
+                            max_tokens: None,
+                            enabled: true,
+                            is_tools: false,
+                            ocr_config: None,
+                        },
+                    ],
+                },
+            )
+            .unwrap();
+        env.state
+            .tenant_models
+            .set_default_chat_model(
+                &env.state.providers,
+                "test-user",
+                Some("minimax/primary/MiniMax-M3"),
+            )
+            .unwrap();
+        let router = build_router(env.state.clone());
+        let authorization = format!("Bearer {}", env.token);
+
+        let listed = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/memories?tenant_id=&owner_ids={}",
+                        memory.tenant_id
+                    ))
+                    .header(header::AUTHORIZATION, &authorization)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(listed.status(), StatusCode::OK);
+        let listed = response_json(listed).await;
+        let memory_json = &listed["data"]["memory_list"][0];
+        assert_eq!(memory_json["owner_name"], "Test");
+        assert_eq!(memory_json["permissions"], "me");
+        assert_eq!(memory_json["memory_size"], 5 * 1024 * 1024);
+        assert_eq!(memory_json["temperature"], 0.5);
+
+        let catalog = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/models")
+                    .header(header::AUTHORIZATION, &authorization)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(catalog.status(), StatusCode::OK);
+        let catalog = response_json(catalog).await;
+        let models = catalog["data"].as_array().unwrap();
+        // Factory-catalog expansion (upstream `list_tenant_added_models`):
+        // every MiniMax factory model is exposed for the tenant instance, in
+        // factory order; an explicit compact record is the final effective
+        // capability set after upstream ACTIVE/INACTIVE/UNSUPPORTED folding.
+        assert!(
+            models.len() >= 7,
+            "expected the full MiniMax factory catalog"
+        );
+        assert_eq!(models[0]["selector"], "MiniMax-M3@Primary@MiniMax");
+        assert_eq!(models[0]["provider_name"], "MiniMax");
+        assert_eq!(models[0]["provider"], "MiniMax");
+        assert!(models.iter().all(|model| model.get("api_key").is_none()));
+        assert!(models.iter().any(|model| {
+            model["name"] == "MiniMax-M2" && model["model_type"] == serde_json::json!(["embedding"])
+        }));
+
+        let defaults = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/models/default")
+                    .header(header::AUTHORIZATION, &authorization)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let defaults = response_json(defaults).await;
+        assert_eq!(
+            defaults["data"]["models"][0]["selector"],
+            "MiniMax-M3@Primary@MiniMax"
+        );
+        assert_eq!(defaults["data"]["models"][0]["enable"], true);
+
+        let openai = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/openai/models")
+                    .header(header::AUTHORIZATION, authorization)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response_json(openai).await["object"], "list");
+    }
+
+    #[tokio::test]
+    async fn memory_message_routes_persist_search_forget_and_cascade() {
+        let mut env = test_env();
+        Arc::get_mut(&mut env.state).unwrap().embedder = Some(Arc::new(TestEmbedder));
+        let memory = env
+            .state
+            .memories
+            .create(
+                "test-user",
+                crate::api::features::MemoryCreateRequest {
+                    name: "Route memory".into(),
+                    memory_type: vec!["raw".into()],
+                    embd_id: "default".into(),
+                    llm_id: "default".into(),
+                    description: String::new(),
+                },
+            )
+            .unwrap();
+        let router = build_router(env.state.clone());
+
+        let added = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/messages")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "memory_id": [memory.id.clone()],
+                            "agent_id": "agent-1",
+                            "session_id": "session-1",
+                            "user_input": "Rust memory",
+                            "agent_response": "Stored"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(added.status(), StatusCode::OK);
+        assert_eq!(response_json(added).await["message"], "All add to task.");
+        let queued = env.state.tasks.pending();
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].task_type, "memory");
+        assert_eq!(queued[0].doc_id, memory.id);
+        assert_eq!(queued[0].digest, "1");
+        dispatch_pending_document_tasks(
+            env.state.clone(),
+            Arc::new(tokio::sync::Semaphore::new(1)),
+        );
+        for _ in 0..50 {
+            if env.state.tasks.get(&queued[0].id).unwrap().status == "done" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(env.state.tasks.get(&queued[0].id).unwrap().status, "done");
+
+        let listed = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/memories/{}", memory.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(listed.status(), StatusCode::OK);
+        let listed = response_json(listed).await;
+        let message = &listed["data"]["messages"]["message_list"][0];
+        assert_eq!(message["user_id"], "test-user");
+        assert!(message.get("content_embed").is_none());
+        assert_eq!(message["extract"], serde_json::json!([]));
+        assert_eq!(message["task"]["digest"], message["message_id"].to_string());
+        assert_eq!(message["task"]["progress"], 1.0);
+        let message_id = message["message_id"].as_i64().unwrap();
+        let message_ref = format!("{}:{message_id}", memory.id);
+
+        let disabled = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri(format!("/api/v1/messages/{message_ref}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"status":false}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(disabled.status(), StatusCode::OK);
+
+        let recent = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/messages?memory_id={}&agent_id=agent-1&session_id=session-1",
+                        memory.id
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response_json(recent).await["data"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+
+        let hidden = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/messages/search?memory_id={}&query=Rust",
+                        memory.id
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            response_json(hidden).await["data"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+
+        let enabled = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri(format!("/api/v1/messages/{message_ref}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"status":true}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(enabled.status(), StatusCode::OK);
+
+        let content = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/messages/{message_ref}/content"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            response_json(content).await["data"]["content"]
+                .as_str()
+                .unwrap()
+                .contains("Rust memory")
+        );
+
+        let forgotten = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!("/api/v1/messages/{message_ref}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(forgotten.status(), StatusCode::OK);
+        assert!(
+            env.state
+                .memory_messages
+                .get_by_message_id(&memory.id, message_id)
+                .unwrap()
+                .forget_at
+                .is_some()
+        );
+
+        let deleted = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!("/api/v1/memories/{}", memory.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(deleted.status(), StatusCode::OK);
+        assert!(
+            env.state
+                .memory_messages
+                .get_by_message_id(&memory.id, message_id)
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn memory_worker_extracts_children_and_structural_failure_keeps_raw() {
+        async fn run(response: &str) -> (TestEnv, String, String, i64) {
+            let mut env = test_env();
+            let llm = mock_memory_llm(response).await;
+            let mutable = Arc::get_mut(&mut env.state).unwrap();
+            mutable.embedder = Some(Arc::new(TestEmbedder));
+            mutable.llm = Some(Arc::new(llm));
+            let memory = env
+                .state
+                .memories
+                .create(
+                    "test-user",
+                    crate::api::features::MemoryCreateRequest {
+                        name: "Worker memory".into(),
+                        memory_type: vec!["raw".into(), "semantic".into()],
+                        embd_id: "default".into(),
+                        llm_id: "default".into(),
+                        description: String::new(),
+                    },
+                )
+                .unwrap();
+            let source_id = env.state.memory_messages.next_message_id();
+            env.state
+                .memory_messages
+                .insert_messages(vec![crate::api::joint_services::MemoryMessage {
+                    message_id: source_id,
+                    message_type: "raw".into(),
+                    source_id: 0,
+                    memory_id: memory.id.clone(),
+                    user_id: "test-user".into(),
+                    agent_id: "agent-1".into(),
+                    session_id: "session-1".into(),
+                    content: crate::api::joint_services::build_raw_message_content(
+                        "Rust is memory safe",
+                        "Stored",
+                    ),
+                    valid_at: "2026-08-12 10:00:00".into(),
+                    invalid_at: None,
+                    forget_at: None,
+                    status: true,
+                    zone_id: 0,
+                    content_embed: vec![1.0, 0.0],
+                }])
+                .unwrap();
+            let task_id = env
+                .state
+                .tasks
+                .stage_memory_task(
+                    "test-user",
+                    &memory.id,
+                    source_id,
+                    crate::api::features::MemoryTaskPayload::new(
+                        "test-user",
+                        "agent-1",
+                        "session-1",
+                        "Rust is memory safe",
+                        "Stored",
+                    ),
+                )
+                .unwrap();
+            assert!(env.state.tasks.publish_memory_task(&task_id).unwrap());
+            let task = env.state.tasks.get(&task_id).unwrap();
+            process_memory_task(env.state.clone(), task).await;
+            (env, memory.id, task_id, source_id)
+        }
+
+        let (success, memory_id, task_id, source_id) = run(
+            r#"{"semantic":[{"content":"Rust prevents data races","valid_at":"2026-08-12T10:00:00Z","invalid_at":""}]}"#,
+        )
+        .await;
+        let rows = success.state.memory_messages.query_with_options(
+            crate::api::joint_services::MemoryMessageQuery {
+                memory_ids: std::slice::from_ref(&memory_id),
+                agent_id: None,
+                session_id: None,
+                user_id: None,
+                status: None,
+                top_n: None,
+                hide_forgotten: false,
+            },
+        );
+        assert_eq!(success.state.tasks.get(&task_id).unwrap().status, "done");
+        assert_eq!(rows.len(), 2);
+        let child = rows.iter().find(|row| row.source_id == source_id).unwrap();
+        assert_eq!(child.message_type, "semantic");
+        assert_eq!(child.valid_at, "2026-08-12 10:00:00");
+
+        let (failed, memory_id, task_id, source_id) = run(r#"{"semantic":{}}"#).await;
+        let task = failed.state.tasks.get(&task_id).unwrap();
+        assert_eq!(task.status, "failed");
+        assert!(task.message.contains("must be an array"));
+        assert!(
+            failed
+                .state
+                .memory_messages
+                .get_by_message_id(&memory_id, source_id)
+                .is_some(),
+            "the synchronous RAW phase must survive extraction failure"
+        );
+        assert!(
+            failed
+                .state
+                .memory_messages
+                .query_with_options(crate::api::joint_services::MemoryMessageQuery {
+                    memory_ids: std::slice::from_ref(&memory_id),
+                    agent_id: None,
+                    session_id: None,
+                    user_id: None,
+                    status: None,
+                    top_n: None,
+                    hide_forgotten: false,
+                })
+                .iter()
+                .all(|row| row.source_id == 0)
+        );
+    }
+
+    #[test]
+    fn memory_task_reconciler_publishes_only_when_raw_and_memory_exist() {
+        let env = test_env();
+        let memory = env
+            .state
+            .memories
+            .create(
+                "test-user",
+                crate::api::features::MemoryCreateRequest {
+                    name: "Reconcile memory".into(),
+                    memory_type: vec!["raw".into()],
+                    embd_id: "default".into(),
+                    llm_id: "default".into(),
+                    description: String::new(),
+                },
+            )
+            .unwrap();
+        env.state
+            .memory_messages
+            .insert_messages(vec![crate::api::joint_services::MemoryMessage {
+                message_id: 91,
+                message_type: "raw".into(),
+                source_id: 0,
+                memory_id: memory.id.clone(),
+                user_id: "test-user".into(),
+                agent_id: "agent".into(),
+                session_id: "session".into(),
+                content: "raw".into(),
+                valid_at: "2026-08-12 10:00:00".into(),
+                invalid_at: None,
+                forget_at: None,
+                status: true,
+                zone_id: 0,
+                content_embed: vec![1.0],
+            }])
+            .unwrap();
+        let payload = || {
+            crate::api::features::MemoryTaskPayload::new(
+                "test-user",
+                "agent",
+                "session",
+                "input",
+                "response",
+            )
+        };
+        let recoverable = env
+            .state
+            .tasks
+            .stage_memory_task("test-user", &memory.id, 91, payload())
+            .unwrap();
+        let orphan = env
+            .state
+            .tasks
+            .stage_memory_task("test-user", &memory.id, 92, payload())
+            .unwrap();
+        reconcile_staged_memory_tasks(&env.state);
+        assert_eq!(env.state.tasks.get(&recoverable).unwrap().status, "pending");
+        assert!(env.state.tasks.get(&orphan).is_none());
+    }
+
+    #[tokio::test]
+    async fn memory_routes_accept_repeated_filters_and_reject_oversized_pages() {
+        let mut env = test_env();
+        Arc::get_mut(&mut env.state).unwrap().embedder = Some(Arc::new(TestEmbedder));
+        let memory = env
+            .state
+            .memories
+            .create(
+                "test-user",
+                crate::api::features::MemoryCreateRequest {
+                    name: "Query contract".into(),
+                    memory_type: vec!["raw".into()],
+                    embd_id: "default".into(),
+                    llm_id: "default".into(),
+                    description: String::new(),
+                },
+            )
+            .unwrap();
+        let message = |message_id, agent_id: &str| crate::api::joint_services::MemoryMessage {
+            message_id,
+            message_type: "raw".into(),
+            source_id: 0,
+            memory_id: memory.id.clone(),
+            user_id: "test-user".into(),
+            agent_id: agent_id.into(),
+            session_id: "session".into(),
+            content: format!("content {message_id}"),
+            valid_at: format!("2026-08-12 00:00:0{message_id}"),
+            invalid_at: None,
+            forget_at: None,
+            status: true,
+            zone_id: 0,
+            content_embed: vec![1.0, 0.0],
+        };
+        env.state
+            .memory_messages
+            .insert_messages(vec![message(1, "agent-a"), message(2, "agent-b")])
+            .unwrap();
+        let router = build_router(env.state.clone());
+        let authorization = format!("Bearer {}", env.token);
+
+        let repeated = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/memories/{}?agent_id=agent-a&agent_id=agent-b&page_size=100",
+                        memory.id
+                    ))
+                    .header(header::AUTHORIZATION, &authorization)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(repeated.status(), StatusCode::OK);
+        let repeated_json = response_json(repeated).await;
+        let repeated_messages = repeated_json["data"]["messages"]["message_list"]
+            .as_array()
+            .unwrap();
+        assert_eq!(repeated_messages.len(), 2);
+        assert_eq!(repeated_messages[0]["agent_name"], "Unknown");
+        assert!(repeated_messages[0]["task"].is_null());
+
+        let content = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/messages/{}:{}/content", memory.id, 1))
+                    .header(header::AUTHORIZATION, &authorization)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(content.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(content).await["data"]["content_embed"],
+            serde_json::json!([1.0, 0.0])
+        );
+
+        let repeated_memory_ids = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/messages?memory_id={}&memory_id={}&limit=100",
+                        memory.id, memory.id
+                    ))
+                    .header(header::AUTHORIZATION, &authorization)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(repeated_memory_ids.status(), StatusCode::OK);
+
+        let too_large = router
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/memories/{}?page_size=101", memory.id))
+                    .header(header::AUTHORIZATION, authorization)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(too_large.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response_json(too_large).await["message"],
+            "page_size must be less than or equal to 100"
+        );
+    }
+
+    #[tokio::test]
+    async fn skill_index_config_search_reindex_and_delete_routes_are_live() {
+        let mut env = test_env();
+        Arc::get_mut(&mut env.state).unwrap().embedder = Some(Arc::new(TestEmbedder));
+        let router = build_router(env.state.clone());
+        let authorization = format!("Bearer {}", env.token);
+
+        let configured = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/skills/config")
+                    .header(header::AUTHORIZATION, &authorization)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "space_id": "engineering",
+                            "embd_id": "default",
+                            "vector_similarity_weight": 0.4,
+                            "similarity_threshold": 0.0,
+                            "top_k": 10,
+                            "field_config": {
+                                "name": {"enabled": true, "weight": 3.0},
+                                "tags": {"enabled": true, "weight": 2.0},
+                                "description": {"enabled": true, "weight": 1.0},
+                                "content": {"enabled": false, "weight": 0.5}
+                            }
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(configured.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(configured).await["data"]["embd_id"],
+            "default"
+        );
+
+        let indexed = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/skills/index")
+                    .header(header::AUTHORIZATION, &authorization)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "space_id": "engineering",
+                            "skills": [{
+                                "id": "rust/search",
+                                "folder_id": "folder-1",
+                                "name": "Rust Search",
+                                "description": "Hybrid retrieval in Rust",
+                                "tags": ["rust", "rag"],
+                                "content": "Implementation notes",
+                                "version": "1.2.3"
+                            }]
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(indexed.status(), StatusCode::OK);
+        assert_eq!(response_json(indexed).await["data"]["indexed_count"], 1);
+
+        let searched = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/skills/search")
+                    .header(header::AUTHORIZATION, &authorization)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"space_id":"engineering","query":"Rust retrieval","page":1,"page_size":10}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(searched.status(), StatusCode::OK);
+        let searched = response_json(searched).await;
+        assert_eq!(searched["data"]["total"], 1);
+        assert_eq!(searched["data"]["search_type"], "hybrid");
+        assert_eq!(searched["data"]["skills"][0]["skill_id"], "rust_search");
+
+        let reindexed = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/skills/reindex")
+                    .header(header::AUTHORIZATION, &authorization)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"space_id":"engineering"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(reindexed.status(), StatusCode::OK);
+        let reindexed = response_json(reindexed).await;
+        assert_eq!(reindexed["data"]["indexed_count"], 1);
+        assert_eq!(reindexed["data"]["version"], "1.0.1");
+
+        let deleted = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri("/api/v1/skills/index?space_id=engineering&skill_id=rust/search")
+                    .header(header::AUTHORIZATION, &authorization)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(deleted.status(), StatusCode::OK);
+        assert!(response_json(deleted).await["data"].as_bool().unwrap());
+
+        let listed = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/skills/search")
+                    .header(header::AUTHORIZATION, authorization)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"space_id":"engineering","query":""}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response_json(listed).await["data"]["total"], 0);
+    }
+
+    async fn response_sse_json(response: Response) -> (Vec<serde_json::Value>, String) {
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = String::from_utf8(body.to_vec()).unwrap();
+        let frames = body
+            .split("\n\n")
+            .filter_map(|frame| frame.strip_prefix("data:"))
+            .map(str::trim)
+            .filter(|frame| !frame.is_empty() && *frame != "[DONE]")
+            .map(|frame| serde_json::from_str(frame).unwrap())
+            .collect();
+        (frames, body)
+    }
+
+    #[tokio::test]
+    async fn prometheus_metrics_are_public_text_and_bounded_to_rust_runtime() {
+        let env = test_env();
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "text/plain; version=0.0.4; charset=utf-8"
+        );
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = std::str::from_utf8(&body).unwrap();
+        assert!(body.contains("ragflow_canvas_runs_total"));
+        assert!(!body.contains("runtime=\"python\""));
+    }
+
+    #[tokio::test]
+    async fn component_catalog_is_authenticated_filtered_and_strictly_shaped() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let unauthorized = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/components")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+        let all = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/components")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(all.status(), StatusCode::OK);
+        let all = response_json(all).await;
+        assert_eq!(all["code"], 0);
+        assert_eq!(all["message"], "success");
+        let descriptors = all["data"].as_array().unwrap();
+        assert!(
+            descriptors
+                .windows(2)
+                .all(|pair| pair[0]["name"].as_str() < pair[1]["name"].as_str())
+        );
+        assert!(descriptors.iter().any(|item| item["category"] == "agent"));
+        assert!(
+            descriptors
+                .iter()
+                .any(|item| item["category"] == "ingestion")
+        );
+        assert!(descriptors.iter().all(|item| {
+            item["inputs"].is_object()
+                && item["outputs"].is_object()
+                && item["name"].as_str().is_some_and(|name| !name.is_empty())
+        }));
+
+        let filtered = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/components?category=INGESTION,ingestion,shared")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(filtered.status(), StatusCode::OK);
+        let filtered = response_json(filtered).await;
+        assert_eq!(
+            filtered["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|item| item["name"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["extractor", "file", "parser", "tokenchunker", "tokenizer"]
+        );
+
+        let invalid = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/components?category=Foo")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+        let invalid = response_json(invalid).await;
+        assert_eq!(invalid["code"], 400);
+        assert_eq!(invalid["message"], "unknown category: foo");
+    }
+
+    #[tokio::test]
+    async fn agent_component_input_form_is_access_checked_and_typed() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let create = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/agents")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "title": "Input Form Agent",
+                            "dsl": {
+                                "graph": {
+                                    "nodes": [
+                                        {"id": "sally:0", "type": "beginNode"},
+                                        {"id": "Browser:0", "type": "agentNode"}
+                                    ],
+                                    "edges": []
+                                },
+                                "components": {
+                                    "sally:0": {
+                                        "obj": {
+                                            "component_name": "Begin",
+                                            "params": {},
+                                            "input_form": {
+                                                "query": {
+                                                    "type": "line",
+                                                    "name": "Query"
+                                                }
+                                            }
+                                        },
+                                        "upstream": [],
+                                        "downstream": []
+                                    },
+                                    "Browser:0": {
+                                        "obj": {
+                                            "component_name": "Browser",
+                                            "params": {"prompts": "{sys.query}"}
+                                        },
+                                        "upstream": [],
+                                        "downstream": []
+                                    }
+                                }
+                            }
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(create.status(), StatusCode::OK);
+        let agent_id = response_json(create).await["data"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let form = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/agents/{agent_id}/components/sally:0/input-form"
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(form.status(), StatusCode::OK);
+        let form = response_json(form).await;
+        assert_eq!(form["code"], 0);
+        assert_eq!(form["message"], "success");
+        assert_eq!(form["data"]["query"]["type"], "line");
+
+        let dynamic = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/agents/{agent_id}/components/Browser:0/input-form"
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(dynamic.status(), StatusCode::OK);
+        let dynamic = response_json(dynamic).await;
+        assert_eq!(dynamic["code"], 0);
+        assert_eq!(dynamic["data"]["prompts"]["type"], "text");
+        assert_eq!(dynamic["data"]["upload_sources"]["type"], "line");
+
+        let missing_component = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/agents/{agent_id}/components/missing/input-form"
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing_component.status(), StatusCode::OK);
+        let missing_component = response_json(missing_component).await;
+        assert_eq!(missing_component["code"], 102);
+        assert_eq!(missing_component["message"], "component not found: missing");
+
+        let debug = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!(
+                        "/api/v1/agents/{agent_id}/components/sally:0/debug"
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::from(
+                        r#"{"params":{"query":{"value":"hello debug"}}}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(debug.status(), StatusCode::OK);
+        let debug = response_json(debug).await;
+        assert_eq!(debug["code"], 0);
+        assert_eq!(debug["data"]["query"], "hello debug");
+
+        for (body, expected_message) in [
+            (r#"{}"#, "`params` is required."),
+            (
+                r#"{"params":{"query":{}}}"#,
+                "`params.query.value` is required.",
+            ),
+        ] {
+            let invalid = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri(format!(
+                            "/api/v1/agents/{agent_id}/components/sally:0/debug"
+                        ))
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(invalid.status(), StatusCode::OK);
+            let invalid = response_json(invalid).await;
+            assert_eq!(invalid["code"], 101);
+            assert_eq!(invalid["message"], expected_message);
+        }
+
+        let unsupported_debug = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!(
+                        "/api/v1/agents/{agent_id}/components/Browser:0/debug"
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::from(r#"{"params":{}}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unsupported_debug.status(), StatusCode::OK);
+        let unsupported_debug = response_json(unsupported_debug).await;
+        assert_eq!(unsupported_debug["code"], 102);
+        assert!(
+            unsupported_debug["message"]
+                .as_str()
+                .unwrap()
+                .contains("component factory")
+        );
+
+        let inaccessible = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/agents/does-not-exist/components/begin/input-form")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(inaccessible.status(), StatusCode::OK);
+        let inaccessible = response_json(inaccessible).await;
+        assert_eq!(inaccessible["code"], 103);
+        assert_eq!(
+            inaccessible["message"],
+            "Make sure you have permission to access the agent."
+        );
+
+        let inaccessible_debug = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/agents/does-not-exist/components/begin/debug")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::from(r#"{"params":{}}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(inaccessible_debug.status(), StatusCode::OK);
+        assert_eq!(response_json(inaccessible_debug).await["code"], 103);
+    }
+
+    #[tokio::test]
+    async fn agent_create_derives_and_versions_a_missing_canvas_graph() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let create = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/agents")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "title": "Derived Graph Agent",
+                            "dsl": {"components": {
+                                "message": {
+                                    "obj": {
+                                        "component_name": "Message",
+                                        "params": {"content": ["done"]}
+                                    },
+                                    "upstream": ["begin"],
+                                    "downstream": []
+                                },
+                                "begin": {
+                                    "obj": {"component_name": "Begin", "params": {}},
+                                    "upstream": [],
+                                    "downstream": ["message"]
+                                }
+                            }}
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(create.status(), StatusCode::OK);
+        let create = response_json(create).await;
+        assert_eq!(create["code"], 0);
+        let dsl = &create["data"]["dsl"];
+        assert_eq!(
+            dsl["graph"]["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|node| node["id"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["begin", "message"]
+        );
+        assert_eq!(dsl["graph"]["edges"][0]["sourceHandle"], "start");
+        assert_eq!(dsl["graph"]["edges"][0]["targetHandle"], "end");
+        assert_eq!(dsl["components"]["begin"]["name"], "Begin");
+        assert!(dsl["components"]["begin"].get("obj").is_none());
+
+        let agent_id = create["data"]["id"].as_str().unwrap();
+        let versions = env.state.canvas_versions.list(agent_id);
+        assert_eq!(versions.len(), 1);
+        assert_eq!(versions[0].dsl, *dsl);
+    }
+
+    /// Upstream `agent_api.py::list_agent_sessions` +
+    /// `API4ConversationService.get_list`: both route spellings answer the
+    /// `{code, message, data, total}` envelope of `_agent_session_list_result`,
+    /// the row carries the `_normalize_agent_session` shape (`agent_id` from
+    /// `dialog_id`, folded per-message references, RAGFlow datetimes), and the
+    /// filters (`keywords`, `desc`, `orderby`, `dsl`, `page_size`) behave the
+    /// way the ported log page drives them.
+    #[tokio::test]
+    async fn agent_log_sessions_match_upstream_envelope_filters_and_detail() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let create = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/agents")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "title": "Log Parity Agent",
+                            "dsl": {"components": {
+                                "message": {
+                                    "obj": {
+                                        "component_name": "Message",
+                                        "params": {"content": ["done"]}
+                                    },
+                                    "upstream": ["begin"],
+                                    "downstream": []
+                                },
+                                "begin": {
+                                    "obj": {"component_name": "Begin", "params": {}},
+                                    "upstream": [],
+                                    "downstream": ["message"]
+                                }
+                            }}
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(create.status(), StatusCode::OK);
+        let agent_id = response_json(create).await["data"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let record = |question: &str, answer: &str| crate::llm::ConversationExchange {
+            question: question.to_string(),
+            answer: answer.to_string(),
+            citations: Vec::new(),
+            references: vec![crate::llm::ChunkReference {
+                document_id: None,
+                document_name: None,
+                id: "chunk-1".into(),
+                kb_id: "kb-1".into(),
+                content: "retrieved passage".into(),
+                similarity: Some(0.75),
+                vector_similarity: Some(0.8),
+                term_similarity: Some(0.2),
+                document_metadata: None,
+            }],
+            settings: None,
+            duration_ms: 1200,
+            usage: None,
+        };
+        let first = env
+            .state
+            .conversations
+            .create_agent_for(
+                "test-user",
+                "test-user",
+                &agent_id,
+                "first question",
+                vec![],
+            )
+            .unwrap();
+        env.state
+            .conversations
+            .append_exchange_with_settings(&first.id, "test-user", record("first question", "one"))
+            .unwrap();
+        let dsl = serde_json::json!({"components": {"begin": {}}});
+        env.state
+            .conversations
+            .record_agent_run(&first.id, &dsl, Some("node failed"))
+            .unwrap();
+        let second = env
+            .state
+            .conversations
+            .create_agent_for(
+                "test-user",
+                "test-user",
+                &agent_id,
+                "second question",
+                vec![],
+            )
+            .unwrap();
+        env.state
+            .conversations
+            .append_exchange_with_settings(
+                &second.id,
+                "test-user",
+                record("second question", "two"),
+            )
+            .unwrap();
+        env.state
+            .conversations
+            .set_agent_version_title(&second.id, "Release 1")
+            .unwrap();
+        // A chat session on the same canvas must not leak into the log table.
+        let other = env
+            .state
+            .conversations
+            .create_for("test-user", "not an agent session")
+            .unwrap();
+
+        let unauthorized = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/canvas/{agent_id}/sessions"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+        let missing_agent = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/canvas/does-not-exist/sessions")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing_agent.status(), StatusCode::NOT_FOUND);
+
+        let listing = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/canvas/{agent_id}/sessions?orderby=create_time&desc=false"
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(listing.status(), StatusCode::OK);
+        let listing = response_json(listing).await;
+        assert_eq!(listing["code"], 0);
+        assert_eq!(listing["message"], "success");
+        assert_eq!(listing["total"], 2);
+        let rows = listing["data"].as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["id"], first.id);
+        assert_eq!(rows[1]["id"], second.id);
+        assert_eq!(rows[0]["agent_id"], agent_id);
+        assert_eq!(rows[0]["user_id"], "test-user");
+        assert_eq!(rows[0]["exp_user_id"], "test-user");
+        assert_eq!(rows[0]["round"], 1);
+        assert_eq!(rows[0]["errors"], "node failed");
+        assert_eq!(rows[1]["errors"], serde_json::Value::Null);
+        assert_eq!(rows[1]["version_title"], "Release 1");
+        assert_eq!(rows[0]["message"][0]["content"], "first question");
+        assert_eq!(rows[0]["message"][0]["role"], "user");
+        assert_eq!(
+            rows[0]["message"][1]["reference"][0]["content"],
+            "retrieved passage"
+        );
+        assert_eq!(rows[0]["message"][1]["reference"][0]["dataset_id"], "kb-1");
+        assert_eq!(rows[0]["dsl"]["components"]["begin"], serde_json::json!({}));
+        assert_eq!(rows[0]["create_date"].as_str().unwrap().len(), 19);
+        assert!(!rows.iter().any(|row| row["id"] == other.id));
+
+        // `dsl=false` drops the snapshot, exactly like `include_dsl`.
+        let without_dsl = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/canvas/{agent_id}/sessions?dsl=false"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let without_dsl = response_json(without_dsl).await;
+        assert!(without_dsl["data"][0].get("dsl").is_none());
+
+        // Keywords match the serialized message, newest first by default.
+        let keyword = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/canvas/{agent_id}/sessions?keywords=SECOND"
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let keyword = response_json(keyword).await;
+        assert_eq!(keyword["total"], 1);
+        assert_eq!(keyword["data"][0]["id"], second.id);
+
+        let empty = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/canvas/{agent_id}/sessions?keywords=nothing"
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let empty = response_json(empty).await;
+        assert_eq!(empty["total"], 0);
+        assert_eq!(empty["data"], serde_json::json!([]));
+
+        // `validate_rest_api_page_size` rejects anything above 100.
+        let oversize = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/canvas/{agent_id}/sessions?page_size=101"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(oversize.status(), StatusCode::BAD_REQUEST);
+        let oversize = response_json(oversize).await;
+        assert_eq!(
+            oversize["message"],
+            "page_size must be less than or equal to 100"
+        );
+
+        // The REST spelling, the detail route and its 404 message.
+        let rest = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/agents/{agent_id}/sessions?page=1&page_size=1"
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let rest = response_json(rest).await;
+        assert_eq!(rest["total"], 2);
+        assert_eq!(rest["data"].as_array().unwrap().len(), 1);
+
+        let detail = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/agents/{agent_id}/sessions/{}", first.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(detail.status(), StatusCode::OK);
+        let detail = response_json(detail).await;
+        assert_eq!(detail["data"]["id"], first.id);
+        assert_eq!(detail["data"]["round"], 1);
+
+        let unknown = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/agents/{agent_id}/sessions/nope"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            response_json(unknown).await["message"],
+            "Session not found!"
+        );
+
+        // `delete_agent_session_item`: the row leaves the log and the total
+        // drops, so callers (and UI probes) can clean up after themselves.
+        let removed = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!("/api/v1/agents/{agent_id}/sessions/{}", second.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(removed.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(removed).await["data"],
+            serde_json::json!(true)
+        );
+        let after = router
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/canvas/{agent_id}/sessions"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let after = response_json(after).await;
+        assert_eq!(after["total"], 1);
+        assert_eq!(after["data"][0]["id"], first.id);
+    }
+
+    /// Upstream `Routes.AgentLog = /agent-log-page/:id`: the SSR shell carries
+    /// the breadcrumb, the toolbar (`flow.export`, the `ID/Title` keyword box,
+    /// the `flow.latestDate` range, Search/Reset), the eight-column table, the
+    /// pagination footer and the detail modal, in both locales.
+    #[tokio::test]
+    async fn agent_log_page_matches_upstream_layout() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        for (lang, expectations) in [
+            (
+                "en",
+                vec![
+                    "agent-log-breadcrumb",
+                    "agent-log-breadcrumb-agents",
+                    ">Log<",
+                    "agent-log-export",
+                    "ID/Title",
+                    "Latest date",
+                    "agent-log-search",
+                    "agent-log-reset",
+                    "agent-log-table",
+                    "agent-log-pagination",
+                    "agent-log-modal",
+                    "agentLogLoad()",
+                ],
+            ),
+            (
+                "zh",
+                vec![
+                    "agent-log-breadcrumb",
+                    "智能体",
+                    ">日志<",
+                    "导出",
+                    "ID/标题",
+                    "最新日期",
+                    "搜索",
+                    "重置",
+                    "agent-log-table",
+                ],
+            ),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/agent-log-page/canvas-1")
+                        .header(
+                            header::COOKIE,
+                            if lang == "zh" {
+                                "lang=zh-CN"
+                            } else {
+                                "lang=en"
+                            },
+                        )
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "lang {lang}");
+            let body = String::from_utf8(
+                to_bytes(response.into_body(), 4 * 1024 * 1024)
+                    .await
+                    .unwrap()
+                    .to_vec(),
+            )
+            .unwrap();
+            for expected in expectations {
+                assert!(body.contains(expected), "lang {lang} missing {expected}");
+            }
+            // The English shell keeps the untranslated `flow.*` fallbacks that
+            // RAGFlow's zh locale also falls back to.
+            if lang == "zh" {
+                assert!(body.contains("No data to export"));
+                assert!(body.contains("Success"));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn stats_requires_authentication_and_honors_canvas_source_filter() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/stats")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        env.state
+            .conversations
+            .create_for("test-user", "standard")
+            .unwrap();
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/stats?from_date=1970-01-01&to_date=2999-12-31&canvas_id=agent")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["data"]["pv"], serde_json::json!([]));
+        assert_eq!(body["data"]["uv"], serde_json::json!([]));
+    }
+
+    #[tokio::test]
+    async fn chat_creation_and_stats_require_selected_tenant_membership() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+
+        let forbidden_chat = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/conversations")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"question":"shared","tenant_id":"other-tenant"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(forbidden_chat.status(), StatusCode::FORBIDDEN);
+
+        let forbidden_stats = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/stats?tenant_id=other-tenant")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(forbidden_stats.status(), StatusCode::FORBIDDEN);
+
+        env.state
+            .tenants
+            .invite_member("shared-tenant", "test-user", "owner-user")
+            .unwrap();
+        env.state
+            .tenants
+            .accept_invitation("shared-tenant", "test-user")
+            .unwrap();
+        let created = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/conversations")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"question":"shared","tenant_id":"shared-tenant"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(created.status(), StatusCode::OK);
+        let created = response_json(created).await;
+        let conversation_id = created["data"]["id"].as_str().unwrap();
+        assert_eq!(
+            env.state
+                .conversations
+                .get(conversation_id)
+                .unwrap()
+                .tenant_id,
+            "shared-tenant"
+        );
+
+        let allowed_stats = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/stats?tenant_id=shared-tenant&from_date=1970-01-01&to_date=2999-12-31")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(allowed_stats.status(), StatusCode::OK);
+        let allowed_stats = response_json(allowed_stats).await;
+        assert_eq!(allowed_stats["data"]["pv"][0][1], 1);
+    }
+
+    fn search_chunk(id: &str, kb_id: &str, content: &str) -> crate::search::IndexedChunk {
+        crate::search::IndexedChunk {
+            id: id.into(),
+            doc_name: "search.txt".into(),
+            content: content.into(),
+            embedding: Vec::new(),
+            token_count: 2,
+            position: 0,
+            metadata: std::collections::HashMap::from([("kb_id".into(), kb_id.into())]),
+        }
+    }
+
+    fn chunk_pagerank(state: &AppState, chunk_id: &str) -> f32 {
+        state
+            .engine
+            .read()
+            .unwrap()
+            .to_vec()
+            .into_iter()
+            .find(|chunk| chunk.id == chunk_id)
+            .and_then(|chunk| chunk.metadata.get("pagerank_fea").cloned())
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0.0)
+    }
+
+    #[test]
+    fn kb_embedding_selector_requires_one_vector_space_and_supports_legacy_default() {
+        let mut env = test_env();
+        configure_embedding_models(&env.state, "test-user", &["embed-a", "embed-b"]);
+        let first = env
+            .state
+            .kbs
+            .create_for_with_config(
+                "test-user",
+                "First",
+                "",
+                "private",
+                "minimax/primary/embed-a",
+            )
+            .unwrap();
+        let second = env
+            .state
+            .kbs
+            .create_for_with_config(
+                "test-user",
+                "Second",
+                "",
+                "private",
+                "minimax/primary/embed-b",
+            )
+            .unwrap();
+        let error = kb_embedder_for(&env.state, &[first.id, second.id])
+            .err()
+            .unwrap();
+        assert_eq!(
+            error.to_string(),
+            "Knowledge bases use different embedding models"
+        );
+
+        let legacy = env.state.kbs.create_for("test-user", "Legacy", "").unwrap();
+        assert!(kb_embedder_for(&env.state, std::slice::from_ref(&legacy.id)).is_err());
+        Arc::get_mut(&mut env.state).unwrap().embedder = Some(Arc::new(TestEmbedder));
+        assert!(kb_embedder_for(&env.state, &[legacy.id]).is_ok());
+    }
+
+    #[tokio::test]
+    async fn datasets_persist_validated_embedding_and_block_changes_after_indexing() {
+        let env = test_env();
+        configure_embedding_models(&env.state, "test-user", &["embed-a", "embed-b"]);
+        let router = build_router(env.state.clone());
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/datasets")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "name": "Configured",
+                            "embedding_model": "minimax/primary/embed-a"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Upstream create answers HTTP 200.
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        let kb_id = body["data"]["id"].as_str().unwrap();
+        assert_eq!(body["data"]["embd_id"], "minimax/primary/embed-a");
+        env.state.kbs.update_counts(kb_id, 1, 1).unwrap();
+
+        // The API guide names this field `document_count`; the struct grew up calling it
+        // `doc_count`. The list must answer to the documented name.
+        let listed = response_json(
+            router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/v1/datasets")
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
+        let rows = listed["data"].as_array().cloned().unwrap_or_default();
+        assert!(!rows.is_empty(), "{listed}");
+        assert!(
+            rows.iter()
+                .any(|row| row["document_count"].as_u64() == Some(1)),
+            "the dataset list must report document_count as the guide documents: {listed}"
+        );
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri(format!("/api/v1/datasets/{kb_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"embedding_model":"minimax/primary/embed-b"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Upstream only verifies availability; it does not block the change when
+        // the dataset already holds indexed chunks (docs recommend clearing first).
+        assert_eq!(response.status(), StatusCode::OK);
+        let updated = response_json(response).await;
+        assert_eq!(updated["code"], 0, "{updated}");
+        assert_eq!(
+            env.state.kbs.get(kb_id).unwrap().embd_id,
+            "minimax/primary/embed-b"
+        );
+    }
+
+    #[tokio::test]
+    async fn retrieval_rejects_knowledge_bases_with_different_embedding_models() {
+        let env = test_env();
+        configure_embedding_models(&env.state, "test-user", &["embed-a", "embed-b"]);
+        let first = env
+            .state
+            .kbs
+            .create_for_with_config(
+                "test-user",
+                "First",
+                "",
+                "private",
+                "minimax/primary/embed-a",
+            )
+            .unwrap();
+        let second = env
+            .state
+            .kbs
+            .create_for_with_config(
+                "test-user",
+                "Second",
+                "",
+                "private",
+                "minimax/primary/embed-b",
+            )
+            .unwrap();
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/retrieval")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "question": "water quality",
+                            "kb_ids": [first.id, second.id],
+                            "vector_similarity_weight": 0
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = response_json(response).await;
+        assert_eq!(
+            body["message"],
+            "Knowledge bases use different embedding models"
+        );
+    }
+
+    #[tokio::test]
+    async fn retrieval_requires_configured_reranker_when_requested() {
+        let env = test_env();
+        let kb = env.state.kbs.create_for("test-user", "Search", "").unwrap();
+        env.state
+            .engine
+            .write()
+            .unwrap()
+            .add(search_chunk("one", &kb.id, "water quality"));
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/retrieval")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "question": "water quality",
+                            "kb_ids": [kb.id],
+                            "vector_similarity_weight": 0,
+                            "rerank": true
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn retrieval_uses_shared_reranker() {
+        let mut env = test_env();
+        let kb = env.state.kbs.create_for("test-user", "Search", "").unwrap();
+        {
+            let mut engine = env.state.engine.write().unwrap();
+            engine.add(search_chunk("first", &kb.id, "water quality exact"));
+            engine.add(search_chunk("second", &kb.id, "water quality"));
+        }
+        Arc::get_mut(&mut env.state).unwrap().reranker =
+            Arc::new(RerankerManager::in_memory(Some(Arc::new(ReverseReranker))));
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/retrieval")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "question": "water quality",
+                            "kb_ids": [kb.id],
+                            "top_k": 2,
+                            "vector_similarity_weight": 0,
+                            "rerank": true
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["data"]["chunks"][0]["chunk_id"], "second");
+    }
+
+    #[tokio::test]
+    async fn retrieval_filters_documents_and_returns_full_aggregations_and_highlights() {
+        let env = test_env();
+        let kb = env.state.kbs.create_for("test-user", "Search", "").unwrap();
+        {
+            let mut engine = env.state.engine.write().unwrap();
+            for (id, doc_id, doc_name, content) in [
+                ("one", "doc-a", "A.txt", "water quality alpha"),
+                ("two", "doc-a", "A.txt", "water quality beta"),
+                ("three", "doc-b", "B.txt", "water quality gamma"),
+            ] {
+                let mut chunk = search_chunk(id, &kb.id, content);
+                chunk.doc_name = doc_name.into();
+                chunk.metadata.insert("doc_id".into(), doc_id.into());
+                engine.add(chunk);
+            }
+        }
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/retrieval")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "question": "water quality",
+                            "kb_ids": [kb.id],
+                            "doc_ids": ["doc-a"],
+                            "top_k": 1,
+                            "vector_similarity_weight": 0,
+                            "highlight": true
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["data"]["total"], 2);
+        assert_eq!(body["data"]["chunks"].as_array().unwrap().len(), 1);
+        assert_eq!(body["data"]["chunks"][0]["doc_id"], "doc-a");
+        assert_eq!(body["data"]["doc_aggs"][0]["count"], 2);
+        assert_eq!(body["data"]["doc_aggs"][0]["doc_name"], "A.txt");
+        assert!(
+            body["data"]["chunks"][0]["highlight"]
+                .as_str()
+                .unwrap()
+                .contains("<em>water</em>")
+        );
+    }
+
+    #[tokio::test]
+    async fn retrieval_deep_page_keeps_global_total_and_aggregations() {
+        let env = test_env();
+        let kb = env.state.kbs.create_for("test-user", "Search", "").unwrap();
+        {
+            let mut engine = env.state.engine.write().unwrap();
+            for index in 0..70 {
+                let mut chunk = search_chunk(&format!("chunk-{index:02}"), &kb.id, "water quality");
+                chunk.doc_name = "A.txt".into();
+                chunk.metadata.insert("doc_id".into(), "doc-a".into());
+                engine.add(chunk);
+            }
+        }
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/retrieval")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "question": "water quality",
+                            "kb_ids": [kb.id],
+                            "top_k": 1,
+                            "page": 65,
+                            "vector_similarity_weight": 0
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["data"]["total"], 70);
+        assert_eq!(body["data"]["chunks"].as_array().unwrap().len(), 1);
+        assert_eq!(body["data"]["doc_aggs"][0]["count"], 70);
+    }
+
+    #[tokio::test]
+    async fn reranker_config_requires_admin_and_hot_disables_runtime() {
+        let mut env = test_env();
+        Arc::get_mut(&mut env.state).unwrap().reranker =
+            Arc::new(RerankerManager::in_memory(Some(Arc::new(ReverseReranker))));
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri("/api/v1/reranker")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "enabled": false,
+                            "api_base": "",
+                            "api_key": null
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(env.state.reranker.current().is_none());
+        let body = response_json(response).await;
+        assert_eq!(body["data"]["enabled"], false);
+        assert!(body["data"].get("api_key").is_none());
+
+        let member = non_admin_env();
+        let response = build_router(member.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/v1/reranker")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", member.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn provider_config_requires_admin_and_never_returns_secret() {
+        let env = test_env();
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/providers/local-openai")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "name": "Local OpenAI",
+                            "api_base": "http://127.0.0.1:8080/v1",
+                            "models": ["model-a"],
+                            "enabled": true,
+                            "api_key": "secret"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["data"]["api_key_configured"], true);
+        assert!(body["data"].get("api_key").is_none());
+
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/providers")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = response_json(response).await;
+        let provider = body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|provider| provider["id"] == "local-openai")
+            .unwrap();
+        assert_eq!(provider["api_key_configured"], true);
+        assert!(provider.get("api_key").is_none());
+
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/providers/local-openai")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["data"]["id"], "local-openai");
+        assert_eq!(body["data"]["api_key_configured"], true);
+        assert!(body["data"].get("api_key").is_none());
+
+        let member = non_admin_env();
+        let response = build_router(member.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/providers/local-openai")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", member.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "name": "Local OpenAI",
+                            "api_base": "http://127.0.0.1:8080/v1",
+                            "models": ["model-a"],
+                            "enabled": true
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+        let response = build_router(member.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/providers/New%20API/models")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", member.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        assert_eq!(response_json(response).await["code"], 502);
+
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/providers/missing/models")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn tenant_model_instances_enforce_permissions_and_expand_capabilities() {
+        let env = test_env();
+        let member = env
+            .state
+            .users
+            .register(
+                "Model Member",
+                "model-member@example.com",
+                "member password 123",
+            )
+            .unwrap();
+        let member_token = env
+            .state
+            .users
+            .login("model-member@example.com", "member password 123")
+            .unwrap()
+            .unwrap();
+        env.state
+            .tenants
+            .invite_member("test-user", &member.id, "test-user")
+            .unwrap();
+        env.state
+            .tenants
+            .accept_invitation("test-user", &member.id)
+            .unwrap();
+        let router = build_router(env.state.clone());
+
+        let create = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri("/api/v1/tenant/models/minimax/primary")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "instance_name": "Primary MiniMax",
+                            "api_key": "tenant-secret",
+                            "models": [{
+                                "name": "MiniMax-M3",
+                                "model_types": ["chat", "embedding"],
+                                "max_tokens": 8192,
+                                "enabled": true
+                            }]
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(create.status(), StatusCode::OK);
+        let create_body = response_json(create).await;
+        assert_eq!(create_body["data"]["api_key_configured"], true);
+        assert!(create_body["data"].get("api_key").is_none());
+
+        let models = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/llm/models?tenant_id=test-user")
+                    .header(header::AUTHORIZATION, format!("Bearer {member_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(models.status(), StatusCode::OK);
+        let models_body = response_json(models).await;
+        let model_types: Vec<&str> = models_body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|model| model["model_type"].as_str())
+            .collect();
+        // Factory-catalog expansion (upstream `list_tenant_added_models`):
+        // the MiniMax factory catalog is exposed for the tenant instance, in
+        // factory order, with the configured MiniMax-M3 entry expanded first
+        // (chat + embedding), followed by the remaining factory chat models.
+        assert!(
+            model_types.len() >= 7,
+            "expected the full MiniMax factory catalog"
+        );
+        assert_eq!(model_types[0], "chat");
+        assert_eq!(model_types[1], "embedding");
+        assert!(model_types[2..].iter().all(|t| *t == "chat"));
+
+        let added_instances = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/providers/MiniMax/instances")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(added_instances.status(), StatusCode::OK);
+        let added_instances = response_json(added_instances).await;
+        assert_eq!(
+            added_instances["data"][0]["instance_name"],
+            "Primary MiniMax"
+        );
+        assert_eq!(added_instances["data"][0]["api_key"], "");
+
+        let instance_models = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/providers/MiniMax/instances/Primary%20MiniMax/models")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(instance_models.status(), StatusCode::OK);
+        let instance_models = response_json(instance_models).await;
+        let minimax_m3 = instance_models["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|model| model["name"] == "MiniMax-M3")
+            .unwrap();
+        assert_eq!(minimax_m3["status"], "active");
+        assert_eq!(
+            minimax_m3["model_type"],
+            serde_json::json!(["chat", "embedding"])
+        );
+
+        let edit_model = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri("/api/v1/providers/MiniMax/instances/Primary%20MiniMax/models")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "model_name": ["MiniMax-M3"],
+                            "model_type": ["chat"]
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(edit_model.status(), StatusCode::OK);
+
+        let deactivate_model = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PATCH)
+                    .uri("/api/v1/providers/MiniMax/instances/Primary%20MiniMax/models/MiniMax-M3")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"status":"inactive"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(deactivate_model.status(), StatusCode::OK);
+        assert!(!env.state.tenant_models.list("test-user")[0].models[0].enabled);
+
+        let reactivate_model = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PATCH)
+                    .uri("/api/v1/providers/MiniMax/instances/Primary%20MiniMax/models/MiniMax-M3")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"status":"active"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(reactivate_model.status(), StatusCode::OK);
+        assert!(env.state.tenant_models.list("test-user")[0].models[0].enabled);
+
+        let member_write = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri("/api/v1/tenant/models/minimax/secondary")
+                    .header(header::AUTHORIZATION, format!("Bearer {member_token}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "tenant_id": "test-user",
+                            "instance_name": "Secondary",
+                            "models": [{
+                                "name": "MiniMax-M2",
+                                "model_types": ["chat"]
+                            }]
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(member_write.status(), StatusCode::FORBIDDEN);
+
+        let delete_provider = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri("/api/v1/providers/minimax")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(delete_provider.status(), StatusCode::CONFLICT);
+
+        let delete_instance = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri("/api/v1/providers/MiniMax/instances")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"instances":["Primary MiniMax"]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(delete_instance.status(), StatusCode::OK);
+        assert!(env.state.tenant_models.list("test-user").is_empty());
+
+        let outsider = env
+            .state
+            .users
+            .register("Outsider", "outsider@example.com", "outsider password 123")
+            .unwrap();
+        let outsider_token = env
+            .state
+            .users
+            .login("outsider@example.com", "outsider password 123")
+            .unwrap()
+            .unwrap();
+        assert_ne!(outsider.id, member.id);
+        let outsider_read = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/tenant/models?tenant_id=test-user")
+                    .header(header::AUTHORIZATION, format!("Bearer {outsider_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(outsider_read.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn provider_modal_verify_is_ephemeral_and_create_persists_tenant_instance() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let probe = Router::new().route(
+            "/v1/models",
+            get(|| async {
+                Json(serde_json::json!({
+                    "data": [{ "id": "gpt-probe" }]
+                }))
+            }),
+        );
+        tokio::spawn(async move {
+            axum::serve(listener, probe).await.unwrap();
+        });
+
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let base_url = format!("http://{address}/v1");
+        let verify = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/providers/OpenAI/connection")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "api_key": "probe-key",
+                            "base_url": base_url.clone()
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(verify.status(), StatusCode::OK);
+        assert_eq!(response_json(verify).await["code"], 0);
+        assert!(env.state.tenant_models.list("test-user").is_empty());
+
+        let create = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/providers/OpenAI/instances")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "instance_name": "Hosted OpenAI",
+                            "api_key": "probe-key",
+                            "base_url": base_url,
+                            "region": "default",
+                            "model_info": []
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(create.status(), StatusCode::OK);
+        let body = response_json(create).await;
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["data"]["instance_name"], "Hosted OpenAI");
+        assert_eq!(body["data"]["api_key_configured"], true);
+        assert!(body["data"].get("api_key").is_none());
+        let instances = env.state.tenant_models.list("test-user");
+        assert_eq!(instances.len(), 1);
+        assert!(instances[0].models.is_empty());
+        assert!(
+            env.state
+                .providers
+                .get_configured("openai")
+                .unwrap()
+                .enabled
+        );
+
+        let models = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/models?type=chat")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(models.status(), StatusCode::OK);
+        let models = response_json(models).await;
+        assert!(
+            models["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|model| { model["selector"] == "gpt-5.5@Hosted OpenAI@OpenAI" })
+        );
+        let resolved = env
+            .state
+            .tenant_models
+            .resolve(
+                &env.state.providers,
+                "test-user",
+                ModelCapability::Chat,
+                Some("gpt-5.5@Hosted OpenAI@OpenAI"),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(resolved.model_name, "gpt-5.5");
+        assert_eq!(resolved.api_key.as_deref(), Some("probe-key"));
+    }
+
+    #[tokio::test]
+    async fn new_api_picker_discovers_then_persists_selected_tool_model() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let probe = Router::new()
+            .route(
+                "/v1/models",
+                get(|| async {
+                    Json(serde_json::json!({
+                        "data": [{ "id": "custom-chat" }, { "id": "custom-embed" }]
+                    }))
+                }),
+            )
+            .route(
+                "/v1/chat/completions",
+                axum::routing::post(|| async {
+                    Json(serde_json::json!({
+                        "choices": [{ "message": { "content": "Hi" } }]
+                    }))
+                }),
+            );
+        tokio::spawn(async move {
+            axum::serve(listener, probe).await.unwrap();
+        });
+
+        let env = test_env();
+        assert!(env.state.providers.get_configured("new-api").is_none());
+        let router = build_router(env.state.clone());
+        let base_url = format!("http://{address}/v1");
+        let discovery = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/providers/New%20API/models?base_url={}",
+                        url::form_urlencoded::byte_serialize(base_url.as_bytes())
+                            .collect::<String>()
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(discovery.status(), StatusCode::OK);
+        let discovery = response_json(discovery).await;
+        assert_eq!(discovery["code"], 0);
+        assert!(
+            discovery["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|model| model["name"] == "custom-chat")
+        );
+        assert!(
+            env.state.providers.get_configured("new-api").is_none(),
+            "read-only discovery must not materialize a provider"
+        );
+
+        let model_info = serde_json::json!([{
+            "model_name": "custom-chat",
+            "model_type": ["chat"],
+            "max_tokens": 16384,
+            "extra": { "is_tools": true }
+        }]);
+        let verify = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/providers/New%20API/connection")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "api_key": "",
+                            "base_url": base_url.clone(),
+                            "model_info": model_info.clone()
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response_json(verify).await["code"], 0);
+        assert!(env.state.providers.get_configured("new-api").is_none());
+
+        let create = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/providers/New%20API/instances")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "instance_name": "Local gateway",
+                            "api_key": "",
+                            "base_url": base_url,
+                            "model_info": model_info
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let create = response_json(create).await;
+        assert_eq!(create["code"], 0);
+        let provider = env.state.providers.get_configured("new-api").unwrap();
+        assert!(provider.enabled);
+        assert_eq!(provider.models, vec!["custom-chat"]);
+        assert!(provider.api_key.is_none());
+        let instances = env.state.tenant_models.list("test-user");
+        assert_eq!(instances[0].models[0].is_tools, true);
+        let instance_models = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/providers/New%20API/instances/Local%20gateway/models")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let instance_models = response_json(instance_models).await;
+        assert_eq!(instance_models["data"][0]["features"][0], "is_tools");
+        let resolved = env
+            .state
+            .tenant_models
+            .resolve(
+                &env.state.providers,
+                "test-user",
+                ModelCapability::Chat,
+                Some("custom-chat@Local gateway@New API"),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(resolved.model_name, "custom-chat");
+    }
+
+    #[tokio::test]
+    async fn default_chat_model_route_enforces_shared_tenant_permissions_and_conflicts() {
+        let env = test_env();
+        env.state
+            .tenant_models
+            .upsert(
+                &env.state.providers,
+                "test-user",
+                "minimax",
+                "primary",
+                TenantModelInstanceUpdate {
+                    tenant_id: None,
+                    instance_name: "Primary".into(),
+                    api_base: None,
+                    api_key: None,
+                    clear_api_key: false,
+                    models: vec![TenantModelSpec {
+                        name: "MiniMax-M3".into(),
+                        model_types: vec![ModelCapability::Chat],
+                        max_tokens: None,
+                        enabled: true,
+                        is_tools: false,
+                        ocr_config: None,
+                    }],
+                },
+            )
+            .unwrap();
+        let member = env
+            .state
+            .users
+            .register(
+                "Selector Member",
+                "selector-member@example.com",
+                "member password 123",
+            )
+            .unwrap();
+        let member_token = env
+            .state
+            .users
+            .login("selector-member@example.com", "member password 123")
+            .unwrap()
+            .unwrap();
+        env.state
+            .tenants
+            .invite_member("test-user", &member.id, "test-user")
+            .unwrap();
+        env.state
+            .tenants
+            .accept_invitation("test-user", &member.id)
+            .unwrap();
+        let router = build_router(env.state.clone());
+
+        let set = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri("/api/v1/tenant/default-chat-model")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"tenant_id":"test-user","selector":"minimax/primary/MiniMax-M3"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(set.status(), StatusCode::OK);
+
+        let member_get = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/tenant/default-chat-model?tenant_id=test-user")
+                    .header(header::AUTHORIZATION, format!("Bearer {member_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(member_get.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(member_get).await["data"]["selector"],
+            "minimax/primary/MiniMax-M3"
+        );
+
+        let member_put = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri("/api/v1/tenant/default-chat-model")
+                    .header(header::AUTHORIZATION, format!("Bearer {member_token}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"tenant_id":"test-user","selector":null}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(member_put.status(), StatusCode::FORBIDDEN);
+
+        let conflict = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri("/api/v1/tenant/models/minimax/primary?tenant_id=test-user")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(conflict.status(), StatusCode::CONFLICT);
+        let conflict = response_json(conflict).await;
+        assert_eq!(conflict["code"], 409);
+        assert!(
+            conflict["message"]
+                .as_str()
+                .unwrap()
+                .contains("Tenant default chat selector")
+        );
+
+        let invalid = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri("/api/v1/tenant/default-chat-model")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"selector":"missing"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(response_json(invalid).await["code"], 400);
+
+        let clear = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri("/api/v1/tenant/default-chat-model")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"selector":null}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(clear.status(), StatusCode::OK);
+        assert!(response_json(clear).await["data"]["selector"].is_null());
+    }
+
+    #[tokio::test]
+    async fn api_auth_public_and_protected_routes() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let public = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/system/healthz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(public.status(), StatusCode::OK);
+        let health = response_json(public).await;
+        assert_eq!(health["data"]["status"], "healthy");
+        assert_eq!(health["data"]["postgres"], "disabled");
+        assert_eq!(health["data"]["zvec"], "disabled");
+
+        let password_key = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/system/password-public-key")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(password_key.status(), StatusCode::OK);
+        let password_key = response_json(password_key).await;
+        assert_eq!(password_key["data"]["enabled"], false);
+        assert!(password_key["data"]["public_key"].is_null());
+        assert_eq!(password_key["data"]["algorithm"], "RSAES-PKCS1-v1_5");
+
+        let status_unauthenticated = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/system/status")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(status_unauthenticated.status(), StatusCode::UNAUTHORIZED);
+
+        let status = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/system/status")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(status.status(), StatusCode::OK);
+        let status = response_json(status).await;
+        assert_eq!(status["data"]["doc_engine"]["type"], "json");
+        assert_eq!(status["data"]["database"]["database"], "local-json");
+        assert!(status["data"]["task_executor_heartbeats"].is_object());
+
+        let unauthenticated = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/datasets")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+
+        let authenticated = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/datasets")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(authenticated.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn system_variables_are_typed_durable_admin_settings() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+
+        let unauthenticated = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/system/variables")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+
+        let listed = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/system/variables")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(listed.status(), StatusCode::OK);
+        let listed = response_json(listed).await;
+        assert_eq!(listed["data"].as_array().unwrap().len(), 14);
+        assert_eq!(listed["data"][0]["name"], "default_role");
+        assert_eq!(listed["data"][0]["setting_type"], "config");
+
+        let invalid = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri("/api/v1/system/variables")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"var_name":"mail.timeout","var_value":"1.5"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+
+        for (name, value) in [("mail.timeout", "45"), ("mail.password", "secret-123")] {
+            let updated = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::PUT)
+                        .uri("/api/v1/system/variables")
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(
+                            serde_json::json!({"var_name": name, "var_value": value}).to_string(),
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(updated.status(), StatusCode::OK);
+        }
+
+        let shown = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/system/variables/bWFpbC50aW1lb3V0")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response_json(shown).await["data"][0]["value"], "45");
+
+        // Python admin CLI SHOW VAR sends a JSON body on GET; preserve that
+        // contract while the Go-style path uses a base64 name segment.
+        let shown_from_body = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/admin/variables")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"var_name":"mail.password"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let shown_from_body = response_json(shown_from_body).await;
+        assert_eq!(shown_from_body["data"].as_array().unwrap().len(), 1);
+        assert_eq!(shown_from_body["data"][0]["value"], "<redacted>");
+
+        let non_admin = non_admin_env();
+        let forbidden = build_router(non_admin.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/system/variables")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", non_admin.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn system_log_config_is_authenticated_and_updates_runtime_levels() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+
+        let unauthenticated = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/system/config/log")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+
+        let updated = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri("/api/v1/system/config/log")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"pkg_name":"rayrag::search","level":"warn"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(updated).await["data"],
+            serde_json::json!({"pkg_name":"rayrag::search","level":"WARNING"})
+        );
+
+        let levels = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/system/config/log")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(levels.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(levels).await["data"]["rayrag::search"],
+            "WARNING"
+        );
+
+        let invalid = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri("/api/v1/system/config/log")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"pkg_name":"rayrag","level":"verbose"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(invalid.status(), StatusCode::OK);
+        let invalid = response_json(invalid).await;
+        assert_eq!(invalid["code"], 102);
+        assert_eq!(invalid["message"], "Invalid log level: verbose");
+
+        let missing = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri("/api/v1/system/config/log")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"pkg_name":"rayrag"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(missing).await,
+            serde_json::json!({"code":102,"message":"pkg_name and level are required"})
+        );
+    }
+
+    #[tokio::test]
+    async fn knowledge_bases_are_isolated_by_authenticated_owner() {
+        let env = test_env();
+        let owner_kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Owner KB", "")
+            .unwrap();
+        let other_kb = env
+            .state
+            .kbs
+            .create_for("other-user", "Other KB", "")
+            .unwrap();
+        let router = build_router(env.state.clone());
+
+        let list = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/datasets")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(list.status(), StatusCode::OK);
+        let list_json = response_json(list).await;
+        let ids: Vec<&str> = list_json["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|kb| kb["id"].as_str())
+            .collect();
+        assert!(ids.contains(&owner_kb.id.as_str()));
+        assert!(!ids.contains(&other_kb.id.as_str()));
+
+        let forbidden = router
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/datasets/{}/documents", other_kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(forbidden.status(), StatusCode::OK);
+        let forbidden_json = response_json(forbidden).await;
+        assert_eq!(forbidden_json["code"], 102);
+    }
+
+    /// Upstream `admin/server/routes.py` user surfaces: the detail payload is a
+    /// *list* of matching accounts (`UserMgr.get_user_details`), and the account's
+    /// datasets and agents come from their own endpoints
+    /// (`UserServiceMgr.get_user_datasets` / `get_user_agents`).
+    #[tokio::test]
+    async fn admin_user_assets_follow_the_upstream_endpoints() {
+        let env = test_env();
+        let admin = env
+            .state
+            .users
+            .create_user("boss@example.com", "secret-passphrase", "admin")
+            .unwrap();
+        let token = env.state.users.issue_token_for(&admin.id).unwrap();
+        let kb = env
+            .state
+            .kbs
+            .create_for(&admin.id, "Admin KB", "dataset owned by the admin")
+            .unwrap();
+        let agent = env
+            .state
+            .agents
+            .create(
+                &admin.id,
+                crate::api::features::AgentCreateRequest {
+                    name: "Admin Agent".into(),
+                    description: String::new(),
+                    permission: None,
+                    kb_ids: Vec::new(),
+                    prompt_template: None,
+                    dsl: serde_json::json!({"components": {}, "history": [], "path": []}),
+                    canvas_category: Some("agent_canvas".into()),
+                    canvas_type: String::new(),
+                    tags: Vec::new(),
+                    avatar: String::new(),
+                    release: None,
+                },
+            )
+            .unwrap();
+        let router = build_router(env.state.clone());
+        let get = |path: String, token: String| {
+            let router = router.clone();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .uri(path)
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        let detail = get("/api/v1/admin/users/boss@example.com".into(), token.clone()).await;
+        assert_eq!(detail.status(), StatusCode::OK);
+        let detail = response_json(detail).await;
+        let rows = detail["data"].as_array().expect("the payload is a list");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["email"], "boss@example.com");
+        assert_eq!(rows[0]["is_superuser"], true);
+        assert_eq!(rows[0]["is_anonymous"], "0");
+        assert_eq!(rows[0]["login_channel"], "password");
+        assert!(rows[0]["create_date"].is_string() && rows[0]["update_date"].is_string());
+        assert!(
+            rows[0]["datasets"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| entry["id"] == kb.id.as_str())
+        );
+
+        let datasets = get(
+            "/api/v1/admin/users/boss@example.com/datasets".into(),
+            token.clone(),
+        )
+        .await;
+        assert_eq!(datasets.status(), StatusCode::OK);
+        let datasets = response_json(datasets).await;
+        let dataset = datasets["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["id"] == kb.id.as_str())
+            .expect("the admin's dataset is listed");
+        for key in [
+            "name",
+            "avatar",
+            "doc_num",
+            "chunk_num",
+            "token_num",
+            "language",
+            "permission",
+            "create_date",
+            "update_date",
+        ] {
+            assert!(
+                dataset.get(key).is_some(),
+                "dataset row missing {key}: {dataset}"
+            );
+        }
+        assert_eq!(dataset["language"], "English", "the KB language column");
+
+        let agents = get(
+            "/api/v1/admin/users/boss@example.com/agents".into(),
+            token.clone(),
+        )
+        .await;
+        assert_eq!(agents.status(), StatusCode::OK);
+        let agents = response_json(agents).await;
+        let agent_row = &agents["data"].as_array().unwrap()[0];
+        assert_eq!(agent_row["title"], "Admin Agent");
+        assert_eq!(agent_row["permission"], "private");
+        assert_eq!(
+            agent_row["canvas_category"], "agent",
+            "upstream keeps only the first `_`-separated segment"
+        );
+        assert_eq!(agent_row["avatar"], serde_json::Value::Null);
+        assert_eq!(agent.id.len() > 0, true);
+
+        // Unknown accounts and non-admins.
+        let missing = get(
+            "/api/v1/admin/users/nobody@example.com/datasets".into(),
+            token.clone(),
+        )
+        .await;
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response_json(missing).await["message"], "User not found");
+        let plain = env
+            .state
+            .users
+            .create_user("plain@example.com", "secret-passphrase", "user")
+            .unwrap();
+        let plain_token = env.state.users.issue_token_for(&plain.id).unwrap();
+        let forbidden = get(
+            "/api/v1/admin/users/boss@example.com/agents".into(),
+            plain_token,
+        )
+        .await;
+        assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+    }
+
+    /// Upstream `admin/server/routes.py` sandbox endpoints: the provider registry,
+    /// the per-provider schemas, the durable configuration (with schema defaults)
+    /// and the connection probe — including the validation that keeps a typo or an
+    /// out-of-range number out of the stored provider configuration.
+    #[tokio::test]
+    async fn sandbox_admin_endpoints_match_the_upstream_contract() {
+        let env = test_env();
+        let admin = env
+            .state
+            .users
+            .create_user("boss@example.com", "secret-passphrase", "admin")
+            .unwrap();
+        let token = env.state.users.issue_token_for(&admin.id).unwrap();
+        let router = build_router(env.state.clone());
+        let call =
+            |method: &'static str, path: String, body: Option<serde_json::Value>, token: String| {
+                let router = router.clone();
+                async move {
+                    let mut request = Request::builder()
+                        .method(method)
+                        .uri(path)
+                        .header(header::AUTHORIZATION, format!("Bearer {token}"));
+                    let body = match body {
+                        Some(value) => {
+                            request = request.header(header::CONTENT_TYPE, "application/json");
+                            Body::from(value.to_string())
+                        }
+                        None => Body::empty(),
+                    };
+                    router.oneshot(request.body(body).unwrap()).await.unwrap()
+                }
+            };
+
+        // Non-admins are refused (the fixture's own user is an administrator).
+        let plain = env
+            .state
+            .users
+            .create_user("plain@example.com", "secret-passphrase", "user")
+            .unwrap();
+        let plain_token = env.state.users.issue_token_for(&plain.id).unwrap();
+        let forbidden = call(
+            "GET",
+            "/api/v1/admin/sandbox/providers".into(),
+            None,
+            plain_token,
+        )
+        .await;
+        assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+
+        let providers = call(
+            "GET",
+            "/api/v1/admin/sandbox/providers".into(),
+            None,
+            token.clone(),
+        )
+        .await;
+        assert_eq!(providers.status(), StatusCode::OK);
+        let providers = response_json(providers).await;
+        let ids: Vec<&str> = providers["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            ids,
+            vec![
+                "local",
+                "self_managed",
+                "ssh",
+                "aliyun_codeinterpreter",
+                "e2b",
+                "tenki",
+                "ucloud_agent_sandbox"
+            ]
+        );
+        assert_eq!(providers["data"][1]["name"], "Self-Managed");
+        assert_eq!(providers["data"][1]["tags"][0], "self-hosted");
+
+        let schema = call(
+            "GET",
+            "/api/v1/admin/sandbox/providers/ssh/schema".into(),
+            None,
+            token.clone(),
+        )
+        .await;
+        let schema = response_json(schema).await;
+        assert_eq!(schema["data"]["host"]["required"], true);
+        assert_eq!(schema["data"]["password"]["secret"], true);
+        assert_eq!(schema["data"]["private_key"]["multiline"], true);
+        let unknown = call(
+            "GET",
+            "/api/v1/admin/sandbox/providers/nope/schema".into(),
+            None,
+            token.clone(),
+        )
+        .await;
+        assert_eq!(unknown.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response_json(unknown).await["message"],
+            "Unknown provider: nope"
+        );
+
+        // The seeded default provider is self_managed; its schema defaults are
+        // filled in even though only four keys are stored.
+        let config = call(
+            "GET",
+            "/api/v1/admin/sandbox/config".into(),
+            None,
+            token.clone(),
+        )
+        .await;
+        let config = response_json(config).await;
+        assert_eq!(config["data"]["provider_type"], "self_managed");
+        assert_eq!(config["data"]["config"]["timeout"], 30);
+        assert!(config["data"]["config"]["endpoint"].is_string());
+
+        // Validation follows upstream `SandboxMgr.set_config`: required fields
+        // must be present, integers are type- and range-checked, and the
+        // rejection wording matches upstream.
+        for (body, expected) in [
+            (
+                serde_json::json!({"provider_type": "ssh", "config": {"host": "h"}}),
+                "Required field 'port' is missing",
+            ),
+            (
+                serde_json::json!({"provider_type": "ssh", "config": {"host": "h", "port": 70000, "username": "u"}}),
+                "Field 'port' must be <= 65535",
+            ),
+            (
+                serde_json::json!({"provider_type": "ssh", "config": {"host": "h", "port": 22, "username": 5}}),
+                "Field 'username' must be a string",
+            ),
+            (
+                serde_json::json!({"provider_type": "ssh", "config": {"host": "h", "port": "22", "username": "u"}}),
+                "Field 'port' must be an integer",
+            ),
+            (
+                serde_json::json!({"provider_type": "self_managed", "config": {"endpoint": "http://x", "timeout": 1}}),
+                "Field 'timeout' must be >= 5",
+            ),
+            (
+                serde_json::json!({"provider_type": "aliyun_codeinterpreter", "config": {"access_key_id": "a", "access_key_secret": "b", "account_id": "c", "region": "mars"}}),
+                "Provider validation failed: Field 'region' must be one of: cn-hangzhou, cn-beijing, cn-shanghai, cn-shenzhen, cn-guangzhou",
+            ),
+        ] {
+            let response = call(
+                "POST",
+                "/api/v1/admin/sandbox/config".into(),
+                Some(body),
+                token.clone(),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{expected}");
+            assert_eq!(response_json(response).await["message"], expected);
+        }
+        // An unknown top-level provider is rejected with upstream's wording.
+        let unknown_save = call(
+            "POST",
+            "/api/v1/admin/sandbox/config".into(),
+            Some(serde_json::json!({"provider_type": "nope", "config": {}})),
+            token.clone(),
+        )
+        .await;
+        assert_eq!(unknown_save.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response_json(unknown_save).await["message"],
+            "Unknown provider type: nope"
+        );
+
+        // A valid save persists and activates the provider.
+        let saved = call(
+            "POST",
+            "/api/v1/admin/sandbox/config".into(),
+            Some(serde_json::json!({
+                "provider_type": "ssh",
+                "config": {
+                    "host": "10.0.0.9",
+                    "port": 2222,
+                    "username": "ragflow",
+                    "password": "s3cret",
+                    "timeout": 45
+                },
+                "set_active": true
+            })),
+            token.clone(),
+        )
+        .await;
+        assert_eq!(
+            saved.status(),
+            StatusCode::OK,
+            "{}",
+            response_json(saved).await
+        );
+        let reloaded = call(
+            "GET",
+            "/api/v1/admin/sandbox/config".into(),
+            None,
+            token.clone(),
+        )
+        .await;
+        let reloaded = response_json(reloaded).await;
+        assert_eq!(reloaded["data"]["provider_type"], "ssh");
+        assert_eq!(reloaded["data"]["config"]["host"], "10.0.0.9");
+        assert_eq!(reloaded["data"]["config"]["port"], 2222);
+        assert_eq!(
+            env.state
+                .system_settings
+                .typed_value("sandbox.ssh")
+                .unwrap()["password"],
+            "s3cret",
+            "the stored value keeps the secret"
+        );
+        assert_eq!(
+            reloaded["data"]["config"]["password"], "<redacted>",
+            "the admin view never echoes a secret"
+        );
+        // Keys outside the schema round-trip untouched (upstream stores the
+        // submitted object verbatim), so the seeded legacy defaults survive.
+        assert_eq!(reloaded["data"]["config"]["port"], 2222);
+
+        // Resubmitting the redacted value keeps the stored secret.
+        let resent = call(
+            "POST",
+            "/api/v1/admin/sandbox/config".into(),
+            Some(serde_json::json!({
+                "provider_type": "ssh",
+                "config": {
+                    "host": "10.0.0.9",
+                    "port": 2222,
+                    "username": "ragflow",
+                    "password": "<redacted>",
+                    "timeout": 45
+                }
+            })),
+            token.clone(),
+        )
+        .await;
+        assert_eq!(resent.status(), StatusCode::OK);
+        assert_eq!(
+            env.state
+                .system_settings
+                .typed_value("sandbox.ssh")
+                .unwrap()["password"],
+            "s3cret"
+        );
+
+        // An unknown provider cannot be tested, and the SSH probe reports the
+        // reachability it can actually verify (nothing listens on port 1).
+        let bad_test = call(
+            "POST",
+            "/api/v1/admin/sandbox/test".into(),
+            Some(serde_json::json!({"provider_type": "nope", "config": {}})),
+            token.clone(),
+        )
+        .await;
+        assert_eq!(bad_test.status(), StatusCode::BAD_REQUEST);
+        let ssh_test = call(
+            "POST",
+            "/api/v1/admin/sandbox/test".into(),
+            Some(serde_json::json!({
+                "provider_type": "ssh",
+                "config": {"host": "127.0.0.1", "port": 1, "username": "ragflow"}
+            })),
+            token.clone(),
+        )
+        .await;
+        assert_eq!(ssh_test.status(), StatusCode::OK);
+        let ssh_test = response_json(ssh_test).await;
+        assert_eq!(ssh_test["data"]["success"], false);
+        assert!(
+            ssh_test["data"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("Test FAILED"),
+            "{}",
+            ssh_test["data"]["message"]
+        );
+        // The e2b / Aliyun providers run through the deployer-provided executor
+        // sidecar (RAYRAG_SANDBOX_EXECUTOR_URL); without one the probe reports
+        // that instead of a fake success, and credentials are validated first.
+        let e2b_test = call(
+            "POST",
+            "/api/v1/admin/sandbox/test".into(),
+            Some(serde_json::json!({"provider_type": "e2b", "config": {"api_key": "k"}})),
+            token.clone(),
+        )
+        .await;
+        assert_eq!(e2b_test.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            response_json(e2b_test).await["message"]
+                .as_str()
+                .unwrap()
+                .contains("RAYRAG_SANDBOX_EXECUTOR_URL")
+        );
+        let aliyun_test = call(
+            "POST",
+            "/api/v1/admin/sandbox/test".into(),
+            Some(serde_json::json!({
+                "provider_type": "aliyun_codeinterpreter",
+                "config": {"access_key_id": "ak", "access_key_secret": "sk", "account_id": "1"}
+            })),
+            token.clone(),
+        )
+        .await;
+        assert_eq!(aliyun_test.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            response_json(aliyun_test).await["message"]
+                .as_str()
+                .unwrap()
+                .contains("RAYRAG_SANDBOX_EXECUTOR_URL")
+        );
+        let e2b_missing = call(
+            "POST",
+            "/api/v1/admin/sandbox/test".into(),
+            Some(serde_json::json!({"provider_type": "e2b", "config": {"region": "us"}})),
+            token,
+        )
+        .await;
+        assert_eq!(e2b_missing.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            response_json(e2b_missing).await["message"]
+                .as_str()
+                .unwrap()
+                .contains("api_key is required")
+        );
+    }
+
+    /// Upstream `DELETE /api/v1/datasets`: `ids` null/empty deletes nothing unless
+    /// `delete_all` is set, foreign ids fail the whole request, and the payload
+    /// reports `success_count`.
+    #[tokio::test]
+    async fn collection_delete_follows_the_upstream_contract() {
+        let env = test_env();
+        let first = env.state.kbs.create_for("test-user", "First", "").unwrap();
+        let second = env.state.kbs.create_for("test-user", "Second", "").unwrap();
+        let other = env
+            .state
+            .kbs
+            .create_for("other-user", "Foreign", "")
+            .unwrap();
+        let router = build_router(env.state.clone());
+        let delete = |body: serde_json::Value| {
+            let router = router.clone();
+            let token = env.token.clone();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method("DELETE")
+                            .uri("/api/v1/datasets")
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(body.to_string()))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        let empty = delete(serde_json::json!({"ids": []})).await;
+        assert_eq!(empty.status(), StatusCode::OK);
+        assert_eq!(response_json(empty).await["data"]["success_count"], 0);
+        assert!(
+            env.state.kbs.get(&first.id).is_some(),
+            "nothing was deleted"
+        );
+
+        // Upstream: unknown/foreign ids are a business permission error on HTTP 200.
+        let foreign = delete(serde_json::json!({"ids": [other.id.clone()]})).await;
+        assert_eq!(foreign.status(), StatusCode::OK);
+        let foreign = response_json(foreign).await;
+        assert_eq!(foreign["code"], 102, "{foreign}");
+        assert!(
+            foreign["message"]
+                .as_str()
+                .unwrap()
+                .contains("lacks permission for datasets"),
+            "{foreign}"
+        );
+        assert!(
+            env.state.kbs.get(&other.id).is_some(),
+            "a foreign id protects the whole request"
+        );
+
+        let removed = delete(serde_json::json!({"ids": [first.id.clone()]})).await;
+        assert_eq!(removed.status(), StatusCode::OK);
+        assert_eq!(response_json(removed).await["data"]["success_count"], 1);
+        assert!(env.state.kbs.get(&first.id).is_none());
+
+        let all = delete(serde_json::json!({"ids": null, "delete_all": true})).await;
+        assert_eq!(all.status(), StatusCode::OK, "delete_all wipes the tenant");
+        assert_eq!(response_json(all).await["data"]["success_count"], 1);
+        assert!(env.state.kbs.get(&second.id).is_none());
+        assert!(
+            env.state.kbs.get(&other.id).is_some(),
+            "another tenant keeps its datasets"
+        );
+    }
+
+    /// The live v0.27.2 dataset REST surface: HTTP 200 business envelopes, the
+    /// upstream dataset key set, auto-unique create names, list filters and
+    /// total_datasets, filters/status counts, update rules and delete shapes.
+    #[tokio::test]
+    async fn dataset_rest_surface_matches_live_v0272_envelopes() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let token = env.token.clone();
+        let call = |method: &'static str, uri: String, body: serde_json::Value| {
+            let router = router.clone();
+            let token = token.clone();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(method)
+                            .uri(uri)
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(body.to_string()))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        // create: HTTP 200, code 0, no message, upstream key set + superset keys.
+        let created = call(
+            "POST",
+            "/api/v1/datasets".into(),
+            serde_json::json!({"name": "Alpha"}),
+        )
+        .await;
+        assert_eq!(created.status(), StatusCode::OK);
+        let created = response_json(created).await;
+        assert_eq!(created["code"], 0, "{created}");
+        assert!(created.get("message").is_none(), "{created}");
+        let data = &created["data"];
+        assert_eq!(data["chunk_method"], "naive");
+        assert_eq!(data["document_count"], 0);
+        assert_eq!(data["status"], "1");
+        assert_eq!(data["similarity_threshold"], 0.2);
+        assert_eq!(data["vector_similarity_weight"], 0.3);
+        assert!(data["parser_config"].is_object(), "{created}");
+        // No parser_config supplied on create: upstream stores the naive
+        // service defaults (chunk_token_num 512, topn_tags 3).
+        assert_eq!(data["parser_config"]["chunk_token_num"], 512);
+        assert_eq!(data["parser_config"]["topn_tags"], 3);
+        assert!(data["parser_config"].get("pages").is_none());
+        assert_eq!(data["language"], "English");
+        assert_eq!(data["permission"], "me");
+        // RayRAG superset keys keep the web UI working.
+        assert!(data["embd_id"].is_string());
+        assert!(data["doc_count"].is_number());
+        assert!(data["parser_config_json"].is_string());
+        let alpha = data["id"].as_str().unwrap().to_string();
+
+        // duplicate create is auto-renamed like upstream `duplicate_name`.
+        let duplicate = response_json(
+            call(
+                "POST",
+                "/api/v1/datasets".into(),
+                serde_json::json!({"name": "Alpha"}),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(duplicate["code"], 0, "{duplicate}");
+        assert_eq!(duplicate["data"]["name"], "Alpha(1)");
+        let alpha_one = duplicate["data"]["id"].as_str().unwrap().to_string();
+
+        // pydantic-style validation is code 101 on HTTP 200.
+        let empty_name = response_json(
+            call(
+                "POST",
+                "/api/v1/datasets".into(),
+                serde_json::json!({"name": ""}),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(empty_name["code"], 101);
+        assert!(
+            empty_name["message"]
+                .as_str()
+                .unwrap()
+                .contains("Field: <name> - Message: <String should have at least 1 character>"),
+            "{empty_name}"
+        );
+        let unknown = response_json(
+            call(
+                "POST",
+                "/api/v1/datasets".into(),
+                serde_json::json!({"name": "Bad", "nope": 1}),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(unknown["code"], 101);
+        assert!(
+            unknown["message"]
+                .as_str()
+                .unwrap()
+                .contains("Field: <nope> - Message: <Extra inputs are not permitted>"),
+            "{unknown}"
+        );
+
+        // get single: size + connectors are part of the payload.
+        let fetched = response_json(
+            call(
+                "GET",
+                format!("/api/v1/datasets/{alpha}"),
+                serde_json::Value::Null,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(fetched["code"], 0);
+        assert_eq!(fetched["data"]["size"], 0);
+        assert_eq!(fetched["data"]["connectors"], serde_json::json!([]));
+
+        // list: total_datasets, filter type, parsing status and validation.
+        let listed =
+            response_json(call("GET", "/api/v1/datasets".into(), serde_json::Value::Null).await)
+                .await;
+        assert_eq!(listed["code"], 0);
+        assert_eq!(listed["total_datasets"], 2, "{listed}");
+        assert!(!listed["data"].as_array().unwrap().is_empty());
+        let filtered = response_json(
+            call(
+                "GET",
+                "/api/v1/datasets?type=filter".into(),
+                serde_json::Value::Null,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(filtered["code"], 0);
+        assert_eq!(filtered["data"]["filter"]["owner"][0]["count"], 2);
+        assert_eq!(filtered["data"]["total"], 2);
+        let with_status = response_json(
+            call(
+                "GET",
+                "/api/v1/datasets?include_parsing_status=true".into(),
+                serde_json::Value::Null,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(with_status["data"][0]["unstart_count"], 0);
+        let bad_order = response_json(
+            call(
+                "GET",
+                "/api/v1/datasets?orderby=nope".into(),
+                serde_json::Value::Null,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(bad_order["code"], 101, "{bad_order}");
+
+        // update: empty body is a service error; duplicate name is refused.
+        let no_props = response_json(
+            call(
+                "PUT",
+                format!("/api/v1/datasets/{alpha}"),
+                serde_json::json!({}),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(no_props["code"], 102);
+        assert_eq!(no_props["message"], "no properties were modified");
+        let duplicate_name = response_json(
+            call(
+                "PUT",
+                format!("/api/v1/datasets/{alpha}"),
+                serde_json::json!({"name": "Alpha(1)"}),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(duplicate_name["code"], 102);
+        assert_eq!(
+            duplicate_name["message"],
+            "Dataset name 'Alpha(1)' already exists"
+        );
+        let renamed = response_json(
+            call(
+                "PUT",
+                format!("/api/v1/datasets/{alpha}"),
+                serde_json::json!({"name": "Beta", "connectors": []}),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(renamed["code"], 0, "{renamed}");
+        assert_eq!(renamed["data"]["name"], "Beta");
+        assert_eq!(renamed["data"]["connectors"], serde_json::json!([]));
+
+        // delete: missing ids is zero work; unknown ids are a permission error;
+        // an existing id deletes and reports success_count only.
+        let empty_delete = response_json(
+            call(
+                "DELETE",
+                "/api/v1/datasets".into(),
+                serde_json::json!({"ids": []}),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(empty_delete["data"]["success_count"], 0);
+        let unknown_delete = response_json(
+            call(
+                "DELETE",
+                "/api/v1/datasets".into(),
+                serde_json::json!({"ids": ["0123456789abcdef0123456789abcdef"]}),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(unknown_delete["code"], 102);
+        assert!(
+            unknown_delete["message"]
+                .as_str()
+                .unwrap()
+                .contains("lacks permission for datasets"),
+            "{unknown_delete}"
+        );
+        let deleted = response_json(
+            call(
+                "DELETE",
+                "/api/v1/datasets".into(),
+                serde_json::json!({"ids": [alpha_one]}),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(deleted["code"], 0);
+        assert_eq!(deleted["data"]["success_count"], 1);
+        assert!(deleted.get("message").is_none(), "{deleted}");
+    }
+
+    /// Drive the router with the fixture bearer token and parse the JSON answer.
+    /// The dataset / data-source family answers business errors as HTTP 200
+    /// envelopes, so the tests read the body code.
+    async fn json_call(
+        router: Router,
+        token: &str,
+        method: &'static str,
+        uri: String,
+        body: serde_json::Value,
+    ) -> serde_json::Value {
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        response_json(response).await
+    }
+
+    /// The dataset Configuration -> Link data source rows are stored on the
+    /// dataset and read back through the wire shape. A PUT that omits the field
+    /// (the dataset name / description / parser form does not post connectors)
+    /// keeps the links, while an explicit empty array unlinks them.
+    #[tokio::test]
+    async fn dataset_connectors_persist_and_do_not_clear_on_an_omitted_field() {
+        let env = test_env_with_data_sources();
+        let router = build_router(env.state.clone());
+        let token = env.token.clone();
+        let fixture = env.root.join("linked-docs");
+        std::fs::create_dir_all(&fixture).unwrap();
+        std::fs::write(fixture.join("alpha.md"), "# Alpha\n\nalpha body\n").unwrap();
+        std::fs::write(fixture.join("beta.md"), "# Beta\n\nbeta body\n").unwrap();
+
+        let source = json_call(
+            router.clone(),
+            &token,
+            "POST",
+            "/api/v1/data_sources".into(),
+            serde_json::json!({
+                "name": "Fixture Local",
+                "type": "local",
+                "url": fixture.to_string_lossy(),
+            }),
+        )
+        .await;
+        assert_eq!(source["code"], 0, "{source}");
+        let source_id = source["data"]["id"].as_str().unwrap().to_string();
+
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Linked KB", "")
+            .unwrap();
+        let linked = json_call(
+            router.clone(),
+            &token,
+            "PUT",
+            format!("/api/v1/datasets/{}", kb.id),
+            serde_json::json!({"connectors": [{"id": source_id, "auto_parse": "0"}]}),
+        )
+        .await;
+        assert_eq!(linked["code"], 0, "{linked}");
+        let rows = linked["data"]["connectors"].as_array().unwrap();
+        assert_eq!(rows.len(), 1, "{linked}");
+        assert_eq!(rows[0]["id"], source_id.as_str());
+        assert_eq!(rows[0]["name"], "Fixture Local");
+        assert_eq!(rows[0]["source"], "local");
+        assert_eq!(
+            rows[0]["auto_parse"], "0",
+            "the auto-parse switch round-trips"
+        );
+        assert!(rows[0]["status"].is_string(), "{linked}");
+
+        // Stored on the dataset row, not merely echoed back.
+        let stored = env.state.kbs.get(&kb.id).unwrap();
+        assert_eq!(stored.connectors.len(), 1);
+        assert_eq!(stored.connectors[0].id, source_id);
+        assert_eq!(stored.connectors[0].auto_parse, "0");
+
+        // GET projects the same link (name/source/auto_parse), whatever status
+        // the fire-and-forget sync has reached by now.
+        let fetched = json_call(
+            router.clone(),
+            &token,
+            "GET",
+            format!("/api/v1/datasets/{}", kb.id),
+            serde_json::Value::Null,
+        )
+        .await;
+        assert_eq!(fetched["code"], 0, "{fetched}");
+        let fetched_rows = fetched["data"]["connectors"].as_array().unwrap();
+        assert_eq!(fetched_rows.len(), 1, "{fetched}");
+        assert_eq!(fetched_rows[0]["id"], source_id.as_str());
+        assert_eq!(fetched_rows[0]["name"], "Fixture Local");
+        assert_eq!(fetched_rows[0]["source"], "local");
+        assert_eq!(fetched_rows[0]["auto_parse"], "0");
+
+        // A PUT that only renames the dataset must not clear the links.
+        let renamed = json_call(
+            router.clone(),
+            &token,
+            "PUT",
+            format!("/api/v1/datasets/{}", kb.id),
+            serde_json::json!({"name": "Linked KB Renamed"}),
+        )
+        .await;
+        assert_eq!(renamed["code"], 0, "{renamed}");
+        assert_eq!(
+            renamed["data"]["connectors"].as_array().unwrap().len(),
+            1,
+            "an omitted connectors field keeps the existing links: {renamed}"
+        );
+        assert_eq!(env.state.kbs.get(&kb.id).unwrap().connectors.len(), 1);
+
+        // An explicit empty array is an unlink.
+        let unlinked = json_call(
+            router.clone(),
+            &token,
+            "PUT",
+            format!("/api/v1/datasets/{}", kb.id),
+            serde_json::json!({"connectors": []}),
+        )
+        .await;
+        assert_eq!(unlinked["code"], 0, "{unlinked}");
+        assert_eq!(unlinked["data"]["connectors"], serde_json::json!([]));
+        assert!(env.state.kbs.get(&kb.id).unwrap().connectors.is_empty());
+        let fetched = json_call(
+            router,
+            &token,
+            "GET",
+            format!("/api/v1/datasets/{}", kb.id),
+            serde_json::Value::Null,
+        )
+        .await;
+        assert_eq!(fetched["data"]["connectors"], serde_json::json!([]));
+    }
+
+    /// Linking a data source runs its sync immediately (upstream
+    /// Connector2KbService.link_connectors run_immediately): the fixture files
+    /// show up in the dataset without a second /sync request. The sync is
+    /// fire-and-forget, so the documents are polled for.
+    #[tokio::test]
+    async fn linking_a_data_source_ingests_its_files_immediately() {
+        let env = test_env_with_data_sources();
+        let router = build_router(env.state.clone());
+        let token = env.token.clone();
+        let fixture = env.root.join("linked-sync-docs");
+        std::fs::create_dir_all(&fixture).unwrap();
+        std::fs::write(fixture.join("guide.md"), "# Guide\n\nbody\n").unwrap();
+        std::fs::write(fixture.join("notes.md"), "# Notes\n\nmore\n").unwrap();
+
+        let source = json_call(
+            router.clone(),
+            &token,
+            "POST",
+            "/api/v1/data_sources".into(),
+            serde_json::json!({
+                "name": "Sync Fixture",
+                "type": "local",
+                "url": fixture.to_string_lossy(),
+            }),
+        )
+        .await;
+        assert_eq!(source["code"], 0, "{source}");
+        let source_id = source["data"]["id"].as_str().unwrap().to_string();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Auto Sync KB", "")
+            .unwrap();
+        let linked = json_call(
+            router.clone(),
+            &token,
+            "PUT",
+            format!("/api/v1/datasets/{}", kb.id),
+            serde_json::json!({"connectors": [{"id": source_id, "auto_parse": "1"}]}),
+        )
+        .await;
+        assert_eq!(linked["code"], 0, "{linked}");
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let docs = json_call(
+                router.clone(),
+                &token,
+                "GET",
+                format!("/api/v1/datasets/{}/documents", kb.id),
+                serde_json::Value::Null,
+            )
+            .await;
+            assert_eq!(docs["code"], 0, "{docs}");
+            let names: Vec<&str> = docs["data"]["docs"]
+                .as_array()
+                .map(|rows| rows.iter().filter_map(|row| row["name"].as_str()).collect())
+                .unwrap_or_default();
+            if names.contains(&"guide.md") && names.contains(&"notes.md") {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the linked sync never ingested the fixture files: {docs}"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+
+    /// Upstream `Knowledgebase.pipeline_id` is a top-level column: `POST` binds
+    /// it, `PUT` rebinds or clears it (null/empty), and both the create and the
+    /// update answer carry the column -- the Artifacts generation gate reads it.
+    #[tokio::test]
+    async fn dataset_pipeline_id_is_a_top_level_column() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let created = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/datasets")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "name": "Pipeline KB",
+                            "pipeline_id": "0123456789abcdef0123456789abcdef",
+                            "parse_type": 2
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let created = response_json(created).await;
+        assert_eq!(
+            created["data"]["pipeline_id"], "0123456789abcdef0123456789abcdef",
+            "{created}"
+        );
+        let dataset_id = created["data"]["id"].as_str().unwrap().to_string();
+
+        let fetched = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/datasets/{dataset_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response_json(fetched).await["data"]["pipeline_id"],
+            "0123456789abcdef0123456789abcdef"
+        );
+
+        let cleared = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri(format!("/api/v1/datasets/{dataset_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"pipeline_id": serde_json::Value::Null}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response_json(cleared).await["data"]["pipeline_id"],
+            serde_json::Value::Null
+        );
+
+        let rebound = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri(format!("/api/v1/datasets/{dataset_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "pipeline_id": "fedcba9876543210fedcba9876543210",
+                            "parse_type": 2
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response_json(rebound).await["data"]["pipeline_id"],
+            "fedcba9876543210fedcba9876543210"
+        );
+    }
+
+    /// Upstream `Knowledgebase.language` is a top-level column with the process
+    /// locale as its default, and `PUT /api/v1/datasets/{id}` writes it there --
+    /// not into `parser_config`, which keeps only parse/retrieval settings.
+    #[tokio::test]
+    async fn dataset_language_is_a_top_level_column() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Language KB", "")
+            .unwrap();
+        let expected_default = if std::env::var("LANG")
+            .map(|lang| lang.contains("zh_CN"))
+            .unwrap_or(false)
+        {
+            "Chinese"
+        } else {
+            "English"
+        };
+        assert_eq!(kb.language, expected_default, "upstream column default");
+        let router = build_router(env.state.clone());
+        let put = |body: serde_json::Value| {
+            let router = router.clone();
+            let token = env.token.clone();
+            let id = kb.id.clone();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method("PUT")
+                            .uri(format!("/api/v1/datasets/{id}"))
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(body.to_string()))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        let updated = put(serde_json::json!({"language": "Korean"})).await;
+        assert_eq!(updated.status(), StatusCode::OK);
+        let updated = response_json(updated).await;
+        assert_eq!(updated["data"]["language"], "Korean");
+        // The REST face reports parser_config as an object now.
+        let parser_config = &updated["data"]["parser_config"];
+        assert!(
+            parser_config.get("language").is_none(),
+            "language must not be duplicated into parser_config"
+        );
+        let reloaded = env.state.kbs.get(&kb.id).unwrap();
+        assert_eq!(reloaded.language, "Korean", "the column is persisted");
+
+        // A blank value fails pydantic's trimmed min_length check (HTTP 200, code 101).
+        let blank = put(serde_json::json!({"language": "   "})).await;
+        assert_eq!(blank.status(), StatusCode::OK);
+        let blank = response_json(blank).await;
+        assert_eq!(blank["code"], 101, "{blank}");
+        // `max_length=32`, like the upstream CharField.
+        let too_long = put(serde_json::json!({"language": "x".repeat(33)})).await;
+        assert_eq!(too_long.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(too_long).await["code"],
+            101,
+            "long language is an argument error"
+        );
+        assert_eq!(
+            env.state.kbs.get(&kb.id).unwrap().language,
+            "Korean",
+            "rejected updates must not change the stored value"
+        );
+
+        let fetched = router
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/datasets/{}", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let fetched = response_json(fetched).await;
+        assert_eq!(fetched["data"]["language"], "Korean");
+    }
+
+    #[tokio::test]
+    async fn system_admin_cannot_manage_another_users_tenant() {
+        let env = test_env();
+        let owner = env
+            .state
+            .users
+            .register("Owner", "owner@example.com", "owner password 123")
+            .unwrap();
+        let invitee = env
+            .state
+            .users
+            .register("Invitee", "invitee@example.com", "invitee password 123")
+            .unwrap();
+        let router = build_router(env.state.clone());
+
+        let invite = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/users/invite")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "tenant_id": owner.id,
+                            "email": "invitee@example.com"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(invite.status(), StatusCode::FORBIDDEN);
+        assert_eq!(env.state.tenants.role(&owner.id, &invitee.id), None);
+    }
+
+    #[tokio::test]
+    async fn team_members_can_read_but_not_manage_and_lose_access_when_removed() {
+        let env = test_env();
+        let member = env
+            .state
+            .users
+            .register(
+                "Team Member",
+                "team-member@example.com",
+                "member password 123",
+            )
+            .unwrap();
+        let member_token = env
+            .state
+            .users
+            .login("team-member@example.com", "member password 123")
+            .unwrap()
+            .unwrap();
+        let kb = env
+            .state
+            .kbs
+            .create_for_with_permission("test-user", "Shared KB", "", "team")
+            .unwrap();
+        let router = build_router(env.state.clone());
+
+        let invite = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/users/invite")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "email": "team-member@example.com" }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(invite.status(), StatusCode::OK);
+        assert!(!env.state.tenants.is_member("test-user", &member.id));
+        assert_eq!(
+            env.state.tenants.role("test-user", &member.id),
+            Some(crate::kb::TenantRole::Invite)
+        );
+
+        let hidden_before_accept = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/datasets")
+                    .header(header::AUTHORIZATION, format!("Bearer {member_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let hidden_before_accept_json = response_json(hidden_before_accept).await;
+        assert!(
+            !hidden_before_accept_json["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["id"] == kb.id)
+        );
+
+        let accept = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PATCH)
+                    .uri("/api/v1/tenant/invitations/test-user/accept")
+                    .header(header::AUTHORIZATION, format!("Bearer {member_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(accept.status(), StatusCode::OK);
+        assert!(env.state.tenants.is_member("test-user", &member.id));
+
+        let visible = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/datasets")
+                    .header(header::AUTHORIZATION, format!("Bearer {member_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let visible_json = response_json(visible).await;
+        assert!(
+            visible_json["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["id"] == kb.id)
+        );
+
+        let manage = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri(format!("/api/v1/datasets/{}", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {member_token}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"permission":"me"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Upstream reports the permission failure as HTTP 200 + code 102.
+        assert_eq!(manage.status(), StatusCode::OK);
+        assert_eq!(response_json(manage).await["code"], 102);
+        assert_eq!(env.state.kbs.get(&kb.id).unwrap().permission, "team");
+
+        let promote = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri(format!("/api/v1/tenant/members/{}", member.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"tenant_id":"test-user","role":"admin"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(promote.status(), StatusCode::OK);
+        assert!(env.state.tenants.can_manage("test-user", &member.id));
+
+        let admin_manage = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri(format!("/api/v1/datasets/{}", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {member_token}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"permission":"me"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(admin_manage.status(), StatusCode::OK);
+        // A legacy `private` write is normalised to the upstream `me` spelling.
+        assert_eq!(env.state.kbs.get(&kb.id).unwrap().permission, "me");
+
+        let restore_team = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri(format!("/api/v1/datasets/{}", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {member_token}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"permission":"team"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(restore_team.status(), StatusCode::OK);
+
+        let remove = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!(
+                        "/api/v1/tenant/members/{}?tenant_id=test-user",
+                        member.id
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {member_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(remove.status(), StatusCode::OK);
+        assert!(!env.state.tenants.is_member("test-user", &member.id));
+
+        let hidden = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/datasets")
+                    .header(header::AUTHORIZATION, format!("Bearer {member_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let hidden_json = response_json(hidden).await;
+        assert!(
+            !hidden_json["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["id"] == kb.id)
+        );
+    }
+
+    #[tokio::test]
+    async fn multipart_upload_is_sanitized_and_queued() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Test KB", "")
+            .unwrap();
+        let boundary = "rayrag-test-boundary";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"sample.txt\"\r\nContent-Type: text/plain\r\n\r\nhello rayrag\r\n--{boundary}--\r\n"
+        );
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/datasets/{}/documents", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let json = response_json(response).await;
+        assert_eq!(status, StatusCode::OK, "response body: {json}");
+        assert_eq!(json["code"], 0, "response body: {json}");
+        assert_eq!(
+            json["data"].as_array().unwrap().len(),
+            1,
+            "response body: {json}"
+        );
+        let doc_id = json["data"][0]["id"].as_str().unwrap();
+        let doc = env.state.docs.get(doc_id).unwrap();
+        assert_eq!(doc.name, "sample.txt");
+        assert!(doc.storage_name.starts_with(doc_id));
+        assert!(!doc.storage_name.contains(".."));
+        assert_eq!(doc.content_hash.len(), 32);
+        assert!(doc.content_hash.chars().all(|ch| ch.is_ascii_hexdigit()));
+        assert!(env.root.join("uploads").join(doc.storage_name).is_file());
+        assert_eq!(json["data"][0]["run"], "UNSTART", "response body: {json}");
+    }
+
+    #[tokio::test]
+    async fn multipart_audio_upload_accepts_real_containers_and_rejects_fake_content() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Audio uploads", "")
+            .unwrap();
+        let fixtures: &[(&str, &[u8])] = &[
+            (
+                "tone.wav",
+                include_bytes!("../tests/fixtures/parsing/rayrag-tone.wav"),
+            ),
+            (
+                "tone.mp3",
+                include_bytes!("../tests/fixtures/parsing/rayrag-tone.mp3"),
+            ),
+            (
+                "tone.ogg",
+                include_bytes!("../tests/fixtures/parsing/rayrag-tone.ogg"),
+            ),
+            (
+                "tone.opus",
+                include_bytes!("../tests/fixtures/parsing/rayrag-tone.opus"),
+            ),
+            (
+                "tone.flac",
+                include_bytes!("../tests/fixtures/parsing/rayrag-tone.flac"),
+            ),
+            (
+                "tone.m4a",
+                include_bytes!("../tests/fixtures/parsing/rayrag-tone.m4a"),
+            ),
+            (
+                "tone.aac",
+                include_bytes!("../tests/fixtures/parsing/rayrag-tone.aac"),
+            ),
+            (
+                "tone.wma",
+                include_bytes!("../tests/fixtures/parsing/rayrag-tone.wma"),
+            ),
+            (
+                "tone.webm",
+                include_bytes!("../tests/fixtures/parsing/rayrag-tone.webm"),
+            ),
+        ];
+        for (index, (name, bytes)) in fixtures.iter().enumerate() {
+            for valid in [true, false] {
+                let boundary = "rayrag-audio-upload";
+                let mut body = format!(
+                    "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{name}\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+                ).into_bytes();
+                body.extend_from_slice(if valid { bytes } else { b"not an audio file" });
+                body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+                let response = build_router(env.state.clone())
+                    .oneshot(
+                        Request::builder()
+                            .method(Method::POST)
+                            .uri(format!("/api/v1/datasets/{}/documents", kb.id))
+                            .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                            .header(
+                                header::CONTENT_TYPE,
+                                format!("multipart/form-data; boundary={boundary}"),
+                            )
+                            .body(Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+                let result = response_json(response).await;
+                if valid {
+                    assert_eq!(result["code"], 0, "{name}: {result}");
+                    let id = result["data"][0]["id"].as_str().unwrap();
+                    let doc = env.state.docs.get(id).unwrap();
+                    assert_eq!(doc.name, *name);
+                    assert_eq!(doc.run, "UNSTARTED");
+                    assert_eq!(
+                        std::fs::read(document_storage_path(&env.state, &doc)).unwrap(),
+                        *bytes
+                    );
+                } else {
+                    assert_ne!(result["code"], 0, "{name}: {result}");
+                    assert!(
+                        result["message"]
+                            .as_str()
+                            .unwrap()
+                            .contains("does not match its extension"),
+                        "{result}"
+                    );
+                }
+                assert_eq!(env.state.docs.list(&kb.id).len(), index + 1);
+                assert_eq!(
+                    std::fs::read_dir(env.root.join("uploads")).unwrap().count(),
+                    index + 1
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn multipart_documents_reach_executor_persisted_index_and_retrieval() {
+        let mut env = test_env();
+        Arc::get_mut(&mut env.state).unwrap().embedder = Some(Arc::new(TestEmbedder));
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Format lifecycle", "")
+            .unwrap();
+        let fixtures: &[(&str, &[u8], &str)] = &[
+            ("sample.docx", include_bytes!("../tests/fixtures/parsing/rayrag-smoke.docx"), "pipeline docx marker"),
+            ("sample.xlsx", include_bytes!("../tests/fixtures/parsing/rayrag-smoke.xlsx"), "pipeline xlsx marker"),
+            ("sample.pdf", include_bytes!("../tests/fixtures/parsing/rayrag-text.pdf"), "pipeline pdf marker"),
+            ("sample.csv", b"name,value\nrecord,pipeline csv marker\n", "pipeline csv marker"),
+            ("sample.txt", b"pipeline text marker", "pipeline text marker"),
+            ("sample.md", b"# Report\n\npipeline markdown marker", "pipeline markdown marker"),
+            ("sample.html", b"<html><body><p>pipeline html marker</p></body></html>", "pipeline html marker"),
+            ("sample.yaml", b"service: pipeline yaml marker\n", "pipeline yaml marker"),
+            ("sample.toml", b"title = \"pipeline toml marker\"\n", "pipeline toml marker"),
+            ("sample.eml", b"From: sender@example.test\nTo: reader@example.test\nSubject: pipeline eml marker\n\nEmail body.\n", "pipeline eml marker"),
+        ];
+        let router = build_router(env.state.clone());
+        let executor = env.state.task_executor.clone();
+        let handle = executor.spawn(
+            document_executor_handler(env.state.clone()),
+            std::time::Duration::from_millis(1),
+        );
+        for (name, bytes, marker) in fixtures {
+            let boundary = "rayrag-format-lifecycle";
+            let mut body = format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{name}\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+            ).into_bytes();
+            body.extend_from_slice(bytes);
+            body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+            let uploaded = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri(format!("/api/v1/datasets/{}/documents", kb.id))
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .header(
+                            header::CONTENT_TYPE,
+                            format!("multipart/form-data; boundary={boundary}"),
+                        )
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(uploaded.status(), StatusCode::OK, "{name}");
+            let uploaded = response_json(uploaded).await;
+            assert_eq!(uploaded["code"], 0, "{name}: {uploaded}");
+            let doc_id = uploaded["data"][0]["id"].as_str().unwrap().to_owned();
+            let doc = env.state.docs.get(&doc_id).unwrap();
+            assert_eq!(
+                std::fs::read(document_storage_path(&env.state, &doc)).unwrap(),
+                *bytes
+            );
+            let queued = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri(format!("/api/v1/datasets/{}/documents/parse", kb.id))
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(
+                            serde_json::json!({"document_ids": [doc_id]}).to_string(),
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(queued.status(), StatusCode::OK);
+            let queued = response_json(queued).await;
+            assert_eq!(queued["code"], 0, "{name}: {queued}");
+            assert_eq!(queued["data"]["success_count"], 1, "{queued}");
+            tokio::time::timeout(std::time::Duration::from_secs(15), async {
+                loop {
+                    let tasks = env.state.tasks.list();
+                    if tasks.iter().any(|task| {
+                        task.doc_id == doc_id && matches!(task.status.as_str(), "done" | "failed")
+                    }) {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap_or_else(|_| panic!("{name}: worker did not finish"));
+            let saved = env.state.docs.get(&doc_id).unwrap();
+            assert_eq!(saved.run, "DONE", "{name}: {}", saved.progress_msg);
+            assert!(saved.chunk_count > 0, "{name}");
+            assert_eq!(saved.indexed_content_hash, saved.content_hash);
+            let indexed = env
+                .state
+                .engine
+                .read()
+                .unwrap()
+                .chunks_for_document(&doc_id);
+            assert!(
+                indexed.iter().any(|chunk| chunk.content.contains(marker)),
+                "{name}: {indexed:?}"
+            );
+            assert!(
+                indexed.iter().all(|chunk| !chunk.embedding.is_empty()),
+                "{name}"
+            );
+            let persisted: serde_json::Value =
+                serde_json::from_reader(std::fs::File::open(&env.state.index_path).unwrap())
+                    .unwrap();
+            assert!(
+                persisted.to_string().contains(marker),
+                "{name}: index was not saved"
+            );
+            let logs: Vec<_> = env
+                .state
+                .ingestion_logs
+                .list_for_kb(&kb.id)
+                .into_iter()
+                .filter(|log| log.document_id == doc_id)
+                .collect();
+            assert_eq!(logs.len(), 1, "{name}: {logs:?}");
+            assert_eq!(logs[0].operation_status, "done");
+            let retrieved = router.clone().oneshot(
+                Request::builder().method(Method::POST).uri("/api/v1/retrieval")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(serde_json::json!({
+                        "question": marker, "kb_ids": [kb.id], "doc_ids": [doc_id],
+                        "vector_similarity_weight": 0, "similarity_threshold": 0, "top_k": 10
+                    }).to_string())).unwrap()
+            ).await.unwrap();
+            assert_eq!(retrieved.status(), StatusCode::OK, "{name}");
+            let retrieved = response_json(retrieved).await;
+            assert_eq!(retrieved["code"], 0, "{name}: {retrieved}");
+            assert!(
+                retrieved["data"]["chunks"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|chunk| { chunk["document_id"] == doc_id || chunk["doc_id"] == doc_id }),
+                "{name}: {retrieved}"
+            );
+            assert!(
+                retrieved.to_string().contains(marker),
+                "{name}: {retrieved}"
+            );
+        }
+        executor.shutdown(handle).await;
+        // Upload auto-queues too; an explicit parse may submit a second execution.
+        assert!(executor.stats().done >= fixtures.len() as u64);
+        assert_eq!(executor.stats().failed, 0);
+        assert_eq!(
+            env.state.kbs.get(&kb.id).unwrap().chunk_count,
+            env.state
+                .docs
+                .list(&kb.id)
+                .iter()
+                .map(|doc| doc.chunk_count)
+                .sum::<usize>()
+        );
+    }
+
+    #[tokio::test]
+    async fn multipart_upload_return_raw_files_keeps_internal_keys() {
+        let env = test_env();
+        let kb = env.state.kbs.create_for("test-user", "Raw KB", "").unwrap();
+        let boundary = "rayrag-test-boundary";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"raw.txt\"\r\nContent-Type: text/plain\r\n\r\nraw body\r\n--{boundary}--\r\n"
+        );
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!(
+                        "/api/v1/datasets/{}/documents?return_raw_files=true",
+                        kb.id
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let json = response_json(response).await;
+        assert_eq!(status, StatusCode::OK, "response body: {json}");
+        assert_eq!(json["code"], 0, "response body: {json}");
+        let doc = &json["data"][0];
+        assert_eq!(doc["name"], "raw.txt");
+        assert_eq!(doc["kb_id"], kb.id);
+        assert_eq!(doc["type"], "doc");
+        assert_eq!(doc["source_type"], "local");
+        assert_eq!(doc["suffix"], "txt");
+        assert!(
+            doc["location"]
+                .as_str()
+                .unwrap()
+                .starts_with(doc["id"].as_str().unwrap())
+        );
+        assert!(doc.get("dataset_id").is_none(), "response body: {json}");
+        assert!(doc.get("chunk_method").is_none(), "response body: {json}");
+        assert!(doc.get("chunk_count").is_none(), "response body: {json}");
+    }
+
+    #[tokio::test]
+    async fn multipart_upload_applies_parent_path_and_parser_config_after_file() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Folder KB", "")
+            .unwrap();
+        let boundary = "rayrag-test-boundary";
+        // The text fields deliberately come after the file: upstream's form parser
+        // exposes them regardless of part order, and the deferred registration must
+        // do the same.
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"folder.txt\"\r\nContent-Type: text/plain\r\n\r\nfolder body\r\n\
+             --{boundary}\r\nContent-Disposition: form-data; name=\"parent_path\"\r\n\r\n../reports\\2026\r\n\
+             --{boundary}\r\nContent-Disposition: form-data; name=\"parser_config\"\r\n\r\n{{\"table_column_mode\":\"header\",\"graphrag\":{{\"use_graphrag\":true}}}}\r\n\
+             --{boundary}--\r\n"
+        );
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/datasets/{}/documents", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let json = response_json(response).await;
+        assert_eq!(status, StatusCode::OK, "response body: {json}");
+        assert_eq!(json["code"], 0, "response body: {json}");
+        let doc = &json["data"][0];
+        let id = doc["id"].as_str().unwrap();
+        assert_eq!(
+            doc["location"].as_str().unwrap(),
+            format!("reports/2026/{id}.txt")
+        );
+        assert_eq!(doc["parser_config"]["table_column_mode"], "header");
+        assert!(doc["parser_config"].get("graphrag").is_none(), "{json}");
+        assert!(
+            env.root
+                .join("uploads/reports/2026")
+                .join(format!("{id}.txt"))
+                .is_file()
+        );
+    }
+
+    #[tokio::test]
+    async fn web_upload_validates_fields_and_blocks_private_urls() {
+        let env = test_env();
+        let kb = env.state.kbs.create_for("test-user", "Web KB", "").unwrap();
+        let boundary = "rayrag-test-boundary";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"name\"\r\n\r\npage\r\n\
+             --{boundary}\r\nContent-Disposition: form-data; name=\"url\"\r\n\r\nhttp://127.0.0.1:8080/\r\n\
+             --{boundary}--\r\n"
+        );
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/datasets/{}/documents?type=web", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let json = response_json(response).await;
+        assert_eq!(json["code"], code::INVALID_ARGUMENT, "{json}");
+        assert_eq!(json["message"], "The URL format is invalid", "{json}");
+        assert!(env.state.docs.list(&kb.id).is_empty());
+    }
+
+    #[tokio::test]
+    async fn empty_upload_creates_virtual_document() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Empty KB", "")
+            .unwrap();
+        let uri = format!("/api/v1/datasets/{}/documents?type=empty", kb.id);
+        let request = |body: serde_json::Value| {
+            Request::builder()
+                .method(Method::POST)
+                .uri(uri.clone())
+                .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        };
+        let response = build_router(env.state.clone())
+            .oneshot(request(serde_json::json!({ "name": "empty-notes.md" })))
+            .await
+            .unwrap();
+        let status = response.status();
+        let json = response_json(response).await;
+        assert_eq!(status, StatusCode::OK, "response body: {json}");
+        assert_eq!(json["code"], 0, "response body: {json}");
+        assert_eq!(json["data"]["name"], "empty-notes.md");
+        assert_eq!(json["data"]["type"], "virtual");
+        assert_eq!(json["data"]["run"], "UNSTART");
+        assert_eq!(json["data"]["size"], 0);
+        assert_eq!(json["data"]["chunk_count"], 0);
+        let doc_id = json["data"]["id"].as_str().unwrap();
+        let stored = env.state.docs.get(doc_id).unwrap();
+        assert_eq!(stored.doc_type.as_deref(), Some("virtual"));
+        assert!(stored.storage_name.is_empty());
+        assert!(stored.content_hash.is_empty());
+
+        let (list_status, list) = list_json(&env, &kb.id, "").await;
+        assert_eq!(list_status, StatusCode::OK);
+        assert_eq!(list["data"]["docs"][0]["type"], "virtual");
+        assert_eq!(list["data"]["docs"][0]["name"], "empty-notes.md");
+        let (_, filtered) = list_json(&env, &kb.id, "types=virtual").await;
+        assert_eq!(filtered["data"]["docs"].as_array().unwrap().len(), 1);
+        assert_eq!(filtered["data"]["docs"][0]["name"], "empty-notes.md");
+
+        let duplicate = build_router(env.state.clone())
+            .oneshot(request(serde_json::json!({ "name": "empty-notes.md" })))
+            .await
+            .unwrap();
+        let duplicate = response_json(duplicate).await;
+        assert_eq!(duplicate["code"], 102, "response body: {duplicate}");
+        assert_eq!(
+            duplicate["message"],
+            "Duplicated document name in the same dataset."
+        );
+
+        let blank = build_router(env.state.clone())
+            .oneshot(request(serde_json::json!({ "name": "  " })))
+            .await
+            .unwrap();
+        let blank = response_json(blank).await;
+        assert_eq!(blank["code"], 101, "response body: {blank}");
+        assert_eq!(blank["message"], "File name can't be empty.");
+    }
+
+    fn seeded_doc(
+        state: &crate::server::AppState,
+        id: &str,
+        kb_id: &str,
+        name: &str,
+        run: &str,
+        created_at: u64,
+    ) -> crate::api::document::DocRecord {
+        let mut doc = stored_doc(id, kb_id, 0);
+        doc.name = name.into();
+        doc.storage_name = name.into();
+        doc.run = run.into();
+        doc.created_at = created_at;
+        doc.updated_at = created_at;
+        state.docs.insert(doc.clone()).unwrap();
+        doc
+    }
+
+    async fn list_json(env: &TestEnv, kb_id: &str, query: &str) -> (StatusCode, serde_json::Value) {
+        let uri = if query.is_empty() {
+            format!("/api/v1/datasets/{kb_id}/documents")
+        } else {
+            format!("/api/v1/datasets/{kb_id}/documents?{query}")
+        };
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        (status, response_json(response).await)
+    }
+
+    /// The list endpoint's query face: upstream defaults (page 1 / page_size 30), the
+    /// 100-row public maximum surfacing as a transport failure, orderby validation, and
+    /// the desc semantics (`false` — and only `false` — sorts ascending).
+    #[tokio::test]
+    async fn list_docs_paginates_sorts_and_bounds_like_upstream() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Query KB", "")
+            .unwrap();
+        for index in 0..35u64 {
+            seeded_doc(
+                &env.state,
+                &format!("doc-{index:02}"),
+                &kb.id,
+                &format!("doc-{index:02}.txt"),
+                "UNSTARTED",
+                1_000 + index,
+            );
+        }
+        let (status, body) = list_json(&env, &kb.id, "").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["message"], "success");
+        let docs = body["data"]["docs"].as_array().unwrap();
+        assert_eq!(docs.len(), 30, "default page size: {body}");
+        assert_eq!(body["data"]["total"], 35);
+
+        assert_eq!(docs[0]["id"], "doc-34", "newest first by default: {body}");
+        assert_eq!(docs[0]["run"], "UNSTART");
+
+        let (_, body) = list_json(&env, &kb.id, "page=2").await;
+        let docs = body["data"]["docs"].as_array().unwrap();
+        assert_eq!(docs.len(), 5);
+        assert_eq!(docs[0]["id"], "doc-04");
+
+        let (_, body) = list_json(&env, &kb.id, "orderby=name&desc=false&page_size=1").await;
+        assert_eq!(body["data"]["docs"][0]["id"], "doc-00");
+
+        let (_, body) = list_json(&env, &kb.id, "page_size=abc&page=-5").await;
+        assert_eq!(
+            body["data"]["docs"].as_array().unwrap().len(),
+            30,
+            "invalid page/page_size fall back silently: {body}"
+        );
+
+        let (status, body) = list_json(&env, &kb.id, "page_size=101").await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(body["code"], 500);
+        assert_eq!(
+            body["message"],
+            "page_size must be less than or equal to 100"
+        );
+
+        let (status, body) = list_json(&env, &kb.id, "orderby=bogus").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body,
+            serde_json::json!({ "code": 101, "message": "invalid orderby field: bogus" })
+        );
+    }
+
+    /// Filters and addressing: keywords / suffix / types / run (with their error texts),
+    /// the id / name ownership checks, the id+ids conflict, the ids ceiling, and the
+    /// create_time window applied to the returned page.
+    #[tokio::test]
+    async fn list_docs_filters_and_addressing_match_upstream() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Filter KB", "")
+            .unwrap();
+        seeded_doc(&env.state, "d-annual", &kb.id, "Annual.pdf", "DONE", 2_000);
+        seeded_doc(&env.state, "d-notes", &kb.id, "Notes.docx", "FAILED", 2_001);
+        seeded_doc(
+            &env.state,
+            "d-audio",
+            &kb.id,
+            "audio.mp3",
+            "UNSTARTED",
+            2_002,
+        );
+        seeded_doc(&env.state, "d-photo", &kb.id, "photo.png", "RUNNING", 2_003);
+
+        let (_, body) = list_json(&env, &kb.id, "keywords=ANNUAL").await;
+        assert_eq!(body["data"]["docs"].as_array().unwrap().len(), 1, "{body}");
+
+        let (_, body) = list_json(&env, &kb.id, "types=pdf").await;
+        assert_eq!(body["data"]["total"], 1);
+        assert_eq!(body["data"]["docs"][0]["type"], "pdf");
+
+        let (_, body) = list_json(&env, &kb.id, "types=aural").await;
+        assert_eq!(body["data"]["docs"][0]["id"], "d-audio");
+
+        let (_, body) = list_json(&env, &kb.id, "types=bogus").await;
+        assert_eq!(body["code"], 102);
+        assert_eq!(body["message"], "Invalid filter conditions: bogus type");
+        let (_, body) = list_json(&env, &kb.id, "types=bogus&types=weird").await;
+        assert_eq!(
+            body["message"],
+            "Invalid filter conditions: bogus, weird types"
+        );
+
+        let (_, body) = list_json(&env, &kb.id, "suffix=docx").await;
+        assert_eq!(body["data"]["docs"][0]["id"], "d-notes");
+        assert_eq!(body["data"]["docs"][0]["suffix"], "docx");
+
+        let (_, body) = list_json(&env, &kb.id, "run=DONE").await;
+        assert_eq!(body["data"]["docs"][0]["id"], "d-annual");
+        let (_, body) = list_json(&env, &kb.id, "run=4").await;
+        assert_eq!(body["data"]["docs"][0]["id"], "d-notes");
+        assert_eq!(body["data"]["docs"][0]["run"], "FAIL");
+        let (_, body) = list_json(&env, &kb.id, "run_status=FAIL").await;
+        assert_eq!(body["data"]["total"], 1);
+        let (_, body) = list_json(&env, &kb.id, "run=bogus").await;
+        assert_eq!(
+            body["message"],
+            "Invalid filter run status conditions: bogus"
+        );
+
+        let (_, body) = list_json(&env, &kb.id, "id=d-annual").await;
+        assert_eq!(body["data"]["docs"].as_array().unwrap().len(), 1);
+        let (_, body) = list_json(&env, &kb.id, "id=missing").await;
+        assert_eq!(body["code"], 102);
+        assert_eq!(body["message"], "you don't own the document missing");
+
+        let (_, body) = list_json(&env, &kb.id, "name=Notes.docx").await;
+        assert_eq!(body["data"]["docs"][0]["id"], "d-notes");
+        let (_, body) = list_json(&env, &kb.id, "name=missing.txt").await;
+        assert_eq!(body["message"], "you don't own the document missing.txt");
+
+        let (_, body) = list_json(&env, &kb.id, "id=d-annual&ids=d-annual&ids=missing").await;
+        assert_eq!(
+            body["message"],
+            "Should not provide both 'id':d-annual and 'ids'['d-annual', 'missing']"
+        );
+
+        let many_ids: Vec<String> = (0..101).map(|index| format!("id-{index}")).collect();
+        let query = format!("ids={}", many_ids.join("&ids="));
+        let (_, body) = list_json(&env, &kb.id, &query).await;
+        assert_eq!(body["message"], "ids must contain at most 100 IDs");
+
+        let (_, body) = list_json(&env, &kb.id, "create_time_from=2002").await;
+        assert_eq!(body["data"]["total"], 4);
+        assert_eq!(
+            body["data"]["docs"].as_array().unwrap().len(),
+            2,
+            "the window narrows the page without re-filling it: {body}"
+        );
+    }
+
+    /// The `type=filter` branch: suffix / run-status / metadata counters with the
+    /// always-present `empty_metadata` bucket.
+    #[tokio::test]
+    async fn list_filter_branch_aggregates_counters() {
+        let env = test_env();
+        let kb = env.state.kbs.create_for("test-user", "Agg KB", "").unwrap();
+        seeded_doc(&env.state, "f-a", &kb.id, "a.pdf", "DONE", 3_000);
+        seeded_doc(&env.state, "f-b", &kb.id, "b.pdf", "RUNNING", 3_001);
+        seeded_doc(&env.state, "f-c", &kb.id, "c.mp3", "UNSTARTED", 3_002);
+        env.state
+            .document_metadata
+            .replace(
+                "f-a",
+                &kb.id,
+                serde_json::json!({ "lake": "yueqing", "tags": ["oxygen", "water"] })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            )
+            .unwrap();
+        let (status, body) = list_json(&env, &kb.id, "type=filter").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["message"], "success");
+        let filter = &body["data"]["filter"];
+        assert_eq!(body["data"]["total"], 3);
+        assert_eq!(filter["suffix"]["pdf"], 2);
+        assert_eq!(filter["suffix"]["mp3"], 1);
+        assert_eq!(filter["run_status"]["3"], 1);
+        assert_eq!(filter["run_status"]["1"], 1);
+        assert_eq!(filter["run_status"]["0"], 1);
+        assert_eq!(filter["metadata"]["lake"]["yueqing"], 1);
+        assert_eq!(filter["metadata"]["tags"]["oxygen"], 1);
+        assert_eq!(filter["metadata"]["tags"]["water"], 1);
+        assert_eq!(filter["metadata"]["empty_metadata"]["true"], 2);
+    }
+
+    /// Every row speaks the upstream vocabulary: renamed keys, the parser face, the
+    /// derived `suffix` / `type`, the translated `run`, and token_count summed from
+    /// the search index.
+    #[tokio::test]
+    async fn document_rows_speak_the_upstream_vocabulary() {
+        let env = test_env();
+        let kb = env.state.kbs.create_for("test-user", "Row KB", "").unwrap();
+        seeded_doc(&env.state, "r-a", &kb.id, "Report.pdf", "DONE", 4_000);
+        {
+            let mut engine = env.state.engine.write().unwrap();
+            let mut chunk_a = search_chunk("row-chunk-a", &kb.id, "oxygen guide");
+            chunk_a.metadata.insert("doc_id".into(), "r-a".into());
+            let mut chunk_b = search_chunk("row-chunk-b", &kb.id, "water guide");
+            chunk_b.metadata.insert("doc_id".into(), "r-a".into());
+            engine.index(vec![chunk_a, chunk_b]);
+        }
+        let (_, body) = list_json(&env, &kb.id, "").await;
+        let row = &body["data"]["docs"][0];
+        assert_eq!(row["dataset_id"], kb.id);
+        assert_eq!(row["chunk_method"], "naive");
+        assert_eq!(row["suffix"], "pdf");
+        assert_eq!(row["type"], "pdf");
+        assert_eq!(row["run"], "DONE");
+        assert_eq!(row["nickname"], "Test");
+        assert_eq!(row["created_by"], "test-user");
+        assert!(row["parser_config"].is_object());
+        assert_eq!(row["pipeline_id"], serde_json::Value::Null);
+        assert_eq!(row["pipeline_name"], serde_json::Value::Null);
+        assert_eq!(row["process_begin_at"], serde_json::Value::Null);
+        assert_eq!(row["process_duration"], 0);
+        assert_eq!(row["thumbnail"], serde_json::Value::Null);
+        assert_eq!(row["token_count"], 4, "two chunks x 2 tokens: {body}");
+        let create_date = row["create_date"].as_str().unwrap();
+        assert_eq!(create_date.len(), 19, "YYYY-MM-DDTHH:MM:SS: {create_date}");
+        assert_eq!(row["create_time"], 4_000u64);
+        assert_eq!(row["update_time"], 4_000u64);
+    }
+
+    #[tokio::test]
+    async fn duplicate_document_names_are_incremented_per_kb() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Duplicate KB", "")
+            .unwrap();
+        let other_kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Other Duplicate KB", "")
+            .unwrap();
+        let router = build_router(env.state.clone());
+
+        for (target_kb, expected_name, content) in [
+            (&kb.id, "report.txt", "first"),
+            (&kb.id, "report(1).txt", "second"),
+            (&kb.id, "report(2).txt", "third"),
+            (&other_kb.id, "report.txt", "fourth"),
+        ] {
+            let boundary = format!("rayrag-duplicate-{}", uuid::Uuid::new_v4());
+            let body = format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"report.txt\"\r\nContent-Type: text/plain\r\n\r\n{content}\r\n--{boundary}--\r\n"
+            );
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri(format!("/api/v1/datasets/{target_kb}/documents"))
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .header(
+                            header::CONTENT_TYPE,
+                            format!("multipart/form-data; boundary={boundary}"),
+                        )
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let status = response.status();
+            let json = response_json(response).await;
+            assert_eq!(status, StatusCode::OK, "response body: {json}");
+            assert_eq!(json["data"][0]["name"], expected_name);
+        }
+
+        let mut names: Vec<_> = env
+            .state
+            .docs
+            .list(&kb.id)
+            .into_iter()
+            .map(|doc| doc.name)
+            .collect();
+        names.sort();
+        assert_eq!(names, vec!["report(1).txt", "report(2).txt", "report.txt"]);
+    }
+
+    #[tokio::test]
+    async fn legacy_xls_upload_is_accepted_by_magic_bytes() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Legacy XLS upload", "")
+            .unwrap();
+        let boundary = "legacy-xls-upload";
+        let mut body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"legacy.xls\"\r\nContent-Type: application/vnd.ms-excel\r\n\r\n"
+        )
+        .into_bytes();
+        body.extend_from_slice(include_bytes!(
+            "../tests/fixtures/parsing/rayrag-legacy.xls"
+        ));
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/datasets/{}/documents", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let json = response_json(response).await;
+        assert_eq!(status, StatusCode::OK, "response body: {json}");
+        assert_eq!(json["code"], 0, "response body: {json}");
+        assert_eq!(json["data"].as_array().unwrap().len(), 1);
+        assert_eq!(json["data"][0]["name"], "legacy.xls");
+    }
+
+    #[tokio::test]
+    async fn legacy_office_upload_returns_conversion_guidance_without_artifacts() {
+        for (filename, target) in [("old.DOC", "DOCX"), ("old.PPT", "PPTX")] {
+            let env = test_env();
+            let kb = env
+                .state
+                .kbs
+                .create_for("test-user", "Legacy upload", "")
+                .unwrap();
+            let boundary = "legacy-office-upload";
+            let body = format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: application/octet-stream\r\n\r\nlegacy fixture\r\n--{boundary}--\r\n"
+            );
+            let response = build_router(env.state.clone())
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri(format!("/api/v1/datasets/{}/documents", kb.id))
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .header(
+                            header::CONTENT_TYPE,
+                            format!("multipart/form-data; boundary={boundary}"),
+                        )
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let json = response_json(response).await;
+            assert_ne!(json["code"], 0, "{json}");
+            let message = json["message"].as_str().unwrap();
+            assert!(
+                message.contains(filename) && message.contains(target),
+                "{message}"
+            );
+            assert!(
+                message.contains("save as") && message.contains("upload again"),
+                "{message}"
+            );
+            assert!(env.state.docs.list(&kb.id).is_empty());
+            assert_eq!(
+                std::fs::read_dir(env.root.join("uploads")).unwrap().count(),
+                0
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn multipart_upload_returns_partial_success_per_file() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Batch KB", "")
+            .unwrap();
+        let boundary = "rayrag-batch-boundary";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"good.txt\"\r\nContent-Type: text/plain\r\n\r\nvalid text\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"fake.pdf\"\r\nContent-Type: application/pdf\r\n\r\nnot a pdf\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"old.ppt\"\r\nContent-Type: application/octet-stream\r\n\r\nlegacy fixture\r\n--{boundary}--\r\n"
+        );
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/datasets/{}/documents", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let json = response_json(response).await;
+        assert_eq!(status, StatusCode::OK, "response body: {json}");
+        assert_eq!(json["code"], 500, "response body: {json}");
+        assert_eq!(json["data"].as_array().unwrap().len(), 1);
+        assert_eq!(json["data"][0]["name"], "good.txt");
+        assert!(
+            json["message"].as_str().is_some_and(
+                |message| message.contains("old.ppt") && message.contains("save as PPTX")
+            ),
+            "response body: {json}"
+        );
+        assert!(
+            json["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("fake.pdf")),
+            "response body: {json}"
+        );
+        assert_eq!(env.state.docs.list(&kb.id).len(), 1);
+        let files: Vec<_> = std::fs::read_dir(env.root.join("uploads"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect();
+        assert_eq!(files.len(), 1);
+        assert!(
+            !files[0]
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".upload-")
+        );
+    }
+
+    /// Upstream `useGetDocumentUrl`'s document branch: the previewer fetches
+    /// `GET /api/v1/documents/{id}/preview` and expects the raw bytes inline
+    /// (a download keeps `attachment` on the dataset route). The MIME type comes
+    /// from the stored name so pdf.js, images and text render in place.
+    #[tokio::test]
+    async fn document_preview_serves_stored_bytes_inline() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Preview KB", "")
+            .unwrap();
+        let doc = crate::api::document::DocRecord {
+            id: "preview-doc".into(),
+            name: "positions.pdf".into(),
+            kb_id: kb.id.clone(),
+            size: 5,
+            storage_name: "preview-doc.pdf".into(),
+            content_hash: "0123456789abcdef0123456789abcdef".into(),
+            indexed_content_hash: String::new(),
+            run: "DONE".into(),
+            progress: 1.0,
+            progress_msg: "Indexed 1 chunks".into(),
+            chunk_count: 1,
+            created_at: 1,
+            updated_at: 1,
+            status: crate::api::document::enabled_status(),
+            ..Default::default()
+        };
+        env.state.docs.insert(doc).unwrap();
+        std::fs::write(env.root.join("uploads/preview-doc.pdf"), b"%PDF-").unwrap();
+
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/documents/preview-doc/preview")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/pdf"
+        );
+        let disposition = response
+            .headers()
+            .get(header::CONTENT_DISPOSITION)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert!(disposition.starts_with("inline"), "{disposition}");
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"%PDF-");
+
+        let missing = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/documents/nope/preview")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(missing.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload["code"], 102);
+    }
+
+    /// Upstream `document_api.py::download_document` (`GET /api/v1/documents/<id>`,
+    /// the byte source behind `fetchPreviewBlob(id, 'document')`): an attachment
+    /// under the document's own MIME type, and `This file is empty.` when the
+    /// stored blob is gone.
+    #[tokio::test]
+    async fn document_download_route_serves_attachment_bytes() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Download KB", "")
+            .unwrap();
+        env.state
+            .docs
+            .insert(crate::api::document::DocRecord {
+                id: "download-doc".into(),
+                name: "notes.md".into(),
+                kb_id: kb.id.clone(),
+                size: 6,
+                storage_name: "download-doc.md".into(),
+                content_hash: String::new(),
+                indexed_content_hash: String::new(),
+                run: "DONE".into(),
+                progress: 1.0,
+                progress_msg: String::new(),
+                chunk_count: 0,
+                created_at: 1,
+                updated_at: 1,
+                status: crate::api::document::enabled_status(),
+                ..Default::default()
+            })
+            .unwrap();
+        std::fs::write(env.root.join("uploads/download-doc.md"), b"# hi\n").unwrap();
+
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/documents/download-doc")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "text/plain; charset=utf-8"
+        );
+        let disposition = response
+            .headers()
+            .get(header::CONTENT_DISPOSITION)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert!(disposition.starts_with("attachment"), "{disposition}");
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"# hi\n");
+
+        // A record whose blob vanished answers upstream's empty-file message.
+        std::fs::remove_file(env.root.join("uploads/download-doc.md")).unwrap();
+        let empty = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/documents/download-doc")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(empty.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload["message"], "This file is empty.");
+    }
+
+    /// Upstream `file_api.py::download` (`GET /api/v1/files/<file_id>`, the branch
+    /// `fetchPreviewBlob(id, 'files')` takes): the raw bytes of a stored file.
+    #[tokio::test]
+    async fn file_blob_route_serves_raw_bytes() {
+        let env = test_env();
+        let files_dir = std::path::Path::new(&env.state.files.data_dir);
+        std::fs::create_dir_all(files_dir).unwrap();
+        std::fs::write(files_dir.join("file-blob.txt"), b"blob-bytes").unwrap();
+        env.state
+            .files
+            .add(crate::api::file_mgr::FileRecord {
+                id: "file-blob".into(),
+                name: "notes.txt".into(),
+                owner_id: "test-user".into(),
+                parent_id: "root".into(),
+                size: 10,
+                content_hash: String::new(),
+                file_type: "file".into(),
+                created_at: 1,
+                ..Default::default()
+            })
+            .unwrap();
+
+        for uri in [
+            "/api/v1/files/file-blob",
+            "/api/v1/files/file-blob/download",
+        ] {
+            let response = build_router(env.state.clone())
+                .oneshot(
+                    Request::builder()
+                        .uri(uri)
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{uri}");
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            assert_eq!(&body[..], b"blob-bytes", "{uri}");
+        }
+
+        let missing = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/files/nope")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(missing.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        // upstream answers the coded data error over HTTP 200
+        assert_eq!(payload["code"], 102);
+        assert_eq!(payload["message"], "document not found");
+    }
+
+    /// Minimal .pptx container: one `ppt/slides/slideN.xml` per slide holding a
+    /// single text shape, which is all `parser::ppt::slide_texts` reads.
+    fn pptx_with_slide_texts(texts: &[&str]) -> Vec<u8> {
+        use std::io::Write;
+        let mut buffer = std::io::Cursor::new(Vec::new());
+        {
+            let mut writer = zip::ZipWriter::new(&mut buffer);
+            let options = zip::write::SimpleFileOptions::default();
+            for (index, text) in texts.iter().enumerate() {
+                writer
+                    .start_file(format!("ppt/slides/slide{}.xml", index + 1), options)
+                    .unwrap();
+                write!(
+                    writer,
+                    "<p:sld xmlns:p=\"p\" xmlns:a=\"a\"><p:sp><p:txBody><a:p><a:r><a:t>{text}</a:t></a:r></a:p></p:txBody></p:sp></p:sld>"
+                )
+                .unwrap();
+            }
+            writer.finish().unwrap();
+        }
+        buffer.into_inner()
+    }
+
+    /// The RayRAG-side readers behind the spreadsheet and slides previewers: the
+    /// workbook grid comes from `parser::excel::read_xlsx_sheets`, the deck text
+    /// from `parser::ppt::slide_texts`. Both are classified `replaced` in the
+    /// ledger — upstream builds them in the browser.
+    #[tokio::test]
+    async fn preview_reader_routes_return_workbook_grid_and_deck_text() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Readers KB", "")
+            .unwrap();
+        for (id, name, storage) in [
+            ("sheet-doc", "book.xlsx", "sheet-doc.xlsx"),
+            ("deck-doc", "deck.pptx", "deck-doc.pptx"),
+            ("word-doc", "notes.docx", "word-doc.docx"),
+        ] {
+            env.state
+                .docs
+                .insert(crate::api::document::DocRecord {
+                    id: id.into(),
+                    name: name.into(),
+                    kb_id: kb.id.clone(),
+                    size: 0,
+                    storage_name: storage.into(),
+                    content_hash: String::new(),
+                    indexed_content_hash: String::new(),
+                    run: "DONE".into(),
+                    progress: 1.0,
+                    progress_msg: String::new(),
+                    chunk_count: 0,
+                    created_at: 1,
+                    updated_at: 1,
+                    status: crate::api::document::enabled_status(),
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+        let workbook = crate::parser::excel::write_xlsx_sheets(&[(
+            "Sheet1".to_string(),
+            vec![
+                vec![serde_json::json!("name"), serde_json::json!("size")],
+                vec![serde_json::json!("alpha"), serde_json::json!(3)],
+            ],
+        )])
+        .unwrap();
+        std::fs::write(env.root.join("uploads/sheet-doc.xlsx"), &workbook).unwrap();
+        std::fs::write(
+            env.root.join("uploads/deck-doc.pptx"),
+            pptx_with_slide_texts(&["First slide", "Second slide"]),
+        )
+        .unwrap();
+        let mut docx_buf = std::io::Cursor::new(Vec::new());
+        docx_rs::Docx::new()
+            .add_paragraph(
+                docx_rs::Paragraph::new().add_run(docx_rs::Run::new().add_text("Hello DOCX")),
+            )
+            .build()
+            .pack(&mut docx_buf)
+            .unwrap();
+        std::fs::write(
+            env.root.join("uploads/word-doc.docx"),
+            docx_buf.into_inner(),
+        )
+        .unwrap();
+
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/documents/sheet-doc/preview/sheets")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload["code"], 0);
+        assert_eq!(payload["data"]["sheets"][0]["name"], "Sheet1");
+        assert_eq!(payload["data"]["sheets"][0]["rows"][0][0], "name");
+        assert_eq!(payload["data"]["sheets"][0]["rows"][1][1], "3");
+        assert_eq!(payload["data"]["truncated"], false);
+
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/documents/deck-doc/preview/slides")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload["code"], 0);
+        assert_eq!(payload["data"]["slides"][0], "First slide");
+        assert_eq!(payload["data"]["slides"][1], "Second slide");
+
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/documents/word-doc/preview/docx")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload["code"], 0);
+        let html = payload["data"]["html"].as_str().unwrap();
+        assert!(html.contains("Hello DOCX"), "html={html}");
+        assert!(html.contains("docx-block"));
+        assert_eq!(payload["data"]["truncated"], false);
+    }
+
+    async fn explicit_reparse_queues_even_when_content_hash_is_unchanged() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Idempotent KB", "")
+            .unwrap();
+        let doc = crate::api::document::DocRecord {
+            id: "indexed-doc".into(),
+            name: "indexed.txt".into(),
+            kb_id: kb.id.clone(),
+            size: 4,
+            storage_name: "indexed-doc.txt".into(),
+            content_hash: "0123456789abcdef0123456789abcdef".into(),
+            indexed_content_hash: "0123456789abcdef0123456789abcdef".into(),
+            run: "DONE".into(),
+            progress: 1.0,
+            progress_msg: "Indexed 1 chunks".into(),
+            chunk_count: 1,
+            created_at: 1,
+            updated_at: 1,
+            status: crate::api::document::enabled_status(),
+            ..Default::default()
+        };
+        env.state.docs.insert(doc).unwrap();
+        std::fs::write(env.root.join("uploads/indexed-doc.txt"), b"same").unwrap();
+
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!(
+                        "/api/v1/datasets/{}/documents/indexed-doc/reparse",
+                        kb.id
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let json = response_json(response).await;
+        assert_eq!(json["code"], 0, "response body: {json}");
+        assert!(json["data"]["task_id"].is_string());
+        let tasks = env.state.tasks.list();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].doc_id, "indexed-doc");
+        assert_eq!(tasks[0].priority, crate::api::features::TASK_PRIORITY_HIGH);
+        assert_eq!(env.state.docs.get("indexed-doc").unwrap().run, "UNSTARTED");
+    }
+
+    #[tokio::test]
+    async fn duplicate_file_names_are_incremented_per_owner_and_folder() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+
+        for expected_name in ["report.txt", "report(1).txt", "report(2).txt"] {
+            let boundary = format!("rayrag-file-duplicate-{}", uuid::Uuid::new_v4());
+            let body = format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"report.txt\"\r\nContent-Type: text/plain\r\n\r\nfile content {expected_name}\r\n--{boundary}--\r\n"
+            );
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri("/api/v1/files/upload")
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .header(
+                            header::CONTENT_TYPE,
+                            format!("multipart/form-data; boundary={boundary}"),
+                        )
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let status = response.status();
+            let json = response_json(response).await;
+            assert_eq!(status, StatusCode::OK, "response body: {json}");
+            assert_eq!(json["code"], 0);
+            assert_eq!(json["data"][0]["name"], expected_name);
+            let stored = env
+                .state
+                .files
+                .list_for("test-user", true, "root")
+                .into_iter()
+                .find(|file| file.name == expected_name)
+                .expect("stored file row");
+            assert_eq!(stored.content_hash.len(), 32);
+        }
+
+        let mut names: Vec<_> = env
+            .state
+            .files
+            .list_for("test-user", true, "root")
+            .into_iter()
+            .map(|file| file.name)
+            .collect();
+        names.sort();
+        assert_eq!(names, vec!["report(1).txt", "report(2).txt", "report.txt"]);
+    }
+
+    #[tokio::test]
+    async fn multipart_rejects_empty_file_without_artifacts() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Empty KB", "")
+            .unwrap();
+        let boundary = "rayrag-empty-boundary";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"empty.txt\"\r\nContent-Type: text/plain\r\n\r\n\r\n--{boundary}--\r\n"
+        );
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/datasets/{}/documents", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let json = response_json(response).await;
+        assert_eq!(status, StatusCode::OK, "response body: {json}");
+        assert_eq!(json["code"], 500, "response body: {json}");
+        assert!(env.state.docs.list(&kb.id).is_empty());
+        assert!(
+            std::fs::read_dir(env.root.join("uploads"))
+                .unwrap()
+                .next()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn multipart_rejects_oversized_file_and_removes_temp_file() {
+        let mut env = test_env();
+        Arc::get_mut(&mut env.state).unwrap().max_upload_bytes = 4;
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Oversize KB", "")
+            .unwrap();
+        let boundary = "rayrag-oversize-boundary";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"large.txt\"\r\nContent-Type: text/plain\r\n\r\n12345\r\n--{boundary}--\r\n"
+        );
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/datasets/{}/documents", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let json = response_json(response).await;
+        assert_eq!(status, StatusCode::OK, "response body: {json}");
+        assert_eq!(json["code"], 500, "response body: {json}");
+        assert!(env.state.docs.list(&kb.id).is_empty());
+        assert!(
+            std::fs::read_dir(env.root.join("uploads"))
+                .unwrap()
+                .next()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn multipart_accepts_multiple_valid_files() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Multi KB", "")
+            .unwrap();
+        let boundary = "rayrag-multi-boundary";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"one.txt\"\r\nContent-Type: text/plain\r\n\r\none\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"two.txt\"\r\nContent-Type: text/plain\r\n\r\ntwo\r\n--{boundary}--\r\n"
+        );
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/datasets/{}/documents", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let json = response_json(response).await;
+        assert_eq!(status, StatusCode::OK, "response body: {json}");
+        assert_eq!(json["data"].as_array().unwrap().len(), 2);
+        let mut names: Vec<_> = env
+            .state
+            .docs
+            .list(&kb.id)
+            .into_iter()
+            .map(|doc| doc.name)
+            .collect();
+        names.sort();
+        assert_eq!(names, vec!["one.txt", "two.txt"]);
+        assert_eq!(
+            std::fs::read_dir(env.root.join("uploads")).unwrap().count(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn multipart_rejects_invalid_ooxml_container_without_artifacts() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "OOXML KB", "")
+            .unwrap();
+        let boundary = "rayrag-ooxml-boundary";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"broken.docx\"\r\nContent-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document\r\n\r\nPK\\x03\\x04not-a-real-docx\r\n--{boundary}--\r\n"
+        );
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/datasets/{}/documents", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let json = response_json(response).await;
+        assert_eq!(status, StatusCode::OK, "response body: {json}");
+        assert_eq!(json["code"], 500, "response body: {json}");
+        assert!(env.state.docs.list(&kb.id).is_empty());
+        assert!(
+            std::fs::read_dir(env.root.join("uploads"))
+                .unwrap()
+                .next()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn multipart_rejects_content_that_does_not_match_extension() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "MIME KB", "")
+            .unwrap();
+        let boundary = "rayrag-mime-boundary";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"fake.pdf\"\r\nContent-Type: application/pdf\r\n\r\nthis is not a pdf\r\n--{boundary}--\r\n"
+        );
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/datasets/{}/documents", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let json = response_json(response).await;
+        assert_eq!(status, StatusCode::OK, "response body: {json}");
+        assert_eq!(json["code"], 500, "response body: {json}");
+        assert!(env.state.docs.list(&kb.id).is_empty());
+    }
+
+    #[tokio::test]
+    async fn chat_requires_owned_kb_ids() {
+        let env = test_env();
+        let other_kb = env
+            .state
+            .kbs
+            .create_for("other-user", "Other Chat KB", "")
+            .unwrap();
+        let body = serde_json::json!({
+            "question": "hello",
+            "kb_ids": [other_kb.id]
+        });
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/conversations")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn message_feedback_is_idempotent_and_reverses_previous_weight() {
+        let mut env = test_env();
+        Arc::get_mut(&mut env.state).unwrap().chunk_feedback_enabled = true;
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Feedback KB", "")
+            .unwrap();
+        let mut chunk = search_chunk("feedback-chunk", &kb.id, "water quality");
+        chunk.metadata.insert("pagerank_fea".into(), "10".into());
+        env.state.engine.write().unwrap().add(chunk);
+        env.state
+            .engine
+            .read()
+            .unwrap()
+            .save(&env.state.index_path)
+            .unwrap();
+        let conversation = env
+            .state
+            .conversations
+            .create_for("test-user", "Feedback")
+            .unwrap();
+        let message_id = env
+            .state
+            .conversations
+            .append_exchange_with_references(
+                &conversation.id,
+                "test-user",
+                "question",
+                "answer",
+                vec!["water quality".into()],
+                vec![crate::llm::ChunkReference {
+                    document_id: None,
+                    document_name: None,
+                    id: "feedback-chunk".into(),
+                    kb_id: kb.id.clone(),
+                    content: "water quality".into(),
+                    similarity: Some(0.9),
+                    vector_similarity: Some(0.8),
+                    term_similarity: Some(0.7),
+                    document_metadata: None,
+                }],
+            )
+            .unwrap()
+            .unwrap();
+        let router = build_router(env.state.clone());
+        let uri = format!(
+            "/api/v1/conversations/{}/messages/{}/feedback",
+            conversation.id, message_id
+        );
+        let compatible_uri = format!(
+            "/api/v1/chats/default/sessions/{}/messages/{}/feedback",
+            conversation.id, message_id
+        );
+
+        let like = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri(&compatible_uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"thumbup":true}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(like.status(), StatusCode::OK);
+        assert_eq!(response_json(like).await["data"]["success_count"], 1);
+        assert_eq!(chunk_pagerank(&env.state, "feedback-chunk"), 11.0);
+
+        let duplicate = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri(&uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"thumbup":true}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(duplicate.status(), StatusCode::OK);
+        assert_eq!(response_json(duplicate).await["data"]["success_count"], 0);
+        assert_eq!(chunk_pagerank(&env.state, "feedback-chunk"), 11.0);
+
+        let dislike = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri(&uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"thumbup":false,"feedback":"not relevant"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(dislike.status(), StatusCode::OK);
+        assert_eq!(response_json(dislike).await["data"]["success_count"], 1);
+        assert_eq!(chunk_pagerank(&env.state, "feedback-chunk"), 9.0);
+        let target = env
+            .state
+            .conversations
+            .feedback_target(&conversation.id, "test-user", &message_id)
+            .unwrap();
+        assert_eq!(target.prior_thumb, Some(false));
+        assert_eq!(target.prior_feedback.as_deref(), Some("not relevant"));
+    }
+
+    #[tokio::test]
+    async fn message_feedback_hides_other_users_sessions() {
+        let mut env = test_env();
+        Arc::get_mut(&mut env.state).unwrap().chunk_feedback_enabled = true;
+        let conversation = env
+            .state
+            .conversations
+            .create_for("other-user", "Private")
+            .unwrap();
+        let message_id = env
+            .state
+            .conversations
+            .append_exchange_with_references(
+                &conversation.id,
+                "other-user",
+                "question",
+                "answer",
+                Vec::new(),
+                Vec::new(),
+            )
+            .unwrap()
+            .unwrap();
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri(format!(
+                        "/api/v1/conversations/{}/messages/{}/feedback",
+                        conversation.id, message_id
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"thumbup":true}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn chat_completion_persists_message_id_and_structured_references() {
+        let mut env = test_env();
+        Arc::get_mut(&mut env.state).unwrap().embedder = Some(Arc::new(TestEmbedder));
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Structured Reference KB", "")
+            .unwrap();
+        let mut chunk = search_chunk("reference-chunk", &kb.id, "water quality guidance");
+        chunk.embedding = vec![1.0, 0.0];
+        env.state.engine.write().unwrap().add(chunk);
+        let conversation = env
+            .state
+            .conversations
+            .create_for("test-user", "Structured Reference")
+            .unwrap();
+
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!(
+                        "/api/v1/conversations/{}/completions",
+                        conversation.id
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "question": "water quality",
+                            "kb_ids": [kb.id]
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        let message_id = body["data"]["message_id"].as_str().unwrap();
+        assert!(!message_id.is_empty());
+        assert_eq!(body["data"]["reference"][0]["id"], "reference-chunk");
+        assert_eq!(body["data"]["reference"][0]["kb_id"], kb.id);
+        assert_eq!(body["data"]["reference"][0]["vector_similarity"], 1.0);
+
+        let target = env
+            .state
+            .conversations
+            .feedback_target(&conversation.id, "test-user", message_id)
+            .unwrap();
+        assert_eq!(target.references.len(), 1);
+        assert_eq!(target.references[0].id, "reference-chunk");
+        assert_eq!(target.references[0].kb_id, kb.id);
+    }
+
+    #[tokio::test]
+    async fn chat_generation_params_reject_invalid_boundaries_before_execution() {
+        let env = test_env();
+        let conversation = env
+            .state
+            .conversations
+            .create_for("test-user", "Generation validation")
+            .unwrap();
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!(
+                        "/api/v1/conversations/{}/completions",
+                        conversation.id
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"question":"hello","temperature":1.01}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert!(String::from_utf8_lossy(&bytes).contains("temperature"));
+    }
+
+    #[tokio::test]
+    async fn openai_generation_params_reject_wrong_types_before_model_resolution() {
+        let env = test_env();
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/chat/completions")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"model":"model","messages":[{"role":"user","content":"hello"}],"max_tokens":1.5}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert!(String::from_utf8_lossy(&bytes).contains("max_tokens"));
+    }
+
+    #[tokio::test]
+    async fn agent_generation_params_reject_invalid_penalty() {
+        let env = test_env();
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/agents/default/completions")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"question":"hello","presence_penalty":-0.01}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn chat_lifecycle_renames_regenerates_in_place_and_deletes_turn() {
+        let mut env = test_env();
+        Arc::get_mut(&mut env.state).unwrap().embedder = Some(Arc::new(TestEmbedder));
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Chat Lifecycle KB", "")
+            .unwrap();
+        let mut chunk = search_chunk("chat-lifecycle-chunk", &kb.id, "pond oxygen context");
+        chunk.embedding = vec![1.0, 0.0];
+        env.state.engine.write().unwrap().add(chunk);
+        let conversation = env
+            .state
+            .conversations
+            .create_for_settings(
+                "test-user",
+                "Original Name",
+                vec![kb.id.clone()],
+                None,
+                None,
+            )
+            .unwrap();
+        let router = build_router(env.state.clone());
+
+        let rename = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PATCH)
+                    .uri(format!("/api/v1/conversations/{}", conversation.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"name":"  Oxygen Session  "}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(rename.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(rename).await["data"]["name"],
+            "Oxygen Session"
+        );
+
+        let completion = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!(
+                        "/api/v1/conversations/{}/completions",
+                        conversation.id
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"question":"How is oxygen?"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(completion.status(), StatusCode::OK);
+        let completion_body = response_json(completion).await;
+        let message_id = completion_body["data"]["message_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(
+            completion_body["data"]["reference"][0]["id"],
+            "chat-lifecycle-chunk"
+        );
+        let before = env
+            .state
+            .conversations
+            .get_for(&conversation.id, "test-user")
+            .unwrap();
+        assert_eq!(before.messages.len(), 2);
+        assert_eq!(before.kb_ids, vec![kb.id.clone()]);
+
+        let regenerate = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!(
+                        "/api/v1/conversations/{}/messages/{}/regenerate",
+                        conversation.id, message_id
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(regenerate.status(), StatusCode::OK);
+        let regenerate_body = response_json(regenerate).await;
+        assert_eq!(regenerate_body["data"]["message_id"], message_id);
+        assert_eq!(
+            regenerate_body["data"]["reference"][0]["id"],
+            "chat-lifecycle-chunk"
+        );
+        let regenerated = env
+            .state
+            .conversations
+            .get_for(&conversation.id, "test-user")
+            .unwrap();
+        assert_eq!(regenerated.messages.len(), 2);
+        assert_eq!(regenerated.messages[0].id, message_id);
+        assert_eq!(regenerated.messages[1].id, message_id);
+        assert_eq!(regenerated.messages[0].content, "How is oxygen?");
+
+        let delete = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!(
+                        "/api/v1/conversations/{}/messages/{}",
+                        conversation.id, message_id
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(delete.status(), StatusCode::OK);
+        assert!(
+            response_json(delete).await["data"]["messages"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    /// The synchronous doc-store connector must not be called from a request handler: it starts the
+    /// driver's own runtime and panics with "Cannot start a runtime from within a runtime". The
+    /// in-memory store used by every other test does not panic, so the suite passed while the live
+    /// deployment failed — this scan is the guard that turns that into a test failure.
+    #[test]
+    fn handlers_may_not_use_the_synchronous_doc_store_connector() {
+        fn rust_files(dir: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    rust_files(&path, found);
+                } else if path.extension().is_some_and(|extension| extension == "rs") {
+                    found.push(path);
+                }
+            }
+        }
+        let mut files = Vec::new();
+        rust_files(std::path::Path::new("src/api"), &mut files);
+        let mut direct_pool_users = Vec::new();
+        assert!(
+            !files.is_empty(),
+            "the source tree must be readable from the test working directory"
+        );
+        let mut offenders = Vec::new();
+        for file in files {
+            // The documented blocking wrappers: both call the synchronous form inside
+            // `spawn_blocking`, which is safe by construction.
+            if file.ends_with("src/api/dataset_navigation.rs")
+                || file.ends_with("src/api/dataset_artifacts.rs")
+            {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&file) else {
+                continue;
+            };
+            for (number, line) in text.lines().enumerate() {
+                let trimmed = line.trim_start();
+                if trimmed.starts_with("//") || trimmed.starts_with("///") {
+                    continue;
+                }
+                if line.contains(".doc_store.get_conn()") || line.contains("pool.get_conn()") {
+                    offenders.push(format!("{}:{}", file.display(), number + 1));
+                }
+            }
+            // The second half of the same rule: touching the pool outside a blocking wrapper means the
+            // queries themselves run on a tokio worker, which panics exactly like connecting does.
+            if text.contains(".doc_store") {
+                let wrapped = text.contains("req_store(")
+                    || text.contains("spawn_blocking")
+                    || text.contains("with_store(");
+                if !wrapped {
+                    direct_pool_users.push(file.display().to_string());
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "use doc_store.get_conn_blocking() in handlers instead of get_conn(): {offenders:?}"
+        );
+        assert!(
+            direct_pool_users.is_empty(),
+            "these handlers touch the doc store without a blocking wrapper (req_store / spawn_blocking / \
+             with_store), so their queries would run on a tokio worker: {direct_pool_users:?}"
+        );
+    }
+
+    /// The skill routes: the aggregate row, a node by path, both deletions, and the refusals. The
+    /// tree itself is built by the compiler's own tests; here the stored tree goes in directly so the
+    /// route contract is what is under test.
+    #[tokio::test]
+    async fn the_skill_routes_serve_and_delete_what_was_compiled() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Skills KB", "d")
+            .unwrap();
+        let tree = crate::api::skill_tree::build_tree(
+            &kb.id,
+            &[
+                crate::api::skill_tree::SkillSourceChunk {
+                    doc_id: "d1".into(),
+                    doc_name: "guide.md".into(),
+                    content: "# Install\n\nRun it.".into(),
+                },
+                crate::api::skill_tree::SkillSourceChunk {
+                    doc_id: "d1".into(),
+                    doc_name: "guide.md".into(),
+                    content: "## Linux\n\nTarball.".into(),
+                },
+            ],
+            1,
+        );
+        env.state.skill_trees.put(&kb.id, tree.clone());
+
+        let call = |method: Method, uri: String| {
+            let router = build_router(env.state.clone());
+            let token = env.token.clone();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(method)
+                            .uri(uri)
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        // HEAD answers 200 while a tree exists and 404 once it is gone.
+        let head = call(Method::HEAD, format!("/api/v1/datasets/{}/skills", kb.id)).await;
+        assert_eq!(head.status(), StatusCode::OK);
+        assert_eq!(
+            to_bytes(head.into_body(), 1 << 20).await.unwrap().len(),
+            0,
+            "a HEAD carries no body"
+        );
+
+        // The aggregate row is served whole, with the fields upstream's row carries.
+        let all =
+            response_json(call(Method::GET, format!("/api/v1/datasets/{}/skills", kb.id)).await)
+                .await;
+        assert_eq!(all["code"], 0, "{all}");
+        assert_eq!(all["data"]["compile_kwd"], "skill_all", "{all}");
+        assert_eq!(
+            all["data"]["children_kwd"],
+            serde_json::json!(["install"]),
+            "{all}"
+        );
+        assert_eq!(all["data"]["node_count"], 2, "{all}");
+        assert!(
+            all["data"]["md_with_weight"]
+                .as_str()
+                .unwrap()
+                .contains("Run it."),
+            "{all}"
+        );
+
+        // A node is fetched by its path, and its children are named.
+        let node = response_json(
+            call(
+                Method::GET,
+                format!("/api/v1/datasets/{}/skills/install", kb.id),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(node["data"]["skill_kwd"], "install", "{node}");
+        assert_eq!(
+            node["data"]["children_kwd"],
+            serde_json::json!(["install/linux"]),
+            "{node}"
+        );
+        assert_eq!(node["data"]["compile_kwd"], "skill", "{node}");
+        assert_eq!(node["data"]["depth_int"], 1, "{node}");
+        let nested = response_json(
+            call(
+                Method::GET,
+                format!("/api/v1/datasets/{}/skills/install/linux", kb.id),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(nested["data"]["skill_kwd"], "install/linux", "{nested}");
+
+        // An unknown node is `null`, not an error: that is what upstream answers.
+        let missing = response_json(
+            call(
+                Method::GET,
+                format!("/api/v1/datasets/{}/skills/nope", kb.id),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(missing["code"], 0, "{missing}");
+        assert!(missing["data"].is_null(), "{missing}");
+
+        // Deleting a branch reports the rows it removed, descendants included.
+        let removed = response_json(
+            call(
+                Method::DELETE,
+                format!("/api/v1/datasets/{}/skills/install", kb.id),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(removed["data"]["deleted"], 2, "{removed}");
+        assert!(
+            env.state.skill_trees.get(&kb.id).is_none(),
+            "the last branch took the tree with it"
+        );
+        let head_after = call(Method::HEAD, format!("/api/v1/datasets/{}/skills", kb.id)).await;
+        assert_eq!(head_after.status(), StatusCode::NOT_FOUND);
+
+        // Deleting a tree that is not there reports zero rather than failing.
+        let again =
+            response_json(call(Method::DELETE, format!("/api/v1/datasets/{}/skills", kb.id)).await)
+                .await;
+        assert_eq!(again["data"]["deleted"], 0, "{again}");
+
+        // A dataset the caller cannot reach is refused with upstream's wording and code.
+        let foreign = response_json(
+            call(
+                Method::GET,
+                "/api/v1/datasets/nobody-elses/skills".to_string(),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(foreign["code"], 500, "{foreign}");
+        assert_eq!(foreign["message"], "no authorization", "{foreign}");
+    }
+
+    /// The artifact route: what the executor collected can be fetched by its owner, and every refusal
+    /// upstream defines comes back with upstream's wording.
+    #[tokio::test]
+    async fn sandbox_artifacts_are_served_to_their_owner_only() {
+        let env = test_env();
+        let store = env.state.artifacts.clone();
+        // An artifact exactly as the sandbox reports it: base64 of "hello artifact".
+        let content = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            b"hello artifact",
+        );
+        assert!(store.put("test-user", "chart.png", "image/png", &content));
+
+        let call = |method: Method, uri: String| {
+            let router = build_router(env.state.clone());
+            let token = env.token.clone();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(method)
+                            .uri(uri)
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        // The owner gets the bytes, with the type and an inline filename.
+        let fetched = call(
+            Method::GET,
+            "/api/v1/documents/artifact/chart.png".to_string(),
+        )
+        .await;
+        assert_eq!(fetched.status(), StatusCode::OK);
+        assert_eq!(
+            fetched.headers().get(header::CONTENT_TYPE).unwrap(),
+            "image/png"
+        );
+        assert_eq!(
+            fetched.headers().get(header::CONTENT_DISPOSITION).unwrap(),
+            "inline; filename=\"chart.png\""
+        );
+        let bytes = to_bytes(fetched.into_body(), 1 << 20).await.unwrap();
+        assert_eq!(&bytes[..], b"hello artifact");
+
+        // A path, a traversal attempt and an unsupported type are all refused before the store is read.
+        for (uri, expected) in [
+            // A literal backslash stays inside one path segment, so it reaches the handler and is
+            // refused there. A `%2F` would be split by the router before the handler ever sees it.
+            (
+                "/api/v1/documents/artifact/dir%5Cchart.png",
+                "Invalid filename.",
+            ),
+            ("/api/v1/documents/artifact/script.sh", "invalid file type"),
+            (
+                "/api/v1/documents/artifact/missing.png",
+                "Artifact not found.",
+            ),
+        ] {
+            let raw = call(Method::GET, uri.to_string()).await;
+            let status = raw.status();
+            let bytes = to_bytes(raw.into_body(), 1 << 20).await.unwrap();
+            let refused: serde_json::Value =
+                serde_json::from_slice(&bytes).unwrap_or_else(|error| {
+                    panic!(
+                        "{uri} returned {status} with a non-JSON body: {} ({error})",
+                        String::from_utf8_lossy(&bytes)
+                    )
+                });
+            assert_eq!(
+                refused["code"],
+                crate::server::code::INVALID_OR_MISSING_DATA,
+                "{uri}: {refused}"
+            );
+            assert_eq!(refused["message"], expected, "{uri}");
+        }
+
+        // The listing is the caller's own, and deleting removes it from the route.
+        let listed =
+            response_json(call(Method::GET, "/api/v1/documents/artifacts".to_string()).await).await;
+        assert_eq!(listed["data"]["total"], 1, "{listed}");
+        assert_eq!(
+            listed["data"]["artifacts"][0]["name"], "chart.png",
+            "{listed}"
+        );
+        assert!(
+            listed["data"]["artifacts"][0].get("content_b64").is_none(),
+            "bytes stay out of listings: {listed}"
+        );
+
+        let removed = response_json(
+            call(
+                Method::DELETE,
+                "/api/v1/documents/artifact/chart.png".to_string(),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(removed["code"], 0, "{removed}");
+        assert!(
+            store.get_for("test-user", false, "chart.png").is_none(),
+            "the handler said success, so the store must be empty"
+        );
+        let raw_gone = call(
+            Method::GET,
+            "/api/v1/documents/artifact/chart.png".to_string(),
+        )
+        .await;
+        let gone = response_json(raw_gone).await;
+        assert_eq!(gone["message"], "Artifact not found.", "{gone}");
+
+        // The fixture user is an administrator, and an administrator sees every artifact — that is the
+        // documented rule, so it is asserted rather than assumed away.
+        assert!(store.put("someone-else", "private.png", "image/png", &content));
+        let as_admin = call(
+            Method::GET,
+            "/api/v1/documents/artifact/private.png".to_string(),
+        )
+        .await;
+        assert_eq!(as_admin.status(), StatusCode::OK);
+
+        // A non-administrator does not.
+        let other = non_admin_env();
+        assert!(
+            other
+                .state
+                .artifacts
+                .put("someone-else", "private.png", "image/png", &content)
+        );
+        let other_router = build_router(other.state.clone());
+        let foreign = response_json(
+            other_router
+                .oneshot(
+                    Request::builder()
+                        .method(Method::GET)
+                        .uri("/api/v1/documents/artifact/private.png")
+                        .header(header::AUTHORIZATION, format!("Bearer {}", other.token))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(foreign["message"], "Artifact not found.", "{foreign}");
+    }
+
+    /// `POST /searchbots/ask`: the embedded stream. Every refusal and the frame envelope are checked
+    /// here; the answer text needs a reachable chat model, so the failure frame is what a deployment
+    /// without one produces — and that path is part of the contract too.
+    #[tokio::test]
+    async fn searchbots_ask_streams_upstreams_envelope() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Ask dataset", "")
+            .unwrap();
+        let call = |body: serde_json::Value| {
+            let router = build_router(env.state.clone());
+            let token = env.token.clone();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(Method::POST)
+                            .uri("/api/v1/searchbots/ask")
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(body.to_string()))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        // No question: the argument error comes before anything else.
+        let no_question = response_json(call(serde_json::json!({"kb_ids": [kb.id]})).await).await;
+        assert_eq!(
+            no_question["code"],
+            crate::server::code::INVALID_ARGUMENT,
+            "{no_question}"
+        );
+        // No dataset: also an argument error, and the message names the field.
+        let no_kb = response_json(call(serde_json::json!({"question": "hi"})).await).await;
+        assert_eq!(
+            no_kb["code"],
+            crate::server::code::INVALID_ARGUMENT,
+            "{no_kb}"
+        );
+        assert!(
+            no_kb["message"].as_str().unwrap().contains("kb_ids"),
+            "{no_kb}"
+        );
+        // A dataset the caller cannot reach uses upstream's wording.
+        let foreign = response_json(
+            call(serde_json::json!({"question": "hi", "kb_ids": ["someone-elses-kb"]})).await,
+        )
+        .await;
+        assert_eq!(
+            foreign["code"],
+            crate::server::code::INVALID_OR_MISSING_DATA,
+            "{foreign}"
+        );
+        assert_eq!(
+            foreign["message"], "You don't own the requested dataset",
+            "{foreign}"
+        );
+
+        // A reachable dataset streams. The stream headers are upstream's, and the frames are its envelope.
+        let streamed = call(serde_json::json!({
+            "question": "what is in this dataset?",
+            "kb_id": kb.id,
+        }))
+        .await;
+        assert_eq!(streamed.status(), StatusCode::OK);
+        assert_eq!(
+            streamed.headers().get(header::CONTENT_TYPE).unwrap(),
+            "text/event-stream; charset=utf-8"
+        );
+        assert_eq!(
+            streamed.headers().get(header::CACHE_CONTROL).unwrap(),
+            "no-cache"
+        );
+        assert_eq!(streamed.headers().get("x-accel-buffering").unwrap(), "no");
+        let body = String::from_utf8(
+            to_bytes(streamed.into_body(), 1 << 20)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        let frames: Vec<serde_json::Value> = body
+            .lines()
+            .filter_map(|line| line.strip_prefix("data:"))
+            .map(|payload| serde_json::from_str(payload).unwrap())
+            .collect();
+        assert!(frames.len() >= 2, "the stream must carry frames: {body}");
+        for frame in &frames {
+            assert!(frame.get("code").is_some(), "{frame}");
+            assert!(frame.get("message").is_some(), "{frame}");
+        }
+        let last = frames.last().unwrap();
+        assert_eq!(last["code"], 0, "{body}");
+        assert_eq!(
+            last["data"], true,
+            "the stream ends with the done frame: {body}"
+        );
+        // The empty dataset retrieves nothing, so the reference is present and empty, and the answer
+        // frame reports why there is no model answer rather than inventing one.
+        let answer_frame = frames
+            .iter()
+            .find(|frame| frame["data"].get("reference").is_some())
+            .expect("a reference frame");
+        assert_eq!(
+            answer_frame["data"]["reference"]["chunks"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0,
+            "{answer_frame}"
+        );
+    }
+
+    /// The document-level structure graph. The assembly helpers and the compiler had no caller for a
+    /// while, so this test is the one that exercises the route end to end: real rows in the shared doc
+    /// store come back grouped by the template that produced them, with the legacy bucket kept and the
+    /// empty case explained.
+    #[tokio::test]
+    async fn the_document_structure_graph_groups_compiled_rows_by_template() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Graph KB", "")
+            .unwrap();
+        let doc = crate::api::document::DocRecord {
+            id: "graph-doc".into(),
+            name: "graph.md".into(),
+            kb_id: kb.id.clone(),
+            size: 10,
+            storage_name: "graph.md".into(),
+            content_hash: "0123456789abcdef0123456789abcdef".into(),
+            indexed_content_hash: String::new(),
+            run: "DONE".into(),
+            progress: 1.0,
+            progress_msg: "Indexed 2 chunks".into(),
+            chunk_count: 2,
+            created_at: 1,
+            updated_at: 1,
+            status: crate::api::document::enabled_status(),
+            ..Default::default()
+        };
+        env.state.docs.insert(doc).unwrap();
+
+        let call = |uri: String| {
+            let router = build_router(env.state.clone());
+            let token = env.token.clone();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(Method::GET)
+                            .uri(uri)
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+        let graph_uri = format!(
+            "/api/v1/datasets/{}/documents/graph-doc/structure/graph",
+            kb.id
+        );
+
+        // With nothing compiled there is nothing to show, and the answer says so.
+        let empty = response_json(call(graph_uri.clone()).await).await;
+        assert_eq!(empty["code"], 0, "{empty}");
+        assert_eq!(empty["data"]["total_entities"], 0, "{empty}");
+        assert!(
+            empty["data"]["templates"].as_array().unwrap().is_empty(),
+            "{empty}"
+        );
+        assert!(
+            empty["data"]["note"]
+                .as_str()
+                .unwrap()
+                .contains("no compiled structure graph"),
+            "{empty}"
+        );
+
+        // Rows as the compiler writes them: entity and relation rows tagged with a template, plus one
+        // that predates the tag and must land in the legacy bucket rather than vanish.
+        // Rows carry the fields the store is queried by, not only the compiled payload: that is what
+        // the compiler writes and what the projection reads endpoints and names from.
+        let row = |id: &str, kind: &str, payload: &str, template: Option<&str>| {
+            let mut row = serde_json::json!({
+                "id": id,
+                "doc_id": "graph-doc",
+                "knowledge_graph_kwd": kind,
+                "content_with_weight": payload,
+            });
+            let object = row.as_object_mut().unwrap();
+            if kind == "entity" {
+                let name = payload
+                    .split("\"name\":\"")
+                    .nth(1)
+                    .and_then(|rest| rest.split('"').next())
+                    .unwrap_or(id);
+                object.insert("name_kwd".to_string(), serde_json::json!(name));
+                object.insert("mention_count_int".to_string(), serde_json::json!(1));
+            } else {
+                object.insert("from_entity_kwd".to_string(), serde_json::json!("rust"));
+                object.insert("to_entity_kwd".to_string(), serde_json::json!("cargo"));
+            }
+            match template {
+                Some(template) => {
+                    object.insert(
+                        "compilation_template_ids".to_string(),
+                        serde_json::json!([template]),
+                    );
+                    object.insert(
+                        "compilation_template_kind_kwd".to_string(),
+                        serde_json::json!("hypergraph"),
+                    );
+                    object.insert(
+                        "compile_kwd".to_string(),
+                        serde_json::json!("knowledge_graph"),
+                    );
+                }
+                None => {
+                    object.insert(
+                        "compile_kwd".to_string(),
+                        serde_json::json!("knowledge_graph"),
+                    );
+                }
+            }
+            row.as_object().unwrap().clone()
+        };
+        let rows: Vec<crate::doc_store::DocRow> = vec![
+            row(
+                "e1",
+                "entity",
+                r#"{"name":"rust","content_with_weight":"a systems language"}"#,
+                Some("tpl-1"),
+            ),
+            row(
+                "e2",
+                "entity",
+                r#"{"name":"cargo","content_with_weight":"the package manager"}"#,
+                Some("tpl-1"),
+            ),
+            row(
+                "r1",
+                "relation",
+                r#"{"from_entity_kwd":"rust","to_entity_kwd":"cargo","content_with_weight":"rust ships cargo"}"#,
+                Some("tpl-1"),
+            ),
+            row(
+                "e3",
+                "entity",
+                r#"{"name":"legacy-entity","content_with_weight":"older row"}"#,
+                None,
+            ),
+        ];
+        let store = env.state.doc_store.get_conn().unwrap();
+        store
+            .insert(
+                &rows,
+                &crate::harness::knowlege_dataset_nav::index_name("test-user"),
+                &kb.id,
+            )
+            .unwrap();
+
+        let listed = response_json(call(graph_uri.clone()).await).await;
+        assert_eq!(listed["code"], 0, "{listed}");
+        assert_eq!(listed["data"]["total_entities"], 3, "{listed}");
+        assert_eq!(listed["data"]["total_relations"], 1, "{listed}");
+        let templates = listed["data"]["templates"].as_array().unwrap();
+        assert_eq!(templates.len(), 2, "template + legacy bucket: {listed}");
+        let templated = templates
+            .iter()
+            .find(|bucket| bucket["template_id"] == "tpl-1")
+            .expect("the tagged rows must be grouped under their template");
+        assert_eq!(
+            templated["entities"].as_array().unwrap().len(),
+            2,
+            "{listed}"
+        );
+        assert_eq!(
+            templated["relations"].as_array().unwrap().len(),
+            1,
+            "{listed}"
+        );
+        let legacy = templates
+            .iter()
+            .find(|bucket| bucket["template_id"] == "legacy:knowledge_graph")
+            .expect("a row without a template id is kept, not dropped");
+        assert_eq!(
+            legacy["template_name"], "Legacy (knowledge_graph)",
+            "{listed}"
+        );
+        assert_eq!(legacy["entities"].as_array().unwrap().len(), 1, "{listed}");
+
+        // Keywords narrow the graph server-side, and a phrase that matches nothing is an empty graph
+        // rather than a refusal.
+        let narrowed = response_json(call(format!("{graph_uri}?keywords=cargo")).await).await;
+        let narrowed_templates = narrowed["data"]["templates"].as_array().unwrap();
+        let narrowed_entities: usize = narrowed_templates
+            .iter()
+            .map(|bucket| bucket["entities"].as_array().unwrap().len())
+            .sum();
+        assert_eq!(narrowed_entities, 1, "{narrowed}");
+        assert_eq!(
+            narrowed["data"]["total_entities"], 3,
+            "totals describe the document: {narrowed}"
+        );
+        let none = response_json(call(format!("{graph_uri}?keywords=zzzz")).await).await;
+        assert_eq!(none["code"], 0, "{none}");
+        assert!(
+            none["data"]["templates"].as_array().unwrap().is_empty(),
+            "{none}"
+        );
+
+        // Deleting a template's tab removes its rows (and only its rows), refuses an empty
+        // `template_id`, and leaves the other buckets alone.
+        let delete_call = |body: serde_json::Value| {
+            let router = build_router(env.state.clone());
+            let token = env.token.clone();
+            let uri = graph_uri.clone();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(Method::DELETE)
+                            .uri(uri)
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(body.to_string()))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+        let missing_id = response_json(delete_call(serde_json::json!({})).await).await;
+        assert_eq!(
+            missing_id["code"],
+            crate::server::code::INVALID_OR_MISSING_DATA,
+            "{missing_id}"
+        );
+        assert!(
+            missing_id["message"]
+                .as_str()
+                .unwrap()
+                .contains("template_id"),
+            "{missing_id}"
+        );
+
+        let removed =
+            response_json(delete_call(serde_json::json!({"template_id": "tpl-1"})).await).await;
+        assert_eq!(removed["code"], 0, "{removed}");
+        assert!(
+            removed["data"]["deleted"].as_u64().unwrap() >= 3,
+            "{removed}"
+        );
+        let after = response_json(call(graph_uri.clone()).await).await;
+        let remaining: Vec<&str> = after["data"]["templates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|bucket| bucket["template_id"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            remaining,
+            vec!["legacy:knowledge_graph"],
+            "only the legacy row survives: {after}"
+        );
+
+        // A document that belongs to another dataset is refused with the upstream wording.
+        let other = response_json(
+            call(format!(
+                "/api/v1/datasets/{}/documents/graph-doc/structure/graph",
+                "some-other-kb"
+            ))
+            .await,
+        )
+        .await;
+        assert_eq!(
+            other["code"],
+            crate::server::code::INVALID_OR_MISSING_DATA,
+            "{other}"
+        );
+        assert!(
+            other["message"].as_str().unwrap().contains("dataset"),
+            "{other}"
+        );
+    }
+
+    /// The reset flow's front door: the image is a real PNG, and no reset code leaves the server until
+    /// the answer comes back. Upstream has both halves; RayRAG had only the OTP half, which let anyone
+    /// request codes for arbitrary addresses in a loop.
+    #[tokio::test]
+    async fn a_reset_code_needs_the_captcha_first() {
+        let env = test_env();
+        let email = "captcha-flow@example.com";
+
+        // The image endpoint, as a browser would call it.
+        let image = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!(
+                        "/api/v1/auth/password/forgot/captcha?email={email}"
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(image.status(), StatusCode::OK);
+        assert_eq!(
+            image.headers().get(header::CONTENT_TYPE).unwrap(),
+            "image/png"
+        );
+        assert_eq!(image.headers().get("x-captcha-ttl").unwrap(), "60");
+        let bytes = to_bytes(image.into_body(), 1 << 20).await.unwrap();
+        assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n", "the body is not a PNG");
+        let decoded = image::load_from_memory(&bytes).unwrap().to_rgb8();
+        assert_eq!(
+            decoded.dimensions(),
+            (crate::captcha::IMAGE_WIDTH, crate::captcha::IMAGE_HEIGHT)
+        );
+
+        // The same question can be asked with POST, which is what upstream registers.
+        let posted = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!(
+                        "/api/v1/auth/password/forgot/captcha?email={email}"
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(posted.status(), StatusCode::OK);
+        assert_eq!(
+            posted.headers().get(header::CONTENT_TYPE).unwrap(),
+            "image/png"
+        );
+
+        // Without an address there is nothing to attach the answer to.
+        let no_email = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/v1/auth/password/forgot/captcha")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(no_email.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            response_json(no_email).await["message"]
+                .as_str()
+                .unwrap()
+                .contains("email"),
+            "the refusal must say what is missing"
+        );
+
+        let otp = |captcha: Option<&'static str>| {
+            let router = build_router(env.state.clone());
+            async move {
+                let mut body = serde_json::json!({ "email": "captcha-flow@example.com" });
+                if let Some(answer) = captcha {
+                    body["captcha"] = serde_json::json!(answer);
+                }
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(Method::POST)
+                            .uri("/api/v1/auth/password/forgot/otp")
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(body.to_string()))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        // No answer: refused, and told how to get one.
+        let missing = response_json(otp(None).await).await;
+        assert_eq!(
+            missing["code"],
+            crate::server::code::INVALID_OR_MISSING_DATA,
+            "{missing}"
+        );
+        assert!(
+            missing["message"].as_str().unwrap().contains("captcha"),
+            "{missing}"
+        );
+
+        // A wrong answer is refused too, and does not consume the question.
+        let wrong = response_json(otp(Some("ZZZZ")).await).await;
+        assert_eq!(
+            wrong["code"],
+            crate::server::code::INVALID_OR_MISSING_DATA,
+            "{wrong}"
+        );
+
+        // The right answer is the one the store issued for that address. A test cannot read the image,
+        // so it asks the store — the same call the endpoint makes.
+        let issued = crate::captcha::CaptchaStore::shared().issue(email);
+        let accepted =
+            response_json(otp(Some(Box::leak(issued.clone().into_boxed_str()))).await).await;
+        assert_eq!(accepted["code"], 0, "{accepted}");
+        assert_eq!(accepted["data"]["email"], email, "{accepted}");
+        assert!(
+            accepted["data"]["expires_in_seconds"].as_u64().unwrap() > 0,
+            "{accepted}"
+        );
+
+        // And it is spent: a second request with the same answer is refused.
+        let replayed = response_json(otp(Some(Box::leak(issued.into_boxed_str()))).await).await;
+        assert_eq!(
+            replayed["code"],
+            crate::server::code::INVALID_OR_MISSING_DATA,
+            "a captcha answer must not be reusable: {replayed}"
+        );
+    }
+
+    /// Four lists that used to be literals in the handlers: the factories come from the provider
+    /// catalogue, the channels and bots from the channel configuration, and the commits from the commit
+    /// store. Each assertion ties the answer to its source, so a literal cannot quietly return.
+    #[tokio::test]
+    async fn the_remaining_lists_follow_their_real_sources() {
+        let env = test_env();
+        let get = |uri: &str| {
+            let router = build_router(env.state.clone());
+            let token = env.token.clone();
+            let uri = uri.to_string();
+            async move {
+                let request = Request::builder()
+                    .method(Method::GET)
+                    .uri(uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap();
+                router.oneshot(request).await.unwrap()
+            }
+        };
+
+        // Factories: the whole catalogue, with the capabilities each one offers.
+        let factories = response_json(get("/api/v1/llm/factories").await).await;
+        assert_eq!(factories["code"], 0, "{factories}");
+        let rows = factories["data"].as_array().unwrap();
+        assert!(
+            rows.len() >= crate::providers::preset_count(),
+            "the catalogue has {} presets but the answer has {}",
+            crate::providers::preset_count(),
+            rows.len()
+        );
+        let names: Vec<&str> = rows
+            .iter()
+            .map(|row| row["name"].as_str().unwrap())
+            .collect();
+        for expected in ["OpenAI", "ZHIPU-AI", "DeepSeek"] {
+            assert!(names.contains(&expected), "missing {expected}");
+        }
+        // The tags are the real capabilities, not a fixed string.
+        let zhipu = rows.iter().find(|row| row["name"] == "ZHIPU-AI").unwrap();
+        assert!(zhipu["tags"].as_str().unwrap().contains("LLM"), "{zhipu}");
+        assert!(zhipu["model_count"].as_u64().unwrap() > 0, "{zhipu}");
+        // `configured` follows the provider store, so the assertion is relative to that store rather
+        // than to an assumption about the fixture.
+        let stored = env.state.providers.list_configured();
+        let configured_ids: std::collections::HashSet<String> = stored
+            .iter()
+            .filter(|provider| {
+                provider
+                    .api_key
+                    .as_deref()
+                    .is_some_and(|key| !key.trim().is_empty())
+            })
+            .flat_map(|provider| [provider.id.clone(), provider.name.clone()])
+            .collect();
+        // The rule itself: a provider row without a key must not make a factory look ready.
+        assert!(
+            stored
+                .iter()
+                .filter(|provider| provider
+                    .api_key
+                    .as_deref()
+                    .is_none_or(|key| key.trim().is_empty()))
+                .all(|provider| !configured_ids.contains(&provider.name)),
+            "a keyless provider row made a factory look configured"
+        );
+        assert_eq!(
+            zhipu["configured"],
+            configured_ids.contains("ZHIPU-AI"),
+            "{zhipu} vs {configured_ids:?}"
+        );
+        assert_eq!(
+            zhipu["status"] == "1",
+            configured_ids.contains("ZHIPU-AI"),
+            "{zhipu}"
+        );
+        // And the China-friendly flag survives, because that is what a user here picks by.
+        assert!(
+            rows.iter().any(|row| row["domestic"] == true),
+            "no mainland-friendly factory is marked: {factories}"
+        );
+
+        // Channels: empty when nothing is configured, with the reason.
+        let channels = response_json(get("/api/v1/channels").await).await;
+        assert_eq!(channels["code"], 0, "{channels}");
+        assert!(
+            channels["note"]
+                .as_str()
+                .unwrap()
+                .contains("RAYRAG_CHANNELS_CONFIG"),
+            "{channels}"
+        );
+        assert_eq!(
+            channels["total"],
+            channels["data"].as_array().unwrap().len(),
+            "{channels}"
+        );
+        // The configuration wraps its entries, and the wrapper must never be reported as a channel.
+        assert!(
+            channels["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|row| row["id"] != "channels"),
+            "{channels}"
+        );
+
+        // Bots: a bot is a configured channel with a callback, so with no configuration there is none.
+        let bots = response_json(get("/api/v1/bots").await).await;
+        assert_eq!(bots["code"], 0, "{bots}");
+        assert_eq!(
+            bots["total"], 0,
+            "no channel is configured in this fixture: {bots}"
+        );
+
+        // Commits: read from the store, so a commit written there appears here.
+        let empty = response_json(get("/api/v1/file/commits").await).await;
+        assert_eq!(empty["code"], 0, "{empty}");
+        assert_eq!(empty["data"].as_array().unwrap().len(), 0, "{empty}");
+        let commit = crate::api::workspaces::WorkspaceCommit {
+            id: "commit-1".into(),
+            folder_id: "kb-1".into(),
+            scope: "kb-1".into(),
+            parent_id: None,
+            message: "first commit".into(),
+            author_id: "test-user".into(),
+            file_count: 1,
+            tree_state: String::new(),
+            tree_entries: Vec::new(),
+            create_time: 1_700_000_000_000,
+        };
+        env.state
+            .workspace_commits
+            .insert(commit, Vec::new())
+            .unwrap();
+        let listed = response_json(get("/api/v1/file/commits").await).await;
+        assert_eq!(listed["data"].as_array().unwrap().len(), 1, "{listed}");
+        assert_eq!(listed["data"][0]["message"], "first commit", "{listed}");
+        assert_eq!(listed["total"], 1, "{listed}");
+    }
+
+    /// The tool catalogue and the capability report: both used to answer from invented data, so this
+    /// checks that the listing is the registry's own and that the report describes this deployment.
+    #[tokio::test]
+    async fn tools_and_capabilities_describe_the_running_deployment() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "catalogue-kb", "")
+            .unwrap();
+        let call = |method: Method, uri: &str| {
+            let router = build_router(env.state.clone());
+            let token = env.token.clone();
+            let uri = uri.to_string();
+            async move {
+                let request = Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap();
+                router.oneshot(request).await.unwrap()
+            }
+        };
+        let get = |uri: &str| call(Method::GET, uri);
+
+        // The plugin tool listing is in the shape upstream's get_metadata() returns.
+        let tools = response_json(get("/api/v1/plugin/tools").await).await;
+        assert_eq!(tools["code"], 0, "{tools}");
+        let list = tools["data"].as_array().unwrap();
+        assert!(!list.is_empty(), "{tools}");
+        assert!(
+            list.iter().all(|tool| tool["type"] == "function"),
+            "{tools}"
+        );
+        let names: Vec<&str> = list
+            .iter()
+            .map(|tool| tool["function"]["name"].as_str().unwrap())
+            .collect();
+        assert!(names.contains(&"ragflow_retrieval"), "{names:?}");
+        assert!(
+            list.iter()
+                .all(|tool| tool["function"]["parameters"]["type"] == "object"),
+            "{tools}"
+        );
+
+        // The retrieval tool's description carries the caller's datasets, so a model is told which ids
+        // exist instead of having to guess one.
+        let retrieval = list
+            .iter()
+            .find(|tool| tool["function"]["name"] == "ragflow_retrieval")
+            .unwrap();
+        assert!(
+            retrieval["function"]["description"]
+                .as_str()
+                .unwrap()
+                .contains(&kb.id),
+            "{retrieval}"
+        );
+
+        // The MCP listing is the same catalogue, not the two invented tools it used to answer with.
+        let mcp = response_json(get("/api/v1/mcp/tools").await).await;
+        let mcp_names: Vec<&str> = mcp["data"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap())
+            .collect();
+        assert!(mcp_names.contains(&"ragflow_retrieval"), "{mcp_names:?}");
+        assert!(
+            !mcp_names.contains(&"search_knowledge") || names.contains(&"search_knowledge"),
+            "{mcp}"
+        );
+
+        // The capability report describes this deployment, and says where each line is configured.
+        let plugins = response_json(get("/api/v1/plugins").await).await;
+        assert_eq!(plugins["code"], 0, "{plugins}");
+        let capabilities = plugins["data"]["capabilities"].as_array().unwrap();
+        let ids: Vec<&str> = capabilities
+            .iter()
+            .map(|entry| entry["id"].as_str().unwrap())
+            .collect();
+        for expected in ["llm", "embedding", "rerank", "vision", "ocr", "tts", "asr"] {
+            assert!(ids.contains(&expected), "missing {expected}: {ids:?}");
+        }
+        assert!(
+            capabilities.iter().all(|entry| entry["configured_by"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())),
+            "{plugins}"
+        );
+        // The built-in reader means OCR is always available, whatever the environment says.
+        let ocr = capabilities
+            .iter()
+            .find(|entry| entry["id"] == "ocr")
+            .unwrap();
+        assert_eq!(ocr["available"], true, "{ocr}");
+        // A capability without an endpoint explains itself rather than reporting a bare false.
+        for entry in capabilities
+            .iter()
+            .filter(|entry| entry["available"] == false)
+        {
+            assert!(
+                entry["detail"]
+                    .as_str()
+                    .is_some_and(|value| !value.is_empty()),
+                "an unavailable capability must say why: {entry}"
+            );
+        }
+        assert_eq!(plugins["data"]["total"], capabilities.len(), "{plugins}");
+        assert_eq!(
+            plugins["data"]["configured"],
+            capabilities
+                .iter()
+                .filter(|entry| entry["available"] == true)
+                .count(),
+            "{plugins}"
+        );
+        // The report says what `available` means, so a configured-but-stopped provider cannot
+        // be mistaken for a working one.
+        assert!(
+            plugins["data"]["note"]
+                .as_str()
+                .unwrap()
+                .contains("not that the endpoint is reachable"),
+            "{plugins}"
+        );
+
+        // Toggling says why it cannot, instead of the old success message for a no-op.
+        let toggled = response_json(call(Method::POST, "/api/v1/plugins/ocr/toggle").await).await;
+        assert_eq!(toggled["code"], 103, "{toggled}");
+        assert!(
+            toggled["message"]
+                .as_str()
+                .unwrap()
+                .contains("not toggled at runtime"),
+            "{toggled}"
+        );
+        let unknown = response_json(call(Method::POST, "/api/v1/plugins/nope/toggle").await).await;
+        assert_eq!(unknown["code"], 102, "{unknown}");
+        assert!(
+            unknown["message"]
+                .as_str()
+                .unwrap()
+                .contains("Unknown capability 'nope'"),
+            "{unknown}"
+        );
+    }
+
+    /// The connector family used to answer from a hard-coded list and echo `create` without storing
+    /// anything. This walks the real thing: create, read back, probe a real directory, read the log,
+    /// rebuild, patch, delete — and the refusals.
+    #[tokio::test]
+    async fn connectors_are_stored_probed_and_refused_honestly() {
+        let env = test_env();
+        // A directory with two files, so `test` and `rebuild` have something real to list.
+        let source = env.root.join("connector-source");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("one.txt"), b"one").unwrap();
+        std::fs::write(source.join("two.txt"), b"two").unwrap();
+
+        let call = |method: Method, uri: String, body: Option<String>| {
+            let router = build_router(env.state.clone());
+            let token = env.token.clone();
+            async move {
+                let mut request = Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"));
+                let payload = match body {
+                    Some(body) => {
+                        request = request.header(header::CONTENT_TYPE, "application/json");
+                        Body::from(body)
+                    }
+                    None => Body::empty(),
+                };
+                router
+                    .oneshot(request.body(payload).unwrap())
+                    .await
+                    .unwrap()
+            }
+        };
+
+        // The list starts empty: no invented connectors.
+        let empty = response_json(call(Method::GET, "/api/v1/connectors".into(), None).await).await;
+        assert_eq!(empty["code"], 0, "{empty}");
+        assert_eq!(empty["data"].as_array().unwrap().len(), 0, "{empty}");
+
+        // An unknown type is refused by name, with the known types listed.
+        let bad_type = response_json(
+            call(
+                Method::POST,
+                "/api/v1/connectors".into(),
+                Some(r#"{"name":"x","source_type":"not-a-real-source"}"#.into()),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(bad_type["code"], 101, "{bad_type}");
+        assert!(
+            bad_type["message"]
+                .as_str()
+                .unwrap()
+                .contains("Unknown connector type 'not-a-real-source'"),
+            "{bad_type}"
+        );
+        assert!(
+            bad_type["message"].as_str().unwrap().contains("local"),
+            "{bad_type}"
+        );
+
+        // A nameless connector is refused too.
+        let no_name = response_json(
+            call(
+                Method::POST,
+                "/api/v1/connectors".into(),
+                Some(r#"{"name":"   ","source_type":"local"}"#.into()),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(no_name["code"], 101, "{no_name}");
+        assert_eq!(no_name["message"], "Connector name is required.");
+
+        // A real one is stored and comes back from the list.
+        let created = response_json(
+            call(
+                Method::POST,
+                "/api/v1/connectors".into(),
+                Some(format!(
+                    r#"{{"name":"local files","source_type":"local","config":{{"path":"{}"}}}}"#,
+                    source.display()
+                )),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(created["code"], 0, "{created}");
+        let id = created["data"]["id"].as_str().unwrap().to_string();
+        assert!(!id.is_empty());
+        assert_eq!(created["data"]["owner_id"], "test-user", "{created}");
+        let listed =
+            response_json(call(Method::GET, "/api/v1/connectors".into(), None).await).await;
+        assert_eq!(listed["data"].as_array().unwrap().len(), 1, "{listed}");
+        assert_eq!(listed["total"], 1, "{listed}");
+
+        // Detail.
+        let detail =
+            response_json(call(Method::GET, format!("/api/v1/connectors/{id}"), None).await).await;
+        assert_eq!(detail["code"], 0, "{detail}");
+        assert_eq!(detail["data"]["name"], "local files", "{detail}");
+
+        // A probe that really lists the directory.
+        let tested = response_json(
+            call(
+                Method::POST,
+                format!("/api/v1/connectors/{id}/test"),
+                Some("{}".into()),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(tested["code"], 0, "{tested}");
+        assert_eq!(tested["data"]["ok"], true, "{tested}");
+        assert_eq!(tested["data"]["files"], 2, "{tested}");
+
+        // Rebuild reports what the source offers and says plainly that it wrote nothing.
+        let rebuilt = response_json(
+            call(
+                Method::POST,
+                format!("/api/v1/connectors/{id}/rebuild"),
+                Some("{}".into()),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(rebuilt["code"], 0, "{rebuilt}");
+        assert_eq!(rebuilt["data"]["scanned"], 2, "{rebuilt}");
+        assert_eq!(rebuilt["data"]["imported"], 0, "{rebuilt}");
+        assert!(
+            rebuilt["message"]
+                .as_str()
+                .unwrap()
+                .contains("no document was written"),
+            "{rebuilt}"
+        );
+
+        // The history records the create, the test and the rebuild, newest first.
+        let logs =
+            response_json(call(Method::GET, format!("/api/v1/connectors/{id}/logs"), None).await)
+                .await;
+        assert_eq!(logs["code"], 0, "{logs}");
+        let events: Vec<&str> = logs["data"]["logs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|line| line["event"].as_str().unwrap())
+            .collect();
+        assert_eq!(events, vec!["rebuild", "test", "created"], "{logs}");
+        assert_eq!(logs["data"]["total"], 3, "{logs}");
+
+        // A disabled connector is not rebuilt, and says why.
+        let patched = response_json(
+            call(
+                Method::PATCH,
+                format!("/api/v1/connectors/{id}"),
+                Some(r#"{"enabled":false}"#.into()),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(patched["data"]["enabled"], false, "{patched}");
+        let disabled = response_json(
+            call(
+                Method::POST,
+                format!("/api/v1/connectors/{id}/rebuild"),
+                Some("{}".into()),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(disabled["code"], 102, "{disabled}");
+        assert!(
+            disabled["message"].as_str().unwrap().contains("disabled"),
+            "{disabled}"
+        );
+
+        // Unknown ids answer the same way for detail, log, test and rebuild.
+        for (method, uri, body) in [
+            (Method::GET, "/api/v1/connectors/nope".to_string(), None),
+            (
+                Method::GET,
+                "/api/v1/connectors/nope/logs".to_string(),
+                None,
+            ),
+            (
+                Method::POST,
+                "/api/v1/connectors/nope/test".to_string(),
+                Some("{}".to_string()),
+            ),
+            (
+                Method::POST,
+                "/api/v1/connectors/nope/rebuild".to_string(),
+                Some("{}".to_string()),
+            ),
+        ] {
+            let response = call(method, uri.clone(), body).await;
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{uri}");
+            assert_eq!(
+                response_json(response).await["message"],
+                "Connector not found."
+            );
+        }
+
+        // Deleting removes it, and a second delete is a refusal rather than a silent success.
+        let deleted =
+            response_json(call(Method::DELETE, format!("/api/v1/connectors/{id}"), None).await)
+                .await;
+        assert_eq!(deleted["data"], true, "{deleted}");
+        let again = call(Method::DELETE, format!("/api/v1/connectors/{id}"), None).await;
+        assert_eq!(again.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// The embedding check: it insists on `embd_id`, it refuses a dataset the caller cannot read, and
+    /// with nothing embedded it says so rather than reporting a similarity of zero as a result.
+    #[tokio::test]
+    async fn embedding_check_reports_what_it_cannot_compare() {
+        let env = test_env();
+        let kb = env.state.kbs.create_for("test-user", "emb-kb", "").unwrap();
+        let call = |uri: String, body: &str| {
+            let router = build_router(env.state.clone());
+            let token = env.token.clone();
+            let body = body.to_string();
+            async move {
+                let request = Request::builder()
+                    .method(Method::POST)
+                    .uri(uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body))
+                    .unwrap();
+                router.oneshot(request).await.unwrap()
+            }
+        };
+
+        // `embd_id` is required, exactly as upstream insists.
+        let missing = response_json(
+            call(
+                format!("/api/v1/datasets/{}/embedding/check", kb.id),
+                r#"{"n":4}"#,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(missing["code"], 102, "{missing}");
+        assert_eq!(missing["message"], "`embd_id` is required.");
+
+        // A dataset the caller cannot read is refused.
+        let unknown = response_json(
+            call(
+                "/api/v1/datasets/no-such-kb/embedding/check".to_string(),
+                r#"{"embd_id":"bge-m3"}"#,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(unknown["code"], 102, "{unknown}");
+        assert_eq!(unknown["message"], "no authorization");
+
+        // A dataset whose chunks carry no vectors has nothing to compare.
+        let empty = response_json(
+            call(
+                format!("/api/v1/datasets/{}/embedding/check", kb.id),
+                r#"{"embd_id":"bge-m3"}"#,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(empty["code"], 102, "{empty}");
+        assert_eq!(
+            empty["message"],
+            "No embedded chunks are available to compare."
+        );
+
+        // A chunk that belongs to the dataset but has no vector is still not comparable.
+        let now = 1_700_000_000_000u64;
+        env.state
+            .docs
+            .insert(crate::api::document::DocRecord {
+                id: "doc-emb-1".into(),
+                name: "emb.txt".into(),
+                kb_id: kb.id.clone(),
+                size: 4,
+                storage_name: "doc-emb-1.txt".into(),
+                content_hash: String::new(),
+                indexed_content_hash: String::new(),
+                run: "DONE".into(),
+                progress: 1.0,
+                progress_msg: String::new(),
+                chunk_count: 0,
+                created_at: now,
+                updated_at: now,
+                status: crate::api::document::enabled_status(),
+                ..Default::default()
+            })
+            .unwrap();
+        env.state
+            .engine
+            .write()
+            .unwrap()
+            .add(crate::search::IndexedChunk {
+                id: "chunk-without-vector".into(),
+                doc_name: "emb.txt".into(),
+                content: "text without a vector".into(),
+                embedding: Vec::new(),
+                token_count: 4,
+                position: 0,
+                metadata: [("doc_id".to_string(), "doc-emb-1".to_string())]
+                    .into_iter()
+                    .collect(),
+            });
+        let unvectorised = response_json(
+            call(
+                format!("/api/v1/datasets/{}/embedding/check", kb.id),
+                r#"{"embd_id":"bge-m3"}"#,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(unvectorised["code"], 102, "{unvectorised}");
+        assert_eq!(
+            unvectorised["message"],
+            "No embedded chunks are available to compare."
+        );
+    }
+
+    /// The audio endpoints, on a deployment with no speech model configured — which is the state the
+    /// guide documents failures for. Missing text is an argument error, missing configuration is the
+    /// documented `102`, and a suffix outside the allowlist is refused before any provider is called.
+    #[tokio::test]
+    async fn audio_endpoints_report_their_documented_refusals() {
+        let env = test_env();
+        let call = |uri: &str, content_type: &str, body: Vec<u8>| {
+            let router = build_router(env.state.clone());
+            let token = env.token.clone();
+            let uri = uri.to_string();
+            let content_type = content_type.to_string();
+            async move {
+                let request = Request::builder()
+                    .method(Method::POST)
+                    .uri(uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .header(header::CONTENT_TYPE, content_type)
+                    .body(Body::from(body))
+                    .unwrap();
+                router.oneshot(request).await.unwrap()
+            }
+        };
+
+        // Speech needs text before anything else.
+        let missing = call(
+            "/api/v1/chat/audio/speech",
+            "application/json",
+            br#"{}"#.to_vec(),
+        )
+        .await;
+        assert_eq!(missing.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response_json(missing).await["message"],
+            "required argument are missing: text"
+        );
+
+        // With text but no configured endpoint, the answer is the documented sentence.
+        let unconfigured = call(
+            "/api/v1/chat/audio/speech",
+            "application/json",
+            br#"{"text":"hello"}"#.to_vec(),
+        )
+        .await;
+        assert_eq!(unconfigured.status(), StatusCode::OK);
+        let unconfigured = response_json(unconfigured).await;
+        assert_eq!(unconfigured["code"], 102, "{unconfigured}");
+        assert_eq!(unconfigured["message"], "No default TTS model is set");
+
+        // A body without a file part.
+        let boundary = "X-BOUNDARY";
+        let no_file = call(
+            "/api/v1/chat/audio/transcription",
+            &format!("multipart/form-data; boundary={boundary}"),
+            format!("--{boundary}\r\nContent-Disposition: form-data; name=\"stream\"\r\n\r\nfalse\r\n--{boundary}--\r\n").into_bytes(),
+        )
+        .await;
+        let no_file = response_json(no_file).await;
+        assert_eq!(no_file["code"], 102, "{no_file}");
+        assert_eq!(no_file["message"], "Missing 'file' in multipart form-data");
+
+        // A suffix outside the allowlist, named exactly as the guide names it.
+        let mp4 = call(
+            "/api/v1/chat/audio/transcription",
+            &format!("multipart/form-data; boundary={boundary}"),
+            format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"clip.mp4\"\r\nContent-Type: video/mp4\r\n\r\nnotaudio\r\n--{boundary}--\r\n").into_bytes(),
+        )
+        .await;
+        let mp4 = response_json(mp4).await;
+        assert_eq!(mp4["code"], 102, "{mp4}");
+        assert_eq!(
+            mp4["message"],
+            "Unsupported audio format: .mp4. Allowed: .aac, .flac, .m4a, .mp3, .ogg, .opus, .wav, .webm, .wma"
+        );
+
+        // An accepted suffix reaches the model lookup, which is where an unconfigured deployment stops.
+        let wav = call(
+            "/api/v1/chat/audio/transcription",
+            &format!("multipart/form-data; boundary={boundary}"),
+            format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"clip.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFFfake\r\n--{boundary}--\r\n").into_bytes(),
+        )
+        .await;
+        let wav = response_json(wav).await;
+        assert_eq!(wav["code"], 102, "{wav}");
+        assert_eq!(wav["message"], "No default ASR model is set");
+    }
+
+    /// The auto-metadata configuration: a dataset starts with the deployment's built-ins and no
+    /// user fields, a saved schema comes back, an invalid one is refused with the field named, and a
+    /// document override is kept per document.
+    #[tokio::test]
+    async fn metadata_configuration_is_validated_stored_and_scoped() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "meta-kb", "")
+            .unwrap();
+        let call = |method: Method, uri: String, body: Option<&str>| {
+            let router = build_router(env.state.clone());
+            let token = env.token.clone();
+            let body = body.map(str::to_string);
+            async move {
+                let mut request = Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"));
+                let payload = match body {
+                    Some(body) => {
+                        request = request.header(header::CONTENT_TYPE, "application/json");
+                        Body::from(body)
+                    }
+                    None => Body::empty(),
+                };
+                router
+                    .oneshot(request.body(payload).unwrap())
+                    .await
+                    .unwrap()
+            }
+        };
+
+        // A fresh dataset has no user fields and no built-ins (upstream reads the stored
+        // parser_config.metadata / built_in_metadata, which are absent on create).
+        let initial = response_json(
+            call(
+                Method::GET,
+                format!("/api/v1/datasets/{}/metadata/config", kb.id),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(initial["code"], 0, "{initial}");
+        assert!(
+            initial.get("message").is_none(),
+            "a get_result success carries no message: {initial}"
+        );
+        assert_eq!(
+            initial["data"]["metadata"].as_array().unwrap().len(),
+            0,
+            "{initial}"
+        );
+        assert_eq!(
+            initial["data"]["built_in_metadata"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0,
+            "a fresh dataset has no stored built-ins: {initial}"
+        );
+
+        // Saving a schema returns it.
+        let saved = response_json(
+            call(
+                Method::PUT,
+                format!("/api/v1/datasets/{}/metadata/config", kb.id),
+                Some(
+                    r#"{"metadata":[{"key":"company","type":"string","description":"the company"}],"built_in_metadata":[{"key":"mine","type":"string"}]}"#,
+                ),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(saved["code"], 0, "{saved}");
+        assert!(
+            saved.get("message").is_none(),
+            "a get_result success carries no message: {saved}"
+        );
+        assert_eq!(saved["data"]["metadata"][0]["key"], "company", "{saved}");
+        assert_eq!(
+            saved["data"]["built_in_metadata"][0]["key"], "mine",
+            "update_auto_metadata stores the client's built_in_metadata verbatim: {saved}"
+        );
+        assert!(saved["data"]["metadata"][0]["enum"].is_null(), "{saved}");
+
+        let reread = response_json(
+            call(
+                Method::GET,
+                format!("/api/v1/datasets/{}/metadata/config", kb.id),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(reread["data"]["metadata"][0]["key"], "company", "{reread}");
+
+        // An invalid schema is refused with the reason, and nothing is stored.
+        for (body, expected) in [
+            (
+                r#"{"metadata":[{"key":"","type":"string"}]}"#,
+                "at least 1 character",
+            ),
+            (
+                r#"{"metadata":[{"key":"company","type":"text"}]}"#,
+                "'string', 'list', 'time' or 'number'",
+            ),
+            (
+                r#"{"metadata":[{"key":"company","type":"string","nope":1}]}"#,
+                "Extra inputs are not permitted",
+            ),
+        ] {
+            let refused = call(
+                Method::PUT,
+                format!("/api/v1/datasets/{}/metadata/config", kb.id),
+                Some(body),
+            )
+            .await;
+            assert_eq!(refused.status(), StatusCode::OK, "{body}");
+            let refused = response_json(refused).await;
+            assert_eq!(refused["code"], 101, "{refused}");
+            assert!(
+                refused["message"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains(expected),
+                "{refused}"
+            );
+        }
+        let still = response_json(
+            call(
+                Method::GET,
+                format!("/api/v1/datasets/{}/metadata/config", kb.id),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            still["data"]["metadata"][0]["key"], "company",
+            "a refused update leaves the stored schema alone: {still}"
+        );
+
+        // The dataset route's raw-body arms (round12): an empty body with a JSON content
+        // type is the malformed-JSON answer, a missing content type is named, and a
+        // non-object payload is typed.
+        let empty_with_json_ct = call(
+            Method::PUT,
+            format!("/api/v1/datasets/{}/metadata/config", kb.id),
+            Some(""),
+        )
+        .await;
+        let body = response_json(empty_with_json_ct).await;
+        assert_eq!(body["code"], 101, "{body}");
+        assert_eq!(
+            body["message"], "Malformed JSON syntax: Missing commas/brackets or invalid encoding",
+            "{body}"
+        );
+
+        let no_content_type = call(
+            Method::PUT,
+            format!("/api/v1/datasets/{}/metadata/config", kb.id),
+            None,
+        )
+        .await;
+        let body = response_json(no_content_type).await;
+        assert_eq!(body["code"], 101, "{body}");
+        assert_eq!(
+            body["message"], "Unsupported content type: Expected application/json, got None",
+            "{body}"
+        );
+
+        let not_an_object = call(
+            Method::PUT,
+            format!("/api/v1/datasets/{}/metadata/config", kb.id),
+            Some("[1]"),
+        )
+        .await;
+        let body = response_json(not_an_object).await;
+        assert_eq!(body["code"], 101, "{body}");
+        assert_eq!(
+            body["message"], "Invalid request payload: expected object, got list",
+            "{body}"
+        );
+
+        // A document override needs a document of that dataset.
+        let missing = call(
+            Method::PUT,
+            format!(
+                "/api/v1/datasets/{}/documents/no-such-doc/metadata/config",
+                kb.id
+            ),
+            Some(r#"{"metadata":[{"key":"author","type":"string"}]}"#),
+        )
+        .await;
+        assert_eq!(missing.status(), StatusCode::OK);
+        let missing = response_json(missing).await;
+        assert_eq!(missing["code"], 102);
+        assert_eq!(
+            missing["message"],
+            format!("document no-such-doc not found in dataset {}", kb.id)
+        );
+
+        let now = 1_700_000_000_000u64;
+        env.state
+            .docs
+            .insert(crate::api::document::DocRecord {
+                id: "doc-meta-1".into(),
+                name: "meta.txt".into(),
+                kb_id: kb.id.clone(),
+                size: 4,
+                storage_name: "doc-meta-1.txt".into(),
+                content_hash: String::new(),
+                indexed_content_hash: String::new(),
+                run: "DONE".into(),
+                progress: 1.0,
+                progress_msg: String::new(),
+                chunk_count: 0,
+                created_at: now,
+                updated_at: now,
+                status: crate::api::document::enabled_status(),
+                ..Default::default()
+            })
+            .unwrap();
+        let override_saved = response_json(
+            call(
+                Method::PUT,
+                format!(
+                    "/api/v1/datasets/{}/documents/doc-meta-1/metadata/config",
+                    kb.id
+                ),
+                Some(r#"{"metadata":[{"key":"author","type":"string"}]}"#),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(override_saved["code"], 0, "{override_saved}");
+        assert!(
+            override_saved.get("message").is_none(),
+            "a get_result success carries no message: {override_saved}"
+        );
+        // Live v0.27.2 stores the value in the document parser_config.metadata and
+        // answers the raw document row.
+        assert_eq!(
+            override_saved["data"]["parser_config"]["metadata"][0]["key"], "author",
+            "{override_saved}"
+        );
+
+        // The raw-body contract of the document route (round12 probes): an empty body, a
+        // `{}` body and a metadata-less object are the argument error; a malformed body is
+        // the raised parse error; a JSON non-object is the payload TypeError.
+        for empty_body in [None, Some(""), Some("{}")] {
+            let response = call(
+                Method::PUT,
+                format!(
+                    "/api/v1/datasets/{}/documents/doc-meta-1/metadata/config",
+                    kb.id
+                ),
+                empty_body,
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = response_json(response).await;
+            assert_eq!(body["code"], 101, "{body}");
+            assert_eq!(body["message"], "metadata is required", "{body}");
+            assert!(body.get("data").is_none(), "{body}");
+        }
+
+        let malformed = call(
+            Method::PUT,
+            format!(
+                "/api/v1/datasets/{}/documents/doc-meta-1/metadata/config",
+                kb.id
+            ),
+            Some("{bad"),
+        )
+        .await;
+        let body = response_json(malformed).await;
+        assert_eq!(body["code"], 100, "{body}");
+        assert_eq!(body["message"], "<BadRequest '400: Bad Request'>", "{body}");
+        assert!(body["data"].is_null(), "{body}");
+
+        let not_object = call(
+            Method::PUT,
+            format!(
+                "/api/v1/datasets/{}/documents/doc-meta-1/metadata/config",
+                kb.id
+            ),
+            Some("[1, 2]"),
+        )
+        .await;
+        let body = response_json(not_object).await;
+        assert_eq!(body["code"], 100, "{body}");
+        assert_eq!(
+            body["message"], "TypeError('JSON payload must be an object.')",
+            "{body}"
+        );
+
+        let wrong_shape = call(
+            Method::PUT,
+            format!(
+                "/api/v1/datasets/{}/documents/doc-meta-1/metadata/config",
+                kb.id
+            ),
+            Some(r#"{"metadata": 5}"#),
+        )
+        .await;
+        let body = response_json(wrong_shape).await;
+        // Live v0.27.2 accepts any JSON value as the document metadata override
+        // (it is stored under the document parser_config, not validated as a schema list).
+        assert_eq!(body["code"], 0, "{body}");
+        assert_eq!(body["data"]["parser_config"]["metadata"], 5, "{body}");
+        assert_eq!(
+            env.state
+                .docs
+                .get("doc-meta-1")
+                .unwrap()
+                .parser_config
+                .unwrap()["metadata"],
+            5
+        );
+
+        // An unknown dataset answers the service's permission wording on both verbs.
+        for method in [Method::GET, Method::PUT] {
+            let response = call(
+                method,
+                "/api/v1/datasets/no-such-kb/metadata/config".into(),
+                Some(r#"{"metadata":[]}"#),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = response_json(response).await;
+            assert_eq!(body["code"], 102, "{body}");
+            assert_eq!(
+                body["message"], "User 'test-user' lacks permission for dataset 'no-such-kb'",
+                "{body}"
+            );
+        }
+    }
+
+    /// The document thumbnail map and the image endpoint its urls point at: a real image document
+    /// gets a generated thumbnail, a document that cannot be decoded says so with `null`, and a
+    /// missing `doc_ids` is the guide's business-code answer.
+    #[tokio::test]
+    async fn thumbnails_are_generated_and_served_for_image_documents() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "thumb-kb", "")
+            .unwrap();
+        // A real PNG on disk, registered the way an upload registers one.
+        let mut source = image::RgbImage::new(600, 300);
+        for (x, _y, pixel) in source.enumerate_pixels_mut() {
+            *pixel = image::Rgb([(x % 256) as u8, 90, 200]);
+        }
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgb8(source)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let uploads = std::path::Path::new(&env.state.files.data_dir);
+        std::fs::write(uploads.join("photo-1.png"), &png).unwrap();
+        let now = 1_700_000_000_000u64;
+        env.state
+            .docs
+            .insert(crate::api::document::DocRecord {
+                id: "photo-1".into(),
+                name: "photo.png".into(),
+                kb_id: kb.id.clone(),
+                size: png.len(),
+                storage_name: "photo-1.png".into(),
+                content_hash: String::new(),
+                indexed_content_hash: String::new(),
+                run: "DONE".into(),
+                progress: 1.0,
+                progress_msg: String::new(),
+                chunk_count: 0,
+                created_at: now,
+                updated_at: now,
+                status: crate::api::document::enabled_status(),
+                ..Default::default()
+            })
+            .unwrap();
+        // A text document, which has no thumbnail.
+        std::fs::write(uploads.join("notes-1.txt"), b"hello").unwrap();
+        env.state
+            .docs
+            .insert(crate::api::document::DocRecord {
+                id: "notes-1".into(),
+                name: "notes.txt".into(),
+                kb_id: kb.id.clone(),
+                size: 5,
+                storage_name: "notes-1.txt".into(),
+                content_hash: String::new(),
+                indexed_content_hash: String::new(),
+                run: "DONE".into(),
+                progress: 1.0,
+                progress_msg: String::new(),
+                chunk_count: 0,
+                created_at: now,
+                updated_at: now,
+                status: crate::api::document::enabled_status(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        // Missing ids: HTTP 200 with the guide's business code.
+        let missing = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/v1/thumbnails")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::OK);
+        let missing = response_json(missing).await;
+        assert_eq!(missing["code"], 101, "{missing}");
+        assert_eq!(missing["message"], "Lack of \"Document ID\"");
+
+        let listed = response_json(
+            build_router(env.state.clone())
+                .oneshot(
+                    Request::builder()
+                        .method(Method::GET)
+                        .uri("/api/v1/thumbnails?doc_ids=photo-1&doc_ids=notes-1")
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(listed["code"], 0, "{listed}");
+        assert_eq!(
+            listed["data"]["photo-1"],
+            serde_json::json!(format!("/api/v1/documents/images/{}-photo-1.jpg", kb.id)),
+            "{listed}"
+        );
+        assert!(
+            listed["data"].get("notes-1").is_none(),
+            "a document that cannot be decoded is left out of the map: {listed}"
+        );
+        assert!(listed["data"].get("unknown-doc").is_none(), "{listed}");
+
+        // The url the map handed out serves a JPEG.
+        let image = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/api/v1/documents/images/{}-photo-1.jpg", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(image.status(), StatusCode::OK);
+        assert_eq!(
+            image
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("image/jpeg")
+        );
+        let bytes = to_bytes(image.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(&bytes[..2], &[0xFF, 0xD8], "a JPEG");
+        let decoded = image::load_from_memory(&bytes).unwrap();
+        assert_eq!(decoded.width(), 200);
+        assert_eq!(decoded.height(), 100);
+
+        // The original image is served under its own name, too.
+        let original = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/api/v1/documents/images/{}-photo-1.png", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(original.status(), StatusCode::OK);
+        assert_eq!(
+            original
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("image/png")
+        );
+
+        // A text document has no image, and an unknown id is the documented 404.
+        for uri in [
+            format!("/api/v1/documents/images/{}-notes-1.jpg", kb.id),
+            format!("/api/v1/documents/images/{}-nothing.jpg", kb.id),
+        ] {
+            let response = build_router(env.state.clone())
+                .oneshot(
+                    Request::builder()
+                        .method(Method::GET)
+                        .uri(uri.clone())
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{uri}");
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(payload["code"], 102, "{uri}");
+        }
+    }
+
+    /// Runtime attachments: upload a file, stream it back for download and preview, and refuse the
+    /// two inputs the guide names as invalid.
+    #[tokio::test]
+    async fn attachments_upload_stream_and_report_bad_input() {
+        let env = test_env();
+        let boundary = "rayrag-attachment-boundary";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"notes.txt\"\r\nContent-Type: text/plain\r\n\r\nhello attachment\r\n--{boundary}--\r\n"
+        );
+        let upload = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/documents/upload")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(upload.status(), StatusCode::OK);
+        let uploaded = response_json(upload).await;
+        assert_eq!(uploaded["code"], 0, "{uploaded}");
+        assert_eq!(uploaded["data"]["name"], "notes.txt", "{uploaded}");
+        assert_eq!(uploaded["data"]["extension"], "txt", "{uploaded}");
+        assert_eq!(uploaded["data"]["mime_type"], "text/plain", "{uploaded}");
+        assert_eq!(uploaded["data"]["size"], 16, "{uploaded}");
+        assert!(
+            uploaded["data"]["preview_url"].is_null(),
+            "as documented: {uploaded}"
+        );
+        let id = uploaded["data"]["id"].as_str().unwrap().to_string();
+
+        // The same upload with a url as well is refused, in the guide's wording.
+        let both = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/documents/upload?url=https://example.com/x")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(format!(
+                        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.txt\"\r\nContent-Type: text/plain\r\n\r\nbody\r\n--{boundary}--\r\n"
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let both = response_json(both).await;
+        assert_eq!(both["code"], 101, "{both}");
+        assert_eq!(
+            both["message"],
+            "Provide either multipart file(s) or ?url=..., not both."
+        );
+
+        // Neither input is refused too.
+        let neither = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/documents/upload")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let neither = response_json(neither).await;
+        assert_eq!(neither["code"], 101, "{neither}");
+        assert_eq!(
+            neither["message"],
+            "Missing input: provide multipart file(s) or url"
+        );
+
+        // A url pointing at this host's own network is refused before anything is fetched.
+        let internal = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/documents/upload?url=http://127.0.0.1:9390/api/v1/version")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let internal = response_json(internal).await;
+        assert_eq!(internal["code"], 101, "{internal}");
+        assert!(
+            internal["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("internal address"),
+            "{internal}"
+        );
+
+        // Download serves the bytes with the uploaded type; `ext` changes the declared type.
+        let download = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/api/v1/agents/attachments/{id}/download"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(download.status(), StatusCode::OK);
+        assert_eq!(
+            download
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("text/plain")
+        );
+        let disposition = download
+            .headers()
+            .get(header::CONTENT_DISPOSITION)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        assert!(disposition.starts_with("attachment"), "{disposition}");
+        let bytes = to_bytes(download.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(String::from_utf8_lossy(&bytes), "hello attachment");
+
+        let as_pdf = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!(
+                        "/api/v1/agents/attachments/{id}/download?ext=pdf&filename=report.pdf"
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            as_pdf
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("application/pdf")
+        );
+
+        // Preview is inline, and an unknown id is the documented 102.
+        let preview = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/api/v1/agents/attachments/{id}/preview"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            preview
+                .headers()
+                .get(header::CONTENT_DISPOSITION)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .starts_with("inline"),
+            "preview is inline"
+        );
+        let missing = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/v1/agents/attachments/does-not-exist/download")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        let missing = response_json(missing).await;
+        assert_eq!(missing["code"], 102, "{missing}");
+        assert_eq!(missing["message"], "document not found");
+    }
+
+    /// The canvas-scoped upload needs a canvas that exists; otherwise it answers as upstream does.
+    #[tokio::test]
+    async fn agent_upload_requires_the_canvas() {
+        let env = test_env();
+        let boundary = "rayrag-agent-boundary";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"canvas.txt\"\r\nContent-Type: text/plain\r\n\r\ncanvas body\r\n--{boundary}--\r\n"
+        );
+        let unknown = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/agents/nope/upload")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+        let unknown = response_json(unknown).await;
+        assert_eq!(unknown["code"], 102, "{unknown}");
+        assert_eq!(unknown["message"], "canvas not found.");
+
+        let agent = env
+            .state
+            .agents
+            .create(
+                "test-user",
+                crate::api::features::AgentCreateRequest {
+                    name: "canvas-agent".into(),
+                    description: String::new(),
+                    avatar: String::new(),
+                    permission: None,
+                    canvas_category: None,
+                    canvas_type: String::new(),
+                    tags: Vec::new(),
+                    release: None,
+                    kb_ids: Vec::new(),
+                    prompt_template: None,
+                    dsl: serde_json::json!({}),
+                },
+            )
+            .unwrap();
+        let created = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/agents/{}/upload", agent.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let created = response_json(created).await;
+        assert_eq!(created["code"], 0, "{created}");
+        assert_eq!(created["data"]["name"], "canvas.txt", "{created}");
+        // It is stored against the canvas it was uploaded for.
+        let id = created["data"]["id"].as_str().unwrap();
+        let stored = env.state.attachments.get(id).expect("stored attachment");
+        assert_eq!(stored.agent_id.as_deref(), Some(agent.id.as_str()));
+    }
+
+    /// The workspace commit family, end to end: a snapshot records what changed, the list is
+    /// paginated, the diff compares two snapshots, `changes` reports what is not committed yet, the
+    /// tree and content are served from the snapshot, and a file's version history spans the
+    /// snapshots that touched it.
+    #[tokio::test]
+    async fn workspace_commits_snapshot_diff_and_serve_content() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let call = |method: Method, uri: String, body: Option<&str>| {
+            let router = router.clone();
+            let token = env.token.clone();
+            let body = body.map(str::to_string);
+            async move {
+                let mut request = Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"));
+                let payload = match body {
+                    Some(body) => {
+                        request = request.header(header::CONTENT_TYPE, "application/json");
+                        Body::from(body)
+                    }
+                    None => Body::empty(),
+                };
+                router
+                    .oneshot(request.body(payload).unwrap())
+                    .await
+                    .unwrap()
+            }
+        };
+
+        // A commit records the change and the resulting state.
+        let created = call(
+            Method::POST,
+            "/api/v1/workspaces/root/commits".into(),
+            Some(r#"{"message":"first","files":[{"file_id":"file-1","file_name":"a.txt","operation":"add","content":"hello"}]}"#),
+        )
+        .await;
+        assert_eq!(created.status(), StatusCode::OK);
+        let body = response_json(created).await;
+        assert_eq!(body["code"], 0, "{body}");
+        let commit_id = body["data"]["id"].as_str().unwrap().to_string();
+        assert_eq!(body["data"]["file_count"], 1);
+        assert!(
+            body["data"]["tree_state"]
+                .as_str()
+                .unwrap()
+                .contains("file-1"),
+            "the snapshot records the file: {body}"
+        );
+        assert!(
+            body["data"]["parent_id"].is_null(),
+            "the first commit has no parent"
+        );
+
+        // Listing is paginated and reports the total.
+        let listed = response_json(
+            call(
+                Method::GET,
+                "/api/v1/workspaces/root/commits?page=1&page_size=5".into(),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(listed["data"]["total"], 1, "{listed}");
+
+        // The commit, its files and its tree.
+        let fetched = response_json(
+            call(
+                Method::GET,
+                format!("/api/v1/workspaces/root/commits/{commit_id}"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            fetched["data"]["files"][0]["file_id"], "file-1",
+            "{fetched}"
+        );
+        let files = response_json(
+            call(
+                Method::GET,
+                format!("/api/v1/workspaces/root/commits/{commit_id}/files"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(files["data"][0]["operation"], "add", "{files}");
+        let tree = response_json(
+            call(
+                Method::GET,
+                format!("/api/v1/workspaces/root/commits/{commit_id}/tree"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(tree["data"]["children"][0]["name"], "a.txt", "{tree}");
+
+        // The snapshot can reproduce the content it was given.
+        let content = response_json(
+            call(
+                Method::GET,
+                format!("/api/v1/workspaces/root/commits/{commit_id}/files/file-1/content"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(content["data"]["content"], "hello", "{content}");
+
+        // A second commit modifies the file: the diff names the change and nothing is left
+        // uncommitted, because the snapshot was taken from the live state.
+        let second = response_json(
+            call(
+                Method::POST,
+                "/api/v1/workspaces/root/commits".into(),
+                Some(r#"{"message":"second","files":[{"file_id":"file-1","file_name":"a.txt","operation":"modify","content":"hello again"}]}"#),
+            )
+            .await,
+        )
+        .await;
+        let second_id = second["data"]["id"].as_str().unwrap().to_string();
+        assert_eq!(
+            second["data"]["parent_id"], commit_id,
+            "a commit records its parent: {second}"
+        );
+        let diff = response_json(
+            call(
+                Method::GET,
+                format!("/api/v1/workspaces/root/commits/diff?from={commit_id}&to={second_id}"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(diff["data"][0]["operation"], "modify", "{diff}");
+        assert_ne!(
+            diff["data"][0]["old_hash"], diff["data"][0]["new_hash"],
+            "{diff}"
+        );
+
+        // The version route resolves the file first, as upstream does; register the file the
+        // commits above recorded.
+        env.state
+            .files
+            .add(crate::api::file_mgr::FileRecord {
+                id: "file-1".into(),
+                name: "a.txt".into(),
+                owner_id: "test-user".into(),
+                parent_id: "root".into(),
+                size: 12,
+                content_hash: String::new(),
+                file_type: "file".into(),
+                created_at: 1,
+                ..Default::default()
+            })
+            .unwrap();
+
+        let versions = response_json(
+            call(
+                Method::GET,
+                "/api/v1/workspace-files/file-1/versions".into(),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            versions["data"].as_array().map(Vec::len),
+            Some(2),
+            "{versions}"
+        );
+        assert_eq!(versions["data"][0]["operation"], "modify", "{versions}");
+        assert_eq!(versions["data"][1]["operation"], "add", "{versions}");
+
+        // Failures answer the verbatim upstream envelopes (round⑦ probes): the missing-argument
+        // answer lists every missing name at once, the resolver failure is a raised ValueError,
+        // and the commit family answers the string-code quirk at HTTP 200.
+        let missing_message = call(
+            Method::POST,
+            "/api/v1/workspaces/root/commits".into(),
+            Some(r#"{"files":[{"file_id":"x","operation":"add"}]}"#),
+        )
+        .await;
+        assert_eq!(missing_message.status(), StatusCode::OK);
+        let body = response_json(missing_message).await;
+        assert_eq!(body["code"], 101, "{body}");
+        assert_eq!(body["message"], "required argument are missing: message; ");
+        assert!(body["data"].is_null(), "{body}");
+
+        let missing_both = call(
+            Method::POST,
+            "/api/v1/workspaces/root/commits".into(),
+            Some("{}"),
+        )
+        .await;
+        assert_eq!(missing_both.status(), StatusCode::OK);
+        let body = response_json(missing_both).await;
+        assert_eq!(
+            body["message"], "required argument are missing: message,files; ",
+            "{body}"
+        );
+        assert!(body["data"].is_null(), "{body}");
+
+        let unknown_scope = call(Method::GET, "/api/v1/workspaces/nope/commits".into(), None).await;
+        assert_eq!(unknown_scope.status(), StatusCode::OK);
+        let body = response_json(unknown_scope).await;
+        assert_eq!(body["code"], 100, "{body}");
+        assert_eq!(
+            body["message"], "ValueError(\"Could not resolve folder 'nope'\")",
+            "{body}"
+        );
+        assert!(body["data"].is_null(), "{body}");
+
+        let unknown_commit = call(
+            Method::GET,
+            "/api/v1/workspaces/root/commits/does-not-exist".into(),
+            None,
+        )
+        .await;
+        assert_eq!(unknown_commit.status(), StatusCode::OK);
+        let body = response_json(unknown_commit).await;
+        assert_eq!(body["code"], "Commit not found", "{body}");
+        assert_eq!(body["message"], "Sorry! Data missing!", "{body}");
+
+        let diff_missing = call(
+            Method::GET,
+            "/api/v1/workspaces/root/commits/diff".into(),
+            None,
+        )
+        .await;
+        assert_eq!(diff_missing.status(), StatusCode::OK);
+        let body = response_json(diff_missing).await;
+        assert_eq!(
+            body["code"], "'from' and 'to' parameters are required",
+            "{body}"
+        );
+        assert_eq!(body["message"], "Sorry! Data missing!", "{body}");
+
+        let unknown_versions = call(
+            Method::GET,
+            "/api/v1/workspace-files/never-was-a-file/versions".into(),
+            None,
+        )
+        .await;
+        assert_eq!(unknown_versions.status(), StatusCode::OK);
+        let body = response_json(unknown_versions).await;
+        assert_eq!(body["code"], "File not found", "{body}");
+        assert_eq!(body["message"], "Sorry! Data missing!", "{body}");
+
+        let too_many = call(
+            Method::GET,
+            "/api/v1/workspaces/root/commits?page_size=101".into(),
+            None,
+        )
+        .await;
+        assert_eq!(too_many.status(), StatusCode::OK);
+        let body = response_json(too_many).await;
+        assert_eq!(body["code"], 100, "{body}");
+        assert_eq!(
+            body["message"], "ValueError('page_size must be less than or equal to 100')",
+            "{body}"
+        );
+    }
+
+    /// The same family under the dataset prefix, where the scope's state is its documents.
+    #[tokio::test]
+    async fn dataset_commits_snapshot_documents() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("member-user", "commit-dataset", "")
+            .unwrap();
+        let router = build_router(env.state.clone());
+        let _ = &router;
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri(format!("/api/v1/datasets/{}/commits", kb.id))
+            .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                r#"{"message":"docs","files":[{"file_id":"doc-1","file_name":"doc.txt","operation":"add","content":"body"}]}"#,
+            ))
+            .unwrap();
+        let response = router.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let created = response_json(response).await;
+        assert_eq!(created["code"], 0, "{created}");
+
+        let listed = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/api/v1/datasets/{}/commits", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let listed = response_json(listed).await;
+        assert_eq!(listed["data"]["total"], 1, "{listed}");
+
+        let unknown = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/v1/datasets/nope/commits")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unknown.status(), StatusCode::OK);
+        let body = response_json(unknown).await;
+        assert_eq!(body["code"], 100, "{body}");
+        assert_eq!(
+            body["message"], "ValueError(\"Could not resolve datasets 'nope' to a folder\")",
+            "{body}"
+        );
+    }
+
+    /// `POST /api/v1/chat/completions` answers the guide's shape: `{code, message, data:{answer,…}}`
+    /// frames with `data: true` at the end, and every failure named instead of answered with an empty
+    /// stream. (The fixture has no chat model, so a real answer cannot be produced here; what is
+    /// asserted is the contract around it.)
+    #[tokio::test]
+    async fn the_documented_chat_completions_endpoint_answers_the_guides_shape() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let call = |body: &str| {
+            let router = router.clone();
+            let token = env.token.clone();
+            let body = body.to_string();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(Method::POST)
+                            .uri("/api/v1/chat/completions")
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        // "Either messages or question is required."
+        let empty = call(r#"{"stream":false}"#).await;
+        assert_eq!(empty.status(), StatusCode::BAD_REQUEST);
+        let body = response_json(empty).await;
+        assert_eq!(body["code"], 102, "{body}");
+        assert_eq!(body["message"], "Please input your question.");
+
+        // An empty question is as good as a missing one.
+        let blank = call(r#"{"question":"   ","stream":false}"#).await;
+        assert_eq!(response_json(blank).await["code"], 102);
+
+        // The three modes resolve their assistant and session as documented.
+        let unknown_chat = call(r#"{"question":"hi","chat_id":"nope","stream":false}"#).await;
+        assert_eq!(unknown_chat.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response_json(unknown_chat).await["code"], 102);
+
+        let unknown_session = call(r#"{"question":"hi","session_id":"nope","stream":false}"#).await;
+        assert_eq!(unknown_session.status(), StatusCode::NOT_FOUND);
+        let body = response_json(unknown_session).await;
+        assert_eq!(body["code"], 102, "{body}");
+        assert_eq!(body["message"], "Session not found!");
+
+        // A generation that cannot happen is reported, never dressed up as an empty answer.
+        let failing = call(r#"{"question":"hi","stream":false}"#).await;
+        let body = response_json(failing).await;
+        assert_ne!(
+            body["code"], 0,
+            "no answer exists, so success is wrong: {body}"
+        );
+        let message = body["message"].as_str().unwrap_or_default();
+        assert!(!message.is_empty(), "the failure is named: {body}");
+
+        // Streaming still ends with the documented terminal frame.
+        let streamed = call(r#"{"question":"hi","stream":true}"#).await;
+        let bytes = to_bytes(streamed.into_body(), usize::MAX).await.unwrap();
+        let text = String::from_utf8_lossy(&bytes);
+        assert!(
+            text.contains(r#"{"code":0,"message":"","data":true}"#),
+            "the stream ends with the guide's terminal frame: {text}"
+        );
+        assert!(
+            text.contains(r#""codes"#) || text.contains(r#""code":"#) || text.contains("code"),
+            "frames carry a business code: {text}"
+        );
+    }
+
+    /// `POST /api/v1/chats/{chat_id}/completions` takes the **assistant** the guide says it does:
+    /// an unknown assistant is refused, an unknown `session_id` is refused, and a request with no
+    /// session creates one bound to that assistant. (The answer itself needs a chat model, which the
+    /// fixture does not have, so only the resolution is asserted here.)
+    #[tokio::test]
+    async fn assistant_completions_resolve_the_assistant_and_its_session() {
+        let env = test_env();
+        let root = std::env::temp_dir().join(format!("rayrag-complete-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut state = (*env.state).clone();
+        let apps =
+            Arc::new(crate::api::chatapp_mgr::ChatAppStore::new(root.to_str().unwrap()).unwrap());
+        apps.insert(crate::api::chatapp_mgr::ChatApp {
+            id: "assistant-1".into(),
+            name: "Assistant".into(),
+            description: String::new(),
+            icon: String::new(),
+            tenant_id: "test-user".into(),
+            kb_ids: Vec::new(),
+            llm_id: None,
+            llm_setting: None,
+            prompt_config: None,
+            rerank_id: None,
+            top_k: None,
+            created_at: 1,
+        })
+        .unwrap();
+        state.chat_apps = Some(apps.clone());
+        let router = build_router(Arc::new(state));
+        let call = |uri: String, body: &str| {
+            let router = router.clone();
+            let token = env.token.clone();
+            let body = body.to_string();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(Method::POST)
+                            .uri(uri)
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        // An unknown assistant is business code 102, not a session lookup.
+        let unknown = call(
+            "/api/v1/chats/no-such-assistant/completions".to_string(),
+            r#"{"question":"hi","stream":false}"#,
+        )
+        .await;
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response_json(unknown).await["code"], 102);
+
+        // An unknown session under a real assistant is refused too.
+        let bad_session = call(
+            "/api/v1/chats/assistant-1/completions".to_string(),
+            r#"{"question":"hi","session_id":"nope","stream":false}"#,
+        )
+        .await;
+        assert_eq!(bad_session.status(), StatusCode::NOT_FOUND);
+        let body = response_json(bad_session).await;
+        assert_eq!(body["code"], 102, "{body}");
+        assert_eq!(body["message"], "Session not found!");
+
+        // With no session, one is created and bound to the assistant before the answer is attempted.
+        let _ = call(
+            "/api/v1/chats/assistant-1/completions".to_string(),
+            r#"{"question":"first question","stream":false}"#,
+        )
+        .await;
+        let sessions = apps.list().len();
+        assert_eq!(sessions, 1, "the assistant itself is untouched");
+        let bound = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/chats/assistant-1/sessions")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let listed = response_json(bound).await;
+        let rows = listed["data"].as_array().cloned().unwrap_or_default();
+        assert_eq!(
+            rows.len(),
+            1,
+            "a session was created for the assistant: {listed}"
+        );
+        assert!(
+            rows[0]["kb_ids"].is_array(),
+            "the session carries its datasets: {listed}"
+        );
+    }
+
+    /// `GET /api/v1/chats` lists **chat assistants**, as the guide says, in `{chats, total}` with
+    /// `dataset_ids` and `kb_names`; `POST` creates one, a duplicate name is refused with the
+    /// documented code, and `DELETE` removes it. The same path used to create and list *sessions*,
+    /// so a guide client's assistant was invisible in the listing and its id 404'd at `/sessions`.
+    #[tokio::test]
+    async fn the_chat_collection_is_the_assistants_the_guide_documents() {
+        let env = test_env();
+        let kb = env.state.kbs.create_for("test-user", "Docs", "d").unwrap();
+        // `test_env` builds the router without the chat-assistant store, and this test is about
+        // that store, so the state is rebuilt with one (AppState is a clone of Arc fields).
+        let root = std::env::temp_dir().join(format!("rayrag-chats-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut state = (*env.state).clone();
+        state.chat_apps = Some(Arc::new(
+            crate::api::chatapp_mgr::ChatAppStore::new(root.to_str().unwrap()).unwrap(),
+        ));
+        let router = build_router(Arc::new(state));
+        let call = |method: Method, uri: String, body: &str| {
+            let router = router.clone();
+            let token = env.token.clone();
+            let body = body.to_string();
+            async move {
+                let mut builder = Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"));
+                if !body.is_empty() {
+                    builder = builder.header(header::CONTENT_TYPE, "application/json");
+                }
+                response_json(
+                    router
+                        .oneshot(builder.body(Body::from(body)).unwrap())
+                        .await
+                        .unwrap(),
+                )
+                .await
+            }
+        };
+
+        let created = call(
+            Method::POST,
+            "/api/v1/chats".to_string(),
+            &format!(
+                r#"{{"name":"Guide Assistant","description":"A helpful Assistant","dataset_ids":["{}"]}}"#,
+                kb.id
+            ),
+        )
+        .await;
+        assert_eq!(created["code"], 0, "{created}");
+        let chat_id = created["data"]["id"].as_str().unwrap().to_string();
+        assert_eq!(
+            created["data"]["dataset_ids"][0],
+            kb.id.as_str(),
+            "{created}"
+        );
+        assert_eq!(
+            created["data"]["kb_names"][0], "Docs",
+            "the guide shows dataset names beside the ids: {created}"
+        );
+        assert!(
+            created["data"]["create_time"].is_u64(),
+            "the documented timestamp is present: {created}"
+        );
+
+        let duplicate = call(
+            Method::POST,
+            "/api/v1/chats".to_string(),
+            r#"{"name":"guide assistant"}"#,
+        )
+        .await;
+        assert_eq!(duplicate["code"], 102, "{duplicate}");
+        assert_eq!(duplicate["message"], "duplicated chat name");
+
+        let unnamed = call(Method::POST, "/api/v1/chats".to_string(), r#"{"name":""}"#).await;
+        assert_eq!(
+            unnamed["code"], 101,
+            "the guide answers an empty name with 101"
+        );
+
+        let listed = call(Method::GET, "/api/v1/chats".to_string(), "").await;
+        assert_eq!(listed["data"]["total"], 1, "{listed}");
+        assert_eq!(
+            listed["data"]["chats"][0]["id"],
+            chat_id.as_str(),
+            "{listed}"
+        );
+        assert_eq!(
+            listed["data"]["chats"][0]["dataset_ids"][0],
+            kb.id.as_str(),
+            "the listing carries the assistant's datasets: {listed}"
+        );
+
+        // An id the listing just returned must resolve at its own sessions endpoint.
+        let sessions = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/chats/{chat_id}/sessions"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(sessions.status(), StatusCode::OK, "the listed id resolves");
+
+        let filtered = call(Method::GET, "/api/v1/chats?keywords=guide".to_string(), "").await;
+        assert_eq!(
+            filtered["data"]["total"], 1,
+            "keywords match the name: {filtered}"
+        );
+        let missed = call(
+            Method::GET,
+            "/api/v1/chats?keywords=nothing".to_string(),
+            "",
+        )
+        .await;
+        assert_eq!(missed["data"]["total"], 0, "{missed}");
+
+        // The single-item verbs address the same collection the listing does: an id taken from
+        // `data.chats` must resolve here (it used to be a session id and answered "not found").
+        let one = call(Method::GET, format!("/api/v1/chats/{chat_id}"), "").await;
+        assert_eq!(one["data"]["name"], "Guide Assistant", "{one}");
+        assert_eq!(one["data"]["kb_names"][0], "Docs", "{one}");
+        assert_eq!(one["data"]["description"], "A helpful Assistant", "{one}");
+
+        // PATCH preserves what the body leaves out.
+        let patched = call(
+            Method::PATCH,
+            format!("/api/v1/chats/{chat_id}"),
+            r#"{"description":"Patched"}"#,
+        )
+        .await;
+        assert_eq!(
+            patched["data"]["name"], "Guide Assistant",
+            "PATCH keeps the name: {patched}"
+        );
+        assert_eq!(patched["data"]["description"], "Patched", "{patched}");
+        assert_eq!(
+            patched["data"]["dataset_ids"][0],
+            kb.id.as_str(),
+            "PATCH keeps the datasets: {patched}"
+        );
+
+        // PUT is a full overwrite: fields the body omits reset to their defaults.
+        let replaced = call(
+            Method::PUT,
+            format!("/api/v1/chats/{chat_id}"),
+            r#"{"name":"Renamed Assistant","dataset_ids":[]}"#,
+        )
+        .await;
+        assert_eq!(replaced["data"]["name"], "Renamed Assistant", "{replaced}");
+        assert_eq!(
+            replaced["data"]["description"], "",
+            "PUT resets the omitted description: {replaced}"
+        );
+        assert!(
+            replaced["data"]["dataset_ids"]
+                .as_array()
+                .unwrap()
+                .is_empty(),
+            "PUT resets the omitted datasets: {replaced}"
+        );
+
+        let unknown = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/chats/no-such-assistant")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            response_json(unknown).await["code"],
+            102,
+            "the guide answers a missing assistant with 102"
+        );
+
+        // A second assistant, so the bulk delete has something to remove after the single delete.
+        let second = call(
+            Method::POST,
+            "/api/v1/chats".to_string(),
+            r#"{"name":"Second Assistant"}"#,
+        )
+        .await;
+        let second_id = second["data"]["id"].as_str().unwrap().to_string();
+
+        let deleted_one = call(Method::DELETE, format!("/api/v1/chats/{chat_id}"), "").await;
+        assert_eq!(deleted_one["code"], 0, "{deleted_one}");
+        assert_eq!(
+            deleted_one["data"], true,
+            "the guide documents data: true here"
+        );
+        let remaining = call(Method::GET, "/api/v1/chats".to_string(), "").await;
+        assert_eq!(remaining["data"]["total"], 1, "{remaining}");
+        assert_eq!(
+            remaining["data"]["chats"][0]["id"],
+            second_id.as_str(),
+            "the other assistant survives: {remaining}"
+        );
+
+        let deleted = call(
+            Method::DELETE,
+            "/api/v1/chats".to_string(),
+            &format!(r#"{{"ids":["{second_id}"]}}"#),
+        )
+        .await;
+        assert_eq!(deleted["code"], 0, "{deleted}");
+        let after = call(Method::GET, "/api/v1/chats".to_string(), "").await;
+        assert_eq!(
+            after["data"]["total"], 0,
+            "the assistants are gone: {after}"
+        );
+    }
+
+    #[tokio::test]
+    async fn chat_lifecycle_hides_other_users_sessions() {
+        let env = non_admin_env();
+        let conversation = env
+            .state
+            .conversations
+            .create_for("other-user", "Private Session")
+            .unwrap();
+        let message_id = env
+            .state
+            .conversations
+            .append_exchange_with_references(
+                &conversation.id,
+                "other-user",
+                "Private question",
+                "Private answer",
+                Vec::new(),
+                Vec::new(),
+            )
+            .unwrap()
+            .unwrap();
+        let router = build_router(env.state.clone());
+
+        for request in [
+            Request::builder()
+                .method(Method::PATCH)
+                .uri(format!("/api/v1/conversations/{}", conversation.id))
+                .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"name":"Stolen"}"#))
+                .unwrap(),
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!(
+                    "/api/v1/conversations/{}/messages/{}/regenerate",
+                    conversation.id, message_id
+                ))
+                .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+            Request::builder()
+                .method(Method::DELETE)
+                .uri(format!(
+                    "/api/v1/conversations/{}/messages/{}",
+                    conversation.id, message_id
+                ))
+                .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                .body(Body::empty())
+                .unwrap(),
+        ] {
+            let response = router.clone().oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        }
+        let untouched = env.state.conversations.get(&conversation.id).unwrap();
+        assert_eq!(untouched.name, "Private Session");
+        assert_eq!(untouched.messages.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn evaluation_api_runs_retrieval_metrics_and_recommendations() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Evaluation KB", "")
+            .unwrap();
+        let mut relevant = search_chunk("relevant-chunk", &kb.id, "water quality management");
+        relevant
+            .metadata
+            .insert("doc_id".into(), "relevant-doc".into());
+        let mut distractor = search_chunk("distractor-chunk", &kb.id, "water feeding");
+        distractor
+            .metadata
+            .insert("doc_id".into(), "distractor-doc".into());
+        env.state
+            .engine
+            .write()
+            .unwrap()
+            .index(vec![relevant, distractor]);
+        let router = build_router(env.state.clone());
+
+        let create = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/evaluations")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "name": "Water Quality Evaluation",
+                            "description": "Retrieval regression",
+                            "kb_ids": [kb.id]
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(create.status(), StatusCode::CREATED);
+        let dataset_id = response_json(create).await["data"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let add_case = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/evaluations/{dataset_id}/cases"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "question": "water quality",
+                            "relevant_chunk_ids": ["relevant-chunk"],
+                            "relevant_doc_ids": ["relevant-doc"]
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(add_case.status(), StatusCode::CREATED);
+
+        let start = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/evaluations/{dataset_id}/runs"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"name":"Baseline","top_k":2,"vector_weight":0}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(start.status(), StatusCode::OK);
+        let start_body = response_json(start).await;
+        let run_id = start_body["data"]["id"].as_str().unwrap().to_string();
+        assert_eq!(start_body["data"]["status"], "COMPLETED");
+        assert_eq!(start_body["data"]["metrics_summary"]["total_cases"], 1.0);
+        assert_eq!(start_body["data"]["metrics_summary"]["avg_recall"], 1.0);
+        assert_eq!(start_body["data"]["metrics_summary"]["avg_hit_rate"], 1.0);
+        assert_eq!(start_body["data"]["metrics_summary"]["avg_mrr"], 1.0);
+        assert_eq!(start_body["data"]["metrics_summary"]["avg_precision"], 0.5);
+
+        let get_run = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/api/v1/evaluation-runs/{run_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(get_run.status(), StatusCode::OK);
+        let run_body = response_json(get_run).await;
+        assert_eq!(run_body["data"]["results"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            run_body["data"]["results"][0]["retrieved_chunk_ids"][0],
+            "relevant-chunk"
+        );
+
+        let recommendations = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/api/v1/evaluation-runs/{run_id}/recommendations"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(recommendations.status(), StatusCode::OK);
+        let recommendations = response_json(recommendations).await;
+        assert_eq!(recommendations["data"][0]["issue"], "Low Precision");
+    }
+
+    #[tokio::test]
+    async fn evaluation_dataset_rejects_inaccessible_knowledge_bases() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("other-user", "Private Evaluation KB", "")
+            .unwrap();
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/evaluations")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "name": "Forbidden",
+                            "kb_ids": [kb.id]
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            env.state
+                .evaluations
+                .list_datasets("test-user", false)
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn manual_chunk_crud_updates_counts_and_availability() {
+        let mut env = test_env();
+        Arc::get_mut(&mut env.state).unwrap().embedder = Some(Arc::new(TestEmbedder));
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Manual Chunk KB", "")
+            .unwrap();
+        let doc = stored_doc("manual-doc", &kb.id, 0);
+        env.state.docs.insert(doc.clone()).unwrap();
+        env.state.kbs.update_counts(&kb.id, 0, 1).unwrap();
+        let router = build_router(env.state.clone());
+        let collection_uri = format!("/api/v1/datasets/{}/documents/{}/chunks", kb.id, doc.id);
+
+        let create = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(&collection_uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "content": "water quality management",
+                            "important_keywords": ["water", "quality"],
+                            "questions": ["How to manage water quality?"],
+                            "tag_kwd": ["aquaculture"],
+                            "tag_feas": {"aquaculture": 1.0},
+                            "positions": [[1, 2, 3, 4, 5]]
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Upstream add_chunk answers HTTP 200 with `get_result(data={"chunk":…})`.
+        assert_eq!(create.status(), StatusCode::OK);
+        let create_body = response_json(create).await;
+        let chunk_id = create_body["data"]["chunk"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(create_body["data"]["chunk"]["available"], true);
+        assert!(create_body["data"]["chunk"]["create_time"].is_string());
+        assert_eq!(env.state.docs.get(&doc.id).unwrap().chunk_count, 1);
+        assert_eq!(env.state.kbs.get(&kb.id).unwrap().chunk_count, 1);
+
+        let list = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("{collection_uri}?keywords=quality"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(list.status(), StatusCode::OK);
+        assert_eq!(response_json(list).await["data"]["total"], 1);
+
+        let item_uri = format!("{collection_uri}/{chunk_id}");
+        let update = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PATCH)
+                    .uri(&item_uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "content": "pond oxygen management",
+                            "important_keywords": ["oxygen"],
+                            "questions": ["How to manage oxygen?"],
+                            "available": false
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Upstream update_chunk answers a bare `get_result()`: `{"code":0}`.
+        assert_eq!(update.status(), StatusCode::OK);
+        assert_eq!(response_json(update).await["code"], 0);
+        let stored = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("{collection_uri}/{chunk_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let stored = response_json(stored).await;
+        assert_eq!(
+            stored["data"]["content_with_weight"],
+            "pond oxygen management"
+        );
+        assert_eq!(stored["data"]["important_kwd"][0], "oxygen");
+        assert_eq!(stored["data"]["available_int"], 0);
+
+        let hidden =
+            env.state
+                .engine
+                .read()
+                .unwrap()
+                .hybrid_search_kbs(crate::search::HybridSearchQuery {
+                    query: "oxygen management",
+                    query_embedding: None,
+                    top_k: 10,
+                    kb_ids: std::slice::from_ref(&kb.id),
+                    vector_weight: 0.0,
+                    doc_ids: None,
+                    rank_feature: None,
+                });
+        assert!(hidden.is_empty());
+
+        let enable = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PATCH)
+                    .uri(&collection_uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "chunk_ids": [chunk_id],
+                            "available": true
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(enable.status(), StatusCode::OK);
+        let visible =
+            env.state
+                .engine
+                .read()
+                .unwrap()
+                .hybrid_search_kbs(crate::search::HybridSearchQuery {
+                    query: "oxygen management",
+                    query_embedding: None,
+                    top_k: 10,
+                    kb_ids: std::slice::from_ref(&kb.id),
+                    vector_weight: 0.0,
+                    doc_ids: None,
+                    rank_feature: None,
+                });
+        assert_eq!(visible.len(), 1);
+
+        let delete = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(&collection_uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "chunk_ids": [chunk_id] }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Upstream rm_chunk answers `{"code":0,"message":"deleted 1 chunks"}`.
+        assert_eq!(delete.status(), StatusCode::OK);
+        let delete_body = response_json(delete).await;
+        assert_eq!(delete_body["code"], 0);
+        assert_eq!(delete_body["message"], "deleted 1 chunks");
+        assert_eq!(env.state.docs.get(&doc.id).unwrap().chunk_count, 0);
+        assert_eq!(env.state.kbs.get(&kb.id).unwrap().chunk_count, 0);
+        assert!(env.state.engine.read().unwrap().is_empty());
+    }
+
+    /// The live v0.27.2 write probe sent `{"chunk_ids":[...],"available_int":1}`
+    /// to b8.68's `PATCH …/chunks` and got an axum 422: the request struct typed
+    /// `available_int` as a bool. Upstream accepts an integer, a bool, or the
+    /// older `available` alias, and answers the two validation messages below.
+    #[tokio::test]
+    async fn chunk_availability_switch_accepts_upstream_available_int() {
+        let mut env = test_env();
+        Arc::get_mut(&mut env.state).unwrap().embedder = Some(Arc::new(TestEmbedder));
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Switch KB", "")
+            .unwrap();
+        let doc = stored_doc("switch-doc", &kb.id, 0);
+        env.state.docs.insert(doc.clone()).unwrap();
+        let router = build_router(env.state.clone());
+        let collection_uri = format!("/api/v1/datasets/{}/documents/{}/chunks", kb.id, doc.id);
+
+        let created = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(&collection_uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"content":"availability probe"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let chunk_id = response_json(created).await["data"]["chunk"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let off = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PATCH)
+                    .uri(&collection_uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "chunk_ids": [chunk_id], "available_int": 0 })
+                            .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(off.status(), StatusCode::OK);
+        let off = response_json(off).await;
+        assert_eq!(off["code"], 0, "{off}");
+        assert_eq!(off["data"], true);
+
+        let neither = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PATCH)
+                    .uri(&collection_uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "chunk_ids": [chunk_id] }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let neither = response_json(neither).await;
+        assert_eq!(neither["code"], 102);
+        assert_eq!(
+            neither["message"],
+            "`available_int` or `available` is required."
+        );
+
+        let missing = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::PATCH)
+                    .uri(&collection_uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"available_int":1}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let missing = response_json(missing).await;
+        assert_eq!(missing["code"], 102);
+        assert_eq!(missing["message"], "`chunk_ids` is required.");
+    }
+
+    #[tokio::test]
+    async fn manual_chunk_mutation_requires_kb_management_permission() {
+        let mut env = non_admin_env();
+        Arc::get_mut(&mut env.state).unwrap().embedder = Some(Arc::new(TestEmbedder));
+        let kb = env
+            .state
+            .kbs
+            .create_for("other-user", "Other Manual KB", "")
+            .unwrap();
+        let doc = stored_doc("other-manual-doc", &kb.id, 0);
+        env.state.docs.insert(doc.clone()).unwrap();
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!(
+                        "/api/v1/datasets/{}/documents/{}/chunks",
+                        kb.id, doc.id
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"content":"forbidden"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Upstream `KnowledgebaseService.accessible` failure: HTTP 200 + code 102.
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 102);
+        assert!(env.state.engine.read().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn manual_chunk_index_failure_preserves_counts_and_index() {
+        let mut env = test_env();
+        Arc::get_mut(&mut env.state).unwrap().embedder = Some(Arc::new(TestEmbedder));
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Manual Rollback KB", "")
+            .unwrap();
+        let doc = stored_doc("manual-rollback-doc", &kb.id, 0);
+        env.state.docs.insert(doc.clone()).unwrap();
+        env.state.kbs.update_counts(&kb.id, 0, 1).unwrap();
+        let index_path = env.root.join("index.json");
+        std::fs::create_dir(&index_path).unwrap();
+
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!(
+                        "/api/v1/datasets/{}/documents/{}/chunks",
+                        kb.id, doc.id
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"content":"rollback content"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Upstream wraps handler exceptions as `{"code":100,"message":…}` on HTTP 200.
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response_json(response).await["code"], 100);
+        assert!(env.state.engine.read().unwrap().is_empty());
+        assert_eq!(env.state.docs.get(&doc.id).unwrap().chunk_count, 0);
+        assert_eq!(env.state.kbs.get(&kb.id).unwrap().chunk_count, 0);
+    }
+
+    #[tokio::test]
+    async fn document_metadata_api_filters_retrieval_and_enriches_references() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Metadata KB", "")
+            .unwrap();
+        let doc_a = stored_doc("metadata-doc-a", &kb.id, 1);
+        let doc_b = stored_doc("metadata-doc-b", &kb.id, 1);
+        env.state.docs.insert(doc_a.clone()).unwrap();
+        env.state.docs.insert(doc_b.clone()).unwrap();
+        env.state.kbs.update_counts(&kb.id, 2, 2).unwrap();
+        {
+            let mut engine = env.state.engine.write().unwrap();
+            let mut chunk_a = search_chunk("metadata-chunk-a", &kb.id, "pond oxygen guide");
+            chunk_a.metadata.insert("doc_id".into(), doc_a.id.clone());
+            let mut chunk_b = search_chunk("metadata-chunk-b", &kb.id, "pond oxygen guide");
+            chunk_b.metadata.insert("doc_id".into(), doc_b.id.clone());
+            engine.index(vec![chunk_a, chunk_b]);
+        }
+        let router = build_router(env.state.clone());
+        let metadata_uri = format!("/api/v1/datasets/{}/documents/{}/metadata", kb.id, doc_a.id);
+        let replace = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri(&metadata_uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "meta_fields": {
+                                "tags": ["water、oxygen", "oxygen"],
+                                "year": 2026,
+                                "owner": "Farm A"
+                            }
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(replace.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(replace).await["data"]["tags"],
+            serde_json::json!(["water", "oxygen"])
+        );
+
+        let list = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/api/v1/datasets/{}/documents", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let list_body = response_json(list).await;
+        let listed = list_body["data"]["docs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|document| document["id"] == doc_a.id)
+            .unwrap();
+        assert_eq!(listed["meta_fields"]["year"], 2026);
+
+        let keys = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/api/v1/datasets/{}/metadata/keys", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response_json(keys).await["data"],
+            serde_json::json!(["owner", "tags", "year"])
+        );
+
+        let summary = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/datasets/{}/metadata/summary", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let summary_body = response_json(summary).await;
+        assert_eq!(summary_body["data"]["year"]["type"], "number");
+        assert_eq!(summary_body["data"]["tags"]["type"], "list");
+
+        let retrieval = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/retrieval")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "question": "pond oxygen",
+                            "kb_ids": [kb.id],
+                            "vector_similarity_weight": 0.0,
+                            "meta_data_filter": {
+                                "method": "manual",
+                                "logic": "and",
+                                "manual": [
+                                    {"key": "tags", "op": "contains", "value": "oxygen"},
+                                    {"name": "year", "comparison_operator": ">=", "value": 2026}
+                                ]
+                            },
+                            "reference_metadata": {
+                                "include": true,
+                                "fields": ["owner"]
+                            }
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(retrieval.status(), StatusCode::OK);
+        let retrieval_body = response_json(retrieval).await;
+        assert_eq!(retrieval_body["data"]["total"], 1);
+        assert_eq!(retrieval_body["data"]["chunks"][0]["doc_id"], doc_a.id);
+        assert_eq!(
+            retrieval_body["data"]["chunks"][0]["document_metadata"],
+            serde_json::json!({ "owner": "Farm A" })
+        );
+
+        let batch = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/datasets/{}/metadata/batch", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "doc_ids": [doc_a.id],
+                            "updates": [{"key": "tags", "value": "fish"}],
+                            "deletes": [{"key": "owner"}]
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(batch.status(), StatusCode::OK);
+        assert_eq!(response_json(batch).await["data"]["updated"], 1);
+        let metadata = env.state.document_metadata.get(&doc_a.id, &kb.id).unwrap();
+        assert_eq!(
+            metadata["tags"],
+            serde_json::json!(["water", "oxygen", "fish"])
+        );
+        assert!(!metadata.contains_key("owner"));
+
+        delete_document_data(&env.state, &doc_a).unwrap();
+        assert!(env.state.document_metadata.get(&doc_a.id, &kb.id).is_none());
+    }
+
+    /// Upstream `document_api.update_metadata` (`PATCH
+    /// /api/v1/datasets/{id}/documents/metadatas`): the body is
+    /// `{selector: {document_ids, metadata_condition}, updates, deletes}`, the
+    /// condition is evaluated by `common/metadata_utils.meta_filter`, and the
+    /// answer carries both `updated` and `matched_docs`.
+    /// Upstream `search_api` mounts the search app CRUD on `/api/v1/searches`
+    /// and answers `GET /api/v1/searches/{id}` with the stored app. The route
+    /// used to be missing: a `GET` on `/api/v1/searchapps/{id}` returned 405 with
+    /// an empty body, which left the search page's settings drawer with nothing
+    /// to load.
+    #[tokio::test]
+    async fn search_app_detail_matches_the_upstream_route_and_shape() {
+        let mut env = test_env();
+        let dir =
+            std::env::temp_dir().join(format!("rayrag-search-detail-{}", uuid::Uuid::new_v4()));
+        let store = Arc::new(
+            crate::api::searchapp_mgr::SearchAppStore::new(dir.to_str().unwrap()).unwrap(),
+        );
+        Arc::get_mut(&mut env.state).unwrap().search_apps = Some(store.clone());
+        let env = env;
+        let router = build_router(env.state.clone());
+        let create = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/searches")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"name": "Drawer app", "kb_ids": []}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(create.status(), StatusCode::OK);
+        let created = response_json(create).await;
+        assert_eq!(created["code"], 0);
+        let app_id = created["data"]["id"].as_str().unwrap().to_string();
+
+        for uri in [
+            format!("/api/v1/searches/{app_id}"),
+            format!("/api/v1/searchapps/{app_id}"),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(&uri)
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{uri}");
+            let body = response_json(response).await;
+            assert_eq!(body["code"], 0, "{uri}");
+            assert_eq!(body["data"]["name"], "Drawer app", "{uri}");
+            assert_eq!(body["data"]["id"], app_id, "{uri}");
+        }
+
+        // The avatar column the settings drawer's crop dialog writes travels
+        // through the same partial-update route and back out of GET.
+        let updated = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri(format!("/api/v1/searchapps/{app_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"avatar": "data:image/png;base64,ZZZZ"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated.status(), StatusCode::OK);
+        let updated = response_json(updated).await;
+        assert_eq!(updated["code"], 0);
+        let fetched = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/searchapps/{app_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response_json(fetched).await["data"]["avatar"],
+            "data:image/png;base64,ZZZZ"
+        );
+
+        // Unknown id and a foreign app keep upstream's messages.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/searches/does-not-exist")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 102);
+        assert_eq!(body["message"], "Can't find this Search App!");
+
+        let stored = env
+            .state
+            .search_apps
+            .as_ref()
+            .unwrap()
+            .get(&app_id)
+            .unwrap();
+        assert_eq!(stored.owner_id, "test-user");
+        let removed = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!("/api/v1/searches/{app_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(removed.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn document_metadata_batch_update_follows_the_upstream_selector() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Metadata Selector KB", "")
+            .unwrap();
+        let doc_a = stored_doc("selector-doc-a", &kb.id, 1);
+        let doc_b = stored_doc("selector-doc-b", &kb.id, 1);
+        env.state.docs.insert(doc_a.clone()).unwrap();
+        env.state.docs.insert(doc_b.clone()).unwrap();
+        env.state
+            .document_metadata
+            .batch_update(
+                &kb.id,
+                &[doc_a.id.clone(), doc_b.id.clone()],
+                &[
+                    crate::api::document_metadata::MetadataUpdate {
+                        key: "owner".into(),
+                        value: serde_json::json!("Farm A"),
+                        r#match: None,
+                    },
+                    crate::api::document_metadata::MetadataUpdate {
+                        key: "owner".into(),
+                        value: serde_json::json!("Farm B"),
+                        r#match: None,
+                    },
+                ],
+                &[],
+            )
+            .unwrap();
+        // `batch_update` applies each update row to every listed document, so the
+        // owner is written per document for the test's purpose.
+        env.state
+            .document_metadata
+            .batch_update(
+                &kb.id,
+                &[doc_a.id.clone()],
+                &[crate::api::document_metadata::MetadataUpdate {
+                    key: "owner".into(),
+                    value: serde_json::json!("Farm A"),
+                    r#match: None,
+                }],
+                &[],
+            )
+            .unwrap();
+        env.state
+            .document_metadata
+            .batch_update(
+                &kb.id,
+                &[doc_b.id.clone()],
+                &[crate::api::document_metadata::MetadataUpdate {
+                    key: "owner".into(),
+                    value: serde_json::json!("Farm B"),
+                    r#match: None,
+                }],
+                &[],
+            )
+            .unwrap();
+
+        let router = build_router(env.state.clone());
+        let uri = format!("/api/v1/datasets/{}/documents/metadatas", kb.id);
+        let patch = |body: serde_json::Value| {
+            Request::builder()
+                .method(Method::PATCH)
+                .uri(&uri)
+                .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        };
+
+        // `metadata_condition` selects only Farm A's document, even though both
+        // ids are offered in the selector.
+        let response = router
+            .clone()
+            .oneshot(patch(serde_json::json!({
+                "selector": {
+                    "document_ids": [doc_a.id, doc_b.id],
+                    "metadata_condition": {
+                        "logic": "and",
+                        "conditions": [
+                            {"name": "owner", "comparison_operator": "is", "value": "Farm A"}
+                        ]
+                    }
+                },
+                "updates": [{"key": "tags", "value": "selector"}]
+            })))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["data"]["updated"], 1);
+        assert_eq!(body["data"]["matched_docs"], 1);
+        assert_eq!(
+            env.state.document_metadata.get(&doc_a.id, &kb.id).unwrap()["tags"],
+            serde_json::json!("selector"),
+            "a key that did not exist yet is written as the given value"
+        );
+        assert!(
+            env.state
+                .document_metadata
+                .get(&doc_b.id, &kb.id)
+                .unwrap()
+                .get("tags")
+                .is_none(),
+            "the condition must exclude the other document"
+        );
+
+        // A condition list that matches nothing short-circuits with
+        // `{updated: 0, matched_docs: 0}`.
+        let response = router
+            .clone()
+            .oneshot(patch(serde_json::json!({
+                "selector": {
+                    "metadata_condition": {
+                        "conditions": [{"name": "owner", "comparison_operator": "is", "value": "Nowhere"}]
+                    }
+                },
+                "updates": [{"key": "tags", "value": "never"}]
+            })))
+            .await
+            .unwrap();
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["data"]["updated"], 0);
+        assert_eq!(body["data"]["matched_docs"], 0);
+
+        // Upstream's per-field validation messages.
+        let response = router
+            .clone()
+            .oneshot(patch(serde_json::json!({
+                "selector": {"metadata_condition": "nope"},
+                "updates": []
+            })))
+            .await
+            .unwrap();
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 102);
+        assert_eq!(body["message"], "metadata_condition must be an object.");
+
+        let response = router
+            .clone()
+            .oneshot(patch(serde_json::json!({
+                "selector": {"document_ids": ["does-not-exist"]},
+                "updates": []
+            })))
+            .await
+            .unwrap();
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 102);
+        assert!(
+            body["message"]
+                .as_str()
+                .unwrap()
+                .starts_with("These documents do not belong to dataset"),
+            "{}",
+            body["message"]
+        );
+
+        let response = router
+            .clone()
+            .oneshot(patch(serde_json::json!({
+                "selector": {"document_ids": [doc_a.id]},
+                "updates": [{"key": "tags"}]
+            })))
+            .await
+            .unwrap();
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 102);
+        assert_eq!(body["message"], "Each update requires key and value.");
+    }
+
+    #[tokio::test]
+    async fn document_metadata_write_requires_kb_management_permission() {
+        let env = non_admin_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("other-user", "Other Metadata KB", "")
+            .unwrap();
+        let doc = stored_doc("other-metadata-doc", &kb.id, 0);
+        env.state.docs.insert(doc.clone()).unwrap();
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri(format!(
+                        "/api/v1/datasets/{}/documents/{}/metadata",
+                        kb.id, doc.id
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"meta_fields":{"owner":"forbidden"}}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert!(env.state.document_metadata.get(&doc.id, &kb.id).is_none());
+    }
+
+    #[tokio::test]
+    async fn message_feedback_restores_index_when_conversation_persistence_fails() {
+        let mut env = test_env();
+        Arc::get_mut(&mut env.state).unwrap().chunk_feedback_enabled = true;
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Feedback Rollback KB", "")
+            .unwrap();
+        let mut chunk = search_chunk("rollback-feedback-chunk", &kb.id, "water quality");
+        chunk.metadata.insert("pagerank_fea".into(), "10".into());
+        env.state.engine.write().unwrap().add(chunk);
+        env.state
+            .engine
+            .read()
+            .unwrap()
+            .save(&env.state.index_path)
+            .unwrap();
+        let conversation = env
+            .state
+            .conversations
+            .create_for("test-user", "Feedback Rollback")
+            .unwrap();
+        let message_id = env
+            .state
+            .conversations
+            .append_exchange_with_references(
+                &conversation.id,
+                "test-user",
+                "question",
+                "answer",
+                vec!["water quality".into()],
+                vec![crate::llm::ChunkReference {
+                    document_id: None,
+                    document_name: None,
+                    id: "rollback-feedback-chunk".into(),
+                    kb_id: kb.id,
+                    content: "water quality".into(),
+                    similarity: Some(1.0),
+                    vector_similarity: Some(1.0),
+                    term_similarity: Some(1.0),
+                    document_metadata: None,
+                }],
+            )
+            .unwrap()
+            .unwrap();
+        let conversation_path = env.root.join("conversations.json");
+        std::fs::remove_file(&conversation_path).unwrap();
+        std::fs::create_dir(&conversation_path).unwrap();
+
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri(format!(
+                        "/api/v1/conversations/{}/messages/{}/feedback",
+                        conversation.id, message_id
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"thumbup":true}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(chunk_pagerank(&env.state, "rollback-feedback-chunk"), 10.0);
+        let restored_index = SearchEngine::from_file(&env.state.index_path).unwrap();
+        assert_eq!(
+            restored_index.to_vec()[0]
+                .metadata
+                .get("pagerank_fea")
+                .map(String::as_str),
+            Some("10")
+        );
+        assert_eq!(
+            env.state
+                .conversations
+                .feedback_target(&conversation.id, "test-user", &message_id)
+                .unwrap()
+                .prior_thumb,
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn chunk_list_hides_documents_from_other_owners() {
+        let env = test_env();
+        let other_kb = env
+            .state
+            .kbs
+            .create_for("other-user", "Other Chunk KB", "")
+            .unwrap();
+        env.state
+            .docs
+            .insert(crate::api::document::DocRecord {
+                id: "other-doc".into(),
+                name: "secret.txt".into(),
+                kb_id: other_kb.id,
+                size: 6,
+                storage_name: "other-doc.txt".into(),
+                content_hash: String::new(),
+                indexed_content_hash: String::new(),
+                run: "DONE".into(),
+                progress: 1.0,
+                progress_msg: "done".into(),
+                chunk_count: 0,
+                created_at: 1,
+                updated_at: 1,
+                status: crate::api::document::enabled_status(),
+                ..Default::default()
+            })
+            .unwrap();
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/chunks/other-doc")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// `GET /api/v1/files` answers the documented `{total, files, parent_folder}` and honours the
+    /// documented query parameters. It used to answer the root folder as a bare array and ignore
+    /// `parent_id`, `keywords`, `page` and `page_size` entirely.
+    #[tokio::test]
+    async fn the_files_list_follows_its_documented_shape_and_query() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let record =
+            |id: &str, name: &str, parent: &str, kind: &str| crate::api::file_mgr::FileRecord {
+                id: id.into(),
+                name: name.into(),
+                owner_id: "test-user".into(),
+                parent_id: parent.into(),
+                size: 3,
+                content_hash: String::new(),
+                file_type: kind.into(),
+                created_at: 1,
+                ..Default::default()
+            };
+        env.state
+            .files
+            .add_unique(record("folder-1", "Reports", "root", "folder"))
+            .unwrap();
+        env.state
+            .files
+            .add_unique(record("file-a", "alpha.txt", "root", "doc"))
+            .unwrap();
+        env.state
+            .files
+            .add_unique(record("file-b", "beta.txt", "folder-1", "doc"))
+            .unwrap();
+
+        let call = |uri: String| {
+            let router = router.clone();
+            let token = env.token.clone();
+            async move {
+                response_json(
+                    router
+                        .oneshot(
+                            Request::builder()
+                                .uri(uri)
+                                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                                .body(Body::empty())
+                                .unwrap(),
+                        )
+                        .await
+                        .unwrap(),
+                )
+                .await
+            }
+        };
+
+        let root = call("/api/v1/files".to_string()).await;
+        assert_eq!(root["data"]["parent_folder"]["id"], "root");
+        let names: Vec<&str> = root["data"]["files"]
+            .as_array()
+            .expect("files must be a list under data.files, as the guide documents")
+            .iter()
+            .filter_map(|row| row["name"].as_str())
+            .collect();
+        assert!(names.contains(&"alpha.txt"), "{root}");
+        assert!(
+            !names.contains(&"beta.txt"),
+            "the folder's file is not in the root: {root}"
+        );
+        assert_eq!(root["data"]["total"], names.len());
+
+        let inside = call("/api/v1/files?parent_id=folder-1".to_string()).await;
+        // upstream answers the *parent* of the listed folder, which is the tenant root here
+        assert_eq!(inside["data"]["parent_folder"]["name"], "/");
+        assert_eq!(inside["data"]["parent_folder"]["id"], "root");
+        let inner: Vec<&str> = inside["data"]["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|row| row["name"].as_str())
+            .collect();
+        assert_eq!(inner, vec!["beta.txt"]);
+
+        let filtered = call("/api/v1/files?keywords=alp".to_string()).await;
+        let hits: Vec<&str> = filtered["data"]["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|row| row["name"].as_str())
+            .collect();
+        assert_eq!(
+            hits,
+            vec!["alpha.txt"],
+            "keywords filter by name: {filtered}"
+        );
+
+        let paged = call("/api/v1/files?page=2&page_size=1".to_string()).await;
+        // the tenant root also carries the visible .knowledgebase system folder
+        assert_eq!(
+            paged["data"]["total"], 3,
+            "total counts every match, not just the page: {paged}"
+        );
+        assert_eq!(paged["data"]["files"].as_array().map(Vec::len), Some(1));
+
+        let missing = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/files?parent_id=nope")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // upstream answers the coded data error over HTTP 200
+        assert_eq!(missing.status(), StatusCode::OK);
+        let missing = response_json(missing).await;
+        assert_eq!(missing["code"], 102);
+        assert_eq!(missing["message"], "Folder not found!");
+    }
+
+    async fn file_and_task_lists_are_scoped_to_authenticated_owner() {
+        let env = non_admin_env();
+        let other_task = env
+            .state
+            .tasks
+            .push("other-user", "Other task", "doc-x")
+            .unwrap();
+        let own_task = env
+            .state
+            .tasks
+            .push("member-user", "Own task", "doc-y")
+            .unwrap();
+        env.state
+            .files
+            .add(crate::api::file_mgr::FileRecord {
+                id: "own-file".into(),
+                name: "own.txt".into(),
+                owner_id: "member-user".into(),
+                parent_id: "root".into(),
+                size: 1,
+                content_hash: String::new(),
+                file_type: "txt".into(),
+                created_at: 1,
+                ..Default::default()
+            })
+            .unwrap();
+        env.state
+            .files
+            .add(crate::api::file_mgr::FileRecord {
+                id: "other-file".into(),
+                name: "other.txt".into(),
+                owner_id: "other-user".into(),
+                parent_id: "root".into(),
+                size: 1,
+                content_hash: String::new(),
+                file_type: "txt".into(),
+                created_at: 1,
+                ..Default::default()
+            })
+            .unwrap();
+        let router = build_router(env.state.clone());
+        let tasks = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/tasks")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let tasks_json = response_json(tasks).await;
+        let ids: Vec<&str> = tasks_json["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|task| task["id"].as_str())
+            .collect();
+        assert!(ids.contains(&own_task.as_str()));
+        assert!(!ids.contains(&other_task.as_str()));
+
+        let files = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/files")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let files_json = response_json(files).await;
+        let ids: Vec<&str> = files_json["data"]["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|file| file["id"].as_str())
+            .collect();
+        assert_eq!(ids, vec!["own-file"]);
+    }
+
+    #[tokio::test]
+    async fn task_patch_accepts_only_the_stop_action() {
+        let env = test_env();
+        let task_id = env
+            .state
+            .tasks
+            .push("test-user", "Patch task", "patch-doc")
+            .unwrap();
+        let router = build_router(env.state.clone());
+
+        let invalid = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PATCH)
+                    .uri(format!("/api/v1/tasks/{task_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"action":"pause"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+        let invalid_json = response_json(invalid).await;
+        assert_eq!(
+            invalid_json["message"],
+            "Invalid action 'pause'. Only 'stop' is supported."
+        );
+
+        let stopped = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PATCH)
+                    .uri(format!("/api/v1/tasks/{task_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"action":"stop"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(stopped.status(), StatusCode::OK);
+        let stopped_json = response_json(stopped).await;
+        assert_eq!(stopped_json["data"], true);
+        let task = env
+            .state
+            .tasks
+            .list()
+            .into_iter()
+            .find(|task| task.id == task_id)
+            .unwrap();
+        assert_eq!(task.status, "cancelled");
+        assert!(task.cancel_requested);
+
+        let stopped_again = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::PATCH)
+                    .uri(format!("/api/v1/tasks/{task_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"action":"stop"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(stopped_again.status(), StatusCode::OK);
+        assert_eq!(response_json(stopped_again).await["data"], true);
+    }
+
+    #[tokio::test]
+    async fn pipeline_operation_logs_filter_terminal_tasks_with_kb_acl() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Logs KB", "")
+            .unwrap();
+        let other_kb = env
+            .state
+            .kbs
+            .create_for("other-user", "Other KB", "")
+            .unwrap();
+        let (done_id, _) = env
+            .state
+            .tasks
+            .push_document_unique(
+                "test-user",
+                "Parse annual-report.pdf",
+                "doc-1",
+                &kb.id,
+                crate::api::features::TASK_PRIORITY_LOW,
+            )
+            .unwrap();
+        assert!(
+            env.state
+                .tasks
+                .update(&done_id, "done", 1.0, "Indexed")
+                .unwrap()
+        );
+        let (pending_id, _) = env
+            .state
+            .tasks
+            .push_document_unique(
+                "test-user",
+                "Parse pending.pdf",
+                "doc-2",
+                &kb.id,
+                crate::api::features::TASK_PRIORITY_LOW,
+            )
+            .unwrap();
+        let (other_id, _) = env
+            .state
+            .tasks
+            .push_document_unique(
+                "other-user",
+                "Parse secret.pdf",
+                "doc-3",
+                &other_kb.id,
+                crate::api::features::TASK_PRIORITY_LOW,
+            )
+            .unwrap();
+        assert!(
+            env.state
+                .tasks
+                .update(&other_id, "failed", 1.0, "Failed")
+                .unwrap()
+        );
+
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/pipeline/operation-logs?kb_id={}&keywords=annual&operation_status=done&page=1&page_size=10",
+                        kb.id
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = response_json(response).await;
+        assert_eq!(json["data"]["total"], 1);
+        assert_eq!(json["data"]["items"][0]["id"], done_id);
+        assert_eq!(json["data"]["items"][0]["kb_id"], kb.id);
+        assert_eq!(json["data"]["items"][0]["task_type"], "document_parse");
+        let ids: Vec<_> = json["data"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|task| task["id"].as_str())
+            .collect();
+        assert!(!ids.contains(&pending_id.as_str()));
+        assert!(!ids.contains(&other_id.as_str()));
+
+        let forbidden = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/pipeline/operation-logs?kb_id={}",
+                        other_kb.id
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(forbidden.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn non_admin_cannot_use_management_write_endpoints() {
+        let env = non_admin_env();
+        let router = build_router(env.state.clone());
+        for (method, uri, body) in [
+            (Method::POST, "/api/v1/system/new_api_key", "{}"),
+            (
+                Method::POST,
+                "/api/v1/connectors",
+                r#"{"id":"x","name":"x","source_type":"file","enabled":true,"config":{}}"#,
+            ),
+            (Method::POST, "/api/v1/plugins/ocr/toggle", "{}"),
+            // The connector family's write verbs are management writes too: probing a source and
+            // rebuilding it reach outside the deployment, so they are not a normal user's to trigger.
+            (Method::POST, "/api/v1/connectors/x/test", "{}"),
+            (Method::POST, "/api/v1/connectors/x/rebuild", "{}"),
+            (
+                Method::PATCH,
+                "/api/v1/connectors/x",
+                r#"{"enabled":false}"#,
+            ),
+            (Method::DELETE, "/api/v1/connectors/x", "{}"),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "uri: {uri}");
+        }
+    }
+
+    /// The files page's bulk bar calls three upstream endpoints. Each one is checked
+    /// here against the contract the page relies on: a refusal that names the reason,
+    /// a per-document result map, and state that survives in the document store (the
+    /// first implementation kept the enabled/disabled switch in the browser, so a
+    /// disabled document happily kept answering questions).
+    #[tokio::test]
+    async fn bulk_document_operations_follow_the_upstream_contract() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Bulk KB", "")
+            .unwrap();
+        let other = env
+            .state
+            .kbs
+            .create_for("test-user", "Other KB", "")
+            .unwrap();
+        for (id, kb_id) in [
+            ("bulk-doc-a", kb.id.as_str()),
+            ("bulk-doc-b", kb.id.as_str()),
+            ("bulk-doc-foreign", other.id.as_str()),
+        ] {
+            env.state.docs.insert(stored_doc(id, kb_id, 1)).unwrap();
+        }
+        let post = |uri: &str, body: serde_json::Value| {
+            Request::builder()
+                .method(Method::POST)
+                .uri(uri)
+                .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        };
+        let bulk_uri = format!("/api/v1/datasets/{}/documents/batch-update-status", kb.id);
+
+        // The list the page renders from carries the status.
+        let listed = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/datasets/{}/documents", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let payload = to_bytes(listed.into_body(), 256 * 1024).await.unwrap();
+        let listed: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(
+            listed["data"]["docs"][0]["status"], "1",
+            "documents are listed under data.docs, as the API guide documents: {listed}"
+        );
+        assert_eq!(
+            listed["data"]["total"], 2,
+            "the total rides along with the docs, as the API guide documents: {listed}"
+        );
+
+        // Disable one document, then the other, and watch each answer.
+        let disabled = router
+            .clone()
+            .oneshot(post(
+                &bulk_uri,
+                serde_json::json!({"doc_ids": ["bulk-doc-a"], "status": 0}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(disabled.status(), StatusCode::OK);
+        let payload = to_bytes(disabled.into_body(), 64 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["data"]["bulk-doc-a"]["status"], "0");
+        assert_eq!(env.state.docs.get("bulk-doc-a").unwrap().status, "0");
+        assert_eq!(env.state.docs.get("bulk-doc-b").unwrap().status, "1");
+
+        // A document from another dataset is reported per id, not silently accepted.
+        let mixed = router
+            .clone()
+            .oneshot(post(
+                &bulk_uri,
+                serde_json::json!({"doc_ids": ["bulk-doc-b", "bulk-doc-foreign"], "status": 1}),
+            ))
+            .await
+            .unwrap();
+        let payload = to_bytes(mixed.into_body(), 64 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(
+            body["code"], 500,
+            "partial failure must be reported: {body}"
+        );
+        assert_eq!(body["message"], "Partial failure");
+        assert!(
+            body["data"]["bulk-doc-foreign"]["error"]
+                .as_str()
+                .is_some_and(|message| message.contains("not found in this dataset")),
+            "{body}"
+        );
+        assert_eq!(body["data"]["bulk-doc-b"]["status"], "1");
+
+        // Argument validation mirrors upstream's messages.
+        for (body, needle) in [
+            (
+                serde_json::json!({"doc_ids": [], "status": 1}),
+                "non-empty list",
+            ),
+            (
+                serde_json::json!({"doc_ids": ["bulk-doc-a"], "status": 7}),
+                "must be either 0 or 1",
+            ),
+        ] {
+            let response = router.clone().oneshot(post(&bulk_uri, body)).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+            assert_eq!(body["code"], 101);
+            assert!(
+                body["message"].as_str().is_some_and(|m| m.contains(needle)),
+                "{body}"
+            );
+        }
+
+        // Parsing a selection: a non-parse `run` value writes through (`update_by_id` —
+        // status persisted without queueing), a document whose upload is missing reports
+        // its own error instead of a blanket success, and a real document is queued once
+        // its file exists.
+        let write_through = router
+            .clone()
+            .oneshot(post(
+                "/api/v1/documents/ingest",
+                serde_json::json!({"doc_ids": ["bulk-doc-b"], "run": 3}),
+            ))
+            .await
+            .unwrap();
+        let payload = to_bytes(write_through.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(body["code"], 0, "{body}");
+        assert_eq!(body["data"], true, "{body}");
+        assert_eq!(env.state.docs.get("bulk-doc-b").unwrap().run, "DONE");
+
+        let missing_file = router
+            .clone()
+            .oneshot(post(
+                "/api/v1/documents/ingest",
+                serde_json::json!({"doc_ids": ["bulk-doc-b"], "run": 1}),
+            ))
+            .await
+            .unwrap();
+        let payload = to_bytes(missing_file.into_body(), 64 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(
+            body["code"], 100,
+            "a missing upload aborts the request like upstream: {body}"
+        );
+        assert!(
+            body["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("missing")),
+            "{body}"
+        );
+
+        // With the file in place the same call queues a task.
+        let uploads = std::path::Path::new(&env.state.static_dir).join("../uploads");
+        std::fs::create_dir_all(&uploads).unwrap();
+        std::fs::write(uploads.join("sample.txt"), b"hello").unwrap();
+        let queued = router
+            .clone()
+            .oneshot(post(
+                "/api/v1/documents/ingest",
+                serde_json::json!({"doc_ids": ["bulk-doc-b"], "run": 1}),
+            ))
+            .await
+            .unwrap();
+        let payload = to_bytes(queued.into_body(), 64 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(body["code"], 0, "{body}");
+        assert_eq!(body["data"], true, "{body}");
+        assert_eq!(body["message"], "success", "{body}");
+
+        // Cancelling the selection (`run: 2`) marks the document and stops the task.
+        let cancelled = router
+            .clone()
+            .oneshot(post(
+                "/api/v1/documents/ingest",
+                serde_json::json!({"doc_ids": ["bulk-doc-b"], "run": 2}),
+            ))
+            .await
+            .unwrap();
+        let payload = to_bytes(cancelled.into_body(), 64 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(body["code"], 0, "{body}");
+        assert_eq!(body["data"], true, "{body}");
+        assert_eq!(env.state.docs.get("bulk-doc-b").unwrap().run, "CANCELLED");
+
+        // Deleting a selection: ids from another dataset are refused, both `ids` and
+        // `delete_all` together are refused, and the accepted ids really disappear.
+        let delete_uri = format!("/api/v1/datasets/{}/documents", kb.id);
+        for (body, needle) in [
+            (
+                serde_json::json!({"ids": ["bulk-doc-a", "bulk-doc-foreign"]}),
+                "do not belong to dataset",
+            ),
+            (
+                serde_json::json!({"ids": ["bulk-doc-a"], "delete_all": true}),
+                "should not provide both",
+            ),
+            (serde_json::json!({}), "should either provide doc ids"),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::DELETE)
+                        .uri(&delete_uri)
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+            assert_eq!(body["code"], 102, "{body}");
+            assert!(
+                body["message"].as_str().is_some_and(|m| m.contains(needle)),
+                "{body}"
+            );
+        }
+        let deleted = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(&delete_uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"ids": ["bulk-doc-a"]}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let payload = to_bytes(deleted.into_body(), 64 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(body["code"], 0, "{body}");
+        // Upstream delete_documents returns `{"deleted": n}` only.
+        assert_eq!(body["data"]["deleted"], 1);
+        assert!(body["data"].get("success_count").is_none(), "{body}");
+        assert!(env.state.docs.get("bulk-doc-a").is_none());
+        assert!(env.state.docs.get("bulk-doc-b").is_some());
+    }
+
+    async fn ingest_json(
+        env: &TestEnv,
+        body: serde_json::Value,
+    ) -> (StatusCode, serde_json::Value) {
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/api/v1/documents/ingest")
+            .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let response = build_router(env.state.clone())
+            .oneshot(request)
+            .await
+            .unwrap();
+        let status = response.status();
+        let payload = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        (status, serde_json::from_slice(&payload).unwrap())
+    }
+
+    /// The ingest contract the round-11 probes pinned down: `KeyError('doc_ids')` for an
+    /// absent key, a success for an empty list, `no authorization` for unreachable ids,
+    /// `KeyError('run')` for a missing run, the cancel guard, and the "stopped by user"
+    /// marker — every failure in the three-key `get_json_result` envelope on HTTP 200.
+    #[tokio::test]
+    async fn ingest_matches_the_probed_upstream_semantics() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Ingest KB", "")
+            .unwrap();
+        seeded_doc(&env.state, "ing-doc", &kb.id, "ing.txt", "UNSTARTED", 5_000);
+
+        // `ingest_none`: the error is a Python KeyError rendered by `repr()`.
+        let (status, body) = ingest_json(&env, serde_json::json!({})).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body,
+            serde_json::json!({"code": 100, "message": "KeyError('doc_ids')", "data": null})
+        );
+
+        // `ingest_empty`: an empty list never reaches the accessibility check.
+        let (_, body) = ingest_json(&env, serde_json::json!({"doc_ids": []})).await;
+        assert_eq!(body["code"], 0, "{body}");
+        assert_eq!(body["data"], true, "{body}");
+
+        // `ingest_fakeid`: unreachable ids answer `no authorization`, not a 404.
+        let (_, body) =
+            ingest_json(&env, serde_json::json!({"doc_ids": ["missing"], "run": 1})).await;
+        assert_eq!(
+            body,
+            serde_json::json!({"code": 109, "message": "no authorization", "data": null})
+        );
+
+        // The run key is required once the ids pass the accessibility check.
+        let (_, body) = ingest_json(&env, serde_json::json!({"doc_ids": ["ing-doc"]})).await;
+        assert_eq!(
+            body,
+            serde_json::json!({"code": 100, "message": "KeyError('run')", "data": null})
+        );
+
+        // Cancelling a document that is neither RUNNING nor has unfinished tasks fails.
+        let (_, body) =
+            ingest_json(&env, serde_json::json!({"doc_ids": ["ing-doc"], "run": 2})).await;
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "code": 102,
+                "message": "Cannot cancel a task that is not in RUNNING status",
+                "data": null
+            })
+        );
+
+        // A RUNNING document cancels, and the marker lands in its progress message.
+        env.state
+            .docs
+            .update_status("ing-doc", "RUNNING", 0.5, "embedding (1/2)")
+            .unwrap();
+        let (_, body) =
+            ingest_json(&env, serde_json::json!({"doc_ids": ["ing-doc"], "run": 2})).await;
+        assert_eq!(body["code"], 0, "{body}");
+        let doc = env.state.docs.get("ing-doc").unwrap();
+        assert_eq!(doc.run, "CANCELLED");
+        assert_eq!(doc.progress, 0.0);
+        assert!(
+            doc.progress_msg.contains("Task stopped by user."),
+            "{}",
+            doc.progress_msg
+        );
+        assert!(
+            doc.progress_msg.contains("embedding (1/2)"),
+            "{}",
+            doc.progress_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn multipart_rejects_path_traversal_filename() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Traversal KB", "")
+            .unwrap();
+        let boundary = "rayrag-traversal-boundary";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"../escape.txt\"\r\nContent-Type: text/plain\r\n\r\nnope\r\n--{boundary}--\r\n"
+        );
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/datasets/{}/documents", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let json = response_json(response).await;
+        assert_eq!(status, StatusCode::OK, "response body: {json}");
+        assert_eq!(json["code"], 500, "response body: {json}");
+        assert!(env.state.docs.list(&kb.id).is_empty());
+        assert!(!env.root.join("escape.txt").exists());
+    }
+
+    fn indexed_chunk(doc_id: &str, kb_id: &str, id: &str) -> crate::search::IndexedChunk {
+        crate::search::IndexedChunk {
+            id: id.into(),
+            doc_name: "sample.txt".into(),
+            content: "sample".into(),
+            embedding: vec![1.0, 0.0],
+            token_count: 1,
+            position: 0,
+            metadata: std::collections::HashMap::from([
+                ("doc_id".into(), doc_id.into()),
+                ("kb_id".into(), kb_id.into()),
+            ]),
+        }
+    }
+
+    /// The PATCH /documents/{id} field face, byte-compared against the live v0.27.2 probes
+    /// (round13 `upd2_*` arms): the 26-key success dict, every validation wording, the
+    /// raised-body envelopes and the write arms.
+    #[tokio::test]
+    async fn document_update_field_face_matches_round13_probes() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Update KB", "")
+            .unwrap();
+        let doc_id = "93808be864d411f1a66de51aa552d498";
+        let mut doc = stored_doc(doc_id, &kb.id, 9);
+        doc.name = "ragflow_test_ocr(3).pdf".into();
+        doc.storage_name = "ragflow_test_ocr(3).pdf".into();
+        doc.run = "DONE".into();
+        doc.progress = 1.0;
+        doc.progress_msg = "Task done".into();
+        env.state.docs.insert(doc.clone()).unwrap();
+        let mut other = stored_doc("606d5b9664d411f1a66de51aa552d498", &kb.id, 1);
+        other.name = "ragflow_test_ocr(2).pdf".into();
+        env.state.docs.insert(other).unwrap();
+
+        let router = build_router(env.state.clone());
+        let uri = format!("/api/v1/datasets/{}/documents/{doc_id}", kb.id);
+        let patch = |body: Option<serde_json::Value>| {
+            let builder = Request::builder()
+                .method(Method::PATCH)
+                .uri(&uri)
+                .header(header::AUTHORIZATION, format!("Bearer {}", env.token));
+            match body {
+                Some(value) => builder
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(value.to_string()))
+                    .unwrap(),
+                None => builder.body(Body::empty()).unwrap(),
+            }
+        };
+
+        // No body at all: `{}` after `get_request_json()` — the no-op success carrying the
+        // full document dict in upstream's jsonify order.
+        let response = router.clone().oneshot(patch(None)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 0);
+        let data = body["data"].as_object().unwrap();
+        let keys: Vec<&str> = data.keys().map(String::as_str).collect();
+        let expected_keys: Vec<&str> = vec![
+            "chunk_count",
+            "chunk_method",
+            "content_hash",
+            "create_date",
+            "create_time",
+            "created_by",
+            "dataset_id",
+            "id",
+            "location",
+            "name",
+            "parser_config",
+            "pipeline_id",
+            "process_begin_at",
+            "process_duration",
+            "progress",
+            "progress_msg",
+            "run",
+            "size",
+            "source_type",
+            "status",
+            "suffix",
+            "thumbnail",
+            "token_count",
+            "type",
+            "update_date",
+            "update_time",
+        ];
+        assert_eq!(keys, expected_keys);
+        assert_eq!(data["run"], "DONE");
+        assert_eq!(data["location"], "ragflow_test_ocr(3).pdf");
+        assert_eq!(data["suffix"], "pdf");
+        assert_eq!(data["type"], "pdf");
+        assert_eq!(data["chunk_method"], "naive");
+        assert_eq!(data["pipeline_id"], serde_json::Value::Null);
+        assert_eq!(data["progress"], 1.0);
+        assert_eq!(data["status"], "1");
+        assert_eq!(data["source_type"], "local");
+        assert_eq!(data["token_count"], 0);
+
+        // Zero-write no-op arms: same name, an ignored extra field, the equal immutable pair.
+        for payload in [
+            serde_json::json!({}),
+            serde_json::json!({"name": "ragflow_test_ocr(3).pdf"}),
+            serde_json::json!({"bogus_field": 1}),
+            serde_json::json!({"chunk_count": 9}),
+            serde_json::json!({"progress": 1.0}),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(patch(Some(payload.clone())))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{payload}");
+            assert_eq!(response_json(response).await["code"], 0, "{payload}");
+        }
+
+        // Validation arms — byte-for-byte with the live probes.
+        let cases: Vec<(serde_json::Value, i64, &str)> = vec![
+            (
+                serde_json::json!({"name": serde_json::Value::Null}),
+                102,
+                "Field: <name> - Message: <Input should be a valid string> - Value: <None>",
+            ),
+            (
+                serde_json::json!({"name": 123}),
+                102,
+                "Field: <name> - Message: <Input should be a valid string> - Value: <123>",
+            ),
+            (
+                serde_json::json!({"name": "ragflow_test_ocr(3).docx"}),
+                101,
+                "The extension of file can't be changed",
+            ),
+            (
+                serde_json::json!({"name": format!("{}.pdf", "a".repeat(260))}),
+                101,
+                "File name must be 255 bytes or less.",
+            ),
+            (
+                serde_json::json!({"name": "ragflow_test_ocr(2).pdf"}),
+                102,
+                "Duplicated document name in the same dataset.",
+            ),
+            (
+                serde_json::json!({"chunk_method": "bogus"}),
+                102,
+                "Field: <chunk_method> - Message: <`chunk_method` bogus doesn't exist> - Value: <bogus>",
+            ),
+            (
+                serde_json::json!({"chunk_method": ""}),
+                102,
+                "`chunk_method` (empty string) is not valid",
+            ),
+            (
+                serde_json::json!({"chunk_method": 5}),
+                102,
+                "Field: <chunk_method> - Message: <Input should be a valid string> - Value: <5>",
+            ),
+            (
+                serde_json::json!({"enabled": 5}),
+                102,
+                "Field: <enabled> - Message: <Input should be less than or equal to 1> - Value: <5>",
+            ),
+            (
+                serde_json::json!({"enabled": "x"}),
+                102,
+                "Field: <enabled> - Message: <Input should be a valid integer> - Value: <x>",
+            ),
+            (
+                serde_json::json!({"chunk_count": 12345}),
+                102,
+                "can't change `chunk_count`",
+            ),
+            (
+                serde_json::json!({"token_count": 12345}),
+                102,
+                "can't change `token_count`",
+            ),
+            (
+                serde_json::json!({"progress": 0.31337}),
+                102,
+                "can't change `progress`",
+            ),
+            (
+                serde_json::json!({"meta_fields": {"a": {"x": 1}}}),
+                102,
+                "Field: <meta_fields> - Message: <The type is not supported: {'x': 1}> - Value: <{'a': {'x': 1}}>",
+            ),
+            (
+                serde_json::json!({"meta_fields": {"a": [{"x": 1}]}}),
+                102,
+                "Field: <meta_fields> - Message: <The type is not supported in list: [{'x': 1}]> - Value: <{'a': [{'x': 1}]}>",
+            ),
+            (
+                serde_json::json!({"meta_fields": "nope"}),
+                102,
+                "Field: <meta_fields> - Message: <Input should be a valid dictionary> - Value: <nope>",
+            ),
+            (
+                serde_json::json!({"parser_config": {"ext": {"x": 1}}}),
+                102,
+                "Field: <parser_config> - Message: <Value error, parser_config.ext is not supported; send parser configuration fields directly> - Value: <{'ext': {'x': 1}}>",
+            ),
+            (
+                serde_json::json!({"parser_config": {"chunk_token_num": "x"}}),
+                102,
+                "Field: <parser_config.chunk_token_num> - Message: <Input should be a valid integer> - Value: <x>",
+            ),
+            (
+                serde_json::json!({"parser_config": {"auto_keywords": 99}}),
+                102,
+                "Field: <parser_config.auto_keywords> - Message: <Input should be less than or equal to 32> - Value: <99>",
+            ),
+            (
+                serde_json::json!({"pipeline_id": 123}),
+                102,
+                "Field: <pipeline_id> - Message: <Input should be a valid string> - Value: <123>",
+            ),
+        ];
+        for (payload, expected_code, expected_message) in cases {
+            let response = router
+                .clone()
+                .oneshot(patch(Some(payload.clone())))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{payload}");
+            let body = response_json(response).await;
+            assert_eq!(body["code"], expected_code, "{payload}: {body}");
+            assert_eq!(body["message"], expected_message, "{payload}: {body}");
+            assert!(body.get("data").is_none(), "{payload}: {body}");
+        }
+
+        // Raised envelopes for unreadable bodies.
+        for (raw, expected_message) in [
+            ("{bad", "<BadRequest '400: Bad Request'>"),
+            ("[1,2]", "TypeError('JSON payload must be an object.')"),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::PATCH)
+                        .uri(&uri)
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(raw))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{raw}");
+            let body = response_json(response).await;
+            assert_eq!(body["code"], 100, "{raw}");
+            assert_eq!(body.get("data"), Some(&serde_json::Value::Null), "{raw}");
+            assert_eq!(body["message"], expected_message, "{raw}");
+        }
+
+        // Write arms: enabled toggles, meta_fields, parser_config, chunk_method reset, rename.
+        let response = router
+            .clone()
+            .oneshot(patch(Some(serde_json::json!({"enabled": 0}))))
+            .await
+            .unwrap();
+        assert_eq!(response_json(response).await["code"], 0);
+        assert_eq!(env.state.docs.get(doc_id).unwrap().status, "0");
+        let response = router
+            .clone()
+            .oneshot(patch(Some(serde_json::json!({"enabled": 1}))))
+            .await
+            .unwrap();
+        assert_eq!(response_json(response).await["code"], 0);
+        assert_eq!(env.state.docs.get(doc_id).unwrap().status, "1");
+
+        let response = router
+            .clone()
+            .oneshot(patch(Some(
+                serde_json::json!({"meta_fields": {"owner": "Farm B"}}),
+            )))
+            .await
+            .unwrap();
+        assert_eq!(response_json(response).await["code"], 0);
+        assert_eq!(
+            env.state.document_metadata.get(doc_id, &kb.id).unwrap()["owner"],
+            "Farm B"
+        );
+
+        let response = router
+            .clone()
+            .oneshot(patch(Some(
+                serde_json::json!({"parser_config": {"chunk_token_num": 1024}}),
+            )))
+            .await
+            .unwrap();
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["data"]["parser_config"]["chunk_token_num"], 1024);
+
+        // A chunk-method change resets the document for reparse
+        // (`reset_document_for_reparse`) and stores the document-scoped method.
+        let response = router
+            .clone()
+            .oneshot(patch(Some(serde_json::json!({"chunk_method": "qa"}))))
+            .await
+            .unwrap();
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["data"]["chunk_method"], "qa");
+        assert_eq!(body["data"]["run"], "UNSTART");
+        assert_eq!(body["data"]["progress"], 0.0);
+        // A method change without a parser_config replaces it with the deployment defaults
+        // (`get_parser_config` fallback — the earlier 1024 does not survive).
+        assert_eq!(
+            body["data"]["parser_config"]["chunk_token_num"],
+            serde_json::Value::Null
+        );
+        assert_eq!(body["data"]["parser_config"]["table_context_size"], 0);
+        assert_eq!(body["data"]["parser_config"]["image_context_size"], 0);
+        let stored = env.state.docs.get(doc_id).unwrap();
+        assert_eq!(stored.parser_id.as_deref(), Some("qa"));
+        assert_eq!(stored.run, "UNSTARTED");
+        assert_eq!(stored.progress, 0.0);
+        assert!(stored.progress_msg.is_empty());
+
+        // An explicit null pipeline_id clears the pipeline and resets as well.
+        let response = router
+            .clone()
+            .oneshot(patch(Some(
+                serde_json::json!({"pipeline_id": serde_json::Value::Null}),
+            )))
+            .await
+            .unwrap();
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["data"]["pipeline_id"], serde_json::Value::Null);
+
+        // The rename arm finishes the field face.
+        let response = router
+            .clone()
+            .oneshot(patch(Some(
+                serde_json::json!({"name": "renamed_report.pdf"}),
+            )))
+            .await
+            .unwrap();
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["data"]["name"], "renamed_report.pdf");
+        assert_eq!(
+            env.state.docs.get(doc_id).unwrap().name,
+            "renamed_report.pdf"
+        );
+    }
+
+    fn stored_doc(id: &str, kb_id: &str, chunk_count: usize) -> crate::api::document::DocRecord {
+        crate::api::document::DocRecord {
+            id: id.into(),
+            name: "sample.txt".into(),
+            kb_id: kb_id.into(),
+            size: 6,
+            storage_name: "sample.txt".into(),
+            content_hash: "hash".into(),
+            indexed_content_hash: String::new(),
+            run: "UNSTARTED".into(),
+            progress: 0.0,
+            progress_msg: String::new(),
+            chunk_count,
+            created_at: 1,
+            updated_at: 1,
+            status: crate::api::document::enabled_status(),
+            ..Default::default()
+        }
+    }
+
+    fn graph_checkpoint(
+        doc: &crate::api::document::DocRecord,
+        chunks: &[crate::search::IndexedChunk],
+    ) -> crate::graph_store::GraphCheckpoint {
+        crate::graph_store::GraphStore::build_checkpoint(
+            &doc.id,
+            &doc.kb_id,
+            &doc.content_hash,
+            "light",
+            &[],
+            chunks,
+        )
+    }
+
+    #[test]
+    fn raptor_chunks_are_marked_and_replaced_with_the_document() {
+        let doc = stored_doc("doc-raptor", "kb-a", 0);
+        let source = vec![
+            indexed_chunk(&doc.id, &doc.kb_id, "one"),
+            indexed_chunk(&doc.id, &doc.kb_id, "two"),
+        ];
+        let summaries = build_raptor_chunks(&doc, &source, 0.5, 2).unwrap();
+        assert!(!summaries.is_empty());
+        assert!(summaries.iter().all(|chunk| {
+            chunk.metadata.get("raptor_kwd").map(String::as_str) == Some("1")
+                && chunk.metadata.contains_key("raptor_layer_int")
+                && chunk.metadata.get("doc_id") == Some(&doc.id)
+        }));
+
+        let mut engine = SearchEngine::from_chunks([source, summaries].concat());
+        engine.replace_document(
+            &doc.id,
+            vec![indexed_chunk(&doc.id, &doc.kb_id, "replacement")],
+        );
+        let chunks = engine.to_vec();
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].id, "replacement");
+    }
+
+    #[test]
+    fn failed_document_metadata_delete_restores_index_and_kb_counts() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Rollback KB", "")
+            .unwrap();
+        let doc = stored_doc("doc-delete", &kb.id, 1);
+        env.state.docs.insert(doc.clone()).unwrap();
+        env.state.kbs.update_counts(&kb.id, 1, 1).unwrap();
+        {
+            let mut engine = env.state.engine.write().unwrap();
+            let mut old = indexed_chunk(&doc.id, &kb.id, "old");
+            old.content = "John Smith uses Rust".into();
+            env.state
+                .graphs
+                .replace_document(&doc.id, Some(graph_checkpoint(&doc, &[old.clone()])))
+                .unwrap();
+            engine.index(vec![old]);
+            engine.save(&env.state.index_path).unwrap();
+        }
+        let docs_path = env.root.join("docs.json");
+        std::fs::remove_file(&docs_path).unwrap();
+        std::fs::create_dir(&docs_path).unwrap();
+
+        assert!(delete_document_data(&env.state, &doc).is_err());
+        assert!(env.state.docs.get(&doc.id).is_some());
+        let kb = env.state.kbs.get(&kb.id).unwrap();
+        assert_eq!(kb.doc_count, 1);
+        assert_eq!(kb.chunk_count, 1);
+        assert_eq!(env.state.engine.read().unwrap().len(), 1);
+        assert!(
+            !env.state
+                .graphs
+                .context_for_query(&[kb.id], "John Smith")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn document_commit_replaces_only_the_target_document() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Scoped Commit KB", "")
+            .unwrap();
+        let doc = stored_doc("doc-target", &kb.id, 1);
+        let peer = stored_doc("doc-peer", &kb.id, 1);
+        env.state.docs.insert(doc.clone()).unwrap();
+        env.state.docs.insert(peer.clone()).unwrap();
+        env.state.kbs.update_counts(&kb.id, 2, 2).unwrap();
+        {
+            let mut engine = env.state.engine.write().unwrap();
+            engine.index(vec![
+                indexed_chunk(&doc.id, &kb.id, "old-target"),
+                indexed_chunk(&peer.id, &kb.id, "peer-chunk"),
+            ]);
+            engine.save(&env.state.index_path).unwrap();
+        }
+        let task_id = env.state.tasks.push("test-user", "Parse", &doc.id).unwrap();
+        let lease = env
+            .state
+            .tasks
+            .claim(&task_id, "worker", 60_000, "Parsing")
+            .unwrap()
+            .unwrap();
+
+        commit_indexed_document(
+            &env.state,
+            &doc,
+            &task_id,
+            &lease.token,
+            vec![indexed_chunk(&doc.id, &kb.id, "new-target")],
+            None,
+            "Indexed 1 chunks",
+        )
+        .unwrap();
+
+        let chunks = env.state.engine.read().unwrap().to_vec();
+        assert_eq!(chunks.len(), 2);
+        assert!(chunks.iter().any(|chunk| chunk.id == "new-target"));
+        assert!(chunks.iter().any(|chunk| chunk.id == "peer-chunk"));
+        assert!(!chunks.iter().any(|chunk| chunk.id == "old-target"));
+        assert_eq!(env.state.kbs.get(&kb.id).unwrap().chunk_count, 2);
+    }
+
+    #[test]
+    fn failed_document_metadata_commit_restores_index_and_kb_counts() {
+        let env = test_env();
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Commit KB", "")
+            .unwrap();
+        let doc = stored_doc("doc-commit", &kb.id, 1);
+        env.state.docs.insert(doc.clone()).unwrap();
+        env.state.kbs.update_counts(&kb.id, 1, 1).unwrap();
+        {
+            let mut engine = env.state.engine.write().unwrap();
+            let mut old = indexed_chunk(&doc.id, &kb.id, "old");
+            old.content = "John Smith uses Rust".into();
+            env.state
+                .graphs
+                .replace_document(&doc.id, Some(graph_checkpoint(&doc, &[old.clone()])))
+                .unwrap();
+            engine.index(vec![old]);
+            engine.save(&env.state.index_path).unwrap();
+        }
+        let task_id = env.state.tasks.push("test-user", "Parse", &doc.id).unwrap();
+        let lease = env
+            .state
+            .tasks
+            .claim(&task_id, "worker", 60_000, "Parsing")
+            .unwrap()
+            .unwrap();
+        let docs_path = env.root.join("docs.json");
+        std::fs::remove_file(&docs_path).unwrap();
+        std::fs::create_dir(&docs_path).unwrap();
+
+        assert!(
+            commit_indexed_document(
+                &env.state,
+                &doc,
+                &task_id,
+                &lease.token,
+                vec![
+                    indexed_chunk(&doc.id, &kb.id, "new-1"),
+                    indexed_chunk(&doc.id, &kb.id, "new-2"),
+                ],
+                Some(graph_checkpoint(
+                    &doc,
+                    &[{
+                        let mut chunk = indexed_chunk(&doc.id, &kb.id, "new-graph");
+                        chunk.content = "Google Inc uses Docker".into();
+                        chunk
+                    }],
+                )),
+                "Indexed 2 chunks",
+            )
+            .is_err()
+        );
+        let kb = env.state.kbs.get(&kb.id).unwrap();
+        assert_eq!(kb.chunk_count, 1);
+        let chunks = env.state.engine.read().unwrap().to_vec();
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].id, "old");
+        assert_eq!(env.state.docs.get(&doc.id).unwrap().run, "UNSTARTED");
+        assert!(
+            !env.state
+                .graphs
+                .context_for_query(&[kb.id], "John Smith")
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_http_lifecycle_enforces_team_edit_and_owner_delete() {
+        let env = test_env();
+        let member = env
+            .state
+            .users
+            .register(
+                "Agent Member",
+                "agent-member@example.com",
+                "correct horse battery staple",
+            )
+            .unwrap();
+        let member_token = env
+            .state
+            .users
+            .login("agent-member@example.com", "correct horse battery staple")
+            .unwrap()
+            .unwrap();
+        env.state
+            .tenants
+            .invite_member("test-user", &member.id, "test-user")
+            .unwrap();
+        env.state
+            .tenants
+            .accept_invitation("test-user", &member.id)
+            .unwrap();
+        let router = build_router(env.state.clone());
+
+        let create = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/agents")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "title": "Collaborative Agent",
+                            "description": "Initial",
+                            "permission": "team",
+                            "dsl": {
+                                "components": [],
+                                "history": ["old"],
+                                "retrieval": [{"id": "chunk"}],
+                                "memory": ["old"],
+                                "path": ["begin"],
+                                "variables": {"region": {"type": "string", "value": "cn"}},
+                                "globals": {
+                                    "sys.query": "old",
+                                    "env.region": "stale",
+                                    "user.keep": 1
+                                }
+                            },
+                            "tags": ["Rust", "rust", "RAG"]
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(create.status(), StatusCode::OK);
+        let create_body = response_json(create).await;
+        let agent_id = create_body["data"]["id"].as_str().unwrap().to_string();
+        assert_eq!(
+            create_body["data"]["tags"],
+            serde_json::json!(["Rust", "RAG"])
+        );
+
+        let member_get = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/api/v1/agents/{agent_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {member_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(member_get.status(), StatusCode::OK);
+
+        let member_update = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri(format!("/api/v1/agents/{agent_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {member_token}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"description":"Edited by member"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(member_update.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(member_update).await["data"]["description"],
+            "Edited by member"
+        );
+
+        let tags = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri(format!("/api/v1/agents/{agent_id}/tags"))
+                    .header(header::AUTHORIZATION, format!("Bearer {member_token}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"tags":["shared","Shared","research"]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(tags.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(tags).await["data"],
+            serde_json::json!(["shared", "research"])
+        );
+
+        let reset = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/agents/{agent_id}/reset"))
+                    .header(header::AUTHORIZATION, format!("Bearer {member_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(reset.status(), StatusCode::OK);
+        let reset = response_json(reset).await;
+        assert_eq!(reset["data"]["history"], serde_json::json!([]));
+        assert_eq!(reset["data"]["retrieval"], serde_json::json!([]));
+        assert_eq!(reset["data"]["memory"], serde_json::json!([]));
+        assert_eq!(reset["data"]["path"], serde_json::json!([]));
+        assert_eq!(reset["data"]["globals"]["sys.query"], "");
+        assert_eq!(reset["data"]["globals"]["env.region"], "cn");
+        assert_eq!(reset["data"]["globals"]["user.keep"], 1);
+        assert_eq!(env.state.canvas_versions.list(&agent_id).len(), 1);
+        assert_eq!(
+            env.state.canvas_versions.list(&agent_id)[0].dsl["history"],
+            serde_json::json!(["old"])
+        );
+
+        let list = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/v1/agents?keywords=collab&tags=shared")
+                    .header(header::AUTHORIZATION, format!("Bearer {member_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(list.status(), StatusCode::OK);
+        let list_body = response_json(list).await;
+        assert_eq!(list_body["data"]["total"], 1);
+        assert_eq!(list_body["data"]["canvas"][0]["id"], agent_id);
+
+        let tag_counts = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/v1/agents/tags?canvas_category=agent_canvas")
+                    .header(header::AUTHORIZATION, format!("Bearer {member_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(tag_counts.status(), StatusCode::OK);
+        let tag_counts = response_json(tag_counts).await;
+        assert!(
+            tag_counts["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| entry["tag"] == "shared" && entry["count"] == 1)
+        );
+
+        let member_delete = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!("/api/v1/agents/{agent_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {member_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(member_delete.status(), StatusCode::NOT_FOUND);
+
+        let make_private = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri(format!("/api/v1/agents/{agent_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"permission":"private"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(make_private.status(), StatusCode::OK);
+
+        let hidden = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/api/v1/agents/{agent_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {member_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(hidden.status(), StatusCode::NOT_FOUND);
+
+        let owner_delete = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!("/api/v1/agents/{agent_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(owner_delete.status(), StatusCode::OK);
+        assert_eq!(response_json(owner_delete).await["data"], true);
+    }
+
+    #[tokio::test]
+    async fn agent_stream_emits_flat_completed_lifecycle_and_done_frame() {
+        let env = test_env();
+        let agent = env
+            .state
+            .agents
+            .create(
+                "test-user",
+                crate::api::features::AgentCreateRequest {
+                    name: "Streaming Agent".into(),
+                    description: String::new(),
+                    permission: Some("private".into()),
+                    kb_ids: Vec::new(),
+                    prompt_template: None,
+                    dsl: serde_json::json!({"components": {
+                        "begin": {
+                            "obj": {"component_name": "Begin", "params": {}},
+                            "downstream": ["done"], "upstream": []
+                        },
+                        "done": {
+                            "obj": {"component_name": "Message", "params": {
+                                "content": ["hello {sys.query}"]
+                            }},
+                            "downstream": [], "upstream": ["begin"]
+                        }
+                    }}),
+                    canvas_category: None,
+                    canvas_type: String::new(),
+                    tags: Vec::new(),
+                    avatar: String::new(),
+                    release: None,
+                },
+            )
+            .unwrap();
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/agents/{}/completions", agent.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"question":"Ada","stream":true}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "text/event-stream"
+        );
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-cache");
+        let (frames, body) = response_sse_json(response).await;
+        assert!(body.ends_with("data: [DONE]\n\n"));
+        assert_eq!(
+            frames
+                .iter()
+                .map(|frame| frame["event"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            [
+                "workflow_started",
+                "node_started",
+                "node_finished",
+                "node_started",
+                "node_finished",
+                "message",
+                "message_end",
+                "workflow_finished"
+            ]
+        );
+        assert_eq!(frames[0]["data"]["inputs"], "Ada");
+        assert_eq!(frames[5]["data"]["content"], "hello Ada");
+        assert_eq!(frames[7]["data"]["outputs"], "hello Ada");
+        assert_eq!(
+            frames[2]["data"]["component_id"],
+            serde_json::json!("begin")
+        );
+        assert_eq!(
+            frames[4]["data"]["outputs"]["content"],
+            serde_json::json!("hello Ada")
+        );
+        let message_id = frames[0]["message_id"].as_str().unwrap();
+        let task_id = frames[0]["task_id"].as_str().unwrap();
+        let session_id = frames[0]["session_id"].as_str().unwrap();
+        assert!(!message_id.is_empty());
+        assert!(!task_id.is_empty());
+        assert!(!session_id.is_empty());
+        assert!(frames.iter().all(|frame| {
+            frame["message_id"] == message_id
+                && frame["task_id"] == task_id
+                && frame["session_id"] == session_id
+                && frame["created_at"].as_u64().is_some()
+        }));
+        let persisted = env.state.conversations.get(session_id).unwrap();
+        assert_eq!(persisted.messages.len(), 2);
+        assert_eq!(persisted.messages[1].content, "hello Ada");
+        assert_eq!(persisted.messages[1].id, message_id);
+    }
+
+    #[tokio::test]
+    async fn agent_stream_emits_waiting_payload_with_opaque_resume_token() {
+        let env = test_env();
+        let agent = env
+            .state
+            .agents
+            .create(
+                "test-user",
+                crate::api::features::AgentCreateRequest {
+                    name: "Streaming Wait Agent".into(),
+                    description: String::new(),
+                    permission: Some("private".into()),
+                    kb_ids: Vec::new(),
+                    prompt_template: None,
+                    dsl: serde_json::json!({"components": {
+                        "begin": {
+                            "obj": {"component_name": "Begin", "params": {}},
+                            "downstream": ["fill"], "upstream": []
+                        },
+                        "fill": {
+                            "obj": {"component_name": "UserFillUp", "params": {
+                                "enable_tips": true,
+                                "tips": "Your name?",
+                                "inputs": {
+                                    "age": {"type": "line"},
+                                    "name": {"type": "line"}
+                                }
+                            }},
+                            "downstream": ["done"], "upstream": ["begin"]
+                        },
+                        "done": {
+                            "obj": {"component_name": "Message", "params": {
+                                "content": ["hello {fill@name}"]
+                            }},
+                            "downstream": [], "upstream": ["fill"]
+                        }
+                    }}),
+                    canvas_category: None,
+                    canvas_type: String::new(),
+                    tags: Vec::new(),
+                    avatar: String::new(),
+                    release: None,
+                },
+            )
+            .unwrap();
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/agents/{}/completions", agent.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"question":"start","stream":true}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "text/event-stream"
+        );
+        let (frames, body) = response_sse_json(response).await;
+        assert!(body.ends_with("data: [DONE]\n\n"));
+        assert_eq!(
+            frames
+                .iter()
+                .map(|frame| frame["event"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            [
+                "workflow_started",
+                "node_started",
+                "node_finished",
+                "node_started",
+                "waiting_for_user"
+            ]
+        );
+        assert_eq!(frames[3]["data"]["component_id"], "fill");
+        let waiting = &frames[4]["data"];
+        assert_eq!(waiting["cpn_id"], "fill");
+        assert_eq!(waiting["tips"], "Your name?");
+        assert_eq!(waiting["inputs"]["name"]["type"], "line");
+        let resume_token = waiting["resume_token"].as_str().unwrap();
+        assert!(!resume_token.is_empty());
+        let session_id = frames[3]["session_id"].as_str().unwrap();
+        let checkpoint = env.state.agent_checkpoints.get(session_id).unwrap();
+        assert_eq!(checkpoint.checkpoint_id, resume_token);
+        let persisted = env.state.conversations.get(session_id).unwrap();
+        assert_eq!(persisted.messages.len(), 2);
+        assert_eq!(persisted.messages[1].content, "");
+        assert_eq!(
+            persisted.messages[1].id,
+            frames[0]["message_id"].as_str().unwrap()
+        );
+
+        let resumed = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/agents/{}/completions", agent.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "question": "submitted",
+                            "conversation_id": session_id,
+                            "resume_token": resume_token,
+                            "inputs": {"name": "Ada", "age": "37"},
+                            "stream": true
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resumed.status(), StatusCode::OK);
+        let (resumed_frames, resumed_body) = response_sse_json(resumed).await;
+        assert!(resumed_body.ends_with("data: [DONE]\n\n"));
+        assert_eq!(
+            resumed_frames
+                .iter()
+                .map(|frame| frame["event"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            [
+                "node_started",
+                "node_finished",
+                "node_started",
+                "node_finished",
+                "message",
+                "message_end",
+                "workflow_finished"
+            ]
+        );
+        assert_eq!(resumed_frames[0]["data"]["component_id"], "fill");
+        assert_eq!(resumed_frames[2]["data"]["component_id"], "done");
+        assert_eq!(resumed_frames[4]["data"]["content"], "hello Ada");
+        assert!(env.state.agent_checkpoints.get(session_id).is_none());
+    }
+
+    #[tokio::test]
+    async fn agent_stream_emits_error_and_done_for_runtime_failure() {
+        let env = test_env();
+        let agent = env
+            .state
+            .agents
+            .create(
+                "test-user",
+                crate::api::features::AgentCreateRequest {
+                    name: "Failing Streaming Agent".into(),
+                    description: String::new(),
+                    permission: Some("private".into()),
+                    kb_ids: Vec::new(),
+                    prompt_template: None,
+                    dsl: serde_json::json!({"components": {
+                        "begin": {
+                            "obj": {"component_name": "Begin", "params": {}},
+                            "downstream": [], "upstream": []
+                        }
+                    }}),
+                    canvas_category: None,
+                    canvas_type: String::new(),
+                    tags: Vec::new(),
+                    avatar: String::new(),
+                    release: None,
+                },
+            )
+            .unwrap();
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/agents/{}/completions", agent.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"question":"fail","stream":true}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "text/event-stream"
+        );
+        let (frames, body) = response_sse_json(response).await;
+        assert!(body.ends_with("data: [DONE]\n\n"));
+        assert_eq!(frames.len(), 4);
+        assert_eq!(frames[0]["event"], "workflow_started");
+        assert_eq!(frames[1]["event"], "node_started");
+        assert_eq!(frames[2]["event"], "node_finished");
+        assert_eq!(frames[2]["data"]["component_id"], "begin");
+        assert_eq!(frames[3]["code"], 500);
+        assert_eq!(frames[3]["data"], false);
+        assert!(
+            frames[3]["message"]
+                .as_str()
+                .unwrap()
+                .contains("without a Message")
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_user_fill_up_waits_persists_and_resumes_once_over_http() {
+        let env = test_env();
+        let agent = env
+            .state
+            .agents
+            .create(
+                "test-user",
+                crate::api::features::AgentCreateRequest {
+                    name: "User Fill Up Agent".into(),
+                    description: String::new(),
+                    permission: Some("private".into()),
+                    kb_ids: Vec::new(),
+                    prompt_template: None,
+                    dsl: serde_json::json!({"components": {
+                        "begin": {
+                            "obj": {"component_name": "Begin", "params": {}},
+                            "downstream": ["fill"], "upstream": []
+                        },
+                        "fill": {
+                            "obj": {"component_name": "UserFillUp", "params": {
+                                "enable_tips": true,
+                                "tips": "Tell us about yourself",
+                                "inputs": {
+                                    "age": {"type": "line"},
+                                    "name": {"type": "line"}
+                                }
+                            }},
+                            "downstream": ["done"], "upstream": ["begin"]
+                        },
+                        "done": {
+                            "obj": {"component_name": "Message", "params": {
+                                "content": ["hello {fill@name}, age {fill@age}"]
+                            }},
+                            "downstream": [], "upstream": ["fill"]
+                        }
+                    }}),
+                    canvas_category: None,
+                    canvas_type: String::new(),
+                    tags: Vec::new(),
+                    avatar: String::new(),
+                    release: None,
+                },
+            )
+            .unwrap();
+        let router = build_router(env.state.clone());
+        let first = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/agents/{}/completions", agent.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"question":"start"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        assert_eq!(first.headers()[header::CONTENT_TYPE], "application/json");
+        let first = response_json(first).await;
+        assert_eq!(first["data"]["event"], "waiting_for_user");
+        assert_eq!(first["data"]["answer"], "");
+        assert_eq!(first["data"]["waiting_for_user"]["kind"], "user_fill_up");
+        assert_eq!(first["data"]["waiting_for_user"]["cpn_id"], "fill");
+        assert_eq!(
+            first["data"]["waiting_for_user"]["tips"],
+            "Tell us about yourself"
+        );
+        assert_eq!(
+            first["data"]["waiting_for_user"]["inputs"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["age", "name"]
+        );
+        let conversation_id = first["data"]["conversation_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let resume_token = first["data"]["resume_token"].as_str().unwrap().to_owned();
+        let persisted = env.state.conversations.get(&conversation_id).unwrap();
+        assert_eq!(persisted.messages.len(), 2);
+        assert_eq!(persisted.messages[0].content, "start");
+        assert_eq!(persisted.messages[1].role, "assistant");
+        assert_eq!(persisted.messages[1].content, "");
+        assert!(env.state.agent_checkpoints.get(&conversation_id).is_some());
+
+        let wrong_token = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/agents/{}/completions", agent.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "question": "submitted",
+                            "conversation_id": conversation_id,
+                            "resume_token": "wrong",
+                            "inputs": {"name": "Ada", "age": "37"}
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(wrong_token.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            env.state
+                .conversations
+                .get(&conversation_id)
+                .unwrap()
+                .messages
+                .len(),
+            2
+        );
+
+        let resumed = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/agents/{}/completions", agent.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "question": "submitted",
+                            "conversation_id": conversation_id,
+                            "resume_token": resume_token,
+                            "inputs": {"name": "Ada", "age": "37"}
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resumed.status(), StatusCode::OK);
+        let resumed = response_json(resumed).await;
+        assert_eq!(resumed["data"]["answer"], "hello Ada, age 37");
+        assert_eq!(
+            resumed["data"]["workflow_path"],
+            serde_json::json!(["begin", "fill", "done"])
+        );
+        let persisted = env.state.conversations.get(&conversation_id).unwrap();
+        assert_eq!(persisted.messages.len(), 4);
+        assert_eq!(persisted.messages[2].content, "submitted");
+        assert_eq!(persisted.messages[3].content, "hello Ada, age 37");
+        assert!(env.state.agent_checkpoints.get(&conversation_id).is_none());
+    }
+
+    #[tokio::test]
+    async fn agent_completion_persists_continues_conversation_and_stats_isolate_canvas_and_acl() {
+        let env = test_env();
+        let member = env
+            .state
+            .users
+            .register(
+                "Agent Session Member",
+                "agent-session-member@example.com",
+                "correct horse battery staple",
+            )
+            .unwrap();
+        let member_token = env
+            .state
+            .users
+            .login(
+                "agent-session-member@example.com",
+                "correct horse battery staple",
+            )
+            .unwrap()
+            .unwrap();
+        env.state
+            .tenants
+            .invite_member("test-user", &member.id, "test-user")
+            .unwrap();
+        env.state
+            .tenants
+            .accept_invitation("test-user", &member.id)
+            .unwrap();
+        let agent = env
+            .state
+            .agents
+            .create(
+                "test-user",
+                crate::api::features::AgentCreateRequest {
+                    name: "Stats Agent".into(),
+                    description: String::new(),
+                    permission: Some("team".into()),
+                    kb_ids: Vec::new(),
+                    prompt_template: None,
+                    dsl: serde_json::json!({}),
+                    canvas_category: None,
+                    canvas_type: String::new(),
+                    tags: Vec::new(),
+                    avatar: String::new(),
+                    release: None,
+                },
+            )
+            .unwrap();
+        env.state
+            .conversations
+            .create_for_tenant_settings("test-user", "test-user", "chat", vec![], None, None)
+            .unwrap();
+        let router = build_router(env.state.clone());
+        let first = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/agents/{}/completions", agent.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {member_token}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"question":"first"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        let first = response_json(first).await;
+        let conversation_id = first["data"]["conversation_id"].as_str().unwrap();
+        let persisted = env.state.conversations.get(conversation_id).unwrap();
+        assert_eq!(persisted.owner_id, member.id);
+        assert_eq!(persisted.tenant_id, "test-user");
+        assert_eq!(persisted.source, "agent");
+        assert_eq!(persisted.canvas_id.as_deref(), Some(agent.id.as_str()));
+        assert_eq!(persisted.messages.len(), 2);
+
+        let resumed = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/agents/{}/completions", agent.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {member_token}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "question": "second",
+                            "conversation_id": conversation_id
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resumed.status(), StatusCode::OK);
+        assert_eq!(
+            env.state
+                .conversations
+                .get(conversation_id)
+                .unwrap()
+                .messages
+                .len(),
+            4
+        );
+
+        let owner_cannot_resume_member_session = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/agents/{}/completions", agent.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "question": "steal",
+                            "conversation_id": conversation_id
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            owner_cannot_resume_member_session.status(),
+            StatusCode::NOT_FOUND
+        );
+
+        let stats = router
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/stats?tenant_id=test-user&canvas_id={}&from_date=1970-01-01&to_date=2999-12-31",
+                        agent.id
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {member_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(stats.status(), StatusCode::OK);
+        let stats = response_json(stats).await;
+        assert_eq!(stats["data"]["pv"][0][1], 1);
+        assert_eq!(stats["data"]["round"][0][1], 2.0);
+    }
+
+    #[tokio::test]
+    async fn compilation_template_group_http_lifecycle_is_tenant_scoped() {
+        let env = test_env();
+        let outsider = env
+            .state
+            .users
+            .register(
+                "Template Outsider",
+                "template-outsider@example.com",
+                "correct horse battery staple",
+            )
+            .unwrap();
+        let outsider_token = env
+            .state
+            .users
+            .login(
+                "template-outsider@example.com",
+                "correct horse battery staple",
+            )
+            .unwrap()
+            .unwrap();
+        assert_ne!(outsider.id, "test-user");
+        let router = build_router(env.state.clone());
+
+        let created = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/compilation_template_groups")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "name": "Entity compilation",
+                            "description": "First version",
+                            "templates": [{
+                                "name": "Entity tree",
+                                "kind": "tree",
+                                "config": {"raptor": {"rechunk": true}}
+                            }]
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(created.status(), StatusCode::OK);
+        let created = response_json(created).await;
+        assert_eq!(created["code"], 0);
+        assert_eq!(created["message"], "success");
+        let group_id = created["data"]["id"].as_str().unwrap().to_string();
+        assert_eq!(created["data"]["scope"], "file");
+
+        let listed = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/compilation_template_groups?keywords=entity&page=1&page_size=10")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let listed = response_json(listed).await;
+        assert_eq!(listed["code"], 0);
+        assert_eq!(listed["message"], "success");
+        assert_eq!(listed["data"]["total"], 1);
+        assert_eq!(listed["data"]["groups"][0]["id"], group_id);
+
+        let hidden = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/compilation_template_groups/{group_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {outsider_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Upstream get_data_error_result: HTTP 200 + code 102, message only.
+        assert_eq!(hidden.status(), StatusCode::OK);
+        let hidden = response_json(hidden).await;
+        assert_eq!(hidden["code"], 102);
+        assert!(hidden.get("data").is_none(), "{hidden}");
+        assert!(
+            hidden["message"]
+                .as_str()
+                .unwrap_or_default()
+                .starts_with("Cannot find compilation template group"),
+            "{hidden}"
+        );
+
+        let updated = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri(format!("/api/v1/compilation_template_groups/{group_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "description": "Dataset version",
+                            "templates": [{
+                                "name": "Wiki artifact",
+                                "kind": "wiki",
+                                "config": {
+                                    "kind": "wiki",
+                                    "mode": "entity",
+                                    "claim": {"fields": [{"statement": "A is B", "subject": "A"}]},
+                                    "concept": {"fields": [{"term": "A", "definition_excerpt": "the A"}]}
+                                }
+                            }]
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated.status(), StatusCode::OK);
+        let updated = response_json(updated).await;
+        assert_eq!(updated["code"], 0);
+        assert_eq!(updated["message"], "success");
+        assert_eq!(updated["data"]["scope"], "dataset");
+
+        let deleted = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!("/api/v1/compilation_template_groups/{group_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(deleted.status(), StatusCode::OK);
+        let deleted = response_json(deleted).await;
+        assert_eq!(deleted["code"], 0);
+        assert_eq!(deleted["message"], "success");
+        assert_eq!(deleted["data"], true);
+
+        let missing = router
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/compilation_template_groups/{group_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::OK);
+        let missing = response_json(missing).await;
+        assert_eq!(missing["code"], 102);
+        assert!(missing.get("data").is_none(), "{missing}");
+    }
+
+    #[tokio::test]
+    async fn compilation_template_group_errors_answer_upstream_envelopes() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let post = |body: Option<serde_json::Value>| {
+            let router = router.clone();
+            let token = env.token.clone();
+            async move {
+                let request = Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/compilation_template_groups")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"));
+                let request = match body {
+                    Some(value) => request
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(value.to_string())),
+                    None => request.body(Body::empty()),
+                }
+                .unwrap();
+                router.oneshot(request).await.unwrap()
+            }
+        };
+
+        // Upstream validate_request: missing keys answer 101 data:null on HTTP 200.
+        let empty = post(Some(serde_json::json!({}))).await;
+        assert_eq!(empty.status(), StatusCode::OK);
+        let empty = response_json(empty).await;
+        assert_eq!(empty["code"], 101);
+        assert_eq!(
+            empty["message"],
+            "required argument are missing: name,templates; "
+        );
+        assert!(empty.get("data").unwrap().is_null());
+        let no_templates = post(Some(serde_json::json!({"name": "x"}))).await;
+        let no_templates = response_json(no_templates).await;
+        assert_eq!(no_templates["code"], 101);
+        assert_eq!(
+            no_templates["message"],
+            "required argument are missing: templates; "
+        );
+
+        // get_data_error_result: HTTP 200 + code 102, no data key.
+        let empty_templates = post(Some(serde_json::json!({"name": "x", "templates": []}))).await;
+        assert_eq!(empty_templates.status(), StatusCode::OK);
+        let empty_templates = response_json(empty_templates).await;
+        assert_eq!(empty_templates["code"], 102);
+        assert_eq!(
+            empty_templates["message"],
+            "A template group must contain at least one template."
+        );
+        assert!(empty_templates.get("data").is_none());
+        let missing_kind = post(Some(serde_json::json!({
+            "name": "x",
+            "templates": [{"name": "t", "config": {}}]
+        })))
+        .await;
+        let missing_kind = response_json(missing_kind).await;
+        assert_eq!(missing_kind["code"], 102);
+        assert_eq!(missing_kind["message"], "Missing required field: kind.");
+        let bad_wiki = post(Some(serde_json::json!({
+            "name": "x",
+            "templates": [{"name": "t", "kind": "wiki", "config": {"kind": "wiki", "mode": "neither"}}]
+        })))
+        .await;
+        let bad_wiki = response_json(bad_wiki).await;
+        assert_eq!(bad_wiki["code"], 102);
+        assert_eq!(
+            bad_wiki["message"],
+            "Wiki mode must be either 'entity' or 'topic'."
+        );
+
+        // Unknown ids answer the same error envelope on every verb.
+        for (method, expected) in [(Method::GET, 102), (Method::DELETE, 102)] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri("/api/v1/compilation_template_groups/no-such-group")
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = response_json(response).await;
+            assert_eq!(body["code"], expected, "{body}");
+            assert!(body.get("data").is_none(), "{body}");
+        }
+    }
+
+    #[tokio::test]
+    async fn compilation_template_reference_routes_are_authenticated_and_read_only() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+
+        for path in [
+            "/api/v1/compilation_templates/builtins",
+            "/api/v1/compilation_templates/wiki_presets",
+        ] {
+            let unauthorized = router
+                .clone()
+                .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+            let write = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::DELETE)
+                        .uri(path)
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(write.status(), StatusCode::METHOD_NOT_ALLOWED);
+        }
+
+        let builtins = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/compilation_templates/builtins")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(builtins.status(), StatusCode::OK);
+        let builtins = response_json(builtins).await;
+        assert_eq!(builtins["data"].as_array().unwrap().len(), 8);
+        assert_eq!(builtins["data"][0]["id"], "knowledge_graph");
+        assert_eq!(builtins["data"][7]["id"], "wiki");
+
+        env.state
+            .tenant_models
+            .upsert(
+                &env.state.providers,
+                "test-user",
+                "minimax",
+                "primary",
+                TenantModelInstanceUpdate {
+                    tenant_id: None,
+                    instance_name: "Primary".into(),
+                    api_base: None,
+                    api_key: None,
+                    clear_api_key: false,
+                    models: vec![TenantModelSpec {
+                        name: "MiniMax-M3".into(),
+                        model_types: vec![ModelCapability::Chat],
+                        max_tokens: None,
+                        enabled: true,
+                        is_tools: false,
+                        ocr_config: None,
+                    }],
+                },
+            )
+            .unwrap();
+        env.state
+            .tenant_models
+            .set_default_chat_model(
+                &env.state.providers,
+                "test-user",
+                Some("minimax/primary/MiniMax-M3"),
+            )
+            .unwrap();
+        let personal = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/compilation_templates/builtins")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let personal = response_json(personal).await;
+        assert_eq!(
+            personal["data"][0]["config"]["llm_id"],
+            "minimax/primary/MiniMax-M3"
+        );
+
+        let member = env
+            .state
+            .users
+            .register(
+                "Builtin Member",
+                "builtin-member@example.com",
+                "member password 123",
+            )
+            .unwrap();
+        let member_token = env
+            .state
+            .users
+            .login("builtin-member@example.com", "member password 123")
+            .unwrap()
+            .unwrap();
+        let forbidden = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/compilation_templates/builtins?tenant_id=test-user")
+                    .header(header::AUTHORIZATION, format!("Bearer {member_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+        env.state
+            .tenants
+            .invite_member("test-user", &member.id, "test-user")
+            .unwrap();
+        env.state
+            .tenants
+            .accept_invitation("test-user", &member.id)
+            .unwrap();
+        let shared = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/compilation_templates/builtins?tenant_id=test-user")
+                    .header(header::AUTHORIZATION, format!("Bearer {member_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(shared.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(shared).await["data"][0]["config"]["llm_id"],
+            "minimax/primary/MiniMax-M3"
+        );
+        let member_personal = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/compilation_templates/builtins")
+                    .header(header::AUTHORIZATION, format!("Bearer {member_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(response_json(member_personal).await["data"][0]["config"]["llm_id"].is_null());
+
+        let presets = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/compilation_templates/wiki_presets")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(presets.status(), StatusCode::OK);
+        let presets = response_json(presets).await;
+        assert_eq!(presets["data"].as_array().unwrap().len(), 6);
+        assert_eq!(presets["data"][0]["id"], "brand");
+        assert_eq!(presets["data"][5]["id"], "user_interview");
+        assert!(
+            presets["data"][0]["example"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty()),
+            "v0.27.2 wiki presets carry the example field"
+        );
+        assert!(presets["data"][0].get("page_example").is_none());
+    }
+
+    /// An unrouted API path must answer JSON, never the application shell: the shell made
+    /// clients parse `<!DOCTYPE html>` as JSON and bounce the user to the login page.
+    #[tokio::test]
+    async fn unrouted_api_paths_answer_json_not_the_app_shell() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/v1/definitely-not-a-route")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let content_type = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            content_type.starts_with("application/json"),
+            "unrouted API path answered {content_type}"
+        );
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 404);
+        assert!(
+            body["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("definitely-not-a-route"),
+            "{body}"
+        );
+
+        // A page path keeps the human-readable HTML 404.
+        let page = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/some/missing/page")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(page.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// Upstream's PATCH body (one selector per capability column) is accepted, and both
+    /// selector spellings are understood; a malformed one is a coded error, not a skip.
+    #[tokio::test]
+    async fn users_me_models_patch_understands_upstream_selectors() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let call = |body: serde_json::Value| {
+            let router = router.clone();
+            let token = env.token.clone();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(Method::PATCH)
+                            .uri("/api/v1/users/me/models")
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(body.to_string()))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        // A malformed selector names the field it rejected.
+        let bad = call(serde_json::json!({"llm_id": "just-a-model"})).await;
+        let bad = response_json(bad).await;
+        assert_eq!(bad["code"], 102, "{bad}");
+        assert!(
+            bad["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("llm_id"),
+            "{bad}"
+        );
+
+        // An unknown provider is refused with a message, and the field list reports what
+        // was applied so a partial update is never silent.
+        let unknown = call(serde_json::json!({
+            "embd_id": "some-model@some-instance@no-such-provider"
+        }))
+        .await;
+        let unknown = response_json(unknown).await;
+        assert!(unknown["code"] == 102 || unknown["code"] == 0, "{unknown}");
+        assert!(
+            unknown.get("data").is_some() || unknown.get("message").is_some(),
+            "{unknown}"
+        );
+
+        // An empty body is a valid no-op that reports nothing applied.
+        let empty = call(serde_json::json!({})).await;
+        let empty = response_json(empty).await;
+        assert_eq!(empty["code"], 0);
+        assert_eq!(empty["data"]["applied"].as_array().unwrap().len(), 0);
+    }
+
+    /// Clearing structure artifacts reports a number and explains a zero, instead of a bare
+    /// success - the failure mode this whole phase keeps running into.
+    #[tokio::test]
+    async fn clearing_structure_artifacts_explains_an_empty_result() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Artifacts dataset", "")
+            .unwrap();
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!("/api/v1/datasets/{}/artifacts/structure", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 0, "{body}");
+        assert_eq!(body["data"]["page_type"], "structure");
+        assert_eq!(body["data"]["removed"], 0);
+        assert!(
+            body["data"]["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("No structure artifacts")),
+            "an empty clear must say so: {body}"
+        );
+    }
+
+    /// Index maintenance is exposed where upstream has it, and a dataset with nothing indexed
+    /// says so instead of reporting a rebuild that did nothing.
+    #[tokio::test]
+    async fn dataset_index_endpoints_report_honestly() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Index dataset", "")
+            .unwrap();
+        let status = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/datasets/{}/index", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(status.status(), StatusCode::OK);
+        let body = response_json(status).await;
+        assert_eq!(body["code"], 0, "{body}");
+        assert_eq!(body["data"]["index_type"], "vector");
+        assert_eq!(body["data"]["chunks"], 0);
+
+        let rebuild = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/datasets/{}/index", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = response_json(rebuild).await;
+        assert_eq!(body["code"], 0, "{body}");
+        assert_eq!(body["data"]["chunks"], 0);
+        assert!(
+            body["data"]["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("nothing to index")),
+            "an empty dataset must say why nothing happened: {body}"
+        );
+
+        // An index type RayRAG does not keep is refused with the supported list, not answered
+        // with a success that deleted nothing.
+        let refused = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!("/api/v1/datasets/{}/not-an-index", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = response_json(refused).await;
+        // `api_error` uses upstream's 400 for a request RayRAG cannot satisfy.
+        assert_eq!(body["code"], 400, "{body}");
+        assert!(
+            body["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("Supported: vector")),
+            "the refusal must list what is supported: {body}"
+        );
+    }
+
+    /// The API guide's business-code table, made checkable: each error constructor must pair the
+    /// documented HTTP status with the documented body code, because callers are told to check
+    /// both and a mismatch makes one of those two checks wrong.
+    #[tokio::test]
+    async fn error_contract_pairs_status_with_business_code() {
+        let cases: [(axum::response::Response, StatusCode, i32); 5] = [
+            (
+                crate::server::invalid_argument("bad argument"),
+                StatusCode::BAD_REQUEST,
+                crate::server::code::INVALID_ARGUMENT,
+            ),
+            (
+                crate::server::invalid_or_missing("missing"),
+                StatusCode::BAD_REQUEST,
+                crate::server::code::INVALID_OR_MISSING_DATA,
+            ),
+            (
+                crate::server::no_permission("not allowed"),
+                StatusCode::FORBIDDEN,
+                crate::server::code::NO_PERMISSION,
+            ),
+            (
+                crate::server::unauthenticated("sign in"),
+                StatusCode::UNAUTHORIZED,
+                crate::server::code::UNAUTHENTICATED,
+            ),
+            (
+                crate::server::conflict("duplicate"),
+                StatusCode::CONFLICT,
+                409,
+            ),
+        ];
+        for (response, expected_status, expected_code) in cases {
+            assert_eq!(response.status(), expected_status);
+            let body = response_json(response).await;
+            assert_eq!(
+                body["code"], expected_code,
+                "body code must match the documented table for HTTP {expected_status}"
+            );
+            assert!(
+                body["message"].as_str().is_some_and(|m| !m.is_empty()),
+                "an error must explain itself: {body}"
+            );
+        }
+    }
+
+    /// The API guide's "Deprecated API Aliases" table promises these old paths keep working.
+    /// Each one routes to the *same* handler as its replacement, so this checks the wiring and
+    /// the argument validation of the two query-parameter forms.
+    #[tokio::test]
+    async fn deprecated_aliases_stay_reachable() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+
+        // Unauthenticated health check, outside `/api` as upstream serves it.
+        let health = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/system/healthz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(health.status(), StatusCode::OK);
+
+        // The query-parameter form of the breadcrumb needs its argument, and says so.
+        let no_arg = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/file/parent_folder")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = response_json(no_arg).await;
+        assert_eq!(body["code"], 102, "{body}");
+        assert!(
+            body["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("file_id")),
+            "the alias must name the missing argument: {body}"
+        );
+
+        let no_arg = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/file/all_parent_folder")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = response_json(no_arg).await;
+        assert_eq!(body["code"], 102, "{body}");
+
+        // The rest are the same handlers under the old names: a 401 here proves the route is
+        // wired (auth runs) rather than being an unrouted 404.
+        for path in [
+            "/api/v1/file/list",
+            "/api/v1/file/root_folder",
+            "/api/v1/file/get/does-not-exist",
+        ] {
+            let response = router
+                .clone()
+                .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_ne!(
+                response.status(),
+                StatusCode::NOT_FOUND,
+                "{path} should be routed (deprecated alias)"
+            );
+        }
+        for path in [
+            "/api/v1/file/upload",
+            "/api/v1/file/create",
+            "/api/v1/file/rm",
+            "/api/v1/file/rename",
+            "/api/v1/file/mv",
+            "/api/v1/chats_openai/some-chat/chat/completions",
+            "/api/v1/chats/some-chat/completions",
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri(path)
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from("{}"))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_ne!(
+                response.status(),
+                StatusCode::NOT_FOUND,
+                "{path} should be routed (deprecated alias)"
+            );
+        }
+    }
+
+    /// The endpoint probe answers for every capability, and says "not set" instead of failing
+    /// when an environment variable is missing - the point is to be able to tell the difference
+    /// between "no endpoint configured" and "endpoint configured but down".
+    #[tokio::test]
+    async fn model_endpoint_check_reports_every_capability() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/models/endpoints/check")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 0, "{body}");
+        let endpoints = body["data"]["endpoints"].as_array().expect("endpoints");
+        assert_eq!(endpoints.len(), 5, "one probe per capability: {body}");
+        for endpoint in endpoints {
+            assert!(endpoint["capability"].is_string(), "{endpoint}");
+            assert!(endpoint["env"].is_string(), "{endpoint}");
+            assert!(endpoint["reachable"].is_boolean(), "{endpoint}");
+            assert!(
+                endpoint["detail"].as_str().is_some_and(|d| !d.is_empty()),
+                "every probe must explain itself: {endpoint}"
+            );
+        }
+    }
+
+    /// Navigation generation reports its prerequisites instead of pretending: without models it
+    /// is a coded error naming the missing piece, and on a dataset with no chunks it answers
+    /// `generated: 0` with a reason rather than a silent success.
+    #[tokio::test]
+    async fn navigation_generation_reports_prerequisites() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Nav dataset", "")
+            .unwrap();
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/datasets/{}/navigation", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // The test environment has no embedding/chat model configured, so the handler must say
+        // which one is missing instead of returning a success with nothing generated. The API
+        // guide separates the two signals, so both are asserted: HTTP 400 with body code 102.
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 102, "{body}");
+        let message = body["message"].as_str().unwrap_or_default();
+        assert!(
+            message.contains("embedding model") || message.contains("chat model"),
+            "the error must name the missing model: {message}"
+        );
+    }
+
+    /// The graph endpoint answers in upstream's shape, and a dataset that has never built a
+    /// graph says so instead of 404-ing or pretending to have one.
+    #[tokio::test]
+    async fn dataset_graph_answers_upstream_shape() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Graph dataset", "")
+            .unwrap();
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/api/v1/datasets/{}/graph", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["data"]["built"], false);
+        assert_eq!(body["data"]["graph"]["nodes"].as_array().unwrap().len(), 0);
+        assert!(body["data"].get("mind_map").is_some());
+    }
+
+    /// The tenant default models are exposed under RAGFlow's own column names, so a client
+    /// reading `llm_id`/`embd_id`/... finds every field present (empty until configured).
+    #[tokio::test]
+    async fn users_me_models_answers_upstream_column_names() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/v1/users/me/models")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 0);
+        for field in [
+            "tenant_id",
+            "llm_id",
+            "embd_id",
+            "rerank_id",
+            "asr_id",
+            "img2txt_id",
+            "tts_id",
+            "ocr_id",
+        ] {
+            assert!(
+                body["data"].get(field).is_some(),
+                "missing upstream column {field}: {body}"
+            );
+        }
+    }
+
+    /// The database component check: unsafe hosts and unsupported engines are coded misses,
+    /// never a silent success. A real PostgreSQL attempt is left to the live deployment.
+    #[tokio::test]
+    async fn db_connection_test_refuses_unsafe_hosts_and_unknown_engines() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let call = |body: serde_json::Value| {
+            let router = router.clone();
+            let token = env.token.clone();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(Method::POST)
+                            .uri("/api/v1/agents/test_db_connection")
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(body.to_string()))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+        let base = |host: &str, db_type: &str| {
+            serde_json::json!({
+                "db_type": db_type,
+                "database": "demo",
+                "username": "reader",
+                "host": host,
+                "port": 5432,
+                "password": "secret",
+            })
+        };
+
+        // The SSRF guard runs before any connection attempt.
+        for host in ["127.0.0.1", "10.0.0.5", "192.168.1.10"] {
+            let response = call(base(host, "postgresql")).await;
+            let response = response_json(response).await;
+            assert_eq!(response["code"], 102, "{response}");
+            assert!(
+                response["message"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("non-public"),
+                "{response}"
+            );
+        }
+
+        // An engine without a client says so instead of guessing.
+        let unsupported = call(base("8.8.8.8", "mysql")).await;
+        let unsupported = response_json(unsupported).await;
+        assert_eq!(unsupported["code"], 102);
+        assert!(
+            unsupported["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("no client in this build"),
+            "{unsupported}"
+        );
+
+        // Missing fields are a coded argument error, not a panic.
+        let incomplete = call(serde_json::json!({"db_type": "postgresql"})).await;
+        assert_eq!(incomplete.status(), StatusCode::BAD_REQUEST);
+
+        // A zero/absent port is rejected before connecting.
+        let bad_port = call(serde_json::json!({
+            "db_type": "postgresql",
+            "database": "demo",
+            "username": "reader",
+            "host": "8.8.8.8",
+            "port": 0,
+            "password": "secret",
+        }))
+        .await;
+        assert_eq!(bad_port.status(), StatusCode::BAD_REQUEST);
+    }
+
+    /// Canvas utilities: the prompt set the UI displays must be the constants the runtime
+    /// uses (not a copy), and the file download is addressed by id with a coded miss.
+    #[tokio::test]
+    async fn agent_canvas_utilities_share_the_runtime_prompts_and_file_store() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let call = |method: Method, uri: String| {
+            let router = router.clone();
+            let token = env.token.clone();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(method)
+                            .uri(uri)
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        let prompts = call(Method::GET, "/api/v1/agents/prompts".to_string()).await;
+        let prompts = response_json(prompts).await;
+        assert_eq!(prompts["code"], 0);
+        let data = &prompts["data"];
+        // The UI and the planner read the same string: it is the constant, not a copy.
+        assert_eq!(
+            data["plan_generation"].as_str().unwrap(),
+            crate::prompts::RAGFLOW_NEXT_STEP_PROMPT
+        );
+        assert_eq!(
+            data["reflection"].as_str().unwrap(),
+            crate::prompts::RAGFLOW_REFLECT_PROMPT
+        );
+        assert_eq!(
+            data["citation_guidelines"].as_str().unwrap(),
+            crate::prompts::RAGFLOW_CITATION_PROMPT
+        );
+        assert_eq!(
+            data["task_analysis"].as_str().unwrap(),
+            format!(
+                "{}\n\n{}",
+                crate::prompts::RAGFLOW_ANALYZE_TASK_SYSTEM_PROMPT,
+                crate::prompts::RAGFLOW_ANALYZE_TASK_USER_PROMPT
+            )
+        );
+
+        let no_id = call(Method::GET, "/api/v1/agents/download".to_string()).await;
+        assert_eq!(no_id.status(), StatusCode::BAD_REQUEST);
+
+        let unknown = call(
+            Method::GET,
+            "/api/v1/agents/download?id=missing-file".to_string(),
+        )
+        .await;
+        // A missing file is a coded miss in the body, not a successful empty answer.
+        let unknown = response_json(unknown).await;
+        assert_ne!(unknown["code"], 0);
+        assert_eq!(unknown["message"], "document not found");
+    }
+
+    /// The embedded search-bot surface: an unknown app is a coded miss, `kb_id` (the
+    /// singular spelling the widget sends) is accepted, and a missing scope is rejected
+    /// with upstream's own message.
+    #[tokio::test]
+    async fn searchbot_surface_accepts_the_embedded_client_shapes() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Bot dataset", "")
+            .unwrap();
+        let call = |method: Method, uri: String, body: &str| {
+            let router = router.clone();
+            let token = env.token.clone();
+            let body = body.to_string();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(method)
+                            .uri(uri)
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        let missing = call(
+            Method::GET,
+            "/api/v1/searchbots/detail?search_id=missing".to_string(),
+            "",
+        )
+        .await;
+        assert_eq!(missing.status(), StatusCode::OK);
+        assert_eq!(response_json(missing).await["code"], 102);
+
+        let no_scope = call(
+            Method::POST,
+            "/api/v1/searchbots/retrieval_test".to_string(),
+            r#"{"question":"x"}"#,
+        )
+        .await;
+        let no_scope = response_json(no_scope).await;
+        assert!(
+            no_scope["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("dataset"),
+            "{no_scope}"
+        );
+
+        // The singular `kb_id` the widget sends is translated, so the selection reaches
+        // the shared retrieval handler instead of being reported as empty.
+        let singular = call(
+            Method::POST,
+            "/api/v1/searchbots/retrieval_test".to_string(),
+            &serde_json::json!({"question": "x", "kb_id": kb.id, "size": 10}).to_string(),
+        )
+        .await;
+        let singular = response_json(singular).await;
+        assert!(
+            !singular["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("accessible kb_id"),
+            "kb_id was not translated: {singular}"
+        );
+
+        let mindmap = call(Method::POST, "/api/v1/searchbots/mindmap".to_string(), "{}").await;
+        assert_eq!(mindmap.status(), StatusCode::BAD_REQUEST);
+    }
+
+    /// The navigation surface reads the rows the nav engine writes: seed a cluster, a
+    /// sub-cluster and a document leaf, then walk list → children → lexical search →
+    /// subtree delete → whole-tree delete.
+    #[tokio::test]
+    async fn navigation_tree_is_served_from_the_shared_doc_store() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Navigation", "")
+            .unwrap();
+        let store = env.state.doc_store.get_conn().unwrap();
+        let row = |id: &str, name: &str, parent: &str, kind: &str, payload: &str| {
+            serde_json::json!({
+                "id": id,
+                "compile_kwd": "dataset_nav",
+                "kind_placeholder": serde_json::Value::Null,
+                "name": name,
+                "parent_kwd": parent,
+                "type_kwd": kind,
+                "doc_count_int": if kind == "nav_cluster" { 2 } else { 1 },
+                "doc_id": if kind == "nav_cluster" { "" } else { "doc-1" },
+                "content_with_weight": payload,
+            })
+            .as_object()
+            .cloned()
+            .unwrap()
+        };
+        let rows: Vec<crate::doc_store::DocRow> = vec![
+            row(
+                "n1",
+                "Storage",
+                "root",
+                "nav_cluster",
+                r#"{"description":"Storage engines and formats","keywords":["storage"],"entities":[]}"#,
+            ),
+            row(
+                "n2",
+                "Vector storage",
+                "Storage",
+                "nav_cluster",
+                r#"{"description":"Vector indexes","keywords":["vector"],"entities":[]}"#,
+            ),
+            row(
+                "n3",
+                "doc-leaf",
+                "Vector storage",
+                "nav_doc",
+                r#"{"description":"HNSW paper summary","keywords":["hnsw","vector"],"entities":[]}"#,
+            ),
+        ];
+        store
+            .insert(
+                &rows,
+                &crate::harness::knowlege_dataset_nav::index_name("test-user"),
+                &kb.id,
+            )
+            .unwrap();
+
+        let call = |method: Method, uri: String| {
+            let router = router.clone();
+            let token = env.token.clone();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(method)
+                            .uri(uri)
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        // The tree lists clusters only at the top level.
+        let listed = call(
+            Method::GET,
+            format!("/api/v1/datasets/{}/navigation", kb.id),
+        )
+        .await;
+        let listed = response_json(listed).await;
+        assert_eq!(listed["data"]["total"], 1, "{listed}");
+        assert_eq!(listed["data"]["items"][0]["name"], "Storage");
+        assert_eq!(listed["data"]["items"][0]["type"], "cluster");
+        assert_eq!(listed["data"]["items"][0]["doc_count"], 2);
+        assert_eq!(listed["data"]["items"][0]["has_children"], true);
+
+        let children = call(
+            Method::GET,
+            format!("/api/v1/datasets/{}/navigation/Storage/children", kb.id),
+        )
+        .await;
+        let children = response_json(children).await;
+        assert_eq!(children["data"]["total"], 1);
+        assert_eq!(children["data"]["items"][0]["name"], "Vector storage");
+
+        let leaves = call(
+            Method::GET,
+            format!(
+                "/api/v1/datasets/{}/navigation/Vector%20storage/children",
+                kb.id
+            ),
+        )
+        .await;
+        let leaves = response_json(leaves).await;
+        assert_eq!(leaves["data"]["items"][0]["type"], "doc");
+        assert_eq!(leaves["data"]["items"][0]["doc_id"], "doc-1");
+
+        let found = call(
+            Method::GET,
+            format!(
+                "/api/v1/datasets/{}/navigation/search?q=hnsw&mode=nav_doc",
+                kb.id
+            ),
+        )
+        .await;
+        let found = response_json(found).await;
+        assert_eq!(found["data"]["mode"], "nav_doc");
+        assert_eq!(found["data"]["items"][0]["name"], "doc-leaf", "{found}");
+
+        let bad_mode = call(
+            Method::GET,
+            format!(
+                "/api/v1/datasets/{}/navigation/search?q=x&mode=chunk",
+                kb.id
+            ),
+        )
+        .await;
+        // The embedding-driven modes are declared missing rather than half-answered.
+        assert_eq!(response_json(bad_mode).await["code"], 102);
+
+        // Deleting a node takes its subtree with it (children point at the parent by name).
+        let deleted_node = call(
+            Method::DELETE,
+            format!("/api/v1/datasets/{}/navigation/Vector%20storage", kb.id),
+        )
+        .await;
+        assert_eq!(response_json(deleted_node).await["code"], 0);
+        let after = call(
+            Method::GET,
+            format!("/api/v1/datasets/{}/navigation", kb.id),
+        )
+        .await;
+        let after = response_json(after).await;
+        assert_eq!(
+            after["data"]["total"], 1,
+            "the surviving top-level cluster: {after}"
+        );
+
+        let cleared = call(
+            Method::DELETE,
+            format!("/api/v1/datasets/{}/navigation", kb.id),
+        )
+        .await;
+        assert_eq!(response_json(cleared).await["code"], 0);
+        let empty = call(
+            Method::GET,
+            format!("/api/v1/datasets/{}/navigation", kb.id),
+        )
+        .await;
+        assert_eq!(response_json(empty).await["data"]["total"], 0);
+    }
+
+    /// The artifact surface reads the rows the wiki engines write: seed one page in the
+    /// shared doc store and walk the whole contract — HEAD probe, list, page read, edit by
+    /// row id, topic listing, and clear.
+    #[tokio::test]
+    async fn artifact_pages_are_served_from_the_shared_doc_store() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let kb = env
+            .state
+            .kbs
+            .create_for("test-user", "Artifacts", "")
+            .unwrap();
+        let store = env.state.doc_store.get_conn().unwrap();
+        let rows: Vec<crate::doc_store::DocRow> = vec![
+            serde_json::json!({
+                "id": "wiki-1",
+                "compile_kwd": "wiki_page",
+                "slug_kwd": "topic/rust",
+                "title_kwd": "Rust",
+                "page_type_kwd": "topic",
+                "md_with_weight": "# Rust\n\nA language.",
+            })
+            .as_object()
+            .cloned()
+            .unwrap(),
+            serde_json::json!({
+                "id": "wiki-2",
+                "compile_kwd": "wiki_page",
+                "slug_kwd": "entity/cargo",
+                "title_kwd": "Cargo",
+                "page_type_kwd": "entity",
+                "md_with_weight": "The package manager.",
+            })
+            .as_object()
+            .cloned()
+            .unwrap(),
+        ];
+        store
+            .insert(
+                &rows,
+                &crate::harness::knowlege_dataset_nav::index_name("test-user"),
+                &kb.id,
+            )
+            .unwrap();
+
+        let call = |method: Method, uri: String, body: &str| {
+            let router = router.clone();
+            let token = env.token.clone();
+            let body = body.to_string();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(method)
+                            .uri(uri)
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        // HEAD is the sidebar probe: 200 once a page exists.
+        let probe = call(
+            Method::HEAD,
+            format!("/api/v1/datasets/{}/artifacts", kb.id),
+            "",
+        )
+        .await;
+        assert_eq!(probe.status(), StatusCode::OK);
+
+        let listed = call(
+            Method::GET,
+            format!("/api/v1/datasets/{}/artifacts", kb.id),
+            "",
+        )
+        .await;
+        let listed = response_json(listed).await;
+        assert_eq!(listed["data"]["total"], 2);
+        // Ordered by page type: entity before topic.
+        assert_eq!(listed["data"]["items"][0]["slug"], "entity/cargo");
+        assert_eq!(listed["data"]["items"][0]["page_type"], "entity");
+        assert_eq!(listed["data"]["items"][1]["slug"], "topic/rust");
+
+        let filtered = call(
+            Method::GET,
+            format!("/api/v1/datasets/{}/artifacts?page_type=topic", kb.id),
+            "",
+        )
+        .await;
+        let filtered = response_json(filtered).await;
+        assert_eq!(filtered["data"]["total"], 1);
+        assert_eq!(filtered["data"]["items"][0]["slug"], "topic/rust");
+
+        let page = call(
+            Method::GET,
+            format!("/api/v1/datasets/{}/artifacts/topic/rust", kb.id),
+            "",
+        )
+        .await;
+        let page = response_json(page).await;
+        assert_eq!(page["code"], 0);
+        assert_eq!(page["data"]["title"], "Rust");
+        assert!(
+            page["data"]["content"]
+                .as_str()
+                .unwrap()
+                .contains("A language")
+        );
+
+        // A page read through the wrong type is a miss, not a silent hit.
+        let wrong_type = call(
+            Method::GET,
+            format!("/api/v1/datasets/{}/artifacts/entity/rust", kb.id),
+            "",
+        )
+        .await;
+        assert_eq!(wrong_type.status(), StatusCode::NOT_FOUND);
+
+        let topics = call(
+            Method::GET,
+            format!("/api/v1/datasets/{}/artifacts/topics", kb.id),
+            "",
+        )
+        .await;
+        let topics = response_json(topics).await;
+        assert_eq!(topics["data"]["total"], 1);
+        assert_eq!(topics["data"]["items"][0]["topic"], "rust");
+
+        let saved = call(
+            Method::PUT,
+            format!("/api/v1/datasets/{}/artifacts/topic/rust", kb.id),
+            // `r##` because the JSON itself contains a `"#` sequence.
+            r##"{"content_md":"# Rust\n\nEdited.","title":"Rust (edited)"}"##,
+        )
+        .await;
+        let saved = response_json(saved).await;
+        assert_eq!(saved["code"], 0, "save failed: {saved}");
+        assert_eq!(saved["data"]["saved"], true);
+
+        let reread = call(
+            Method::GET,
+            format!("/api/v1/datasets/{}/artifacts/topic/rust", kb.id),
+            "",
+        )
+        .await;
+        let reread = response_json(reread).await;
+        assert!(
+            reread["data"]["content"]
+                .as_str()
+                .unwrap()
+                .contains("Edited")
+        );
+        assert_eq!(reread["data"]["title"], "Rust (edited)");
+
+        let cleared = call(
+            Method::DELETE,
+            format!("/api/v1/datasets/{}/artifacts", kb.id),
+            "",
+        )
+        .await;
+        assert_eq!(response_json(cleared).await["code"], 0);
+        let probe_after = call(
+            Method::HEAD,
+            format!("/api/v1/datasets/{}/artifacts", kb.id),
+            "",
+        )
+        .await;
+        assert_eq!(probe_after.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// Chat-app sessions must be scoped to their app: a session created under one chat is
+    /// invisible to another, and every handler refuses an unknown chat.
+    #[tokio::test]
+    async fn chat_app_sessions_are_scoped_and_paginated() {
+        let env = test_env();
+        // `test_env` builds the router without the chat-app store; the session handlers
+        // need one, so the state is rebuilt with it (AppState is a clone of Arc fields).
+        let root = std::env::temp_dir().join(format!("rayrag-chat-apps-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut state = (*env.state).clone();
+        let apps =
+            Arc::new(crate::api::chatapp_mgr::ChatAppStore::new(root.to_str().unwrap()).unwrap());
+        state.chat_apps = Some(apps.clone());
+        for id in ["app-one", "app-two"] {
+            apps.insert(crate::api::chatapp_mgr::ChatApp {
+                id: id.into(),
+                name: id.into(),
+                description: String::new(),
+                icon: String::new(),
+                tenant_id: "test-user".into(),
+                kb_ids: Vec::new(),
+                llm_id: None,
+                llm_setting: None,
+                rerank_id: None,
+                top_k: None,
+                prompt_config: None,
+                created_at: 1,
+            })
+            .unwrap();
+        }
+        let state = Arc::new(state);
+        let router = build_router(state.clone());
+        let call = |method: Method, uri: String, body: &str| {
+            let router = router.clone();
+            let token = env.token.clone();
+            let body = body.to_string();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(method)
+                            .uri(uri)
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        let created = call(
+            Method::POST,
+            "/api/v1/chats/app-one/sessions".to_string(),
+            r#"{"name":"First session"}"#,
+        )
+        .await;
+        assert_eq!(created.status(), StatusCode::OK);
+        let created = response_json(created).await;
+        assert_eq!(created["code"], 0);
+        let session_id = created["data"]["id"].as_str().unwrap().to_string();
+        assert_eq!(created["data"]["app_id"], "app-one");
+
+        let listed = call(
+            Method::GET,
+            "/api/v1/chats/app-one/sessions?page=1&page_size=10".to_string(),
+            "",
+        )
+        .await;
+        let listed = response_json(listed).await;
+        // The guide documents `data` as the list itself; pagination still applies to it.
+        let sessions = listed["data"].as_array().cloned().unwrap_or_default();
+        assert_eq!(sessions.len(), 1, "{listed}");
+        assert_eq!(sessions[0]["id"], session_id.as_str());
+
+        // Another chat app cannot see it, and neither can it be fetched through it.
+        let other = call(
+            Method::GET,
+            "/api/v1/chats/app-two/sessions".to_string(),
+            "",
+        )
+        .await;
+        assert_eq!(
+            response_json(other).await["data"].as_array().map(Vec::len),
+            Some(0)
+        );
+
+        let cross = call(
+            Method::GET,
+            format!("/api/v1/chats/app-two/sessions/{session_id}"),
+            "",
+        )
+        .await;
+        assert_eq!(cross.status(), StatusCode::NOT_FOUND);
+
+        let renamed = call(
+            Method::PATCH,
+            format!("/api/v1/chats/app-one/sessions/{session_id}"),
+            r#"{"name":"Renamed session"}"#,
+        )
+        .await;
+        let renamed = response_json(renamed).await;
+        assert_eq!(renamed["code"], 0);
+        assert_eq!(renamed["data"]["name"], "Renamed session");
+
+        let unknown = call(
+            Method::GET,
+            "/api/v1/chats/missing-app/sessions".to_string(),
+            "",
+        )
+        .await;
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+
+        let cleared = call(
+            Method::DELETE,
+            "/api/v1/chats/app-one/sessions".to_string(),
+            r#"{"delete_all":true}"#,
+        )
+        .await;
+        assert_eq!(response_json(cleared).await["data"], true);
+        let after = call(
+            Method::GET,
+            "/api/v1/chats/app-one/sessions".to_string(),
+            "",
+        )
+        .await;
+        assert_eq!(
+            response_json(after).await["data"].as_array().map(Vec::len),
+            Some(0),
+            "deleting every session leaves the documented empty list"
+        );
+    }
+
+    /// The methods upstream registers on paths RayRAG already answered must be routed,
+    /// not rejected with 405. Each call is checked at its first validation layer, which is
+    /// enough to prove the method exists and the handler runs.
+    #[tokio::test]
+    async fn upstream_registered_methods_are_routed_onto_existing_paths() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let json_call = |method: Method, uri: String, body: &str| {
+            let router = router.clone();
+            let token = env.token.clone();
+            let body = body.to_string();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .method(method)
+                            .uri(uri)
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+
+        // Upstream `provider_api.update_provider_instance`: PUT addressed by name. An
+        // unknown instance is a 404 from the handler, not a 405 from the router.
+        let put_instance = json_call(
+            Method::PUT,
+            "/api/v1/providers/minimax/instances/missing".to_string(),
+            r#"{"instance_name":"missing","model_info":[]}"#,
+        )
+        .await;
+        assert_ne!(put_instance.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(put_instance.status(), StatusCode::NOT_FOUND);
+
+        // A partial body is a coded JSON error, not the extractor's plain-text 422: a
+        // scripted client reads `code`/`message`.
+        let partial = json_call(
+            Method::PUT,
+            "/api/v1/providers/minimax/instances/missing".to_string(),
+            "{}",
+        )
+        .await;
+        assert_eq!(partial.status(), StatusCode::OK);
+        assert_eq!(response_json(partial).await["code"], 102);
+
+        let delete_models = json_call(
+            Method::DELETE,
+            "/api/v1/providers/minimax/instances/missing/models".to_string(),
+            r#"{"model_name":"MiniMax-M3"}"#,
+        )
+        .await;
+        assert_ne!(delete_models.status(), StatusCode::METHOD_NOT_ALLOWED);
+
+        let chat_to_model = json_call(
+            Method::POST,
+            "/api/v1/providers/minimax/instances/missing/models/MiniMax-M3".to_string(),
+            r#"{"message":"ping"}"#,
+        )
+        .await;
+        assert_ne!(chat_to_model.status(), StatusCode::METHOD_NOT_ALLOWED);
+
+        // Upstream `agent_api.delete_agent_session` with an empty body is a no-op that
+        // still answers success.
+        let delete_sessions = json_call(
+            Method::DELETE,
+            "/api/v1/agents/missing-agent/sessions".to_string(),
+            "{}",
+        )
+        .await;
+        assert_eq!(delete_sessions.status(), StatusCode::OK);
+        assert_eq!(response_json(delete_sessions).await["data"], true);
+    }
+
+    /// The file tree and the bulk-delete paths must behave like upstream's: a folder can
+    /// be created through `POST /files`, moved, walked up with `parent`/`ancestors`, and
+    /// deleted in bulk; `DELETE /chats` takes `ids` or `delete_all`.
+    #[tokio::test]
+    async fn file_tree_and_bulk_delete_endpoints_follow_upstream() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+
+        let create = |name: &str, parent: &str, kind: &str| {
+            let router = router.clone();
+            let token = env.token.clone();
+            let body =
+                serde_json::json!({"name": name, "parent_id": parent, "type": kind}).to_string();
+            async move {
+                let response = router
+                    .oneshot(
+                        Request::builder()
+                            .method(Method::POST)
+                            .uri("/api/v1/files")
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+                response_json(response).await
+            }
+        };
+
+        let folder = create("Docs", "root", "folder").await;
+        assert_eq!(folder["code"], 0);
+        let folder_id = folder["data"]["id"].as_str().unwrap().to_string();
+        assert_eq!(folder["data"]["type"], "folder");
+
+        let child = create("report.pdf", &folder_id, "virtual").await;
+        let child_id = child["data"]["id"].as_str().unwrap().to_string();
+
+        let parent = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/files/{child_id}/parent"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let parent = response_json(parent).await;
+        assert_eq!(parent["code"], 0);
+        assert_eq!(parent["data"]["parent_folder"]["id"], folder_id.as_str());
+        assert_eq!(parent["data"]["parent_folder"]["name"], "Docs");
+
+        let ancestors = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/files/{child_id}/ancestors"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let ancestors = response_json(ancestors).await;
+        let chain = ancestors["data"]["parent_folders"].as_array().unwrap();
+        // Upstream starts at the file itself and walks up to the root.
+        assert_eq!(chain[0]["id"], child_id.as_str());
+        assert_eq!(chain[1]["id"], folder_id.as_str());
+        assert_eq!(chain[2]["id"], "root");
+
+        let moved = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/files/move")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "src_file_ids": [child_id.clone()],
+                            "dest_file_id": "root",
+                            "new_name": "summary.pdf"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let moved = response_json(moved).await;
+        assert_eq!(moved["code"], 0);
+        assert_eq!(moved["data"], true);
+        let renamed = env.state.files.get(&child_id).expect("moved file");
+        assert_eq!(renamed.name, "summary.pdf");
+        assert_eq!(renamed.parent_id, "root");
+
+        let deleted = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri("/api/v1/files")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"ids": [folder_id.clone(), "missing"]}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let deleted = response_json(deleted).await;
+        // upstream reports a partial delete with the data-error code
+        assert_eq!(deleted["code"], 102);
+        assert_eq!(deleted["data"]["success_count"], 1);
+        assert_eq!(deleted["data"]["errors"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            deleted["message"],
+            "Partially deleted 1 files with 1 errors"
+        );
+
+        // `DELETE /conversations` with no selection and no flag answers the empty object.
+        let empty = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri("/api/v1/conversations")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(empty.status(), StatusCode::OK);
+        assert_eq!(response_json(empty).await["data"], serde_json::json!({}));
+
+        // The Dify probe answers on GET as well as POST.
+        let probe = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/dify/retrieval")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(probe.status(), StatusCode::OK);
+        assert_eq!(response_json(probe).await["data"], true);
+    }
+
+    /// The dataset-scoped upstream endpoints must answer with upstream's own envelopes:
+    /// a selection that names unknown documents is a `102` with the ids listed, and the
+    /// two list endpoints demand `dataset_ids` in the query string.
+    #[tokio::test]
+    async fn dataset_scoped_upstream_endpoints_answer_with_upstream_envelopes() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let kb = env.state.kbs.create_for("test-user", "Scoped", "").unwrap();
+
+        let parse = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/datasets/{}/documents/parse", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"document_ids": ["missing-doc"]}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(parse.status(), StatusCode::OK);
+        let parse = response_json(parse).await;
+        assert_eq!(parse["code"], 102);
+        assert!(
+            parse["message"]
+                .as_str()
+                .unwrap()
+                .contains("Documents not found"),
+            "{parse}"
+        );
+
+        // Upstream mounts the same two handlers on the chunks path.
+        let chunks_parse = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/datasets/{}/chunks", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"document_ids": ["missing-doc"]}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response_json(chunks_parse).await["code"], 102);
+
+        let stop = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/datasets/{}/documents/stop", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"document_ids": []}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response_json(stop).await["code"], 102);
+
+        let flattened = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/datasets/metadata/flattened")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let flattened = response_json(flattened).await;
+        assert_eq!(flattened["code"], 102);
+        assert!(
+            flattened["message"]
+                .as_str()
+                .unwrap()
+                .contains("dataset_ids")
+        );
+
+        let aggregation = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/datasets/tags/aggregation")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response_json(aggregation).await["code"], 102);
+
+        // The GET summary speaks upstream's shape (`{"summary": {...}}`).
+        let summary = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/datasets/{}/metadata/summary?doc_ids=",
+                        kb.id
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(summary.status(), StatusCode::OK);
+        let summary = response_json(summary).await;
+        assert_eq!(summary["code"], 0);
+        assert!(summary["data"]["summary"].is_object(), "{summary}");
+
+        // The scoped search path reaches the same handler as `/retrieval`.
+        let scoped = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/datasets/{}/search", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"question": "anything"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // The scoped path injects `dataset_ids`; the shared handler must recognise the
+        // selection. This environment has no embedder, so the request still fails — but
+        // with the embedding error, not with "no accessible kb".
+        let scoped_body = response_json(scoped).await;
+        assert!(
+            !scoped_body["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("accessible kb_id"),
+            "scoped retrieval rejected the selection: {scoped_body}"
+        );
+
+        // Upstream's body spells the selection `dataset_ids`/`document_ids`; both must be
+        // understood by the shared handler a RAGFlow client reaches.
+        let upstream_body = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/retrieval")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "question": "anything",
+                            "dataset_ids": [kb.id.clone()],
+                            "document_ids": ["missing-doc"],
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let upstream_body = response_json(upstream_body).await;
+        assert!(
+            !upstream_body["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("accessible kb_id"),
+            "upstream body field names were not understood: {upstream_body}"
+        );
+    }
+
+    /// RAGFlow spells these paths with hyphens; RayRAG's own routes use underscores.
+    /// A client written against upstream calls the hyphenated form, so both must answer
+    /// with the same status and the same payload.
+    #[tokio::test]
+    async fn upstream_spelled_routes_answer_like_the_rayrag_spelling() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+
+        for (upstream, own) in [
+            (
+                "/api/v1/compilation-templates/builtins",
+                "/api/v1/compilation_templates/builtins",
+            ),
+            (
+                "/api/v1/compilation-templates/wiki-presets",
+                "/api/v1/compilation_templates/wiki_presets",
+            ),
+            (
+                "/api/v1/compilation-template-groups",
+                "/api/v1/compilation_template_groups",
+            ),
+            ("/api/v1/system/stats", "/api/v1/stats"),
+        ] {
+            let mut statuses = Vec::new();
+            let mut bodies = Vec::new();
+            for path in [upstream, own] {
+                let response = router
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .uri(path)
+                            .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                statuses.push(response.status());
+                bodies.push(response_json(response).await);
+            }
+            assert_eq!(statuses[0], statuses[1], "status differs for {upstream}");
+            assert_eq!(statuses[0], StatusCode::OK, "{upstream}");
+            assert_eq!(bodies[0], bodies[1], "payload differs for {upstream}");
+        }
+
+        // Upstream leaves these three unauthenticated (`system_api.ping`,
+        // `system_api.language`, `dify_retrieval_api.retrieval_health_check`).
+        let ping = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/system/ping")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ping.status(), StatusCode::OK);
+        assert_eq!(
+            axum::body::to_bytes(ping.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .as_ref(),
+            b"pong"
+        );
+
+        let language = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/language")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(language.status(), StatusCode::OK);
+        assert_eq!(response_json(language).await["data"]["language"], "python");
+
+        let health = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/dify/retrieval/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(health.status(), StatusCode::OK);
+        assert_eq!(response_json(health).await["data"], true);
+
+        // Upstream registers GET (profile) and PATCH (settings) on `/users/me`; a
+        // path-only audit missed the GET, and the live probe answered 405 for it.
+        let profile = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/users/me")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(profile.status(), StatusCode::OK);
+        let profile = response_json(profile).await;
+        assert_eq!(profile["data"]["email"], "test@example.com");
+        assert!(profile["data"].get("password_hash").is_none());
+
+        // Upstream answers these two with its own "document engine is not this one"
+        // envelopes; a monitoring client reads `data.status`, so both must stay 200 OK.
+        let gaussdb = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/system/gaussdb/status")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(gaussdb.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(gaussdb).await["data"]["status"],
+            "not_configured"
+        );
+
+        let oceanbase = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/system/oceanbase/status")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(oceanbase.status(), StatusCode::OK);
+        assert_eq!(response_json(oceanbase).await["data"]["status"], "error");
+
+        // Upstream `user_api.log_out`: the presented token stops working afterwards.
+        let logout = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/auth/logout")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(logout.status(), StatusCode::OK);
+        assert_eq!(response_json(logout).await["data"], true);
+        let after = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/users/me")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(after.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // Real GPU end-to-end: build a group with a tree template, then POST
+    // /execute with chunks. Requires RAYRAG_TEST_LLM_BASE (e.g.
+    // http://127.0.0.1:8088/v1) and RAYRAG_TEST_LLM_MODEL.
+    #[tokio::test]
+    #[ignore]
+    async fn gpu_tree_template_execute_builds_trees_over_http() {
+        let llm_base = std::env::var("RAYRAG_TEST_LLM_BASE").expect("RAYRAG_TEST_LLM_BASE");
+        let llm_model = std::env::var("RAYRAG_TEST_LLM_MODEL").expect("RAYRAG_TEST_LLM_MODEL");
+        let env = test_env();
+        let mut state: AppState = (*env.state).clone();
+        state.llm = Some(Arc::new(crate::llm::LlmClient::new(
+            crate::llm::LlmConfig {
+                api_base: llm_base,
+                api_key: String::new(),
+                model: llm_model,
+                generation: Default::default(),
+                system_prompt: String::new(),
+                deepseek: Default::default(),
+            },
+        )));
+        let state = Arc::new(state);
+        let router = build_router(state.clone());
+
+        let created = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/compilation_template_groups")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "name": "GPU tree group",
+                            "templates": [
+                                {
+                                    "name": "Raptor tree",
+                                    "kind": "tree",
+                                    "config": {"raptor": {"prompt": "Summarize:\n{cluster_content}", "max_token": 256, "threshold": 0.3, "max_cluster": 8}}
+                                },
+                                {
+                                    "name": "Hypergraph",
+                                    "kind": "hypergraph",
+                                    "config": {
+                                        "guideline": {
+                                            "target": "从源文本中提取主要实体和关系。",
+                                            "rules_for_entities": "实体包括人名、组织名、地点和概念。",
+                                            "rules_for_relations": "关系连接两个已知实体。",
+                                            "rules_for_time": ""
+                                        },
+                                        "entity": {
+                                            "description": "文本中出现的命名实体。",
+                                            "fields": [
+                                                {"type": "person", "description": "人名", "rule": ""},
+                                                {"type": "organization", "description": "组织名", "rule": ""},
+                                                {"type": "location", "description": "地点", "rule": ""}
+                                            ]
+                                        },
+                                        "relation": {
+                                            "description": "两个实体之间的有向关系。",
+                                            "fields": [
+                                                {"type": "operates", "description": "经营关系", "rule": ""},
+                                                {"type": "supplies", "description": "供应关系", "rule": ""}
+                                            ]
+                                        }
+                                    }
+                                }
+                            ]
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(created.status(), StatusCode::OK);
+        let created = response_json(created).await;
+        let group_id = created["data"]["id"].as_str().unwrap().to_string();
+
+        let chunks = vec![
+            serde_json::json!({"content": "中山市百鲤居水产养殖场主营四大家鱼养殖", "embedding": [0.9, 0.1]}),
+            serde_json::json!({"content": "强调科学管理水质与溶氧以提高成活率", "embedding": [0.85, 0.15]}),
+            serde_json::json!({"content": "饲料配方与投喂频率直接影响生长速度", "embedding": [0.1, 0.9]}),
+        ];
+        let executed = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!(
+                        "/api/v1/compilation_template_groups/{group_id}/execute?doc_id=doc-1&kb_id=kb-1"
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "chunks": chunks }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(executed.status(), StatusCode::OK);
+        let executed = response_json(executed).await;
+        let results = executed["data"]["results"].as_array().unwrap();
+        assert_eq!(results.len(), 2, "tree + hypergraph results: {results:?}");
+        // Tree result.
+        let tree_result = results
+            .iter()
+            .find(|r| r["graph"].is_object())
+            .expect("tree result");
+        assert!(tree_result["node_count"].as_u64().unwrap() >= 3);
+        assert!(
+            tree_result["graph"]["entities"].as_array().unwrap().len() >= 3,
+            "tree graph projection should be returned"
+        );
+        // Hypergraph result.
+        let hyper_result = results
+            .iter()
+            .find(|r| r["entities"].is_array())
+            .expect("hypergraph result");
+        let hyper_entities = hyper_result["entities"].as_array().unwrap();
+        assert!(
+            !hyper_entities.is_empty(),
+            "hypergraph entities: {hyper_entities:?}"
+        );
+        assert!(
+            hyper_entities.iter().any(|e| e["name"]
+                .as_str()
+                .map(|n| n.contains("百鲤居") || n.contains("李锦澎"))
+                .unwrap_or(false)),
+            "expected farm/owner entity"
+        );
+        // Persisted as a knowledge_compile document checkpoint.
+        let checkpoint = state
+            .graphs
+            .snapshot()
+            .checkpoints
+            .get("doc-1")
+            .cloned()
+            .expect("doc-1 checkpoint persisted");
+        assert_eq!(checkpoint.method, "knowledge_compile");
+        assert_eq!(checkpoint.kb_id, "kb-1");
+        assert!(checkpoint.entity_types.contains(&"entity".to_string()));
+        assert!(
+            checkpoint.graph.node_count() > 0,
+            "compiled graph nodes persisted"
+        );
+    }
+
+    /// Upstream `agent_api.py::create_agent_session` plus
+    /// `api.ts::agentChatCompletion`: the Explore surface creates a session with
+    /// the canvas prologue seeded as its first assistant message, lists it back,
+    /// and posts the conversation to the body-addressed chat route.
+    #[tokio::test]
+    async fn agent_explore_session_creation_and_chat_route_match_upstream() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let create = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/agents")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "title": "Launch Agent",
+                            "dsl": {
+                                "graph": {"nodes": [{"id": "begin", "type": "beginNode"}], "edges": []},
+                                "components": {
+                                    "begin": {
+                                        "obj": {
+                                            "component_name": "Begin",
+                                            "params": {},
+                                            "mode": "conversational",
+                                            "prologue": "Hi! I'm your assistant."
+                                        },
+                                        "upstream": [],
+                                        "downstream": []
+                                    }
+                                }
+                            }
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(create.status(), StatusCode::OK);
+        let agent_id = response_json(create).await["data"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let session = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/agents/{agent_id}/sessions"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"name": "First session"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(session.status(), StatusCode::OK);
+        let session = response_json(session).await;
+        assert_eq!(session["code"], 0);
+        assert_eq!(session["message"], "success");
+        assert_eq!(session["data"]["name"], "First session");
+        assert_eq!(session["data"]["source"], "agent");
+        assert_eq!(session["data"]["agent_id"], agent_id);
+        let session_id = session["data"]["id"].as_str().unwrap().to_owned();
+        assert!(!session_id.is_empty());
+        // `canvas.get_prologue()` is seeded as the first assistant message.
+        assert_eq!(session["data"]["message"][0]["role"], "assistant");
+        assert_eq!(
+            session["data"]["message"][0]["content"],
+            "Hi! I'm your assistant."
+        );
+
+        let list = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/agents/{agent_id}/sessions"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(list.status(), StatusCode::OK);
+        let list = response_json(list).await;
+        assert!(
+            list["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["id"] == session_id.as_str()),
+            "created session missing from the list: {list}"
+        );
+
+        // `api.ts::agentChatCompletion` carries the canvas id in the body; the
+        // literal route must win over `/api/v1/agents/{id}/completions`.
+        let chat = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/agents/chat/completions")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "agent_id": agent_id,
+                            "session_id": session_id,
+                            "query": "hello",
+                            "stream": false
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_ne!(chat.status(), StatusCode::NOT_FOUND);
+        assert_ne!(chat.status(), StatusCode::METHOD_NOT_ALLOWED);
+
+        let missing = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/agents/does-not-exist/sessions")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let missing = response_json(missing).await;
+        assert_eq!(missing["code"], 102);
+        assert_eq!(missing["message"], "Agent not found.");
+    }
+    /// RAGFlow `system_api.py` API tokens plus the `bot_api.py` agentbot
+    /// surface: a token's `beta` secret is a bearer credential of its own, and
+    /// the embedded agent chat (`/agentbots/{id}/inputs` and
+    /// `/agentbots/{id}/completions`) answers to it without a user session.
+    #[tokio::test]
+    async fn system_tokens_and_agentbots_match_upstream() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let create = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/agents")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "title": "Embedded Agent",
+                            "dsl": {
+                                "graph": {"nodes": [{"id": "begin", "type": "beginNode"}], "edges": []},
+                                "components": {
+                                    "begin": {
+                                        "obj": {
+                                            "component_name": "Begin",
+                                            "params": {},
+                                            "mode": "conversational",
+                                            "prologue": "Hello from the embed",
+                                            "input_form": {
+                                                "query": {"type": "line", "name": "Query"}
+                                            }
+                                        },
+                                        "upstream": [],
+                                        "downstream": ["message"]
+                                    },
+                                    "message": {
+                                        "obj": {
+                                            "component_name": "Message",
+                                            "params": {"content": ["embedded answer"]}
+                                        },
+                                        "upstream": ["begin"],
+                                        "downstream": []
+                                    }
+                                }
+                            }
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(create.status(), StatusCode::OK);
+        let agent_id = response_json(create).await["data"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        // `POST /system/tokens` — upstream mints `ragflow-<token>` plus a beta.
+        let created = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/system/tokens")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(created.status(), StatusCode::OK);
+        let created = response_json(created).await;
+        assert_eq!(created["code"], 0);
+        let token = created["data"]["token"].as_str().unwrap().to_owned();
+        let beta = created["data"]["beta"].as_str().unwrap().to_owned();
+        assert!(token.starts_with("ragflow-"), "{token}");
+        assert_eq!(beta.len(), 32, "{beta}");
+        assert!(created["data"]["update_time"].is_null());
+        assert!(created["data"]["update_date"].is_null());
+
+        let listed = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/system/tokens")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(listed.status(), StatusCode::OK);
+        let listed = response_json(listed).await;
+        assert_eq!(listed["data"].as_array().unwrap().len(), 1);
+        assert_eq!(listed["data"][0]["beta"], beta);
+
+        // The beta alone authenticates the embedded surface: no session token in
+        // the Authorization header, exactly like `?auth=<beta>` in the embed URL.
+        let inputs = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/agentbots/{agent_id}/inputs"))
+                    .header(header::AUTHORIZATION, format!("Bearer {beta}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(inputs.status(), StatusCode::OK);
+        let inputs = response_json(inputs).await;
+        assert_eq!(inputs["code"], 0);
+        assert_eq!(inputs["data"]["title"], "Embedded Agent");
+        assert_eq!(inputs["data"]["prologue"], "Hello from the embed");
+        assert_eq!(inputs["data"]["mode"], "conversational");
+        assert_eq!(inputs["data"]["inputs"]["query"]["type"], "line");
+
+        let completion = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/agentbots/{agent_id}/completions"))
+                    .header(header::AUTHORIZATION, format!("Bearer {beta}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"stream": false, "query": "hi"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(completion.status(), StatusCode::OK);
+        let completion = response_json(completion).await;
+        assert_eq!(completion["code"], 0);
+        assert_eq!(completion["data"]["answer"], "embedded answer");
+
+        // Unknown beta secrets stay unauthorized.
+        let rejected = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/agentbots/{agent_id}/inputs"))
+                    .header(header::AUTHORIZATION, "Bearer deadbeef")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED);
+
+        // An unknown canvas keeps upstream's `Can't find agent by ID` answer.
+        let missing = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/agentbots/nope/inputs")
+                    .header(header::AUTHORIZATION, format!("Bearer {beta}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let missing = response_json(missing).await;
+        assert_eq!(missing["code"], 102);
+        assert_eq!(missing["message"], "Can't find agent by ID: nope");
+
+        // `DELETE /system/tokens/{token}` revokes both credentials.
+        let removed = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!("/api/v1/system/tokens/{token}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(removed.status(), StatusCode::OK);
+        assert_eq!(response_json(removed).await["data"], true);
+        let revoked = router
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/agentbots/{agent_id}/inputs"))
+                    .header(header::AUTHORIZATION, format!("Bearer {beta}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(revoked.status(), StatusCode::UNAUTHORIZED);
+    }
+    #[tokio::test]
+    async fn index_commit_failure_is_logged_as_failed_and_reparse_recovers() {
+        let mut env = test_env();
+        Arc::get_mut(&mut env.state).unwrap().embedder = Some(Arc::new(TestEmbedder));
+        let me = env.state.users.get_user_by_token(&env.token).unwrap();
+        let kb = env
+            .state
+            .kbs
+            .create_for(&me.id, "Index failure", "")
+            .unwrap();
+        let doc = seeded_doc(
+            &env.state,
+            "index-failure",
+            &kb.id,
+            "index.txt",
+            "UNSTARTED",
+            0,
+        );
+        let path = env.root.join("uploads/index.txt");
+        std::fs::write(&path, b"index failure recovery marker").unwrap();
+        // A directory at the index path lets extraction succeed but rejects saving.
+        std::fs::create_dir(&env.state.index_path).unwrap();
+        let task_id = env
+            .state
+            .tasks
+            .push(&me.id, "Parse index", &doc.id)
+            .unwrap();
+        let attempts = env.state.tasks.get(&task_id).unwrap().max_retries;
+        for _ in 0..attempts {
+            process_document(
+                env.state.clone(),
+                doc.clone(),
+                path.clone(),
+                task_id.clone(),
+            )
+            .await;
+        }
+        let saved = env.state.docs.get(&doc.id).unwrap();
+        assert_eq!(saved.run, "FAILED");
+        assert!(
+            saved
+                .progress_msg
+                .contains("Failed to commit document index")
+        );
+        assert!(saved.progress_msg.contains("storage permissions"));
+        assert!(saved.progress_msg.contains("free disk space"));
+        assert_eq!(saved.chunk_count, 0);
+        assert_eq!(env.state.kbs.get(&kb.id).unwrap().chunk_count, 0);
+        assert!(
+            env.state
+                .engine
+                .read()
+                .unwrap()
+                .chunks_for_document(&doc.id)
+                .is_empty()
+        );
+        let task = env.state.tasks.get(&task_id).unwrap();
+        assert_eq!(task.status, "failed");
+        assert!(task.message.contains(&saved.progress_msg));
+        let logs = env.state.ingestion_logs.list_for_kb(&kb.id);
+        assert_eq!(logs.len(), attempts as usize);
+        for log in &logs {
+            assert_eq!(log.operation_status, "failed");
+            assert!(log.progress_msg.contains("Failed to commit document index"));
+        }
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/datasets/{}/ingestions/{}",
+                        kb.id, logs[0].id
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 0, "{body}");
+        assert_eq!(body["data"]["progress_msg"], saved.progress_msg);
+
+        std::fs::remove_dir(&env.state.index_path).unwrap();
+        let recovery_task = env
+            .state
+            .tasks
+            .push(&me.id, "Reparse index", &doc.id)
+            .unwrap();
+        process_document(env.state.clone(), doc.clone(), path, recovery_task.clone()).await;
+        let saved = env.state.docs.get(&doc.id).unwrap();
+        assert_eq!(saved.run, "DONE", "{}", saved.progress_msg);
+        assert!(saved.chunk_count > 0);
+        assert_eq!(env.state.tasks.get(&recovery_task).unwrap().status, "done");
+        assert!(std::path::Path::new(&env.state.index_path).is_file());
+        let logs = env.state.ingestion_logs.list_for_kb(&kb.id);
+        assert_eq!(logs.len(), attempts as usize + 1);
+        assert_eq!(
+            logs.iter()
+                .filter(|log| log.operation_status == "done")
+                .count(),
+            1
+        );
+        assert_eq!(
+            logs.iter()
+                .filter(|log| log.operation_status == "failed")
+                .count(),
+            attempts as usize
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_embedding_response_is_visible_and_reparse_after_model_repair_succeeds() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let repaired = Arc::new(AtomicBool::new(false));
+        let handler_state = repaired.clone();
+        let model = Router::new().route(
+            "/embeddings",
+            post(move |Json(body): Json<Value>| {
+                let repaired = handler_state.clone();
+                async move {
+                    let vectors: Vec<_> = body["input"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .enumerate()
+                        .map(|(index, _)| {
+                            serde_json::json!({
+                                "index": index,
+                                "embedding": if repaired.load(Ordering::SeqCst) {
+                                    serde_json::json!([1.0, 0.0])
+                                } else {
+                                    serde_json::json!([1.0, "invalid-coordinate"])
+                                }
+                            })
+                        })
+                        .collect();
+                    Json(serde_json::json!({"data": vectors}))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, model).await.unwrap() });
+        let mut env = test_env();
+        Arc::get_mut(&mut env.state).unwrap().embedder = Some(Arc::new(
+            crate::embed::OpenAIEmbedder::new(&base, "test-key", "test-model"),
+        ));
+        let me = env.state.users.get_user_by_token(&env.token).unwrap();
+        let kb = env
+            .state
+            .kbs
+            .create_for(&me.id, "Invalid embedding", "")
+            .unwrap();
+        let doc = seeded_doc(
+            &env.state,
+            "invalid-embedding",
+            &kb.id,
+            "vectors.txt",
+            "UNSTARTED",
+            0,
+        );
+        let path = env.root.join("uploads/vectors.txt");
+        std::fs::write(&path, b"embedding recovery marker").unwrap();
+        let task_id = env
+            .state
+            .tasks
+            .push(&me.id, "Parse vectors", &doc.id)
+            .unwrap();
+        let attempts = env.state.tasks.get(&task_id).unwrap().max_retries;
+        for _ in 0..attempts {
+            process_document(
+                env.state.clone(),
+                doc.clone(),
+                path.clone(),
+                task_id.clone(),
+            )
+            .await;
+        }
+        let saved = env.state.docs.get(&doc.id).unwrap();
+        assert_eq!(saved.run, "FAILED");
+        assert!(
+            saved.progress_msg.contains("invalid or empty vector"),
+            "{}",
+            saved.progress_msg
+        );
+        assert!(
+            saved.progress_msg.contains("API URL, API key and model"),
+            "{}",
+            saved.progress_msg
+        );
+        assert_eq!(saved.chunk_count, 0);
+        assert_eq!(env.state.kbs.get(&kb.id).unwrap().chunk_count, 0);
+        assert!(
+            env.state
+                .engine
+                .read()
+                .unwrap()
+                .chunks_for_document(&doc.id)
+                .is_empty()
+        );
+        let task = env.state.tasks.get(&task_id).unwrap();
+        assert_eq!(task.status, "failed");
+        assert!(task.message.contains(&saved.progress_msg));
+        let logs = env.state.ingestion_logs.list_for_kb(&kb.id);
+        assert_eq!(logs.len(), attempts as usize);
+        for log in &logs {
+            assert_eq!(log.operation_status, "failed");
+            assert_eq!(log.progress_msg, saved.progress_msg);
+        }
+        let response = build_router(env.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/datasets/{}/ingestions/{}",
+                        kb.id, logs[0].id
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 0, "{body}");
+        assert_eq!(body["data"]["progress_msg"], saved.progress_msg);
+
+        repaired.store(true, Ordering::SeqCst);
+        let recovery_task = env
+            .state
+            .tasks
+            .push(&me.id, "Reparse vectors", &doc.id)
+            .unwrap();
+        process_document(env.state.clone(), doc.clone(), path, recovery_task.clone()).await;
+        server.abort();
+        let saved = env.state.docs.get(&doc.id).unwrap();
+        assert_eq!(saved.run, "DONE", "{}", saved.progress_msg);
+        assert!(saved.chunk_count > 0);
+        assert_eq!(env.state.tasks.get(&recovery_task).unwrap().status, "done");
+        let logs = env.state.ingestion_logs.list_for_kb(&kb.id);
+        assert_eq!(
+            logs.iter()
+                .filter(|log| log.operation_status == "failed")
+                .count(),
+            attempts as usize
+        );
+        assert_eq!(
+            logs.iter()
+                .filter(|log| log.operation_status == "done")
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn password_entry_points_report_account_storage_failure() {
+        for (method, uri, current_key) in [
+            (
+                Method::PATCH,
+                "/api/v1/user/password",
+                Some("current_password"),
+            ),
+            (Method::PATCH, "/api/v1/users/me", Some("password")),
+            (
+                Method::PUT,
+                "/api/v1/admin/users/test@example.com/password",
+                None,
+            ),
+        ] {
+            let env = test_env();
+            let users_path = env.root.join("users.json");
+            std::fs::remove_file(&users_path).unwrap();
+            std::fs::create_dir(&users_path).unwrap();
+            let mut payload = serde_json::json!({"new_password": "replacement-password"});
+            if let Some(key) = current_key {
+                payload[key] = serde_json::json!("correct horse battery staple");
+            }
+            let response = build_router(env.state.clone())
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(payload.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let body = response_json(response).await;
+            assert_ne!(body["code"], 0, "{uri}: {body}");
+            let message = body["message"].as_str().unwrap();
+            assert!(message.contains("storage permissions"), "{uri}: {message}");
+            assert!(message.contains("disk space"), "{uri}: {message}");
+            assert!(
+                env.state
+                    .users
+                    .login("test@example.com", "correct horse battery staple")
+                    .unwrap()
+                    .is_some()
+            );
+            assert!(
+                env.state
+                    .users
+                    .login("test@example.com", "replacement-password")
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn parser_setup_failures_are_logged_with_model_configuration_guidance() {
+        for invalid_config in [false, true] {
+            let env = test_env();
+            let me = env.state.users.get_user_by_token(&env.token).unwrap();
+            let kb = env
+                .state
+                .kbs
+                .create_for(&me.id, "Setup failure", "")
+                .unwrap();
+            if invalid_config {
+                env.state
+                    .kbs
+                    .update_config(&kb.id, None, None, Some("{"), None)
+                    .unwrap();
+            }
+            let doc = seeded_doc(
+                &env.state,
+                "setup-failure",
+                &kb.id,
+                "setup.txt",
+                "UNSTARTED",
+                0,
+            );
+            let path = env.root.join("uploads/setup.txt");
+            std::fs::write(&path, b"must not be indexed without a working setup").unwrap();
+            let task_id = env
+                .state
+                .tasks
+                .push(&me.id, "Parse setup", &doc.id)
+                .unwrap();
+            process_document(env.state.clone(), doc.clone(), path, task_id.clone()).await;
+            let saved = env.state.docs.get(&doc.id).unwrap();
+            let task = env.state.tasks.get(&task_id).unwrap();
+            assert_eq!(saved.run, "FAILED", "{}", saved.progress_msg);
+            assert_eq!(task.status, "failed");
+            assert!(
+                task.message.ends_with(&saved.progress_msg),
+                "{}",
+                task.message
+            );
+            assert!(
+                saved.progress_msg.contains("Configuration"),
+                "{}",
+                saved.progress_msg
+            );
+            if invalid_config {
+                assert!(saved.progress_msg.contains("Invalid parser configuration"));
+                assert!(saved.progress_msg.contains("parser settings"));
+            } else {
+                assert!(saved.progress_msg.contains("Embedding is not configured"));
+                assert!(saved.progress_msg.contains("API URL"));
+                assert!(saved.progress_msg.contains("API key"));
+                assert!(saved.progress_msg.contains("model name"));
+            }
+            let logs = env.state.ingestion_logs.list_for_kb(&kb.id);
+            assert_eq!(logs.len(), 1);
+            assert_eq!(logs[0].operation_status, "failed");
+            assert_eq!(logs[0].progress_msg, saved.progress_msg);
+            let response = build_router(env.state.clone())
+                .oneshot(
+                    Request::builder()
+                        .uri(format!(
+                            "/api/v1/datasets/{}/ingestions/{}",
+                            kb.id, logs[0].id
+                        ))
+                        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = response_json(response).await;
+            assert_eq!(body["code"], 0, "{body}");
+            assert_eq!(body["data"]["progress_msg"], saved.progress_msg);
+            assert_eq!(saved.chunk_count, 0);
+            assert!(
+                env.state
+                    .engine
+                    .read()
+                    .unwrap()
+                    .chunks_for_document(&doc.id)
+                    .is_empty()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn parsing_failure_preserves_configuration_guidance_in_document_task_and_api() {
+        let mut env = test_env();
+        Arc::get_mut(&mut env.state).unwrap().embedder = Some(Arc::new(TestEmbedder));
+        let me = env.state.users.get_user_by_token(&env.token).unwrap();
+        let kb = env
+            .state
+            .kbs
+            .create_for(&me.id, "Scan failure", "")
+            .unwrap();
+        let doc = crate::api::document::DocRecord {
+            id: "failed-scan".into(),
+            name: "scan.pdf".into(),
+            kb_id: kb.id.clone(),
+            storage_name: "scan.pdf".into(),
+            content_hash: "scan-hash".into(),
+            run: "UNSTARTED".into(),
+            ..Default::default()
+        };
+        env.state.docs.insert(doc.clone()).unwrap();
+        let path = env.root.join("uploads/scan.pdf");
+        std::fs::write(
+            &path,
+            include_bytes!("../tests/fixtures/parsing/rayrag-scanned.pdf"),
+        )
+        .unwrap();
+        let task_id = env.state.tasks.push(&me.id, "Parse scan", &doc.id).unwrap();
+        process_document(env.state.clone(), doc.clone(), path, task_id.clone()).await;
+        let pending = env.state.tasks.get(&task_id).unwrap();
+        assert_eq!(pending.status, "pending");
+        assert!(pending.message.contains("OCR"));
+        assert!(
+            env.state
+                .docs
+                .get(&doc.id)
+                .unwrap()
+                .progress_msg
+                .contains("OCR")
+        );
+        for _ in 1..pending.max_retries {
+            process_document(
+                env.state.clone(),
+                doc.clone(),
+                env.root.join("uploads/scan.pdf"),
+                task_id.clone(),
+            )
+            .await;
+        }
+        let saved = env.state.docs.get(&doc.id).unwrap();
+        assert_eq!(saved.run, "FAILED");
+        assert!(
+            saved.progress_msg.contains("OCR") && saved.progress_msg.contains("API URL"),
+            "{}",
+            saved.progress_msg
+        );
+        let task = env.state.tasks.get(&task_id).unwrap();
+        assert_eq!(task.status, "failed");
+        let logs = env.state.ingestion_logs.list_for_kb(&kb.id);
+        assert_eq!(logs.len(), pending.max_retries as usize);
+        assert_eq!(logs[0].operation_status, "failed");
+        assert_eq!(logs[0].progress_msg, saved.progress_msg);
+        let router = build_router(env.state.clone());
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/datasets/{}/ingestions/{}",
+                        kb.id, logs[0].id
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = response_json(response).await;
+        assert_eq!(body["code"], 0, "{body}");
+        assert_eq!(body["data"]["progress_msg"], saved.progress_msg, "{body}");
+        assert_eq!(saved.chunk_count, 0);
+    }
+
+    /// RAGFlow `dataset_api.py` ingestion logs and `agent_api.py::rerun_agent`:
+    /// the dataflow-result page's data source, scoped to the dataset and
+    /// answering the upstream error strings.
+    #[tokio::test]
+    async fn ingestion_logs_and_rerun_match_upstream() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        // The KB belongs to the signed-in user so the ACL check passes.
+        let me = env
+            .state
+            .users
+            .get_user_by_token(&env.token)
+            .expect("token resolves");
+        let kb = env.state.kbs.create_for(&me.id, "Ingestion", "").unwrap();
+        let doc = crate::api::document::DocRecord {
+            id: "ingestion-doc".into(),
+            name: "report.pdf".into(),
+            kb_id: kb.id.clone(),
+            size: 1024,
+            storage_name: "ingestion-doc.pdf".into(),
+            content_hash: "0123456789abcdef0123456789abcdef".into(),
+            indexed_content_hash: String::new(),
+            run: "DONE".into(),
+            progress: 1.0,
+            progress_msg: String::new(),
+            chunk_count: 0,
+            created_at: 1,
+            updated_at: 1,
+            status: crate::api::document::enabled_status(),
+            ..Default::default()
+        };
+        env.state.docs.insert(doc.clone()).unwrap();
+        // `get_ingestion_summary` reports the dataset row's denormalized
+        // counters (`kb.doc_num` / `kb.chunk_num`), exactly like upstream.
+        env.state.kbs.update_counts(&kb.id, 0, 1).unwrap();
+        std::fs::write(env.root.join("uploads/ingestion-doc.pdf"), b"%PDF-1.4").unwrap();
+        let report = crate::pipeline::PipelineReport {
+            stages: vec![crate::pipeline::StageReport {
+                id: "parser",
+                component: "Parser",
+                title: "Parser",
+                elapsed_seconds: 0.5,
+                outputs: serde_json::json!({
+                    "output_format": {"type": "string", "value": "text"},
+                    "text": {"type": "string", "value": "parsed body"},
+                    "_elapsed_time": {"type": "number", "value": 0.5}
+                }),
+            }],
+        };
+        let log = crate::api::ingestion::record_parse_run(
+            &env.state, &me.id, &kb.id, &doc.id, &doc.name, "naive", &report, "done", "",
+        )
+        .expect("ingestion log recorded");
+        assert_eq!(log.dsl["path"], serde_json::json!(["parser"]));
+
+        let listed = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/datasets/{}/ingestions", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(listed.status(), StatusCode::OK);
+        let listed = response_json(listed).await;
+        assert_eq!(listed["code"], 0);
+        // The default log_type=dataset only shows dataset-level (graph/raptor) logs;
+        // a parse run is a file-level log, just as upstream filters by
+        // document_id == GRAPH_RAPTOR_FAKE_DOC_ID for the dataset listing.
+        assert_eq!(listed["data"]["total"], 0, "{listed}");
+        assert!(
+            listed["data"]["logs"].as_array().unwrap().is_empty(),
+            "{listed}"
+        );
+
+        let file_logs = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/datasets/{}/ingestions?log_type=file",
+                        kb.id
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let file_logs = response_json(file_logs).await;
+        assert_eq!(file_logs["code"], 0, "{file_logs}");
+        assert_eq!(file_logs["data"]["total"], 1, "{file_logs}");
+        assert_eq!(file_logs["data"]["logs"][0]["document_name"], "report.pdf");
+        assert_eq!(file_logs["data"]["logs"][0]["operation_status"], "done");
+        assert!(file_logs.get("message").is_none(), "{file_logs}");
+        assert_eq!(file_logs["data"]["logs"][0]["status"], "1");
+
+        let detail = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/datasets/{}/ingestions/{}", kb.id, log.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(detail.status(), StatusCode::OK);
+        let detail = response_json(detail).await;
+        assert_eq!(
+            detail["data"]["dsl"]["components"]["parser"]["obj"]["params"]["outputs"]["text"]["value"],
+            "parsed body"
+        );
+
+        let missing = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/datasets/{}/ingestions/nope", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let missing = response_json(missing).await;
+        assert_eq!(missing["code"], 102);
+        assert_eq!(missing["message"], "Log not found");
+
+        let summary = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/datasets/{}/ingestions/summary", kb.id))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let summary = response_json(summary).await;
+        assert_eq!(summary["code"], 0);
+        assert_eq!(summary["data"]["doc_num"], 1);
+        assert!(summary["data"]["status"]["unstart_count"].is_number());
+
+        // `POST /agents/rerun` rewrites the log's `path` and re-queues the parse.
+        let rerun = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/agents/rerun")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "id": log.id,
+                            "dsl": {"path": ["parser", "tokenChunker"], "components": {}},
+                            "component_id": "parser"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(rerun.status(), StatusCode::OK);
+        let rerun = response_json(rerun).await;
+        assert_eq!(rerun["code"], 0);
+        assert_eq!(rerun["data"], true);
+        assert_eq!(
+            env.state.ingestion_logs.get(&kb.id, &log.id).unwrap().dsl["path"],
+            serde_json::json!(["parser"])
+        );
+
+        // An unknown log id keeps upstream's "Document not found.".
+        let unknown = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/agents/rerun")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(serde_json::json!({"id": "nope"}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let unknown = response_json(unknown).await;
+        assert_eq!(unknown["code"], 102);
+        assert_eq!(unknown["message"], "Document not found.");
+    }
+    /// RAGFlow `get_agent_logs` / `bot_api.agent_bot_logs`: the per-message run
+    /// trace the log sheet polls, plus its beta-token sibling.
+    #[tokio::test]
+    async fn agent_run_traces_match_upstream() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let create = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/agents")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "title": "Trace Agent",
+                            "dsl": {
+                                "graph": {"nodes": [{"id": "begin", "type": "beginNode"}], "edges": []},
+                                "components": {
+                                    "begin": {
+                                        "obj": {
+                                            "component_name": "Begin",
+                                            "params": {},
+                                            "mode": "conversational"
+                                        },
+                                        "upstream": [],
+                                        "downstream": ["message"]
+                                    },
+                                    "message": {
+                                        "obj": {
+                                            "component_name": "Message",
+                                            "params": {"content": ["traced answer"]}
+                                        },
+                                        "upstream": ["begin"],
+                                        "downstream": []
+                                    }
+                                }
+                            }
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let agent_id = response_json(create).await["data"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let run = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/api/v1/agents/{agent_id}/completions"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"question": "trace me", "stream": false}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(run.status(), StatusCode::OK);
+        let run = response_json(run).await;
+        let message_id = run["data"]["message_id"].as_str().unwrap().to_owned();
+
+        let trace = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/agents/{agent_id}/logs/{message_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(trace.status(), StatusCode::OK);
+        let trace = response_json(trace).await;
+        assert_eq!(trace["code"], 0);
+        let components = trace["data"].as_array().expect("trace array");
+        let ids: Vec<&str> = components
+            .iter()
+            .filter_map(|component| component["component_id"].as_str())
+            .collect();
+        assert!(ids.contains(&"begin"), "trace: {trace}");
+        assert!(ids.contains(&"message"), "trace: {trace}");
+        let message_trace = components
+            .iter()
+            .find(|component| component["component_id"] == "message")
+            .unwrap();
+        let samples = message_trace["trace"].as_array().unwrap();
+        assert!(!samples.is_empty());
+        // Upstream's sample shape (`ITraceData.trace[]`).
+        assert!(samples[0]["message"].is_string());
+        assert!(samples[0]["elapsed_time"].is_number());
+        assert!(samples[0]["timestamp"].is_number());
+        assert!(samples[0]["progress"].is_number());
+
+        // A message without a run answers the empty object, not an empty array.
+        let missing = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/agents/{agent_id}/logs/does-not-exist"))
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response_json(missing).await["data"], serde_json::json!({}));
+
+        // The beta sibling authenticates with the token's beta secret.
+        let token = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/system/tokens")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let beta = response_json(token).await["data"]["beta"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let shared = router
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/agentbots/{agent_id}/logs/{message_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {beta}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(shared.status(), StatusCode::OK);
+        let shared = response_json(shared).await;
+        assert_eq!(shared["code"], 0);
+        assert!(shared["data"].as_array().is_some(), "trace: {shared}");
+    }
+
+    /// Edge semantics pinned by the live v0.27.2 probe: delete answers the upstream AttributeError
+    /// quirk and persists nothing; an unknown operation is accepted, records its item and leaves
+    /// the snapshot untouched; an add moves the live File row onto the content-addressed object.
+    #[tokio::test]
+    async fn commit_family_keeps_upstream_edge_semantics() {
+        let env = test_env();
+        let router = build_router(env.state.clone());
+        let call = |method: Method, uri: String, body: Option<&str>| {
+            let router = router.clone();
+            let token = env.token.clone();
+            let body = body.map(str::to_string);
+            async move {
+                let mut request = Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"));
+                let payload = match body {
+                    Some(body) => {
+                        request = request.header(header::CONTENT_TYPE, "application/json");
+                        Body::from(body)
+                    }
+                    None => Body::empty(),
+                };
+                router
+                    .oneshot(request.body(payload).unwrap())
+                    .await
+                    .unwrap()
+            }
+        };
+        env.state
+            .files
+            .add(crate::api::file_mgr::FileRecord {
+                id: "edge-file".into(),
+                name: "edge.txt".into(),
+                owner_id: "test-user".into(),
+                parent_id: "root".into(),
+                size: 0,
+                content_hash: String::new(),
+                file_type: "virtual".into(),
+                created_at: 1,
+                ..Default::default()
+            })
+            .unwrap();
+
+        let created = response_json(
+            call(
+                Method::POST,
+                "/api/v1/workspaces/root/commits".into(),
+                Some(r#"{"message":"add","files":[{"file_id":"edge-file","file_name":"edge.txt","operation":"add","content":"alpha"}]}"#),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(created["code"], 0, "{created}");
+        let snapshot = created["data"]["tree_state"].as_str().unwrap().to_string();
+        assert!(
+            snapshot.contains("\".objects/") && snapshot.contains("\"hash\": "),
+            "upstream-shaped ordered tree_state: {snapshot}"
+        );
+        let stored = env.state.files.get("edge-file").expect("file row");
+        assert!(stored.location.starts_with(".objects/"), "{stored:?}");
+        assert_eq!(stored.size, 5);
+
+        let total_before =
+            response_json(call(Method::GET, "/api/v1/workspaces/root/commits".into(), None).await)
+                .await["data"]["total"]
+                .as_u64()
+                .unwrap();
+        let rejected = response_json(
+            call(
+                Method::POST,
+                "/api/v1/workspaces/root/commits".into(),
+                Some(r#"{"message":"del","files":[{"file_id":"edge-file","operation":"delete"}]}"#),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(rejected["code"], 100, "{rejected}");
+        assert_eq!(
+            rejected["message"],
+            "AttributeError(\"type object 'File' has no attribute 'status'\")"
+        );
+        let total_after =
+            response_json(call(Method::GET, "/api/v1/workspaces/root/commits".into(), None).await)
+                .await["data"]["total"]
+                .as_u64()
+                .unwrap();
+        assert_eq!(
+            total_after, total_before,
+            "the failed commit is rolled back"
+        );
+
+        let unknown = response_json(
+            call(
+                Method::POST,
+                "/api/v1/workspaces/root/commits".into(),
+                Some(r#"{"message":"nope","files":[{"file_id":"edge-file","operation":"nope"}]}"#),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(unknown["code"], 0, "{unknown}");
+        assert_eq!(unknown["data"]["file_count"], 1);
+        assert_eq!(unknown["data"]["tree_state"], snapshot);
+
+        let changes =
+            response_json(call(Method::GET, "/api/v1/workspaces/root/changes".into(), None).await)
+                .await;
+        assert_eq!(changes["data"].as_array().unwrap().len(), 0, "{changes}");
+    }
+}

@@ -197,4 +197,73 @@ pub fn component_sequence(dsl: &Value) -> Vec<String> {
     names
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn registry_serves_the_upstream_catalog_in_order() {
+        let ids: Vec<&str> = list().iter().map(|item| item.id).collect();
+        assert_eq!(
+            ids,
+            vec![
+                "general",
+                "qa",
+                "manual",
+                "table",
+                "paper",
+                "book",
+                "laws",
+                "presentation",
+                "picture",
+                "one",
+                "audio",
+                "email",
+            ]
+        );
+        assert_eq!(list().len(), 12);
+        assert_eq!(list()[0].title, "General");
+        assert!(list()[0].description.contains("token count"));
+        assert_eq!(list()[0].filename, "ingestion_pipeline_general.json");
+    }
+
+    #[test]
+    fn aliases_and_invalid_refs_follow_upstream() {
+        assert!(is_valid("general"));
+        assert!(is_valid("naive"));
+        assert_eq!(get("naive").map(|item| item.id), Some("general"));
+        assert!(get("  qa ").is_some());
+        assert!(!is_valid(""));
+        assert!(!is_valid("knowledge_graph"));
+        assert!(!is_valid("nonexistent"));
+    }
+
+    #[test]
+    fn every_template_carries_a_usable_dsl() {
+        for item in list() {
+            let components = item
+                .dsl
+                .get("components")
+                .and_then(Value::as_object)
+                .unwrap_or_else(|| panic!("{} has no components", item.id));
+            assert!(
+                !components.is_empty(),
+                "{} has an empty component map",
+                item.id
+            );
+            let file = components.values().any(|component| {
+                component
+                    .pointer("/obj/component_name")
+                    .and_then(Value::as_str)
+                    == Some("File")
+            });
+            assert!(file, "{} has no File component", item.id);
+            let sequence = component_sequence(&item.dsl);
+            assert!(
+                sequence.iter().any(|name| name == "Parser"),
+                "{} has no Parser component",
+                item.id
+            );
+        }
+    }
+}

@@ -3141,7 +3141,7 @@ pub async fn kb_detail_page(
     b.push_str(t("Team", zh));
     b.push_str("\"]],'me',false);");
     b.push_str("function syncSliderToNumber(slider,numberId){var el=document.getElementById(numberId);if(el)el.value=slider.value}function syncNumberToSlider(input,sliderId){var el=document.getElementById(sliderId);if(!el)return;var v=parseFloat(input.value);if(isNaN(v))return;var lo=parseFloat(el.min||0),hi=parseFloat(el.max||1);if(v<lo)v=lo;if(v>hi)v=hi;el.value=v}function loadConfig(){avatarDataUrl='';fetch('/api/v1/datasets/'+kbId).then(r=>r.json()).then(function(d){if(d.code!==0)return;var kb=d.data||{};var nm=document.getElementById('cfgName');if(nm)nm.value=kb.name||'';swsSet('cfgPerm',(kb.permission==='team')?'team':'me');var em=document.getElementById('embdSel');if(em&&kb.embd_id){em.dataset.value=kb.embd_id;em.dataset.savedValue=kb.embd_id;var embdField=modelField('embd_id');if(embdField){renderDefaultModelTrigger(embdField);renderDefaultModelTree(embdField)}normalizeDefaultModelStoredValues()}var pc={};try{pc=(typeof kb.parser_config==='string')?JSON.parse(kb.parser_config||'{}'):(kb.parser_config||{})}catch(e){}if(pc.chunk_method)document.getElementById('cfgMethod').value=pc.chunk_method;var tn=parseInt(pc.chunk_token_num,10);if(!isNaN(tn)&&tn>0)document.getElementById('cfgTokenNum').value=tn;var delims=Array.isArray(pc.delimiters)?pc.delimiters:(pc.delimiter?[pc.delimiter]:[]);document.getElementById('cfgDelims').value=delims.join('\\n');var op=parseFloat(pc.overlapped_percent);if(!isNaN(op))document.getElementById('cfgOverlap').value=Math.round(op*100);document.getElementById('cfgAutoKeywords').checked=!!pc.auto_keywords;document.getElementById('cfgAutoQuestions').checked=!!pc.auto_questions;document.getElementById('cfgChildren').checked=!!pc.enable_children;var rerankBox=document.getElementById('cfgRerank');if(rerankBox)rerankBox.checked=!!(pc.rerank||pc.rerank_model);document.getElementById('cfgRaptor').checked=!!(pc.raptorEn||pc.raptor_enabled);document.getElementById('cfgGraph').checked=!!(pc.graphEn||pc.graphrag_enabled);var pr=parseInt(pc.page_rank,10);if(!isNaN(pr))document.getElementById('cfgPageRank').value=pr;var prs=document.getElementById('cfgPageRankSlider');if(prs&&!isNaN(pr))prs.value=pr;var cfgTagFallback=kb.tag_sets||(pc.tag_sets||'');if(cfgTagFallback)document.getElementById('cfgTagSets').value=cfgTagFallback;if(kb.avatar){avatarDataUrl=kb.avatar;var ap=document.getElementById('cfgAvatarPreview');if(ap){ap.src=kb.avatar;ap.style.display='inline-block'}}var tk=parseInt(pc.top_k,10);if(!isNaN(tk)&&tk>0)document.getElementById('cfgTopK').value=tk;var th=parseFloat(pc.similarity_threshold);if(!isNaN(th)){document.getElementById('cfgThreshold').value=th;document.getElementById('cfgThrV').value=th}var vw=parseFloat(pc.vector_similarity_weight);if(!isNaN(vw)){document.getElementById('cfgVector').value=vw;document.getElementById('cfgVecV').value=vw}var pc2={};try{pc2=JSON.parse(kb.prompt_config||'{}')}catch(e){}if((!pc2||!Array.isArray(pc2.cross_languages))&&pc.prompt_config&&Array.isArray(pc.prompt_config.cross_languages)){pc2.cross_languages=pc.prompt_config.cross_languages}if(Array.isArray(pc2.cross_languages)){var lg=document.getElementById('cfgLangs');if(lg)lg.value=pc2.cross_languages.join(',');document.querySelectorAll('.lang-chip').forEach(function(c){if(pc2.cross_languages.indexOf(c.dataset.lang)>=0)c.classList.add('on')})}})};");
-    b.push_str("function syncSliderToNumber(slider,numberId){var el=document.getElementById(numberId);if(el)el.value=slider.value}function syncNumberToSlider(input,sliderId){var el=document.getElementById(sliderId);if(!el)return;var v=parseFloat(input.value);if(isNaN(v))return;var lo=parseFloat(el.min||0),hi=parseFloat(el.max||1);if(v<lo)v=lo;if(v>hi)v=hi;el.value=v}function saveConfig(){var delims=document.getElementById('cfgDelims').value.split('\\n').map(function(s){return s.trim()}).filter(Boolean);if(!delims.length)delims=['\\n'];var body={name:document.getElementById('cfgName').value,description:document.getElementById('cfgDescription').value,permission:(swsValue('cfgPerm')==='team'?'team':'me'),embd_id:(document.getElementById('embdSel').dataset.value||'default'),chunk_method:document.getElementById('cfgMethod').value,chunk_token_num:parseInt(document.getElementById('cfgTokenNum').value,10)||2048,delimiters:delims,overlapped_percent:Math.min(1,Math.max(0,(parseFloat(document.getElementById('cfgOverlap').value)||0)/100)),auto_keywords:document.getElementById('cfgAutoKeywords').checked,auto_questions:document.getElementById('cfgAutoQuestions').checked,enable_children:document.getElementById('cfgChildren').checked,rerank:document.getElementById('cfgRerank').checked,raptorEn:document.getElementById('cfgRaptor').checked,graphEn:document.getElementById('cfgGraph').checked,top_k:parseInt(document.getElementById('cfgTopK').value,10)||10,page_rank:parseInt(document.getElementById('cfgPageRank').value,10)||0,tag_sets:document.getElementById('cfgTagSets').value,avatar:avatarDataUrl,similarity_threshold:parseFloat(document.getElementById('cfgThreshold').value),vector_similarity_weight:parseFloat(document.getElementById('cfgVector').value)};body.prompt_config={cross_languages:(document.getElementById('cfgLangs').value||'').split(',').map(function(x){return x.trim()}).filter(Boolean)};var m=document.getElementById('cfgMsg');if(m){m.textContent='保存中…';m.style.color='var(--tm)'}fetch('/api/v1/datasets/'+kbId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(function(d){if(m){if(d.code===0){m.textContent='已保存';m.style.color='var(--s)'}else{m.textContent='保存失败: '+(d.message||'未知错误');m.style.color='var(--d)'}}})};");
+    b.push_str("function syncSliderToNumber(slider,numberId){var el=document.getElementById(numberId);if(el)el.value=slider.value}function syncNumberToSlider(input,sliderId){var el=document.getElementById(sliderId);if(!el)return;var v=parseFloat(input.value);if(isNaN(v))return;var lo=parseFloat(el.min||0),hi=parseFloat(el.max||1);if(v<lo)v=lo;if(v>hi)v=hi;el.value=v}function saveConfig(){var delims=document.getElementById('cfgDelims').value.split('\\n').map(function(s){return s.trim()}).filter(Boolean);if(!delims.length)delims=['\\n'];var body={name:document.getElementById('cfgName').value,description:document.getElementById('cfgDescription').value,permission:(swsValue('cfgPerm')==='team'?'team':'me'),embd_id:(document.getElementById('embdSel').dataset.value||'default'),chunk_method:document.getElementById('cfgMethod').value,chunk_token_num:parseInt(document.getElementById('cfgTokenNum').value,10)||2048,delimiters:delims,overlapped_percent:Math.min(1,Math.max(0,(parseFloat(document.getElementById('cfgOverlap').value)||0)/100)),auto_keywords:document.getElementById('cfgAutoKeywords').checked,auto_questions:document.getElementById('cfgAutoQuestions').checked,enable_children:document.getElementById('cfgChildren').checked,rerank:document.getElementById('cfgRerank').checked,raptorEn:document.getElementById('cfgRaptor').checked,graphEn:document.getElementById('cfgGraph').checked,top_k:parseInt(document.getElementById('cfgTopK').value,10)||10,page_rank:parseInt(document.getElementById('cfgPageRank').value,10)||0,tag_sets:document.getElementById('cfgTagSets').value,avatar:avatarDataUrl,similarity_threshold:parseFloat(document.getElementById('cfgThreshold').value),vector_similarity_weight:parseFloat(document.getElementById('cfgVector').value)};body.prompt_config={cross_languages:(document.getElementById('cfgLangs').value||'').split(',').map(function(x){return x.trim()}).filter(Boolean)};var m=document.getElementById('cfgMsg');if(m){m.textContent='保存中…';m.style.color='var(--tm)'}fetch('/api/v1/datasets/'+kbId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){if(!r.ok){return r.text().then(function(t){throw new Error('HTTP '+r.status+': '+String(t||'').slice(0,200))})}return r.text().then(function(t){try{return JSON.parse(t)}catch(e){throw new Error('Invalid server response: '+String(t||'').slice(0,200))}})}).then(function(d){if(m){if(d.code===0){m.textContent='已保存';m.style.color='var(--s)'}else{m.textContent='保存失败: '+(d.message||'未知错误');m.style.color='var(--d)'}}}).catch(function(error){if(m){m.textContent='保存失败: '+(error&&error.message||error);m.style.color='var(--d)'}})};");
     b.push_str("function runTest(){var q=document.getElementById('tq').value;if(!q){alert('请输入测试问题');return}var k=parseInt(document.getElementById('tk').value,10);var t=parseFloat(document.getElementById('tt').value);var w=parseFloat(document.getElementById('tw').value);var rerankEl=document.getElementById('testRerankingSel');var rerankingId=rerankEl?rerankEl.dataset.value:'';;var body={question:q,kb_ids:[kbId],top_k:k,similarity_threshold:t,vector_similarity_weight:w,page:1,highlight:true};if(rerankingId)body.rerank_id=rerankingId;var kg=document.getElementById('testUseKg');if(kg&&kg.checked)body.use_kg=true;var cl=document.getElementById('testCrossLangs');if(cl){var picked=[];[].forEach.call(cl.options,function(o){if(o.selected)picked.push(o.value)});if(picked.length)body.cross_languages=picked}document.getElementById('testRes').innerHTML='<p style=color:var(--tm);text-align:center;padding:40px>检索中…</p>';fetch('/api/v1/retrieval',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(resp){return resp.json()}).then(function(d){if(d.code!==0){document.getElementById('testRes').innerHTML='<p style=color:var(--d)>检索失败: '+(d.message||'未知错误')+'</p>';return}var chunks=(d.data&&d.data.chunks)||[];var h='';chunks.forEach(function(c,i){h+='<div class=ri><span class=rs>#'+(i+1)+' · 相似度 '+(c.score||0).toFixed(4)+'</span><div class=rc>'+hl(c.content||'',q)+'</div><div class=rm>'+(c.doc_name||'')+'</div></div>'});document.getElementById('testRes').innerHTML=h||'<p style=color:var(--tm);text-align:center;padding:40px>无匹配结果</p>'}).catch(function(e){document.getElementById('testRes').innerHTML='<p style=color:var(--d)>请求失败: '+e+'</p>'})};");
     b.push_str("function hl(t,q){if(!q)return t;try{return t.replace(new RegExp(q.replace(/[.*+?^${}()|[\\\\]\\\\]/g,'\\\\$&'),'gi'),function(m){return '<mark>'+m+'</mark>'})}catch(e){return t}};");
     // Model options are rendered by the shared default-model tree (the field is a
@@ -4018,7 +4018,7 @@ loadLogs();
     b.push_str("</td><td><select id='cfgPdfParser' style='max-width:280px'><option value='Built-in'>Built-in</option><option value='DeepDOC'>DeepDOC</option></select></td></tr>");
     b.push_str("<tr><td>");
     b.push_str(t("Layout Recognize", zh));
-    b.push_str("</td><td><select id='cfgLayoutRecognize' style='max-width:280px'><option value='Docling'>Docling</option><option value='DeepDOC'>DeepDOC</option><option value='PaddleOCR'>PaddleOCR</option><option value='OpenDataLoader'>OpenDataLoader</option><option value='MinerU'>MinerU</option><option value='SoMark'>SoMark</option><option value='OXR'>OXR</option></select></td></tr>");
+    b.push_str("</td><td><select id='cfgLayoutRecognize' style='max-width:280px'><option value='Docling'>Docling (embedded)</option><option value='DeepDOC'>DeepDOC</option><option value='PaddleOCR'>PaddleOCR</option><option value='OpenDataLoader'>OpenDataLoader</option><option value='MinerU'>MinerU</option><option value='SoMark'>SoMark</option><option value='OXR'>OXR</option></select></td></tr>");
     b.push_str("<tr><td>");
     b.push_str(t("Page Index", zh));
     b.push_str("</td><td><label style='display:flex;align-items:center;gap:6px'><input type='checkbox' id='cfgPageIndex'> ");
@@ -4508,7 +4508,7 @@ function testSearch(){var q=(document.getElementById('testQ').value||'').trim();
     ));
     b.push_str(",'me',false);");
     b.push_str("function syncSliderToNumber(slider,numberId){var el=document.getElementById(numberId);if(el)el.value=slider.value}function syncNumberToSlider(input,sliderId){var el=document.getElementById(sliderId);if(!el)return;var v=parseFloat(input.value);if(isNaN(v))return;var lo=parseFloat(el.min||0),hi=parseFloat(el.max||1);if(v<lo)v=lo;if(v>hi)v=hi;el.value=v}function loadConfig(){avatarDataUrl='';fetch('/api/v1/datasets/'+kbId).then(function(r){return r.json()}).then(function(d){if(d.code!==0)return;var kb=d.data||{};cfgConnectorsFromKb(kb);var nm=document.getElementById('cfgName');if(nm)nm.value=kb.name||'';swsSet('cfgLang',kb.language||'English');swsSet('cfgPerm',(kb.permission==='team')?'team':'me');var em=document.getElementById('embdSel');if(em&&kb.embd_id){em.dataset.value=kb.embd_id;em.dataset.savedValue=kb.embd_id;var embdField=modelField('embd_id');if(embdField){renderDefaultModelTrigger(embdField);renderDefaultModelTree(embdField)}normalizeDefaultModelStoredValues()}var pc={};try{pc=(typeof kb.parser_config==='string')?JSON.parse(kb.parser_config||'{}'):(kb.parser_config||{})}catch(e){}window.__cfgChunkMethod=kb.chunk_method||pc.chunk_method||'general';var parseRadios=document.getElementsByName('cfgParseType');for(var pr=0;pr<parseRadios.length;pr++){parseRadios[pr].checked=(parseRadios[pr].value===(kb.pipeline_id?'2':'1'))}cfgParseTypeChange();var pipelineSelect=document.getElementById('cfgPipelineId');if(pipelineSelect&&kb.pipeline_id){var savedPipeline=document.createElement('option');savedPipeline.value=kb.pipeline_id;savedPipeline.textContent=kb.pipeline_id;pipelineSelect.appendChild(savedPipeline);window.__cfgPipelineId=kb.pipeline_id;pipelineSelect.value=kb.pipeline_id}if(window.__applyChunkMethodSelection)window.__applyChunkMethodSelection();var cs=parseInt(pc.chunk_size,10);if(isNaN(cs))cs=parseInt(pc.chunk_token_num,10);if(!isNaN(cs)&&cs>0){var csSel=document.getElementById('chunkSize');for(var j=0;j<csSel.options.length;j++){if(parseInt(csSel.options[j].value,10)===cs){csSel.selectedIndex=j;break}}}var ovRaw=(pc.overlapped_percent!==undefined&&pc.overlapped_percent!==null)?pc.overlapped_percent:pc.overlap;var ovValue=parseFloat(ovRaw);if(!isNaN(ovValue)){var ovPct=Math.round(ovValue>1?ovValue:ovValue*100);var ov=document.getElementById('overlap');if(ov){for(var k=0;k<ov.options.length;k++){if(parseInt(ov.options[k].value,10)===ovPct){ov.selectedIndex=k;break}}}}if(pc.delimiter)document.getElementById('cfgDelim').value=pc.delimiter;if(pc.parser_type)document.getElementById('cfgParserType').value=pc.parser_type;var cd2=Array.isArray(pc.children_delimiters)?pc.children_delimiters.join('\\n'):'';if(cd2)document.getElementById('cfgChildrenDelims').value=cd2;if(pc.title_levels)document.getElementById('cfgTitleLevels').value=pc.title_levels.join(',');document.getElementById('cfgAutoMeta').checked=!!pc.enable_metadata;var pr=parseInt(pc.page_rank,10);if(!isNaN(pr))document.getElementById('cfgPageRank').value=pr;var prs=document.getElementById('cfgPageRankSlider');if(prs&&!isNaN(pr))prs.value=pr;var cfgTagFallback=kb.tag_sets||(pc.tag_sets||'');if(cfgTagFallback)document.getElementById('cfgTagSets').value=cfgTagFallback;if(kb.avatar){avatarDataUrl=kb.avatar;var ap=document.getElementById('cfgAvatarPreview');if(ap){ap.src=kb.avatar;ap.style.display='inline-block'}}document.getElementById('cfgExcelHtml').checked=!!pc.excel_to_html;if(pc.layout_recognize)document.getElementById('cfgLayoutRecognize').value=pc.layout_recognize;document.getElementById('cfgAutoKeywords').checked=!!pc.auto_keywords;document.getElementById('cfgAutoQuestions').checked=!!pc.auto_questions;document.getElementById('cfgChildren').checked=!!pc.enable_children;var rerankBox=document.getElementById('cfgRerank');if(rerankBox)rerankBox.checked=!!(pc.rerank||pc.rerank_model);document.getElementById('raptorEn').checked=!!(pc.raptorEn||pc.raptor_enabled);var avatarDataUrl='';function onAvatarPick(input){var f=input.files&&input.files[0];if(!f)return;if(f.size>300*1024){alert('Avatar too large (max 300KB)');input.value='';return}var r=new FileReader();r.onload=function(){avatarDataUrl=r.result;var img=document.getElementById('cfgAvatarPreview');if(img){img.src=avatarDataUrl;img.style.display='inline-block'}};r.readAsDataURL(f)}var rd=document.getElementById('raptorDepth');rd.disabled=!document.getElementById('raptorEn').checked;var rth=parseFloat(pc.raptor_threshold);if(!isNaN(rth))document.getElementById('raptorThreshold').value=rth;if(pc.raptor_scope)document.getElementById('raptorScope').value=pc.raptor_scope;if(pc.raptor_prompt)document.getElementById('raptorPrompt').value=pc.raptor_prompt;var rmt=parseInt(pc.raptor_max_token,10);if(!isNaN(rmt))document.getElementById('raptorMaxToken').value=rmt;if(pc.raptor_cluster_method)document.getElementById('raptorCluster').value=pc.raptor_cluster_method;var rmc=parseInt(pc.raptor_max_cluster,10);if(!isNaN(rmc))document.getElementById('raptorMaxCluster').value=rmc;var rseed=parseInt(pc.raptor_random_seed,10);if(!isNaN(rseed))document.getElementById('raptorSeed').value=rseed;var gbs=parseInt(pc.graphrag_batch_chunk_size,10);if(!isNaN(gbs))document.getElementById('graphBatchSize').value=gbs;document.getElementById('graphEntityRes').checked=!!pc.graphrag_entity_resolution;document.getElementById('graphCommReports').checked=!!pc.graphrag_community_reports;if(pc.graphrag_method)document.getElementById('cfgGraphMethod').value=pc.graphrag_method;document.getElementById('graphEn').checked=!!(pc.graphEn||pc.graphrag_enabled);if(pc.entity_types)document.getElementById('cfgEntityTypes').value=pc.entity_types;var tk=parseInt(pc.top_k,10);if(!isNaN(tk)&&tk>0)document.getElementById('cfgTopK').value=tk;var th=parseFloat(pc.similarity_threshold);if(!isNaN(th)){document.getElementById('cfgThreshold').value=th;document.getElementById('cfgThrV').value=th}var vw=parseFloat(pc.vector_similarity_weight);if(!isNaN(vw)){document.getElementById('cfgVector').value=vw;document.getElementById('cfgVecV').value=vw}var pc2={};try{pc2=JSON.parse(kb.prompt_config||'{}')}catch(e){}if((!pc2||!Array.isArray(pc2.cross_languages))&&pc.prompt_config&&Array.isArray(pc.prompt_config.cross_languages)){pc2.cross_languages=pc.prompt_config.cross_languages}if(Array.isArray(pc2.cross_languages)){var lg=document.getElementById('cfgLangs');if(lg)lg.value=pc2.cross_languages.join(',');document.querySelectorAll('.lang-chip').forEach(function(c){if(pc2.cross_languages.indexOf(c.dataset.lang)>=0)c.classList.add('on')})}})};");
-    b.push_str("function saveConfig(){var zhMsg=(document.documentElement.lang||'').toLowerCase().indexOf('zh')>=0;var cfgVal=function(id,fallback){var el=document.getElementById(id);return el?el.value:(fallback===undefined?'':fallback)};var cfgBool=function(id){var el=document.getElementById(id);return !!(el&&el.checked)};var cfgNum=function(id,fallback){var value=parseFloat(cfgVal(id,''));return isNaN(value)?fallback:value};var cfgList=function(text){return String(text||'').split(',').map(function(item){return item.trim()}).filter(Boolean)};var delimiterList=String(cfgVal('cfgChildrenDelims','')).split(String.fromCharCode(10));var firstChildDelimiter=delimiterList.length?delimiterList[0]:'';var cfgParseType=document.querySelector('input[name=cfgParseType]:checked');var parseType=cfgParseType?cfgParseType.value:'1';var firstChildDelimiter=delimiterList.length?delimiterList[0]:'';var cfgDelimiter=cfgVal('cfgDelim','')||String.fromCharCode(10);var pc={chunk_token_num:parseInt(cfgVal('chunkSize','512'),10)||512,overlapped_percent:Math.min(1,Math.max(0,(parseFloat(String(cfgVal('overlap','0%')).replace('%',''))||0)/100)),delimiter:cfgDelimiter,layout_recognize:cfgVal('cfgLayoutRecognize'),parser_type:cfgVal('cfgParserType'),pdf_parser:cfgVal('cfgPdfParser'),page_index:cfgBool('cfgPageIndex'),image_context_size:parseInt(cfgVal('cfgImgTableWin','5'),10)||5,table_context_size:parseInt(cfgVal('cfgImgTableWin','5'),10)||5,html4excel:cfgBool('cfgExcelHtml'),auto_keywords:cfgBool('cfgAutoKeywords')?1:0,auto_questions:cfgBool('cfgAutoQuestions')?1:0,enable_children:cfgBool('cfgChildren'),children_delimiter:firstChildDelimiter,parent_child:{use_parent_child:cfgBool('cfgChildren'),children_delimiter:firstChildDelimiter},title_levels:cfgList(cfgVal('cfgTitleLevels','')),enable_metadata:cfgBool('cfgAutoMeta'),topn_tags:3,top_k:parseInt(cfgVal('cfgTopK','10'),10)||10,similarity_threshold:cfgNum('cfgThreshold',0.2),vector_similarity_weight:cfgNum('cfgVector',0.3),tag_sets:cfgVal('cfgTagSets',''),prompt_config:{cross_languages:cfgList(cfgVal('cfgLangs',''))}};var raptor={use_raptor:cfgBool('raptorEn'),max_token:parseInt(cfgVal('raptorMaxToken','1024'),10)||1024,clustering_threshold:cfgNum('raptorThreshold',0.1),random_seed:parseInt(cfgVal('raptorSeed','0'),10)||0};var raptorPrompt=cfgVal('raptorPrompt','');if(raptorPrompt)raptor.prompt=raptorPrompt;var raptorScope=(cfgVal('raptorScope','')||'').toLowerCase();if(raptorScope)raptor.scope=raptorScope;pc.raptor=raptor;var entityTypes=cfgList(cfgVal('cfgEntityTypes',''));var graphMethod=(cfgVal('cfgGraphMethod','')||'light').toLowerCase();pc.graphrag={use_graphrag:cfgBool('graphEn'),method:graphMethod,entity_types:entityTypes,community:cfgBool('graphCommReports'),resolution:cfgBool('graphEntityRes'),batch_chunk_token_size:parseInt(cfgVal('graphBatchSize','8196'),10)||8196};var body={name:cfgVal('cfgName'),description:cfgVal('cfgDescription'),permission:(swsValue('cfgPerm')==='team'?'team':'me'),embd_id:(document.getElementById('embdSel')&&document.getElementById('embdSel').dataset.value)||'default',language:swsValue('cfgLang'),avatar:avatarDataUrl,pagerank:parseInt(cfgVal('cfgPageRank','0'),10)||0,parser_config:pc};body.connectors=cfgConnectorPayload();var m=document.getElementById('cfgMsg');if(parseType==='2'){var pipelineSelect=document.getElementById('cfgPipelineId');var savedPipelineId=pipelineSelect?pipelineSelect.value:'';if(!savedPipelineId){if(m){m.textContent=(zhMsg?'请先选择一个数据管道。':'Choose a data pipeline first.');m.style.color='var(--d)'}return}body.parse_type=2;body.pipeline_id=savedPipelineId}else{body.parse_type=1;body.chunk_method=cfgVal('chunkMethod','general')}if(m){m.textContent=(zhMsg?'保存中…':'Saving…');m.style.color='var(--tm)'}fetch('/api/v1/datasets/'+kbId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json()}).then(function(d){if(m){if(d.code===0){m.textContent=(zhMsg?'已保存':'Saved');m.style.color='var(--s)'}else{m.textContent=(zhMsg?'保存失败: ':'Save failed: ')+(d.message||(zhMsg?'未知错误':'Unknown error'));m.style.color='var(--d)'}}})};");
+    b.push_str("function saveConfig(){var zhMsg=(document.documentElement.lang||'').toLowerCase().indexOf('zh')>=0;var cfgVal=function(id,fallback){var el=document.getElementById(id);return el?el.value:(fallback===undefined?'':fallback)};var cfgBool=function(id){var el=document.getElementById(id);return !!(el&&el.checked)};var cfgNum=function(id,fallback){var value=parseFloat(cfgVal(id,''));return isNaN(value)?fallback:value};var cfgList=function(text){return String(text||'').split(',').map(function(item){return item.trim()}).filter(Boolean)};var delimiterList=String(cfgVal('cfgChildrenDelims','')).split(String.fromCharCode(10));var firstChildDelimiter=delimiterList.length?delimiterList[0]:'';var cfgParseType=document.querySelector('input[name=cfgParseType]:checked');var parseType=cfgParseType?cfgParseType.value:'1';var firstChildDelimiter=delimiterList.length?delimiterList[0]:'';var cfgDelimiter=cfgVal('cfgDelim','')||String.fromCharCode(10);var pc={chunk_token_num:parseInt(cfgVal('chunkSize','512'),10)||512,overlapped_percent:Math.min(1,Math.max(0,(parseFloat(String(cfgVal('overlap','0%')).replace('%',''))||0)/100)),delimiter:cfgDelimiter,layout_recognize:cfgVal('cfgLayoutRecognize'),parser_type:cfgVal('cfgParserType'),pdf_parser:cfgVal('cfgPdfParser'),page_index:cfgBool('cfgPageIndex'),image_context_size:parseInt(cfgVal('cfgImgTableWin','5'),10)||5,table_context_size:parseInt(cfgVal('cfgImgTableWin','5'),10)||5,html4excel:cfgBool('cfgExcelHtml'),auto_keywords:cfgBool('cfgAutoKeywords')?1:0,auto_questions:cfgBool('cfgAutoQuestions')?1:0,enable_children:cfgBool('cfgChildren'),children_delimiter:firstChildDelimiter,parent_child:{use_parent_child:cfgBool('cfgChildren'),children_delimiter:firstChildDelimiter},title_levels:cfgList(cfgVal('cfgTitleLevels','')),enable_metadata:cfgBool('cfgAutoMeta'),topn_tags:3,top_k:parseInt(cfgVal('cfgTopK','10'),10)||10,similarity_threshold:cfgNum('cfgThreshold',0.2),vector_similarity_weight:cfgNum('cfgVector',0.3),tag_sets:cfgVal('cfgTagSets',''),prompt_config:{cross_languages:cfgList(cfgVal('cfgLangs',''))}};var raptor={use_raptor:cfgBool('raptorEn'),max_token:parseInt(cfgVal('raptorMaxToken','1024'),10)||1024,clustering_threshold:cfgNum('raptorThreshold',0.1),random_seed:parseInt(cfgVal('raptorSeed','0'),10)||0};var raptorPrompt=cfgVal('raptorPrompt','');if(raptorPrompt)raptor.prompt=raptorPrompt;var raptorScope=(cfgVal('raptorScope','')||'').toLowerCase();if(raptorScope)raptor.scope=raptorScope;pc.raptor=raptor;var entityTypes=cfgList(cfgVal('cfgEntityTypes',''));var graphMethod=(cfgVal('cfgGraphMethod','')||'light').toLowerCase();pc.graphrag={use_graphrag:cfgBool('graphEn'),method:graphMethod,entity_types:entityTypes,community:cfgBool('graphCommReports'),resolution:cfgBool('graphEntityRes'),batch_chunk_token_size:parseInt(cfgVal('graphBatchSize','8196'),10)||8196};var body={name:cfgVal('cfgName'),description:cfgVal('cfgDescription'),permission:(swsValue('cfgPerm')==='team'?'team':'me'),embd_id:(document.getElementById('embdSel')&&document.getElementById('embdSel').dataset.value)||'default',language:swsValue('cfgLang'),avatar:avatarDataUrl,pagerank:parseInt(cfgVal('cfgPageRank','0'),10)||0,parser_config:pc};body.connectors=cfgConnectorPayload();var m=document.getElementById('cfgMsg');if(parseType==='2'){var pipelineSelect=document.getElementById('cfgPipelineId');var savedPipelineId=pipelineSelect?pipelineSelect.value:'';if(!savedPipelineId){if(m){m.textContent=(zhMsg?'请先选择一个数据管道。':'Choose a data pipeline first.');m.style.color='var(--d)'}return}body.parse_type=2;body.pipeline_id=savedPipelineId}else{body.parse_type=1;body.chunk_method=cfgVal('chunkMethod','general')}if(m){m.textContent=(zhMsg?'保存中…':'Saving…');m.style.color='var(--tm)'}cfgJsonFetch('/api/v1/datasets/'+kbId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(d){if(m){if(d.code===0){m.textContent=(zhMsg?'已保存':'Saved');m.style.color='var(--s)'}else{m.textContent=(zhMsg?'保存失败: ':'Save failed: ')+(d.message||(zhMsg?'未知错误':'Unknown error'));m.style.color='var(--d)'}}}).catch(function(error){if(m){m.textContent=(zhMsg?'保存失败: ':'Save failed: ')+(error&&error.message||error);m.style.color='var(--d)'}})};");
     b.push_str("function toggleLang(btn){btn.classList.toggle('on');var sel=[];document.querySelectorAll('.lang-chip.on').forEach(function(x){sel.push(x.dataset.lang)});var h=document.getElementById('cfgLangs');if(h)h.value=sel.join(',');}
 function toggleChunkOptions(){var m=document.getElementById('chunkMethod').value;var show=['naive','manual'].indexOf(m)>=0;document.getElementById('chunkSizeRow').style.display=show?'':'none';document.getElementById('overlapRow').style.display=show?'':'none'};document.getElementById('raptorEn').onchange=function(){document.getElementById('raptorDepth').disabled=!this.checked};");
     b.push_str("function kgRenderGraph(g){if(!g)return '';var nodes=g.nodes||[];var edges=g.edges||[];var h='<p style=margin:0 0 10px><strong>'+nodes.length+'</strong> nodes / <strong>'+edges.length+'</strong> edges</p>';if(!nodes.length){h+='<p style=color:var(--tm)>");
@@ -4689,7 +4689,7 @@ function cfgConnectorPayload(){return CFG_CONNECTORS.map(function(item){return {
 function cfgLinkStatus(text,error){var node=document.getElementById('cfgLinkStatus');if(!node)return;node.textContent=text||'';node.style.color=error?'var(--d)':'var(--tm)'}
 function cfgIconButton(action,className,title,svg,handler){var button=document.createElement('button');button.type='button';button.className=className;button.title=title;button.setAttribute('aria-label',title);button.setAttribute('data-action',action);button.innerHTML=svg;button.addEventListener('click',function(event){event.stopPropagation();handler()});return button}
 function cfgRenderLinkedSources(){var host=document.getElementById('cfgLinkedSources');if(!host)return;host.replaceChildren();CFG_CONNECTORS.forEach(function(item,index){var info=cfgSourceInfo(item.source);var row=document.createElement('div');row.className='cfg-linked-source';row.dataset.testid='dataset-linked-source';row.dataset.sourceId=item.id;var main=document.createElement('div');main.className='cfg-linked-source-main';main.appendChild(cfgSourceIconEl(info,'cfg-linked-source-icon'));var type=document.createElement('span');type.className='cfg-linked-source-type';type.textContent=info.name;main.appendChild(type);var name=document.createElement('span');name.className='cfg-linked-source-name';name.textContent=item.name||item.id;main.appendChild(name);var actions=document.createElement('div');actions.className='cfg-linked-source-actions';var auto=document.createElement('label');auto.className='cfg-linked-source-auto';var autoText=document.createElement('span');autoText.textContent=CFG_DS_LABELS.autoParse;auto.appendChild(autoText);var toggle=document.createElement('input');toggle.type='checkbox';toggle.setAttribute('role','switch');toggle.checked=item.auto_parse!=='0';toggle.setAttribute('aria-label',CFG_DS_LABELS.autoParse);toggle.dataset.testid='dataset-linked-source-auto-parse';toggle.addEventListener('change',function(){CFG_CONNECTORS[index].auto_parse=toggle.checked?'1':'0'});auto.appendChild(toggle);actions.appendChild(auto);actions.appendChild(cfgIconButton('rebuild','cfg-icon-btn',CFG_DS_LABELS.rebuild,__REBUILD_ICON__,function(){cfgRebuildLinkedSource(item.id)}));actions.appendChild(cfgIconButton('settings','cfg-icon-btn',CFG_DS_LABELS.settings,__SETTINGS_ICON__,function(){window.location.href='/user-setting/data-source/'+encodeURIComponent(item.id)}));actions.appendChild(cfgIconButton('unlink','cfg-icon-btn cfg-icon-danger',CFG_DS_LABELS.unlink,__UNLINK_ICON__,function(){cfgRequestUnlink(item.id)}));row.append(main,actions);host.appendChild(row)})}
-function cfgJsonResponse(response){return response.text().then(function(text){var data=null;try{data=JSON.parse(text)}catch(error){throw new Error(response.ok?('无效的服务器响应：'+String(text||'').slice(0,200)):('HTTP '+response.status+'：'+String(text||'').slice(0,200)))}if(!response.ok)throw new Error((data&&data.message)||('HTTP '+response.status));return data})}function cfgJsonFetch(url,options){return fetch(url,options).then(cfgJsonResponse)}function cfgRebuildLinkedSource(id){cfgLinkStatus(CFG_DS_LABELS.syncing,false);cfgJsonFetch('/api/v1/data_sources/'+encodeURIComponent(id)+'/sync?async=1&kb_id='+encodeURIComponent(kbId),{method:'POST'}).then(function(data){if(!data||data.code!==0){cfgLinkStatus(CFG_DS_LABELS.syncFailed+' '+((data&&data.message)||''),true);return}cfgLinkStatus(CFG_DS_LABELS.syncing,false);var tries=0;var timer=setInterval(function(){tries++;cfgJsonFetch('/api/v1/data_sources/'+encodeURIComponent(id)).then(function(source){var status=String((source&&source.data&&source.data.status)||'').toLowerCase();if(status==='running'){if(tries>=150){clearInterval(timer);cfgLinkStatus(CFG_DS_LABELS.syncFailed,true)}return}clearInterval(timer);cfgJsonFetch('/api/v1/data_sources/'+encodeURIComponent(id)+'/logs?page=1&page_size=1').then(function(logs){var log=((logs&&logs.data&&logs.data.logs)||[])[0]||{};var failed=String(log.status||'').toUpperCase()==='FAIL';if(failed){cfgLinkStatus(CFG_DS_LABELS.syncFailed+' '+(log.error_msg||''),true);return}var count=Number(log.total_docs_indexed||0);cfgLinkStatus(CFG_DS_LABELS.synced.split('{count}').join(String(count)),false)}).catch(function(error){cfgLinkStatus(String(error),true)})}).catch(function(error){clearInterval(timer);cfgLinkStatus(String(error),true)})},2000)}).catch(function(error){cfgLinkStatus(String(error),true)})}
+function cfgJsonResponse(response){return response.text().then(function(text){var data=null;try{data=JSON.parse(text)}catch(error){throw new Error(response.ok?('无效的服务器响应：'+String(text||'').slice(0,200)):('HTTP '+response.status+'：'+String(text||'').slice(0,200)))}if(!response.ok)throw new Error((data&&data.message)||('HTTP '+response.status));return data})}function cfgJsonFetch(url,options){return fetch(url,options).then(cfgJsonResponse)}function cfgRebuildLinkedSource(id){cfgLinkStatus(CFG_DS_LABELS.syncing,false);cfgJsonFetch('/api/v1/data_sources/'+encodeURIComponent(id)+'/sync?async=1&kb_id='+encodeURIComponent(kbId),{method:'POST'}).then(function(data){if(!data||data.code!==0){cfgLinkStatus(CFG_DS_LABELS.syncFailed+' '+((data&&data.message)||''),true);return}cfgLinkStatus(CFG_DS_LABELS.syncing,false);var tries=0;var timer=setInterval(function(){tries++;cfgJsonFetch('/api/v1/data_sources/'+encodeURIComponent(id)).then(function(source){var status=String((source&&source.data&&source.data.status)||'').toLowerCase();if(status==='running'||status==='schedule'){if(tries>=900){clearInterval(timer);cfgLinkStatus(CFG_DS_LABELS.syncFailed,true)}return}clearInterval(timer);cfgJsonFetch('/api/v1/data_sources/'+encodeURIComponent(id)+'/logs?page=1&page_size=1').then(function(logs){var log=((logs&&logs.data&&logs.data.logs)||[])[0]||{};var failed=String(log.status||'').toUpperCase()==='FAIL';if(failed){cfgLinkStatus(CFG_DS_LABELS.syncFailed+' '+(log.error_msg||''),true);return}var count=Number(log.total_docs_indexed||0);cfgLinkStatus(CFG_DS_LABELS.synced.split('{count}').join(String(count)),false)}).catch(function(error){cfgLinkStatus(String(error),true)})}).catch(function(error){clearInterval(timer);cfgLinkStatus(String(error),true)})},2000)}).catch(function(error){cfgLinkStatus(String(error),true)})}
 function cfgRequestUnlink(id){var item=null;CFG_CONNECTORS.forEach(function(entry){if(entry.id===id)item=entry});if(!item)return;var nameNode=document.getElementById('cfgUnlinkName');if(nameNode)nameNode.textContent=item.name||item.id;var modal=document.getElementById('cfgUnlinkModal');if(modal){modal.dataset.sourceId=id;modal.classList.add('show')}else{cfgRemoveLinkedSource(id)}}
 function cfgCancelUnlink(){var modal=document.getElementById('cfgUnlinkModal');if(modal)modal.classList.remove('show')}
 function cfgConfirmUnlink(){var modal=document.getElementById('cfgUnlinkModal');var id=modal?modal.dataset.sourceId:'';if(modal)modal.classList.remove('show');if(id)cfgRemoveLinkedSource(id)}
@@ -8099,7 +8099,7 @@ pub async fn datasources_page(
     b.push_str("function connDs(id){document.getElementById('dsPreview').textContent=(window.DS_ZH?'连接中…':'Connecting...');fetch('/api/v1/data_sources/'+id+'/connect',{method:'POST'}).then(function(r){return r.json()}).then(function(d){document.getElementById('dsPreview').textContent=d.code===0?(window.DS_ZH?'已连接 ✓':'Connected ✓'):((window.DS_ZH?'连接失败：':'Connect failed: '))+(d.message||'unknown');loadDs();});}");
     b.push_str("function discDs(id){fetch('/api/v1/data_sources/'+id+'/disconnect',{method:'POST'}).then(function(r){return r.json()}).then(function(d){document.getElementById('dsPreview').textContent=d.code===0?(window.DS_ZH?'已断开连接':'Disconnected'):((window.DS_ZH?'断开失败：':'Disconnect failed: '))+(d.message||'unknown');loadDs();});}");
     b.push_str("function listDs(id){document.getElementById('dsPreview').textContent=(window.DS_ZH?'列出中…':'Listing...');fetch('/api/v1/data_sources/'+id+'/files',{method:'POST'}).then(function(r){return r.json()}).then(function(d){if(d.code===0){var x=d.data||{};var h='<b>'+x.count+(window.DS_ZH?' 个文件</b><table><tr><th>名称</th><th>扩展名</th><th>大小</th><th>更新时间</th></tr>':' files</b><table><tr><th>Name</th><th>Ext</th><th>Size</th><th>Updated</th></tr>');(x.files||[]).forEach(function(f){h=h+'<tr><td>'+(f.name||'')+'</td><td>'+(f.extension||'')+'</td><td>'+(f.size_bytes||0)+'</td><td>'+(f.updated_at||'')+'</td></tr>';});document.getElementById('dsPreview').innerHTML=h+'</table>';}else{document.getElementById('dsPreview').textContent=(window.DS_ZH?'列出失败：':'List failed: ')+(d.message||'unknown');}});}");
-    b.push_str("function syncDs(id){document.getElementById('dsPreview').textContent=(window.DS_ZH?'同步中…':'Syncing...');var kb=document.getElementById('dsKb').value||'';var base='/api/v1/data_sources/'+id+'/sync?async=1'+(kb?('&kb_id='+encodeURIComponent(kb)):'');fetch(base,{method:'POST'}).then(function(r){return r.json()}).then(function(d){if(d.code!==0)throw new Error(d.message||'sync failed');document.getElementById('dsPreview').textContent=(window.DS_ZH?'同步已在后台启动，打开详情可查看日志':'Sync started in the background; open Details to watch logs');setTimeout(loadDs,600);var tries=0;var timer=setInterval(function(){tries++;fetch('/api/v1/data_sources/'+id).then(function(r){return r.json()}).then(function(s){var st=String((s.data&&s.data.status)||'').toLowerCase();if(st!=='running'){clearInterval(timer);loadDs();document.getElementById('dsPreview').textContent=(window.DS_ZH?(st==='fail'?'同步失败':'同步完成')+'，打开详情查看日志':'Sync '+(st==='fail'?'failed':'finished')+' - open Details for logs')}else if(tries>=150){clearInterval(timer)}}).catch(function(){})},2000)}).catch(function(e){document.getElementById('dsPreview').textContent=(window.DS_ZH?'同步失败：':'Sync failed: ')+String(e.message||e)})}");
+    b.push_str("function syncDs(id){document.getElementById('dsPreview').textContent=(window.DS_ZH?'同步中…':'Syncing...');var kb=document.getElementById('dsKb').value||'';var base='/api/v1/data_sources/'+id+'/sync?async=1'+(kb?('&kb_id='+encodeURIComponent(kb)):'');fetch(base,{method:'POST'}).then(function(r){if(!r.ok){return r.text().then(function(t){throw new Error('HTTP '+r.status+': '+String(t||'').slice(0,200))})}return r.json()}).then(function(d){if(d.code!==0)throw new Error(d.message||'sync failed');document.getElementById('dsPreview').textContent=(window.DS_ZH?'同步已在后台启动，打开详情可查看日志':'Sync started in the background; open Details to watch logs');setTimeout(loadDs,600);var tries=0;var timer=setInterval(function(){tries++;fetch('/api/v1/data_sources/'+id).then(function(r){return r.json()}).then(function(s){var st=String((s.data&&s.data.status)||'').toLowerCase();if(st!=='running'&&st!=='schedule'){clearInterval(timer);loadDs();document.getElementById('dsPreview').textContent=(window.DS_ZH?(st==='fail'?'同步失败':'同步完成')+'，打开详情查看日志':'Sync '+(st==='fail'?'failed':'finished')+' - open Details for logs')}else if(tries>=900){clearInterval(timer)}}).catch(function(){})},2000)}).catch(function(e){document.getElementById('dsPreview').textContent=(window.DS_ZH?'同步失败：':'Sync failed: ')+String(e.message||e)})}");
     b.push_str("function delDs(id){if(typeof openDsDelete==='function'){openDsDelete(id,id,'');return}if(typeof confirmDsDelete==='function'){DS_DELETE_ID=id;confirmDsDelete()}}loadKbs();loadDs();</script>");
     let schema = serde_json::to_string(&crate::data_source::form_fields::schema_for_ui())
         .unwrap_or_else(|_| "{}".to_string());
@@ -8210,7 +8210,7 @@ function dsCustomSelect(field,onChange){
 function dsTooltip(host,text){if(!text)return;var trigger=document.createElement('span');trigger.className='ds-tip-trigger';trigger.tabIndex=0;trigger.setAttribute('role','button');trigger.setAttribute('aria-label',text);trigger.textContent='?';var popup=document.createElement('span');popup.className='ds-tip-popup';popup.setAttribute('role','tooltip');popup.textContent=text;trigger.addEventListener('mouseenter',function(){popup.classList.add('show')});trigger.addEventListener('mouseleave',function(){popup.classList.remove('show')});trigger.addEventListener('focus',function(){popup.classList.add('show')});trigger.addEventListener('blur',function(){popup.classList.remove('show')});trigger.addEventListener('keydown',function(event){if(event.key==='Escape')popup.classList.remove('show')});host.appendChild(trigger);host.appendChild(popup)}
 function dsBuildPanel(field){var box=document.createElement('div');box.className='ds-panel';box.dataset.panel=field.name;var lines=((window.DS_ZH&&field.panel_zh)?field.panel_zh:field.panel_en||'').split('\n');lines.forEach(function(line,index){if(!line.trim())return;var node=document.createElement('p');node.className=index===0?'ds-panel-heading':'ds-panel-line';node.textContent=line;box.appendChild(node)});return box}
 function dsValidate(){var failures=[];(DS_SCHEMA_FIELDS||[]).forEach(function(field){(field.validate||[]).forEach(function(rule){var applies=(!rule.when||!rule.when.length||rule.when.every(dsConditionMatches))&&(!rule.when_any||!rule.when_any.length||rule.when_any.some(function(group){return group.every(dsConditionMatches)}));if(!applies)return;var ok;if(rule.require==='any_of'){ok=(rule.targets||[]).some(function(name){return String(dsFieldValue(name)).trim()!==''})}else{ok=String(dsFieldValue(rule.field)).trim()!==''}if(!ok)failures.push(rule)})});return failures}
-function dsBuildField(field){var checkbox=field.type==='Checkbox'||field.type==='Switch';var wrap=document.createElement('label');wrap.className=checkbox?'provider-instance-switch':'provider-instance-field';var span=document.createElement('span');span.textContent=field.label+(field.required?' *':'');wrap.appendChild(span);dsTooltip(span,dsTooltipText(field));if(checkbox){var check=document.createElement('input');check.type='checkbox';check.addEventListener('change',function(){dsMarkDirty();dsRefreshVisibility()});wrap.appendChild(check);return wrap}var input;if(field.type==='Select'&&field.allow_custom){var host=dsCustomSelect(field,function(){dsMarkDirty();dsRefreshVisibility()});wrap.appendChild(host);return wrap}else if(field.type==='Select'){input=document.createElement('select');(field.options||[]).forEach(function(option){var node=document.createElement('option');node.value=option.value;node.textContent=option.label;input.appendChild(node)});if(!field.required){var blank=document.createElement('option');blank.value='';blank.textContent=(window.DS_ZH?'请选择':'Please select');input.prepend(blank)}input.addEventListener('change',function(){dsMarkDirty();dsRefreshVisibility()})}else if(field.type==='Textarea'){input=document.createElement('textarea');input.rows=4;input.addEventListener('input',function(){dsMarkDirty();dsRefreshVisibility()})}else if(field.type==='Segmented'){input=document.createElement('input');input.type='hidden';var segment=document.createElement('div');segment.className='ds-segment';(field.options||[]).forEach(function(option){var button=document.createElement('button');button.type='button';button.textContent=option.label;button.dataset.value=option.value;button.addEventListener('click',function(){input.value=option.value;segment.querySelectorAll('button').forEach(function(node){node.setAttribute('aria-checked',String(node===button))});dsMarkDirty();dsRefreshVisibility()});segment.appendChild(button)});wrap.appendChild(input);wrap.appendChild(segment);wrap._seg=segment;return wrap}else{input=document.createElement('input');input.type=field.type==='Password'?'password':field.type==='Number'?'number':'text';if(input.type==='number')input.step='any';if(field.type==='Password')input.autocomplete='new-password';if(field.placeholder)input.placeholder=field.placeholder;input.addEventListener('input',function(){dsMarkDirty();dsRefreshVisibility()})}wrap.appendChild(input);return wrap}function dsBuildFields(){var root=document.getElementById('dsDynamicFields');DS_SCHEMA_FIELDS.forEach(function(field){if(field.type==='Custom'){var panel=dsBuildPanel(field);DS_PANELS[field.name]=panel;root.appendChild(panel);return}var wrap=dsBuildField(field);DS_WRAPS[field.name]=wrap;root.appendChild(wrap)})}function dsBuildPayload(){var payload={name:document.getElementById('dsDetailName').value.trim(),sync_deleted_files:document.getElementById('dsDetailSyncDeleted').checked,prune_freq:Number(document.getElementById('dsDetailPrune').value)||0,refresh_freq:Number(document.getElementById('dsDetailRefresh').value)||0,timeout_secs:Number(document.getElementById('dsDetailTimeout').value)||0};if(DS_SCHEMA_FIELDS.length){var failures=dsValidate();if(failures.length){dsStatus((window.DS_ZH&&failures[0].message_zh)?failures[0].message_zh:failures[0].message_en,true);return null}var config={};DS_SCHEMA_FIELDS.forEach(function(field){if(field.type==='Custom')return;dsSet(config,field.name,dsFieldValue(field.name))});payload.config=config}else{payload.url=document.getElementById('dsDetailUrl').value.trim();payload.target=document.getElementById('dsDetailTarget').value.trim();var token=document.getElementById('dsDetailToken').value;var clear=document.getElementById('dsDetailClearToken');if(clear&&clear.checked){payload.token=''}else if(token){payload.token=token}}return payload}function dsActionMode(){var status=(DS_RECORD&&DS_RECORD.status||'unstart').toLowerCase();if(DS_DIRTY)return 'save';if(status==='unstart')return 'save';if(status==='running'||status==='schedule')return 'stop';return 'resume'}function dsUpdatePrimary(){var mode=dsActionMode();var button=document.getElementById('dsDetailPrimary');button.dataset.mode=mode;button.textContent=(window.DS_ZH?(mode==='save'?'保存':(mode==='stop'?'停止':'恢复')):(mode==='save'?'Save':(mode==='stop'?'Stop':'Resume')))}function dsStatus(text,error){var status=document.getElementById('dsDetailStatus');status.textContent=text||'';status.style.color=error?'var(--d)':'var(--tm)'}var DS_LOGS={page:1,pageSize:10,total:0,rows:[]};var DS_LOG_TICK=null;function dsLogStatusBadge(status){var map=window.DS_ZH?{UNSTART:['待处理','bw'],'0':['待处理','bw'],RUNNING:['运行中','bi'],'1':['运行中','bi'],CANCEL:['已取消','bw'],'2':['已取消','bw'],DONE:['成功','bs'],'3':['成功','bs'],FAIL:['失败','bw'],'4':['失败','bw'],SCHEDULE:['已排期','bi'],'5':['已排期','bi']}:{UNSTART:['Pending','bw'],'0':['Pending','bw'],RUNNING:['Running','bi'],'1':['Running','bi'],CANCEL:['Cancel','bw'],'2':['Cancel','bw'],DONE:['Success','bs'],'3':['Success','bs'],FAIL:['Failed','bw'],'4':['Failed','bw'],SCHEDULE:['Schedule','bi'],'5':['Schedule','bi']};var entry=map[status]||[status||'Unknown','bw'];var badge=document.createElement('span');badge.className='badge '+entry[1];if(status==='FAIL'||status==='4')badge.style.color='var(--d)';badge.textContent=entry[0];return badge}function dsFormatDuration(seconds){seconds=Math.max(0,seconds);var hours=Math.floor(seconds/3600);var minutes=Math.floor((seconds%3600)/60);var remaining=seconds%60;if(hours>0)return hours+'h '+minutes+'m '+remaining+'s';if(minutes>0)return minutes+'m '+remaining+'s';return remaining+'s'}function dsUpdateRefreshHint(){var node=document.getElementById('dsRefreshHint');if(!node)return;var freq=Number(document.getElementById('dsDetailRefresh').value)||0;if(!freq){node.textContent=(window.DS_ZH?'自动刷新已关闭':'Auto refresh disabled');return}var last=0;if(DS_LOGS.rows&&DS_LOGS.rows.length){var started=DS_LOGS.rows[0].time_started;if(started){var parsed=Date.parse(started);if(!isNaN(parsed))last=parsed}}if(!last){node.textContent=(window.DS_ZH?'自动刷新间隔 ':'Auto refresh every ')+freq+' min';return}var remain=Math.max(0,Math.ceil((last+freq*60000-Date.now())/1000));node.textContent=(window.DS_ZH?'下次自动刷新约 ':'Next auto refresh in ')+dsFormatDuration(remain)}function dsLogCountdownSeconds(log,now){var freq=Number(log.task_type==='prune'?(log.prune_freq||0):(log.refresh_freq||0));var scheduledAt=log.time_started?Date.parse(log.time_started):0;if(!freq||!scheduledAt)return null;return Math.ceil((scheduledAt+freq*60*1000-now)/1000)}function dsLogSummary(log,now){var zh=window.DS_ZH;var status=String(log.status||'').toUpperCase();if(status==='SCHEDULE'||status==='5'){var countdown=dsLogCountdownSeconds(log,now);if(countdown!=null&&countdown>0)return (zh?'任务将在 ':'Task starts in ')+dsFormatDuration(countdown)+(zh?' 后开始':'');return zh?'已排期':'Scheduled'}if(status==='RUNNING'||status==='1')return log.task_type==='prune'?(zh?'清理进行中':'Prune in progress'):(zh?'同步进行中':'Sync in progress');if(status==='FAIL'||status==='4')return log.error_msg||(zh?'任务失败':'Task failed');if(status==='CANCEL'||status==='2')return '';if(log.task_type==='prune')return (zh?'已删除=':'deleted=')+(log.docs_removed_from_index||0)+(zh?'，错误=':', error=')+(log.error_count||0);var total=log.total_docs_indexed||0;var added=log.new_docs_indexed||0;return (zh?'总数=':'total=')+total+(zh?'，新增=':', added=')+added+(zh?'，更新=':', updated=')+Math.max(0,total-added)+(zh?'，错误=':', error=')+(log.error_count||0)}function dsRenderLogsPage(){var now=Date.now();var body=document.getElementById('dsLogRows');body.replaceChildren();(DS_LOGS.rows||[]).forEach(function(log,index){var row=document.createElement('tr');var time=document.createElement('td');time.textContent=log.update_date||log.created_at||'';var status=document.createElement('td');status.appendChild(dsLogStatusBadge(log.status));var dataset=document.createElement('td');if(log.kb_name){var link=document.createElement('a');link.href='/dataset/'+encodeURIComponent(log.kb_id||'');link.textContent=log.kb_name;link.style.color='var(--p)';link.style.textDecoration='none';dataset.appendChild(link)}var taskType=document.createElement('td');taskType.textContent=(log.task_type||'sync')+(window.DS_ZH?(log.trigger==='schedule'?'（自动）':(log.trigger==='link'?'（关联）':'')):(log.trigger==='schedule'?' (auto)':(log.trigger==='link'?' (linked)':'')));var summary=document.createElement('td');summary.className='ds-log-summary';summary.dataset.index=String(index);summary.textContent=dsLogSummary(log,now);row.append(time,status,dataset,taskType,summary);body.appendChild(row)});if(!(DS_LOGS.rows||[]).length){var row=document.createElement('tr');var cell=document.createElement('td');cell.colSpan=5;cell.className='team-empty';cell.textContent=(window.DS_ZH?'暂无数据':'No data');row.appendChild(cell);body.appendChild(row)}var pager=document.getElementById('dsLogPager');pager.replaceChildren();var total=DS_LOGS.total||0;var pages=Math.max(1,Math.ceil(total/DS_LOGS.pageSize));var prev=document.createElement('button');prev.type='button';prev.className='btn btn-o btn-sm';prev.textContent=(window.DS_ZH?'上一页':'Prev');prev.disabled=DS_LOGS.page<=1;prev.addEventListener('click',function(){loadDsLogs(DS_LOGS.page-1)});var next=document.createElement('button');next.type='button';next.className='btn btn-o btn-sm';next.textContent=(window.DS_ZH?'下一页':'Next');next.disabled=DS_LOGS.page>=pages;next.addEventListener('click',function(){loadDsLogs(DS_LOGS.page+1)});var info=document.createElement('span');info.style.fontSize='12px';info.style.color='var(--tm)';info.textContent=(window.DS_ZH?'第 ':'Page ')+DS_LOGS.page+(window.DS_ZH?' / ':' of ')+pages+(window.DS_ZH?' 页 · 共 ':' · ')+total+(window.DS_ZH?' 条日志 · 每页 ':' logs · ')+DS_LOGS.pageSize+(window.DS_ZH?' 条':' per page');pager.append(prev,next,info)}async function loadDsLogs(page){page=Math.max(1,page);DS_LOGS.page=page;try{var data=await dsDetailApi('/api/v1/data_sources/'+DS_DETAIL_ID+'/logs?page='+page+'&page_size='+DS_LOGS.pageSize);var payload=(data&&data.data)||{};DS_LOGS.total=payload.total||0;DS_LOGS.rows=payload.logs||[];dsRenderLogsPage();dsUpdateRefreshHint()}catch(error){DS_LOGS.rows=[];var body=document.getElementById('dsLogRows');if(body){body.textContent='';var row=document.createElement('tr');var cell=document.createElement('td');cell.colSpan=5;cell.className='team-empty';cell.textContent=(DS_ZH?'加载日志失败：':'Failed to load logs: ')+String((error&&error.message)||error);row.appendChild(cell);body.appendChild(row)}}}function dsStartLogTick(){if(DS_LOG_TICK)clearInterval(DS_LOG_TICK);DS_LOG_TICK=setInterval(function(){if(!(DS_LOGS.rows||[]).length)return;var now=Date.now();document.getElementById('dsLogRows').querySelectorAll('td.ds-log-summary').forEach(function(cell){var log=DS_LOGS.rows[Number(cell.dataset.index)];if(log)cell.textContent=dsLogSummary(log,now)});dsUpdateRefreshHint()},1000)}async function dsMaybePoll(){if(DS_POLL)clearInterval(DS_POLL);DS_POLL=null;var status=(DS_RECORD&&DS_RECORD.status||'').toLowerCase();if(status==='running'||status==='schedule')DS_POLL=setInterval(function(){dsDetailApi('/api/v1/data_sources/'+DS_DETAIL_ID).then(function(data){DS_RECORD=data.data||DS_RECORD;loadDsLogs(DS_LOGS.page);dsUpdatePrimary()}).catch(function(){})},5000)}async function loadDsDetail(){var data=await dsDetailApi('/api/v1/data_sources/'+DS_DETAIL_ID);DS_RECORD=data.data||{};document.getElementById('dsDetailTitle').textContent=(DS_RECORD.name||'');document.getElementById('dsDetailName').value=DS_RECORD.name||'';document.getElementById('dsFlatFields').hidden=DS_SCHEMA_FIELDS.length>0;document.getElementById('dsDetailUrl').value=DS_RECORD.url||'';document.getElementById('dsDetailTarget').value=DS_RECORD.target||'';document.getElementById('dsDetailToken').value='';document.getElementById('dsDetailSyncDeleted').checked=!!DS_RECORD.sync_deleted_files;document.getElementById('dsDetailPrune').value=DS_RECORD.prune_freq==null?'':DS_RECORD.prune_freq;document.getElementById('dsDetailRefresh').value=DS_RECORD.refresh_freq==null?'':DS_RECORD.refresh_freq;document.getElementById('dsDetailTimeout').value=DS_RECORD.timeout_secs==null?'':DS_RECORD.timeout_secs;DS_SCHEMA_FIELDS.forEach(function(field){var value=dsGet(DS_RECORD.config,field.name);if(value===undefined||value===null||value==='')value=field.default_value||'';dsSetFieldValue(field.name,value)});document.getElementById('dsDetailTest').hidden=false;/* The endpoint verifies every kind: it builds the connector and loads credentials, recording a FAIL
+function dsBuildField(field){var checkbox=field.type==='Checkbox'||field.type==='Switch';var wrap=document.createElement('label');wrap.className=checkbox?'provider-instance-switch':'provider-instance-field';var span=document.createElement('span');span.textContent=((window.DS_ZH&&field.label_zh)?field.label_zh:field.label)+(field.required?' *':'');wrap.appendChild(span);dsTooltip(span,dsTooltipText(field));if(checkbox){var check=document.createElement('input');check.type='checkbox';check.addEventListener('change',function(){dsMarkDirty();dsRefreshVisibility()});wrap.appendChild(check);return wrap}var input;if(field.type==='Select'&&field.allow_custom){var host=dsCustomSelect(field,function(){dsMarkDirty();dsRefreshVisibility()});wrap.appendChild(host);return wrap}else if(field.type==='Select'){input=document.createElement('select');(field.options||[]).forEach(function(option){var node=document.createElement('option');node.value=option.value;node.textContent=option.label;input.appendChild(node)});if(!field.required){var blank=document.createElement('option');blank.value='';blank.textContent=(window.DS_ZH?'请选择':'Please select');input.prepend(blank)}input.addEventListener('change',function(){dsMarkDirty();dsRefreshVisibility()})}else if(field.type==='Textarea'){input=document.createElement('textarea');input.rows=4;input.addEventListener('input',function(){dsMarkDirty();dsRefreshVisibility()})}else if(field.type==='Segmented'){input=document.createElement('input');input.type='hidden';var segment=document.createElement('div');segment.className='ds-segment';(field.options||[]).forEach(function(option){var button=document.createElement('button');button.type='button';button.textContent=option.label;button.dataset.value=option.value;button.addEventListener('click',function(){input.value=option.value;segment.querySelectorAll('button').forEach(function(node){node.setAttribute('aria-checked',String(node===button))});dsMarkDirty();dsRefreshVisibility()});segment.appendChild(button)});wrap.appendChild(input);wrap.appendChild(segment);wrap._seg=segment;return wrap}else{input=document.createElement('input');input.type=field.type==='Password'?'password':field.type==='Number'?'number':'text';if(input.type==='number')input.step='any';if(field.type==='Password')input.autocomplete='new-password';if(field.placeholder)input.placeholder=field.placeholder;input.addEventListener('input',function(){dsMarkDirty();dsRefreshVisibility()})}wrap.appendChild(input);return wrap}function dsBuildFields(){var root=document.getElementById('dsDynamicFields');DS_SCHEMA_FIELDS.forEach(function(field){if(field.type==='Custom'){var panel=dsBuildPanel(field);DS_PANELS[field.name]=panel;root.appendChild(panel);return}var wrap=dsBuildField(field);DS_WRAPS[field.name]=wrap;root.appendChild(wrap)})}function dsBuildPayload(){var payload={name:document.getElementById('dsDetailName').value.trim(),sync_deleted_files:document.getElementById('dsDetailSyncDeleted').checked,prune_freq:Number(document.getElementById('dsDetailPrune').value)||0,refresh_freq:Number(document.getElementById('dsDetailRefresh').value)||0,timeout_secs:Number(document.getElementById('dsDetailTimeout').value)||0};if(DS_SCHEMA_FIELDS.length){var failures=dsValidate();if(failures.length){dsStatus((window.DS_ZH&&failures[0].message_zh)?failures[0].message_zh:failures[0].message_en,true);return null}var config={};DS_SCHEMA_FIELDS.forEach(function(field){if(field.type==='Custom')return;dsSet(config,field.name,dsFieldValue(field.name))});payload.config=config}else{payload.url=document.getElementById('dsDetailUrl').value.trim();payload.target=document.getElementById('dsDetailTarget').value.trim();var token=document.getElementById('dsDetailToken').value;var clear=document.getElementById('dsDetailClearToken');if(clear&&clear.checked){payload.token=''}else if(token){payload.token=token}}return payload}function dsActionMode(){var status=(DS_RECORD&&DS_RECORD.status||'unstart').toLowerCase();if(DS_DIRTY)return 'save';if(status==='unstart')return 'save';if(status==='running'||status==='schedule')return 'stop';return 'resume'}function dsUpdatePrimary(){var mode=dsActionMode();var button=document.getElementById('dsDetailPrimary');button.dataset.mode=mode;button.textContent=(window.DS_ZH?(mode==='save'?'保存':(mode==='stop'?'停止':'恢复')):(mode==='save'?'Save':(mode==='stop'?'Stop':'Resume')))}function dsStatus(text,error){var status=document.getElementById('dsDetailStatus');status.textContent=text||'';status.style.color=error?'var(--d)':'var(--tm)'}var DS_LOGS={page:1,pageSize:10,total:0,rows:[]};var DS_LOG_TICK=null;function dsLogStatusBadge(status){var map=window.DS_ZH?{UNSTART:['待处理','bw'],'0':['待处理','bw'],RUNNING:['运行中','bi'],'1':['运行中','bi'],CANCEL:['已取消','bw'],'2':['已取消','bw'],DONE:['成功','bs'],'3':['成功','bs'],FAIL:['失败','bw'],'4':['失败','bw'],SCHEDULE:['已排期','bi'],'5':['已排期','bi']}:{UNSTART:['Pending','bw'],'0':['Pending','bw'],RUNNING:['Running','bi'],'1':['Running','bi'],CANCEL:['Cancel','bw'],'2':['Cancel','bw'],DONE:['Success','bs'],'3':['Success','bs'],FAIL:['Failed','bw'],'4':['Failed','bw'],SCHEDULE:['Schedule','bi'],'5':['Schedule','bi']};var entry=map[status]||[status||'Unknown','bw'];var badge=document.createElement('span');badge.className='badge '+entry[1];if(status==='FAIL'||status==='4')badge.style.color='var(--d)';badge.textContent=entry[0];return badge}function dsFormatDuration(seconds){seconds=Math.max(0,seconds);var hours=Math.floor(seconds/3600);var minutes=Math.floor((seconds%3600)/60);var remaining=seconds%60;if(hours>0)return hours+'h '+minutes+'m '+remaining+'s';if(minutes>0)return minutes+'m '+remaining+'s';return remaining+'s'}function dsUpdateRefreshHint(){var node=document.getElementById('dsRefreshHint');if(!node)return;var freq=Number(document.getElementById('dsDetailRefresh').value)||0;if(!freq){node.textContent=(window.DS_ZH?'自动刷新已关闭':'Auto refresh disabled');return}var last=0;if(DS_LOGS.rows&&DS_LOGS.rows.length){var started=DS_LOGS.rows[0].time_started;if(started){var parsed=Date.parse(started);if(!isNaN(parsed))last=parsed}}if(!last){node.textContent=(window.DS_ZH?'自动刷新间隔 ':'Auto refresh every ')+freq+' min';return}var remain=Math.max(0,Math.ceil((last+freq*60000-Date.now())/1000));node.textContent=(window.DS_ZH?'下次自动刷新约 ':'Next auto refresh in ')+dsFormatDuration(remain)}function dsLogCountdownSeconds(log,now){var freq=Number(log.task_type==='prune'?(log.prune_freq||0):(log.refresh_freq||0));var scheduledAt=log.time_started?Date.parse(log.time_started):0;if(!freq||!scheduledAt)return null;return Math.ceil((scheduledAt+freq*60*1000-now)/1000)}function dsLogSummary(log,now){var zh=window.DS_ZH;var status=String(log.status||'').toUpperCase();if(status==='SCHEDULE'||status==='5'){var countdown=dsLogCountdownSeconds(log,now);if(countdown!=null&&countdown>0)return (zh?'任务将在 ':'Task starts in ')+dsFormatDuration(countdown)+(zh?' 后开始':'');return zh?'已排期':'Scheduled'}if(status==='RUNNING'||status==='1')return log.task_type==='prune'?(zh?'清理进行中':'Prune in progress'):(zh?'同步进行中':'Sync in progress');if(status==='FAIL'||status==='4')return log.error_msg||(zh?'任务失败':'Task failed');if(status==='CANCEL'||status==='2')return '';if(log.task_type==='prune')return (zh?'已删除=':'deleted=')+(log.docs_removed_from_index||0)+(zh?'，错误=':', error=')+(log.error_count||0);var total=log.total_docs_indexed||0;var added=log.new_docs_indexed||0;return (zh?'总数=':'total=')+total+(zh?'，新增=':', added=')+added+(zh?'，更新=':', updated=')+Math.max(0,total-added)+(zh?'，错误=':', error=')+(log.error_count||0)}function dsRenderLogsPage(){var now=Date.now();var body=document.getElementById('dsLogRows');body.replaceChildren();(DS_LOGS.rows||[]).forEach(function(log,index){var row=document.createElement('tr');var time=document.createElement('td');time.textContent=log.update_date||log.created_at||'';var status=document.createElement('td');status.appendChild(dsLogStatusBadge(log.status));var dataset=document.createElement('td');if(log.kb_name){var link=document.createElement('a');link.href='/dataset/'+encodeURIComponent(log.kb_id||'');link.textContent=log.kb_name;link.style.color='var(--p)';link.style.textDecoration='none';dataset.appendChild(link)}var taskType=document.createElement('td');taskType.textContent=(log.task_type||'sync')+(window.DS_ZH?(log.trigger==='schedule'?'（自动）':(log.trigger==='link'?'（关联）':'')):(log.trigger==='schedule'?' (auto)':(log.trigger==='link'?' (linked)':'')));var summary=document.createElement('td');summary.className='ds-log-summary';summary.dataset.index=String(index);summary.textContent=dsLogSummary(log,now);row.append(time,status,dataset,taskType,summary);body.appendChild(row)});if(!(DS_LOGS.rows||[]).length){var row=document.createElement('tr');var cell=document.createElement('td');cell.colSpan=5;cell.className='team-empty';cell.textContent=(window.DS_ZH?'暂无数据':'No data');row.appendChild(cell);body.appendChild(row)}var pager=document.getElementById('dsLogPager');pager.replaceChildren();var total=DS_LOGS.total||0;var pages=Math.max(1,Math.ceil(total/DS_LOGS.pageSize));var prev=document.createElement('button');prev.type='button';prev.className='btn btn-o btn-sm';prev.textContent=(window.DS_ZH?'上一页':'Prev');prev.disabled=DS_LOGS.page<=1;prev.addEventListener('click',function(){loadDsLogs(DS_LOGS.page-1)});var next=document.createElement('button');next.type='button';next.className='btn btn-o btn-sm';next.textContent=(window.DS_ZH?'下一页':'Next');next.disabled=DS_LOGS.page>=pages;next.addEventListener('click',function(){loadDsLogs(DS_LOGS.page+1)});var info=document.createElement('span');info.style.fontSize='12px';info.style.color='var(--tm)';info.textContent=(window.DS_ZH?'第 ':'Page ')+DS_LOGS.page+(window.DS_ZH?' / ':' of ')+pages+(window.DS_ZH?' 页 · 共 ':' · ')+total+(window.DS_ZH?' 条日志 · 每页 ':' logs · ')+DS_LOGS.pageSize+(window.DS_ZH?' 条':' per page');pager.append(prev,next,info)}async function loadDsLogs(page){page=Math.max(1,page);DS_LOGS.page=page;try{var data=await dsDetailApi('/api/v1/data_sources/'+DS_DETAIL_ID+'/logs?page='+page+'&page_size='+DS_LOGS.pageSize);var payload=(data&&data.data)||{};DS_LOGS.total=payload.total||0;DS_LOGS.rows=payload.logs||[];dsRenderLogsPage();dsUpdateRefreshHint()}catch(error){DS_LOGS.rows=[];var body=document.getElementById('dsLogRows');if(body){body.textContent='';var row=document.createElement('tr');var cell=document.createElement('td');cell.colSpan=5;cell.className='team-empty';cell.textContent=(DS_ZH?'加载日志失败：':'Failed to load logs: ')+String((error&&error.message)||error);row.appendChild(cell);body.appendChild(row)}}}function dsStartLogTick(){if(DS_LOG_TICK)clearInterval(DS_LOG_TICK);DS_LOG_TICK=setInterval(function(){if(!(DS_LOGS.rows||[]).length)return;var now=Date.now();document.getElementById('dsLogRows').querySelectorAll('td.ds-log-summary').forEach(function(cell){var log=DS_LOGS.rows[Number(cell.dataset.index)];if(log)cell.textContent=dsLogSummary(log,now)});dsUpdateRefreshHint()},1000)}async function dsMaybePoll(){if(DS_POLL)clearInterval(DS_POLL);DS_POLL=null;var status=(DS_RECORD&&DS_RECORD.status||'').toLowerCase();if(status==='running'||status==='schedule')DS_POLL=setInterval(function(){dsDetailApi('/api/v1/data_sources/'+DS_DETAIL_ID).then(function(data){DS_RECORD=data.data||DS_RECORD;loadDsLogs(DS_LOGS.page);dsUpdatePrimary()}).catch(function(){})},5000)}async function loadDsDetail(){var data=await dsDetailApi('/api/v1/data_sources/'+DS_DETAIL_ID);DS_RECORD=data.data||{};document.getElementById('dsDetailTitle').textContent=(DS_RECORD.name||'');document.getElementById('dsDetailName').value=DS_RECORD.name||'';document.getElementById('dsFlatFields').hidden=DS_SCHEMA_FIELDS.length>0;document.getElementById('dsDetailUrl').value=DS_RECORD.url||'';document.getElementById('dsDetailTarget').value=DS_RECORD.target||'';document.getElementById('dsDetailToken').value='';document.getElementById('dsDetailSyncDeleted').checked=!!DS_RECORD.sync_deleted_files;document.getElementById('dsDetailPrune').value=DS_RECORD.prune_freq==null?'':DS_RECORD.prune_freq;document.getElementById('dsDetailRefresh').value=DS_RECORD.refresh_freq==null?'':DS_RECORD.refresh_freq;document.getElementById('dsDetailTimeout').value=DS_RECORD.timeout_secs==null?'':DS_RECORD.timeout_secs;DS_SCHEMA_FIELDS.forEach(function(field){var value=dsGet(DS_RECORD.config,field.name);if(value===undefined||value===null||value==='')value=field.default_value||'';dsSetFieldValue(field.name,value)});document.getElementById('dsDetailTest').hidden=false;/* The endpoint verifies every kind: it builds the connector and loads credentials, recording a FAIL
 log and a 502 with the reason when that fails. Hiding the button for the 39 kinds outside
 rest_api/bigquery left the user unable to verify a connection the backend can check. */dsRefreshVisibility();DS_DIRTY=false;dsUpdatePrimary();DS_LOGS.page=1;loadDsLogs(1);dsLocaliseDetailActions();dsStartLogTick();dsMaybePoll();dsUpdateRefreshHint()}async function dsDetailTest(){var b=document.getElementById('dsDetailTest');if(b&&b.disabled)return;if(b)b.disabled=true;try{dsStatus(DS_ZH?'测试中…':'Testing…',false);var data=await dsDetailApi('/api/v1/data_sources/'+DS_DETAIL_ID+'/test',{method:'POST'});dsStatus(data.code===0?(DS_ZH?'连接已验证 ✓':'Connection verified ✓'):((DS_ZH?'测试失败：':'Test failed: ')+(data.message||'unknown')),data.code!==0);await loadDsDetail()}finally{if(b)b.disabled=false}}async function dsDetailPrimary(){var button=document.getElementById('dsDetailPrimary');var mode=button.dataset.mode;button.disabled=true;if(mode==='stop'){dsStatus(DS_ZH?'停止中…':'Stopping…',false);try{var stopped=await dsDetailApi('/api/v1/data_sources/'+DS_DETAIL_ID,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:'cancel'})});if(stopped.code!==0)throw new Error(stopped.message||('HTTP '+stopped.code));dsStatus(DS_ZH?'已停止 ✓':'Stopped ✓',false);await loadDsDetail()}catch(error){dsStatus(error.message,true)}finally{button.disabled=false}return}var payload=mode==='save'?dsBuildPayload():{status:'schedule'};if(mode==='save')payload.reschedule=true;dsStatus(mode==='save'?(DS_ZH?'保存中…':'Saving…'):(DS_ZH?'恢复中…':'Resuming…'),false);try{var data=await dsDetailApi('/api/v1/data_sources/'+DS_DETAIL_ID,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});if(data.code!==0)throw new Error(data.message||('HTTP '+data.code));var nextStatus=data.data&&data.data.status||'';dsStatus(nextStatus==='fail'?(DS_ZH?'同步失败，请查看下方日志':'Sync failed; see logs below'):(DS_ZH?'已保存 ✓':'Saved ✓'),nextStatus==='fail');await loadDsDetail()}catch(error){dsStatus(error.message,true)}finally{button.disabled=false}}dsBuildFields();loadDsDetail();async function dsDetailSync(){var b=document.getElementById('dsDetailSync');if(b&&b.disabled)return;if(b)b.disabled=true;try{dsStatus(DS_ZH?'同步中…':'Syncing…',false);var kb='';if(DS_LOGS.rows&&DS_LOGS.rows.length){kb=DS_LOGS.rows[0].kb_id||''}if(!kb){dsStatus(DS_ZH?'请先在数据集配置中关联数据源并完成一次同步，再使用立即同步':'Link this data source to a knowledge base in dataset configuration first',true);return}var data=await dsDetailApi('/api/v1/data_sources/'+DS_DETAIL_ID+'/sync?async=1&kb_id='+encodeURIComponent(kb),{method:'POST'});if(data.code!==0)throw new Error(data.message||('HTTP '+data.code));dsStatus(DS_ZH?'同步已在后台启动，结果见下方日志':'Sync started in the background; watch the logs below',false);await loadDsDetail();await loadDsLogs(DS_LOGS.page||1)}catch(error){dsStatus((DS_ZH?'同步失败：':'Sync failed: ')+(error&&error.message||error),true)}finally{if(b)b.disabled=false}}async function dsDetailDisconnect(){var b=document.getElementById('dsDetailDisconnect');if(b&&b.disabled)return;if(b)b.disabled=true;try{dsStatus(DS_ZH?'断开中…':'Disconnecting…',false);var data=await dsDetailApi('/api/v1/data_sources/'+DS_DETAIL_ID+'/disconnect',{method:'POST'});dsStatus(data.code===0?(DS_ZH?'已断开连接':'Disconnected ✓'):((DS_ZH?'断开失败：':'Disconnect failed: ')+(data.message||'unknown')),data.code!==0);await loadDsDetail()}finally{if(b)b.disabled=false}}function dsLocaliseDetailActions(){if(!DS_ZH){return}var sync=document.getElementById('dsDetailSync');if(sync){sync.textContent='立即同步'}var off=document.getElementById('dsDetailDisconnect');if(off){off.textContent='断开连接'}var test=document.getElementById('dsDetailTest');if(test){test.textContent='测试'}var clear=document.getElementById('dsClearTokenLabel');if(clear){clear.textContent='清除已保存的凭证'}}</script>"#;
 
@@ -8335,7 +8335,7 @@ function dscBuildPanel(field){
   });
   return box;
 }
-function dscBuildField(field){var checkbox=field.type==='Checkbox'||field.type==='Switch';var wrap=document.createElement('label');wrap.className=checkbox?'provider-instance-switch':'provider-instance-field';var span=document.createElement('span');span.textContent=field.label+(field.required?' *':'');wrap.appendChild(span);dsTooltip(span,dsTooltipText(field));if(checkbox){var check=document.createElement('input');check.type='checkbox';check.addEventListener('change',function(){dscRefresh()});wrap.appendChild(check);return wrap}var input;if(field.type==='Select'&&field.allow_custom){var host=dsCustomSelect(field,function(){dscRefresh()});wrap.appendChild(host);return wrap}else if(field.type==='Select'){input=document.createElement('select');(field.options||[]).forEach(function(option){var node=document.createElement('option');node.value=option.value;node.textContent=option.label;input.appendChild(node)});if(!field.required){var blank=document.createElement('option');blank.value='';blank.textContent=(window.DS_ZH?'请选择':'Please select');input.prepend(blank)}if(field.default_value&&!field.required===false){input.value=field.default_value}input.addEventListener('change',function(){dscRefresh()})}else if(field.type==='Textarea'){input=document.createElement('textarea');input.rows=4}else if(field.type==='Segmented'){input=document.createElement('input');input.type='hidden';var segment=document.createElement('div');segment.className='ds-segment';(field.options||[]).forEach(function(option){var button=document.createElement('button');button.type='button';button.textContent=option.label;button.dataset.value=option.value;button.addEventListener('click',function(){input.value=option.value;segment.querySelectorAll('button').forEach(function(node){node.setAttribute('aria-checked',String(node===button))});dscRefresh()});segment.appendChild(button)});input.value=field.default_value||'';segment.querySelectorAll('button').forEach(function(node){node.setAttribute('aria-checked',String(node.dataset.value===input.value))});wrap.appendChild(input);wrap.appendChild(segment);return wrap}else{input=document.createElement('input');input.type=field.type==='Password'?'password':field.type==='Number'?'number':'text';if(input.type==='number')input.step='any';if(field.type==='Password')input.autocomplete='new-password';if(field.placeholder)input.placeholder=field.placeholder;if(field.default_value)input.value=field.default_value}wrap.appendChild(input);return wrap}function dscFlatFields(){var root=document.getElementById('dsAddFields');(window.DS_ZH?['地址','目标','令牌']:['URL','Target','Token']).forEach(function(label){var wrap=document.createElement('label');wrap.className='provider-instance-field';var span=document.createElement('span');span.textContent=label;wrap.appendChild(span);var input=document.createElement('input');input.id='dsc'+label;if(label==='Token'){input.type='password';input.autocomplete='new-password'}wrap.appendChild(input);root.appendChild(wrap)})}function dscRenderFields(){var root=document.getElementById('dsAddFields');root.replaceChildren();DSC_WRAPS={};DSC_PANELS={};var kind=(document.getElementById('dsType').value||'').toUpperCase();DSC_FIELDS=DS_SCHEMA[kind]||[];if(!DSC_FIELDS.length){dscFlatFields();return}DSC_FIELDS.forEach(function(field){if(field.type==='Custom'){var panel=dscBuildPanel(field);DSC_PANELS[field.name]=panel;root.appendChild(panel);return}var wrap=dscBuildField(field);DSC_WRAPS[field.name]=wrap;root.appendChild(wrap)});dscRefresh()}function openDsAdd(){var select=document.getElementById('dsType');document.getElementById('dsAddTitle').textContent=(window.DS_ZH?'添加数据源：':'Add data source: ')+select.selectedOptions[0].textContent;document.getElementById('dsAddError').textContent='';document.getElementById('dsAddName').value='';dscRenderFields();document.getElementById('dsAddModal').classList.add('show');setTimeout(function(){var n=document.getElementById('dsAddName');if(n)n.focus()},0)}function closeDsAdd(){document.getElementById('dsAddModal').classList.remove('show')}function dscCreate(){var name=document.getElementById('dsAddName').value.trim();var error='';if(!name)error=window.DS_ZH?'名称不能为空':'Name is required';DSC_FIELDS.forEach(function(field){if(field.type==='Custom')return;if(field.required&&!dscValue(field.name).trim())error=error||(window.DS_ZH?(field.label+' 为必填项'):(field.label+' is required'))});var failures=dscValidate();if(!error&&failures.length)error=(window.DS_ZH&&failures[0].message_zh)?failures[0].message_zh:failures[0].message_en;if(error){var node=document.getElementById('dsAddError');node.textContent=error;node.dataset.field=failures.length?failures[0].field:'';return}var body={name:name,type:document.getElementById('dsType').value};if(DSC_FIELDS.length){var config={};DSC_FIELDS.forEach(function(field){if(field.type==='Custom')return;dscSet(config,dscPath(field.name),dscValue(field.name))});body.config=config}else{body.url=document.getElementById('dscUrl').value.trim();body.target=document.getElementById('dscTarget').value.trim();var token=document.getElementById('dscToken').value;if(token)body.token=token;if(!body.url||!body.target){document.getElementById('dsAddError').textContent=window.DS_ZH?'URL/目标不能为空':'URL/Target required';return}}var button=document.getElementById('dsAddConfirm');button.disabled=true;fetch('/api/v1/data_sources',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(response){return response.json()}).then(function(data){if(data.code===0){closeDsAdd();loadDs()}else{document.getElementById('dsAddError').textContent=data.message||(window.DS_ZH?'创建失败':'create failed')}}).finally(function(){button.disabled=false})}document.addEventListener('keydown',function(event){if(event.key==='Escape'){closeDsAdd();if(typeof closeDscBoxDialog==='function')closeDscBoxDialog();if(typeof closeDscGoogleDialog==='function')closeDscGoogleDialog()}});</script>"#;
+function dscBuildField(field){var checkbox=field.type==='Checkbox'||field.type==='Switch';var wrap=document.createElement('label');wrap.className=checkbox?'provider-instance-switch':'provider-instance-field';var span=document.createElement('span');span.textContent=((window.DS_ZH&&field.label_zh)?field.label_zh:field.label)+(field.required?' *':'');wrap.appendChild(span);dsTooltip(span,dsTooltipText(field));if(checkbox){var check=document.createElement('input');check.type='checkbox';check.addEventListener('change',function(){dscRefresh()});wrap.appendChild(check);return wrap}var input;if(field.type==='Select'&&field.allow_custom){var host=dsCustomSelect(field,function(){dscRefresh()});wrap.appendChild(host);return wrap}else if(field.type==='Select'){input=document.createElement('select');(field.options||[]).forEach(function(option){var node=document.createElement('option');node.value=option.value;node.textContent=option.label;input.appendChild(node)});if(!field.required){var blank=document.createElement('option');blank.value='';blank.textContent=(window.DS_ZH?'请选择':'Please select');input.prepend(blank)}if(field.default_value&&!field.required===false){input.value=field.default_value}input.addEventListener('change',function(){dscRefresh()})}else if(field.type==='Textarea'){input=document.createElement('textarea');input.rows=4}else if(field.type==='Segmented'){input=document.createElement('input');input.type='hidden';var segment=document.createElement('div');segment.className='ds-segment';(field.options||[]).forEach(function(option){var button=document.createElement('button');button.type='button';button.textContent=option.label;button.dataset.value=option.value;button.addEventListener('click',function(){input.value=option.value;segment.querySelectorAll('button').forEach(function(node){node.setAttribute('aria-checked',String(node===button))});dscRefresh()});segment.appendChild(button)});input.value=field.default_value||'';segment.querySelectorAll('button').forEach(function(node){node.setAttribute('aria-checked',String(node.dataset.value===input.value))});wrap.appendChild(input);wrap.appendChild(segment);return wrap}else{input=document.createElement('input');input.type=field.type==='Password'?'password':field.type==='Number'?'number':'text';if(input.type==='number')input.step='any';if(field.type==='Password')input.autocomplete='new-password';if(field.placeholder)input.placeholder=field.placeholder;if(field.default_value)input.value=field.default_value}wrap.appendChild(input);return wrap}function dscFlatFields(){var root=document.getElementById('dsAddFields');(window.DS_ZH?['地址','目标','令牌']:['URL','Target','Token']).forEach(function(label){var wrap=document.createElement('label');wrap.className='provider-instance-field';var span=document.createElement('span');span.textContent=label;wrap.appendChild(span);var input=document.createElement('input');input.id='dsc'+label;if(label==='Token'){input.type='password';input.autocomplete='new-password'}wrap.appendChild(input);root.appendChild(wrap)})}function dscRenderFields(){var root=document.getElementById('dsAddFields');root.replaceChildren();DSC_WRAPS={};DSC_PANELS={};var kind=(document.getElementById('dsType').value||'').toUpperCase();DSC_FIELDS=DS_SCHEMA[kind]||[];if(!DSC_FIELDS.length){dscFlatFields();return}DSC_FIELDS.forEach(function(field){if(field.type==='Custom'){var panel=dscBuildPanel(field);DSC_PANELS[field.name]=panel;root.appendChild(panel);return}var wrap=dscBuildField(field);DSC_WRAPS[field.name]=wrap;root.appendChild(wrap)});dscRefresh()}function openDsAdd(){var select=document.getElementById('dsType');document.getElementById('dsAddTitle').textContent=(window.DS_ZH?'添加数据源：':'Add data source: ')+select.selectedOptions[0].textContent;document.getElementById('dsAddError').textContent='';document.getElementById('dsAddName').value='';dscRenderFields();document.getElementById('dsAddModal').classList.add('show');setTimeout(function(){var n=document.getElementById('dsAddName');if(n)n.focus()},0)}function closeDsAdd(){document.getElementById('dsAddModal').classList.remove('show')}function dscCreate(){var name=document.getElementById('dsAddName').value.trim();var error='';if(!name)error=window.DS_ZH?'名称不能为空':'Name is required';DSC_FIELDS.forEach(function(field){if(field.type==='Custom')return;if(field.required&&!dscValue(field.name).trim())error=error||(window.DS_ZH?(field.label+' 为必填项'):(field.label+' is required'))});var failures=dscValidate();if(!error&&failures.length)error=(window.DS_ZH&&failures[0].message_zh)?failures[0].message_zh:failures[0].message_en;if(error){var node=document.getElementById('dsAddError');node.textContent=error;node.dataset.field=failures.length?failures[0].field:'';return}var body={name:name,type:document.getElementById('dsType').value};if(DSC_FIELDS.length){var config={};DSC_FIELDS.forEach(function(field){if(field.type==='Custom')return;dscSet(config,dscPath(field.name),dscValue(field.name))});body.config=config}else{body.url=document.getElementById('dscUrl').value.trim();body.target=document.getElementById('dscTarget').value.trim();var token=document.getElementById('dscToken').value;if(token)body.token=token;if(!body.url||!body.target){document.getElementById('dsAddError').textContent=window.DS_ZH?'URL/目标不能为空':'URL/Target required';return}}var button=document.getElementById('dsAddConfirm');button.disabled=true;fetch('/api/v1/data_sources',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(response){return response.json()}).then(function(data){if(data.code===0){closeDsAdd();loadDs()}else{document.getElementById('dsAddError').textContent=data.message||(window.DS_ZH?'创建失败':'create failed')}}).finally(function(){button.disabled=false})}document.addEventListener('keydown',function(event){if(event.key==='Escape'){closeDsAdd();if(typeof closeDscBoxDialog==='function')closeDscBoxDialog();if(typeof closeDscGoogleDialog==='function')closeDscGoogleDialog()}});</script>"#;
     let js = js
         .replace("__DSZH__", if zh { "true" } else { "false" })
         .replace("__SCHEMA__", schema)
@@ -8345,7 +8345,7 @@ function dscBuildField(field){var checkbox=field.type==='Checkbox'||field.type==
         )
         .replace(
             "function dscFlatFields()",
-            "var DSC_BOX_FLOW='';var DSC_BOX_CREDS={};function dscBuildBoxField(field){var wrap=document.createElement('div');wrap.className='provider-instance-field';var span=document.createElement('span');span.textContent=field.label+(field.required?' *':'');var input=document.createElement('input');input.type='hidden';input.dataset.field=field.name;var chips=document.createElement('div');chips.id='dscBoxChips';chips.className='ds-box-chips';var button=document.createElement('button');button.type='button';button.className='btn btn-o';button.id='dscBoxBtn';button.textContent='Configure Box credentials';button.addEventListener('click',openDscBoxDialog);wrap.append(span,input,chips,button);try{var parsed=JSON.parse(input.value||'');if(parsed&&(parsed.client_id||parsed.access_token||parsed.authorization_code)){DSC_BOX_CREDS=parsed;dscBoxRefreshChips()}}catch(error){}return wrap}function dscBoxRefreshChips(){var chips=document.getElementById('dscBoxChips');if(!chips)return;var authorized=!!(DSC_BOX_CREDS.access_token||DSC_BOX_CREDS.authorization_code);var configured=!!DSC_BOX_CREDS.client_id;chips.replaceChildren();if(authorized){var a=document.createElement('span');a.className='ds-box-chip ds-box-authorized';a.textContent='Authorized';chips.appendChild(a)}else if(configured){var c=document.createElement('span');c.className='ds-box-chip ds-box-configured';c.textContent='Configured';chips.appendChild(c)}var b=document.getElementById('dscBoxBtn');if(b)b.textContent=authorized||configured?'Get Box credentials':'Configure Box credentials'}function openDscBoxDialog(){document.getElementById('dscBoxClientId').value=DSC_BOX_CREDS.client_id||'';document.getElementById('dscBoxClientSecret').value=DSC_BOX_CREDS.client_secret||'';document.getElementById('dscBoxRedirect').value=DSC_BOX_CREDS.redirect_uri||'';document.getElementById('dscBoxMsg').hidden=true;document.getElementById('dscBoxRefresh').hidden=!window.DSC_BOX_FLOW;document.getElementById('dscBoxDialog').classList.add('show')}function closeDscBoxDialog(){document.getElementById('dscBoxDialog').classList.remove('show')}function dscBoxMsg(text,error){var message=document.getElementById('dscBoxMsg');message.hidden=false;message.textContent=text||'';message.style.color=error?'var(--d)':'var(--tm)';document.getElementById('dscBoxRefresh').hidden=!window.DSC_BOX_FLOW}function dscBoxSubmit(){var cid=document.getElementById('dscBoxClientId').value.trim();var csec=document.getElementById('dscBoxClientSecret').value.trim();var redir=document.getElementById('dscBoxRedirect').value.trim();if(!cid||!csec||!redir){dscBoxMsg('Please fill in Client ID, Client Secret, and Redirect URI.',true);return}var button=document.getElementById('dscBoxSubmit');button.disabled=true;fetch('/api/v1/connectors/box/oauth/web/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({client_id:cid,client_secret:csec,redirect_uri:redir})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Failed to start Box authorization.');window.DSC_BOX_FLOW=data.data.flow_id;DSC_BOX_CREDS={client_id:cid,client_secret:csec,redirect_uri:redir};var field=document.querySelector(\"#dsAddFields input[data-field='config.credentials.box_tokens']\");if(field)field.value=JSON.stringify(DSC_BOX_CREDS);dscBoxRefreshChips();dscBoxMsg('Complete the Box consent in the opened window and return here.',false);var popup=window.open(data.data.authorization_url,'ragflow-box-oauth','width=600,height=720');if(!popup){dscBoxMsg('Popup was blocked. Please allow popups for this site.',true);window.DSC_BOX_FLOW='';document.getElementById('dscBoxRefresh').hidden=true}}).catch(function(error){dscBoxMsg(error.message||'Failed to start Box authorization.',true)}).finally(function(){button.disabled=false})}function dscBoxPoll(){var flow=window.DSC_BOX_FLOW;if(!flow){dscBoxMsg('Start browser authorization first.',true);return}dscBoxMsg('Checking authorization status...',false);fetch('/api/v1/connectors/box/oauth/web/result',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({flow_id:flow})}).then(function(response){return response.json()}).then(function(data){if(data.code===0){var creds=data.data.credentials||{};var finalValue={client_id:creds.client_id||DSC_BOX_CREDS.client_id,client_secret:creds.client_secret||DSC_BOX_CREDS.client_secret,redirect_uri:creds.redirect_uri||DSC_BOX_CREDS.redirect_uri};if(creds.code)finalValue.authorization_code=creds.code;if(creds.access_token)finalValue.access_token=creds.access_token;if(creds.refresh_token)finalValue.refresh_token=creds.refresh_token;var field=document.querySelector(\"#dsAddFields input[data-field='config.credentials.box_tokens']\");if(field)field.value=JSON.stringify(finalValue);DSC_BOX_CREDS=finalValue;dscBoxRefreshChips();dscBoxMsg('Box authorization completed.',false);window.DSC_BOX_FLOW='';document.getElementById('dscBoxRefresh').hidden=true;closeDscBoxDialog()}else if(data.code===106){dscBoxMsg('Authorization is still pending.',false)}else{dscBoxMsg(data.message||'Authorization failed.',true)}}).catch(function(){dscBoxMsg('Unable to retrieve authorization result.',true)})}var DSC_GOOGLE_FLOW='';var DSC_GOOGLE_PENDING='';function dscBuildGoogleField(field){var wrap=document.createElement('div');wrap.className='provider-instance-field';var span=document.createElement('span');span.textContent=field.label+(field.required?' *':'');var input=document.createElement('input');input.type='hidden';input.dataset.field=field.name;var chips=document.createElement('div');chips.id='dscGoogleChips';chips.className='ds-box-chips';var file=document.createElement('input');file.type='file';file.accept='.json,application/json';file.id='dscGoogleFile';file.addEventListener('change',function(){dscGoogleFileSelected(file.files&&file.files[0])});var hint=document.createElement('p');hint.className='user-setting-description';hint.textContent='Upload your Google OAuth JSON file.';wrap.append(span,input,chips,file,hint);dscGoogleRefreshChips();return wrap}function dscGoogleChip(text,className){var chip=document.createElement('span');chip.className='ds-box-chip '+className;chip.textContent=text;return chip}function dscGoogleRefreshChips(){var chips=document.getElementById('dscGoogleChips');if(!chips)return;chips.replaceChildren();var value=(document.querySelector(\"#dsAddFields input[data-field='config.credentials.google_tokens']\")||{}).value||'';try{var parsed=JSON.parse(value);if(parsed&&parsed.refresh_token){chips.appendChild(dscGoogleChip('Verified','ds-box-authorized'))}else if(parsed&&(parsed.web||parsed.installed)){chips.appendChild(dscGoogleChip('Needs authorization','ds-box-pending'))}else if(value){chips.appendChild(dscGoogleChip('Stored','ds-box-configured'))}}catch(error){}}function dscGoogleFileSelected(file){if(!file)return;var reader=new FileReader();reader.onload=function(){var text=String(reader.result||'');try{var parsed=JSON.parse(text);var redirect='';var uris=parsed.web&&parsed.web.redirect_uris||parsed.installed&&parsed.installed.redirect_uris;if(Array.isArray(uris)&&uris.length)redirect=uris[0];if(parsed.refresh_token){var field=document.querySelector(\"#dsAddFields input[data-field='config.credentials.google_tokens']\");if(field)field.value=text;dscGoogleRefreshChips();dscBoxMsg?dscBoxMsg('OAuth credentials uploaded.',false):null;return}DSC_GOOGLE_PENDING=text;document.getElementById('dscGoogleRedirect').value=redirect||'';document.getElementById('dscGoogleMsg').hidden=true;document.getElementById('dscGoogleRefresh').hidden=true;document.getElementById('dscGoogleDialog').classList.add('show')}catch(error){dscBoxMsg('Invalid JSON file.',true)}};reader.readAsText(file)}function closeDscGoogleDialog(){document.getElementById('dscGoogleDialog').classList.remove('show')}function dscGoogleMsg(text,error){var message=document.getElementById('dscGoogleMsg');message.hidden=false;message.textContent=text||'';message.style.color=error?'var(--d)':'var(--tm)';document.getElementById('dscGoogleRefresh').hidden=!window.DSC_GOOGLE_FLOW}function dscGoogleAuthorize(){if(!DSC_GOOGLE_PENDING){dscGoogleMsg('No Google credential file detected.',true);return}var redir=document.getElementById('dscGoogleRedirect').value.trim();if(!redir){dscGoogleMsg('Please fill in Redirect URI.',true);return}var button=document.getElementById('dscGoogleSubmit');button.disabled=true;var type=window.DSC_TYPE==='gmail'?'gmail':'google-drive';fetch('/api/v1/connectors/google/oauth/web/start?type='+type,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({credentials:DSC_GOOGLE_PENDING,redirect_uri:redir})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Failed to start browser authorization.');window.DSC_GOOGLE_FLOW=data.data.flow_id;dscGoogleMsg('Complete the Google consent in the popup window.',false);var popup=window.open(data.data.authorization_url,type==='gmail'?'ragflow-gmail-oauth':'ragflow-google-drive-oauth','width=600,height=720');if(!popup){dscGoogleMsg('Popup was blocked. Please allow popups for this site.',true);window.DSC_GOOGLE_FLOW='';document.getElementById('dscGoogleRefresh').hidden=true}}).catch(function(error){dscGoogleMsg(error.message||'Failed to start browser authorization.',true)}).finally(function(){button.disabled=false})}function dscGooglePoll(){var flow=window.DSC_GOOGLE_FLOW;if(!flow){dscGoogleMsg('Start browser authorization first.',true);return}var type=window.DSC_TYPE==='gmail'?'gmail':'google-drive';dscGoogleMsg('Checking authorization status...',false);fetch('/api/v1/connectors/google/oauth/web/result?type='+type,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({flow_id:flow})}).then(function(response){return response.json()}).then(function(data){if(data.code===0){var field=document.querySelector(\"#dsAddFields input[data-field='config.credentials.google_tokens']\");if(field)field.value=data.data.credentials||'';dscGoogleRefreshChips();dscGoogleMsg('Google credentials verified.',false);window.DSC_GOOGLE_FLOW='';document.getElementById('dscGoogleRefresh').hidden=true;DSC_GOOGLE_PENDING='';closeDscGoogleDialog()}else if(data.code===106){dscGoogleMsg('Authorization is still pending.',false)}else{dscGoogleMsg(data.message||'Authorization failed.',true)}}).catch(function(){dscGoogleMsg('Unable to retrieve authorization result.',true)})}function dscFlatFields()",
+            "var DSC_BOX_FLOW='';var DSC_BOX_CREDS={};function dscBuildBoxField(field){var wrap=document.createElement('div');wrap.className='provider-instance-field';var span=document.createElement('span');span.textContent=((window.DS_ZH&&field.label_zh)?field.label_zh:field.label)+(field.required?' *':'');var input=document.createElement('input');input.type='hidden';input.dataset.field=field.name;var chips=document.createElement('div');chips.id='dscBoxChips';chips.className='ds-box-chips';var button=document.createElement('button');button.type='button';button.className='btn btn-o';button.id='dscBoxBtn';button.textContent='Configure Box credentials';button.addEventListener('click',openDscBoxDialog);wrap.append(span,input,chips,button);try{var parsed=JSON.parse(input.value||'');if(parsed&&(parsed.client_id||parsed.access_token||parsed.authorization_code)){DSC_BOX_CREDS=parsed;dscBoxRefreshChips()}}catch(error){}return wrap}function dscBoxRefreshChips(){var chips=document.getElementById('dscBoxChips');if(!chips)return;var authorized=!!(DSC_BOX_CREDS.access_token||DSC_BOX_CREDS.authorization_code);var configured=!!DSC_BOX_CREDS.client_id;chips.replaceChildren();if(authorized){var a=document.createElement('span');a.className='ds-box-chip ds-box-authorized';a.textContent='Authorized';chips.appendChild(a)}else if(configured){var c=document.createElement('span');c.className='ds-box-chip ds-box-configured';c.textContent='Configured';chips.appendChild(c)}var b=document.getElementById('dscBoxBtn');if(b)b.textContent=authorized||configured?'Get Box credentials':'Configure Box credentials'}function openDscBoxDialog(){document.getElementById('dscBoxClientId').value=DSC_BOX_CREDS.client_id||'';document.getElementById('dscBoxClientSecret').value=DSC_BOX_CREDS.client_secret||'';document.getElementById('dscBoxRedirect').value=DSC_BOX_CREDS.redirect_uri||'';document.getElementById('dscBoxMsg').hidden=true;document.getElementById('dscBoxRefresh').hidden=!window.DSC_BOX_FLOW;document.getElementById('dscBoxDialog').classList.add('show')}function closeDscBoxDialog(){document.getElementById('dscBoxDialog').classList.remove('show')}function dscBoxMsg(text,error){var message=document.getElementById('dscBoxMsg');message.hidden=false;message.textContent=text||'';message.style.color=error?'var(--d)':'var(--tm)';document.getElementById('dscBoxRefresh').hidden=!window.DSC_BOX_FLOW}function dscBoxSubmit(){var cid=document.getElementById('dscBoxClientId').value.trim();var csec=document.getElementById('dscBoxClientSecret').value.trim();var redir=document.getElementById('dscBoxRedirect').value.trim();if(!cid||!csec||!redir){dscBoxMsg('Please fill in Client ID, Client Secret, and Redirect URI.',true);return}var button=document.getElementById('dscBoxSubmit');button.disabled=true;fetch('/api/v1/connectors/box/oauth/web/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({client_id:cid,client_secret:csec,redirect_uri:redir})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Failed to start Box authorization.');window.DSC_BOX_FLOW=data.data.flow_id;DSC_BOX_CREDS={client_id:cid,client_secret:csec,redirect_uri:redir};var field=document.querySelector(\"#dsAddFields input[data-field='config.credentials.box_tokens']\");if(field)field.value=JSON.stringify(DSC_BOX_CREDS);dscBoxRefreshChips();dscBoxMsg('Complete the Box consent in the opened window and return here.',false);var popup=window.open(data.data.authorization_url,'ragflow-box-oauth','width=600,height=720');if(!popup){dscBoxMsg('Popup was blocked. Please allow popups for this site.',true);window.DSC_BOX_FLOW='';document.getElementById('dscBoxRefresh').hidden=true}}).catch(function(error){dscBoxMsg(error.message||'Failed to start Box authorization.',true)}).finally(function(){button.disabled=false})}function dscBoxPoll(){var flow=window.DSC_BOX_FLOW;if(!flow){dscBoxMsg('Start browser authorization first.',true);return}dscBoxMsg('Checking authorization status...',false);fetch('/api/v1/connectors/box/oauth/web/result',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({flow_id:flow})}).then(function(response){return response.json()}).then(function(data){if(data.code===0){var creds=data.data.credentials||{};var finalValue={client_id:creds.client_id||DSC_BOX_CREDS.client_id,client_secret:creds.client_secret||DSC_BOX_CREDS.client_secret,redirect_uri:creds.redirect_uri||DSC_BOX_CREDS.redirect_uri};if(creds.code)finalValue.authorization_code=creds.code;if(creds.access_token)finalValue.access_token=creds.access_token;if(creds.refresh_token)finalValue.refresh_token=creds.refresh_token;var field=document.querySelector(\"#dsAddFields input[data-field='config.credentials.box_tokens']\");if(field)field.value=JSON.stringify(finalValue);DSC_BOX_CREDS=finalValue;dscBoxRefreshChips();dscBoxMsg('Box authorization completed.',false);window.DSC_BOX_FLOW='';document.getElementById('dscBoxRefresh').hidden=true;closeDscBoxDialog()}else if(data.code===106){dscBoxMsg('Authorization is still pending.',false)}else{dscBoxMsg(data.message||'Authorization failed.',true)}}).catch(function(){dscBoxMsg('Unable to retrieve authorization result.',true)})}var DSC_GOOGLE_FLOW='';var DSC_GOOGLE_PENDING='';function dscBuildGoogleField(field){var wrap=document.createElement('div');wrap.className='provider-instance-field';var span=document.createElement('span');span.textContent=((window.DS_ZH&&field.label_zh)?field.label_zh:field.label)+(field.required?' *':'');var input=document.createElement('input');input.type='hidden';input.dataset.field=field.name;var chips=document.createElement('div');chips.id='dscGoogleChips';chips.className='ds-box-chips';var file=document.createElement('input');file.type='file';file.accept='.json,application/json';file.id='dscGoogleFile';file.addEventListener('change',function(){dscGoogleFileSelected(file.files&&file.files[0])});var hint=document.createElement('p');hint.className='user-setting-description';hint.textContent='Upload your Google OAuth JSON file.';wrap.append(span,input,chips,file,hint);dscGoogleRefreshChips();return wrap}function dscGoogleChip(text,className){var chip=document.createElement('span');chip.className='ds-box-chip '+className;chip.textContent=text;return chip}function dscGoogleRefreshChips(){var chips=document.getElementById('dscGoogleChips');if(!chips)return;chips.replaceChildren();var value=(document.querySelector(\"#dsAddFields input[data-field='config.credentials.google_tokens']\")||{}).value||'';try{var parsed=JSON.parse(value);if(parsed&&parsed.refresh_token){chips.appendChild(dscGoogleChip('Verified','ds-box-authorized'))}else if(parsed&&(parsed.web||parsed.installed)){chips.appendChild(dscGoogleChip('Needs authorization','ds-box-pending'))}else if(value){chips.appendChild(dscGoogleChip('Stored','ds-box-configured'))}}catch(error){}}function dscGoogleFileSelected(file){if(!file)return;var reader=new FileReader();reader.onload=function(){var text=String(reader.result||'');try{var parsed=JSON.parse(text);var redirect='';var uris=parsed.web&&parsed.web.redirect_uris||parsed.installed&&parsed.installed.redirect_uris;if(Array.isArray(uris)&&uris.length)redirect=uris[0];if(parsed.refresh_token){var field=document.querySelector(\"#dsAddFields input[data-field='config.credentials.google_tokens']\");if(field)field.value=text;dscGoogleRefreshChips();dscBoxMsg?dscBoxMsg('OAuth credentials uploaded.',false):null;return}DSC_GOOGLE_PENDING=text;document.getElementById('dscGoogleRedirect').value=redirect||'';document.getElementById('dscGoogleMsg').hidden=true;document.getElementById('dscGoogleRefresh').hidden=true;document.getElementById('dscGoogleDialog').classList.add('show')}catch(error){dscBoxMsg('Invalid JSON file.',true)}};reader.readAsText(file)}function closeDscGoogleDialog(){document.getElementById('dscGoogleDialog').classList.remove('show')}function dscGoogleMsg(text,error){var message=document.getElementById('dscGoogleMsg');message.hidden=false;message.textContent=text||'';message.style.color=error?'var(--d)':'var(--tm)';document.getElementById('dscGoogleRefresh').hidden=!window.DSC_GOOGLE_FLOW}function dscGoogleAuthorize(){if(!DSC_GOOGLE_PENDING){dscGoogleMsg('No Google credential file detected.',true);return}var redir=document.getElementById('dscGoogleRedirect').value.trim();if(!redir){dscGoogleMsg('Please fill in Redirect URI.',true);return}var button=document.getElementById('dscGoogleSubmit');button.disabled=true;var type=window.DSC_TYPE==='gmail'?'gmail':'google-drive';fetch('/api/v1/connectors/google/oauth/web/start?type='+type,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({credentials:DSC_GOOGLE_PENDING,redirect_uri:redir})}).then(function(response){return response.json()}).then(function(data){if(data.code!==0)throw new Error(data.message||'Failed to start browser authorization.');window.DSC_GOOGLE_FLOW=data.data.flow_id;dscGoogleMsg('Complete the Google consent in the popup window.',false);var popup=window.open(data.data.authorization_url,type==='gmail'?'ragflow-gmail-oauth':'ragflow-google-drive-oauth','width=600,height=720');if(!popup){dscGoogleMsg('Popup was blocked. Please allow popups for this site.',true);window.DSC_GOOGLE_FLOW='';document.getElementById('dscGoogleRefresh').hidden=true}}).catch(function(error){dscGoogleMsg(error.message||'Failed to start browser authorization.',true)}).finally(function(){button.disabled=false})}function dscGooglePoll(){var flow=window.DSC_GOOGLE_FLOW;if(!flow){dscGoogleMsg('Start browser authorization first.',true);return}var type=window.DSC_TYPE==='gmail'?'gmail':'google-drive';dscGoogleMsg('Checking authorization status...',false);fetch('/api/v1/connectors/google/oauth/web/result?type='+type,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({flow_id:flow})}).then(function(response){return response.json()}).then(function(data){if(data.code===0){var field=document.querySelector(\"#dsAddFields input[data-field='config.credentials.google_tokens']\");if(field)field.value=data.data.credentials||'';dscGoogleRefreshChips();dscGoogleMsg('Google credentials verified.',false);window.DSC_GOOGLE_FLOW='';document.getElementById('dscGoogleRefresh').hidden=true;DSC_GOOGLE_PENDING='';closeDscGoogleDialog()}else if(data.code===106){dscGoogleMsg('Authorization is still pending.',false)}else{dscGoogleMsg(data.message||'Authorization failed.',true)}}).catch(function(){dscGoogleMsg('Unable to retrieve authorization result.',true)})}function dscFlatFields()",
         )
         .replace(
             "var kind=(document.getElementById('dsType').value||'').toUpperCase();",
@@ -13520,8 +13520,11427 @@ pub async fn search_app_detail_page(
     Html(layout(t("Search apps", zh), &b, zh))
 }
 
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn detect_lang_defaults_to_chinese_and_honours_explicit_english() {
+        let mut headers = axum::http::HeaderMap::new();
+        assert!(detect_lang(&headers));
+        headers.insert(
+            axum::http::header::COOKIE,
+            axum::http::HeaderValue::from_static("rayrag_token=abc; theme=dark"),
+        );
+        assert!(
+            detect_lang(&headers),
+            "auth cookies must not flip the UI to English"
+        );
+        headers.insert(
+            axum::http::header::COOKIE,
+            axum::http::HeaderValue::from_static("lang=en; rayrag_token=abc"),
+        );
+        assert!(!detect_lang(&headers));
+        headers.insert(
+            axum::http::header::COOKIE,
+            axum::http::HeaderValue::from_static("lang=zh-CN; rayrag_token=abc"),
+        );
+        assert!(detect_lang(&headers));
+    }
 
+    /// The translation table has two arms: an English early-return for namespaced upstream keys, and the
+    /// Chinese arm. Inserting a key into the wrong arm inverts the pages (English rendering Chinese) without
+    /// failing any existing test, so both directions are asserted here.
+    #[test]
+    fn translation_table_points_the_right_way() {
+        for (english, chinese) in [
+            ("Knowledge Graph", "知识图谱"),
+            ("Plain Text", "纯文本"),
+            ("All files", "全部文件"),
+            ("Entity resolution", "实体消解"),
+            // The admin console kept these English through `AdminConsoleSection::label()`, and a layout
+            // test had frozen that leak as expected behaviour.
+            ("User management", "用户管理"),
+            ("Service status", "服务状态"),
+        ] {
+            assert_eq!(
+                t(english, true),
+                chinese,
+                "zh arm missing or wrong for {english:?}"
+            );
+            assert_eq!(
+                t(english, false),
+                english,
+                "the English arm must return the English label for {english:?}"
+            );
+        }
+    }
 
+    use super::*;
 
+    #[test]
+    fn html_escape_escapes_special_chars() {
+        assert_eq!(
+            html_escape("a&b<c>d\"e'f"),
+            "a&amp;b&lt;c&gt;d&quot;e&#39;f"
+        );
+        assert_eq!(html_escape("plain"), "plain");
+    }
 
+    #[test]
+    fn zh_translations_cover_new_button_labels() {
+        for key in [
+            "Run",
+            "Publish",
+            "Save",
+            "Cancel",
+            "Copy",
+            "Download",
+            "Install",
+            "Uninstall",
+            "Components",
+            "Run Log",
+            "Add User",
+            "API Keys",
+            "Delete Key",
+            "Close",
+            "New Agent",
+            "Create",
+            "Delete",
+            "Rename",
+            "Upload",
+            "Generate",
+        ] {
+            let zh_value = t(key, true);
+            assert_ne!(zh_value, key, "missing zh translation for {key}");
+        }
+    }
 
+    #[test]
+    fn english_is_identity() {
+        assert_eq!(t("Run", false), "Run");
+        assert_eq!(t("任意键", false), "任意键");
+    }
+}
+
+#[cfg(test)]
+mod kb_ui_tests {
+    use super::*;
+    use crate::api::compilation_templates::CompilationTemplateStore;
+    use crate::api::document::DocStore;
+    use crate::api::document_metadata::DocumentMetadataStore;
+    use crate::api::evaluation::EvaluationStore;
+    use crate::api::features::{
+        AgentRunRegistry, AgentStore, CanvasVersionStore, MemoryStore, ProviderStore, TaskQueue,
+    };
+    use crate::api::file_mgr::FileStore;
+    use crate::api::tenant_models::TenantModelStore;
+    use crate::auth::UserStore;
+    use crate::channels::ChannelRegistry;
+    use crate::kb::{KbStore, TenantStore};
+    use crate::llm::ConvStore;
+    use crate::logging::LogLevelManager;
+    use crate::rerank::RerankerManager;
+    use crate::search::SearchEngine;
+    use crate::task_executor::TaskExecutor;
+    use axum::body::Body;
+    use axum::extract::{Path, State};
+    use axum::http::Request;
+    use axum::response::IntoResponse;
+    use std::sync::{Arc, RwLock};
+
+    fn test_state() -> (tempfile::TempDir, Arc<AppState>) {
+        let root = tempfile::tempdir().unwrap();
+        let static_dir = root.path().join("web");
+        std::fs::create_dir_all(&static_dir).unwrap();
+        // 预写空 users.json：全新用户存储从零开始，首次注册成为管理员。
+        let users_path = root.path().join("users.json");
+        std::fs::write(&users_path, "[]").unwrap();
+        let users = Arc::new(UserStore::new(users_path.to_str().unwrap()).unwrap());
+        let state = Arc::new(AppState {
+            static_dir: static_dir.to_string_lossy().into_owned(),
+            port: 0,
+            doc_store: Arc::new(crate::doc_store::DocStorePool::memory()),
+            artifacts: Arc::new(crate::api::artifacts::ArtifactStore::in_memory()),
+            skill_trees: Arc::new(crate::api::skill_tree::SkillTreeStore::in_memory()),
+            users,
+            kbs: Arc::new(KbStore::new(root.path().join("kbs.json").to_str().unwrap()).unwrap()),
+            tenants: Arc::new(
+                TenantStore::new(root.path().join("tenants.json").to_str().unwrap()).unwrap(),
+            ),
+            conversations: Arc::new(
+                ConvStore::new(root.path().join("conversations.json").to_str().unwrap()).unwrap(),
+            ),
+            llm: None,
+            embedder: None,
+            reranker: Arc::new(RerankerManager::in_memory(None)),
+            graphs: Arc::new(crate::graph_store::GraphStore::in_memory()),
+            engine: Arc::new(RwLock::new(SearchEngine::new())),
+            vector_mirror: Arc::new(crate::store::OnlineVectorMirror::disabled()),
+            index_path: root
+                .path()
+                .join("index.json")
+                .to_string_lossy()
+                .into_owned(),
+            model_path: root.path().join("models").to_string_lossy().into_owned(),
+            max_upload_bytes: 64 * 1024 * 1024,
+            docs: Arc::new(DocStore::new(root.path().join("docs.json").to_str().unwrap()).unwrap()),
+            document_metadata: Arc::new(DocumentMetadataStore::in_memory()),
+            files: Arc::new(FileStore::new(root.path().join("uploads").to_str().unwrap()).unwrap()),
+            workspace_commits: Arc::new(
+                crate::api::workspaces::WorkspaceCommitStore::new(
+                    root.path().join("workspace-commits").to_str().unwrap(),
+                )
+                .unwrap(),
+            ),
+            data_sources: None,
+            attachments: Arc::new(
+                crate::api::attachments::AttachmentStore::new(
+                    root.path().join("attachments").to_str().unwrap(),
+                )
+                .unwrap(),
+            ),
+            search_apps: None,
+            metadata_config: Arc::new(
+                crate::api::metadata_config::MetadataConfigStore::new(
+                    root.path().join("metadata-config.json").to_str().unwrap(),
+                )
+                .unwrap(),
+            ),
+            connectors: Arc::new(
+                crate::api::connector::ConnectorStore::new(
+                    root.path().join("connectors.json").to_str().unwrap(),
+                )
+                .unwrap(),
+            ),
+            chat_apps: Some(Arc::new(
+                crate::api::chatapp_mgr::ChatAppStore::new(
+                    root.path().join("chat_apps.json").to_str().unwrap(),
+                )
+                .unwrap(),
+            )),
+            providers: Arc::new(ProviderStore::in_memory()),
+            tenant_models: Arc::new(TenantModelStore::in_memory()),
+            memories: Arc::new(MemoryStore::in_memory()),
+            memory_messages: Arc::new(crate::api::joint_services::MemoryMessageService::in_memory()),
+            skill_index: Arc::new(crate::api::skill_index::SkillIndexStore::in_memory()),
+            system_settings: Arc::new(crate::api::system_settings::SystemSettingsStore::in_memory()),
+            api_tokens: Arc::new(crate::api::tokens::ApiTokenStore::in_memory()),
+            ingestion_logs: Arc::new(crate::api::ingestion::IngestionLogStore::in_memory()),
+            agent_traces: Arc::new(crate::api::agent_trace::AgentTraceStore::in_memory()),
+            register_enabled: 1,
+            disable_password_login: false,
+            oauth_states: Arc::new(crate::oauth_config::StateStore::new()),
+            oauth_channels: Arc::new(std::sync::RwLock::new(Vec::new())),
+            langfuse: Arc::new(crate::api::langfuse::LangfuseStore::in_memory()),
+            mcp_servers: Arc::new(crate::api::mcp_mgr::McpServerStore::in_memory()),
+            chat_channels: Arc::new(crate::api::chat_channel_mgr::ChatChannelStore::in_memory()),
+            tasks: Arc::new(TaskQueue::in_memory()),
+            task_executor: Arc::new(TaskExecutor::new("test_executor", 4)),
+            agents: Arc::new(AgentStore::in_memory()),
+            agent_runs: Arc::new(AgentRunRegistry::default()),
+            agent_checkpoints: Arc::new(crate::agent_checkpoint::AgentCheckpointStore::in_memory()),
+            canvas_versions: Arc::new(CanvasVersionStore::in_memory()),
+            compilation_templates: Arc::new(CompilationTemplateStore::in_memory()),
+            evaluations: Arc::new(EvaluationStore::in_memory()),
+            log_levels: Arc::new(LogLevelManager::in_memory()),
+            chunk_feedback_enabled: false,
+            chunk_feedback_weighting: crate::chunk_feedback::FeedbackWeighting::Relevance,
+            channels: Arc::new(ChannelRegistry::new()),
+            document_commit_lock: Arc::new(std::sync::Mutex::new(())),
+            memory_commit_lock: Arc::new(std::sync::Mutex::new(())),
+
+            whitelist: Arc::new(crate::registration_whitelist::WhitelistStore::in_memory()),
+        });
+        (root, state)
+    }
+
+    async fn body_of(resp: impl IntoResponse) -> String {
+        let bytes = axum::body::to_bytes(resp.into_response().into_body(), 16 * 1024 * 1024)
+            .await
+            .unwrap();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    fn english_request(uri: &str) -> Request<Body> {
+        Request::builder()
+            .uri(uri)
+            .header("cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    /// A rendered page is one long single-line `push_str` literal, so a single
+    /// stray brace silently kills the whole `<script>`: the browser logs
+    /// `Unexpected token 'function'`, the page renders nothing and no substring
+    /// assertion notices. Every `<script>` block of a page therefore gets its
+    /// delimiters checked once strings and comments are skipped.
+    fn assert_inline_scripts_balance(html: &str, page: &str) {
+        let mut scripts = 0usize;
+        let mut cursor = 0usize;
+        while let Some(found) = html[cursor..].find("<script") {
+            let start = cursor + found;
+            let Some(open) = html[start..].find('>') else {
+                break;
+            };
+            let body_start = start + open + 1;
+            let Some(close) = html[body_start..].find("</script>") else {
+                break;
+            };
+            let body = &html[body_start..body_start + close];
+            scripts += 1;
+            if let Err(problem) = balanced_js_delimiters(body) {
+                panic!(
+                    "{page}: script #{scripts} (len {}) {problem}\nhead: {}\ntail: {}",
+                    body.len(),
+                    &body[..body.len().min(180)],
+                    &body[body.len().saturating_sub(180)..]
+                );
+            }
+            cursor = body_start + close + "</script>".len();
+        }
+        assert!(scripts > 0, "{page}: no inline script found");
+    }
+
+    /// Skip `'…'` / `"…"` / `` `…` `` literals plus `//` and `/* … */` comments,
+    /// then require `{}`, `()` and `[]` to nest correctly. Regex literals are
+    /// left to the bracket check, which their character classes satisfy.
+    fn balanced_js_delimiters(body: &str) -> Result<(), String> {
+        let chars: Vec<char> = body.chars().collect();
+        let mut stack: Vec<char> = Vec::new();
+        let mut i = 0usize;
+        let mut prev: Option<char> = None;
+        // `/` opens a regex literal only where a value may start; after an
+        // identifier, `)` or `]` it is a division. `adminEscape` alone needs this
+        // for `.replace(/"/g,'&quot;')`, whose pattern contains a quote.
+        let regex_allowed = |prev: Option<char>| match prev {
+            None => true,
+            Some(p) => matches!(
+                p,
+                '(' | ','
+                    | '='
+                    | ':'
+                    | '['
+                    | '!'
+                    | '&'
+                    | '|'
+                    | '?'
+                    | '{'
+                    | '}'
+                    | ';'
+                    | '+'
+                    | '-'
+                    | '*'
+                    | '%'
+                    | '<'
+                    | '>'
+                    | '~'
+                    | '^'
+            ),
+        };
+        while i < chars.len() {
+            let c = chars[i];
+            if c == '\'' || c == '"' || c == '`' {
+                i += 1;
+                while i < chars.len() {
+                    if chars[i] == '\\' {
+                        i += 2;
+                        continue;
+                    }
+                    if chars[i] == c {
+                        break;
+                    }
+                    i += 1;
+                }
+                prev = Some(c);
+            } else if c == '/' && chars.get(i + 1) == Some(&'/') {
+                while i < chars.len() && chars[i] != '\n' {
+                    i += 1;
+                }
+                continue;
+            } else if c == '/' && chars.get(i + 1) == Some(&'*') {
+                i += 2;
+                while i + 1 < chars.len() && !(chars[i] == '*' && chars[i + 1] == '/') {
+                    i += 1;
+                }
+                i += 1;
+                prev = Some('*');
+            } else if c == '/' && regex_allowed(prev) {
+                i += 1;
+                let mut in_class = false;
+                while i < chars.len() {
+                    let inside = chars[i];
+                    if inside == '\\' {
+                        i += 2;
+                        continue;
+                    }
+                    if inside == '[' {
+                        in_class = true;
+                    } else if inside == ']' {
+                        in_class = false;
+                    } else if inside == '/' && !in_class {
+                        break;
+                    }
+                    i += 1;
+                }
+                while chars
+                    .get(i + 1)
+                    .is_some_and(|flag| flag.is_ascii_alphabetic())
+                {
+                    i += 1;
+                }
+                prev = Some('/');
+            } else if c == '{' || c == '(' || c == '[' {
+                stack.push(c);
+                prev = Some(c);
+            } else if c == '}' || c == ')' || c == ']' {
+                let want = match c {
+                    '}' => '{',
+                    ')' => '(',
+                    _ => '[',
+                };
+                match stack.pop() {
+                    Some(open) if open == want => {}
+                    Some(open) => return Err(format!("`{c}` at {i} closes `{open}`")),
+                    None => return Err(format!("unmatched `{c}` at {i}")),
+                }
+                prev = Some(c);
+            } else if !c.is_whitespace() {
+                prev = Some(c);
+            }
+            i += 1;
+        }
+        match stack.pop() {
+            Some(open) => Err(format!("unclosed `{open}`")),
+            None => Ok(()),
+        }
+    }
+
+    #[test]
+    fn inline_json_string_cannot_terminate_script() {
+        let encoded = json_script_string("</script>\u{2028}&>");
+        assert_eq!(encoded, "\"\\u003c/script\\u003e\\u2028\\u0026\\u003e\"");
+        assert!(!encoded.contains("</script>"));
+    }
+
+    #[tokio::test]
+    async fn memory_list_shell_uses_safe_dom_and_fixed_detail_route() {
+        // Upstream `pages/memories/index.tsx` list shell: shared list layout,
+        // the add-or-edit create fields and the fixed `/memory/{id}` detail
+        // route. User-controlled names are escaped before entering the card
+        // markup (the shared `lpEscape` helper).
+        let html = body_of(memories_page_v2(english_request("/memories")).await).await;
+        assert!(html.contains("data-testid='memory-list'"));
+        assert!(html.contains("data-testid='create-memory'"));
+        assert!(html.contains("data-testid='memory-list-form-dialog'"));
+        assert!(html.contains("/api/v1/models/default"));
+        assert!(html.contains("acceptedTypes"));
+        assert!(html.contains("/memory/"));
+        assert!(html.contains("lpEscape"));
+        assert!(html.contains("memory_list"));
+        assert!(!html.contains("Recent Conversations"));
+    }
+
+    #[tokio::test]
+    async fn memory_message_shell_has_fixed_hierarchy_actions_and_safe_id() {
+        let malicious = "</script><script>alert(1)</script>\u{2028}&";
+        let html = body_of(
+            memory_message_page(
+                Path(malicious.into()),
+                english_request("/memory/memory-message/x"),
+            )
+            .await,
+        )
+        .await;
+        for marker in [
+            "memoryMessagesLink",
+            "memorySettingLink",
+            "messageSearch",
+            "agentFilter",
+            "contentModal",
+            "forgetModal",
+            "taskModal",
+            "copyVector",
+            "allowedSizes=[10,20,50,100]",
+            "/api/v1/messages/",
+            "taskDisplayState",
+            "taskStartTime",
+            "memory-task-button",
+            "memory-task-dot",
+            "taskButton.dataset.taskStatus=taskState",
+            "status==='failed'||status==='cancelled'||progress<0",
+            "[data-task-status=done]",
+            "[data-task-status=running]",
+            "[data-task-status=failed]",
+            "width:32px;height:32px",
+            ".memory-message-table tr:hover .memory-actions",
+        ] {
+            assert!(html.contains(marker), "missing message UI marker {marker}");
+        }
+        assert!(html.contains("\\u003c/script\\u003e"));
+        assert!(!html.contains(malicious));
+        assert!(html.contains("Started: '+taskStartTime(task&&task.create_time)"));
+        assert!(!html.contains("task.create_time||Date.now()"));
+        assert!(!html.contains("innerHTML"));
+    }
+
+    #[tokio::test]
+    async fn memory_task_log_static_contract_keeps_api_log_as_text() {
+        let malicious_log = r#"<img src=x onerror="alert(1)"></script><script>alert(2)</script>"#;
+        let html = body_of(
+            memory_message_page(
+                Path("memory-a".into()),
+                english_request("/memory/memory-message/memory-a"),
+            )
+            .await,
+        )
+        .await;
+
+        assert!(!html.contains(malicious_log));
+        assert!(html.contains(
+            "function node(tag,cls,text){const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=String(text)"
+        ));
+        assert!(html.contains("node('div','memory-modal-content',task&&task.progress_msg||'')"));
+        for unsafe_sink in [
+            "taskLog.innerHTML",
+            "log.innerHTML",
+            "insertAdjacentHTML",
+            "document.write",
+        ] {
+            assert!(
+                !html.contains(unsafe_sink),
+                "task log must not use unsafe DOM sink {unsafe_sink}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn memory_setting_shell_has_basic_advanced_and_safe_id() {
+        let malicious = "</script><script>alert(1)</script>";
+        let html = body_of(
+            memory_setting_page(
+                Path(malicious.into()),
+                english_request("/memory/memory-setting/x"),
+            )
+            .await,
+        )
+        .await;
+        for marker in [
+            "memoryMessagesLink",
+            "memorySettingLink",
+            "cfgName",
+            "cfgAvatar",
+            "cfgDescription",
+            "cfgEmbd",
+            "cfgLlm",
+            "default-model-embd_id",
+            "default-model-llm_id",
+            "const MODEL_FIELDS=",
+            "cfgSize",
+            "cfgPermissions",
+            "cfgPolicy",
+            "cfgTemperature",
+            "cfgSystemPrompt",
+            "cfgUserPrompt",
+            "cfgReset",
+            "cfgSave",
+            "/api/v1/models",
+            "max='10485760'",
+            "value='me'",
+        ] {
+            assert!(html.contains(marker), "missing setting UI marker {marker}");
+        }
+        assert!(html.contains("\\u003c/script\\u003e"));
+        assert!(!html.contains(malicious));
+        assert!(!html.contains("innerHTML"));
+    }
+
+    /// Upstream `setting-model/components/system-setting.tsx` verbatim: the
+    /// `article > header.py-5` composition, the six `flex gap-3` rows with a
+    /// 1/4 label column and a 3/4 `ModelTreeSelect` column, the shared
+    /// `selectModelPlaceholder` and the six `setting.*Tip` tooltips rendered
+    /// through `t()` behind a lucide `CircleQuestionMark` trigger.
+    #[tokio::test]
+    async fn system_model_settings_matches_upstream_system_setting() {
+        let (_root, state) = test_state();
+        let en = axum::http::Request::builder()
+            .uri("/user-setting/model")
+            .header("cookie", "lang=en")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let en_body = body_of(providers_page(axum::extract::State(state.clone()), en).await).await;
+        let zh = axum::http::Request::builder()
+            .uri("/user-setting/model")
+            .header("cookie", "lang=zh-CN")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let zh_body = body_of(providers_page(axum::extract::State(state), zh).await).await;
+
+        for (lang, body) in [("en", &en_body), ("zh", &zh_body)] {
+            assert!(
+                body.contains(
+                    "<article class='card system-model-settings' \
+                     data-testid='system-model-settings'><header class='system-model-header'>"
+                ),
+                "{lang}: upstream article/header composition missing"
+            );
+            assert!(
+                body.contains("</p></header><div class='provider-default-grid'>"),
+                "{lang}: rows container is not the bordered scroll box"
+            );
+            assert!(
+                body.contains("<p id='dmMsg' class='system-model-message'></p></article>"),
+                "{lang}: section must close as an <article>"
+            );
+            assert_eq!(
+                body.matches("class='provider-default-field'").count(),
+                6,
+                "{lang}: six default-model rows expected"
+            );
+            // Upstream label column is `w-1/4`, control column `w-3/4`; the
+            // required marker stays on the LLM row only.
+            assert_eq!(
+                body.matches("flex:0 0 25%").count(),
+                1,
+                "{lang}: label column must be the 1/4 track"
+            );
+            assert_eq!(
+                body.matches("aria-required='true'").count(),
+                1,
+                "{lang}: only llm_id is required"
+            );
+            // lucide `CircleQuestionMark` trigger, not the legacy `?` badge.
+            // The count is scoped to the SystemSetting section: the page also
+            // renders the model picker, whose badge/remove icons draw circles.
+            let section_start = body
+                .find("data-testid='system-model-settings'")
+                .expect("system setting section");
+            let section = &body[section_start..];
+            let section = &section[..section
+                .find("data-testid='added-models-section'")
+                .unwrap_or(section.len())];
+            assert_eq!(
+                section.matches("class='tip-icon'").count(),
+                6,
+                "{lang}: six tooltip triggers expected"
+            );
+            assert_eq!(
+                section.matches("<circle cx='12' cy='12' r='10'/>").count(),
+                6,
+                "{lang}: CircleQuestionMark glyph missing"
+            );
+            assert!(
+                !body.contains("class='tip' tabindex='0'"),
+                "{lang}: legacy question-mark tooltip still rendered on the rows"
+            );
+            // Upstream `setting.selectModelPlaceholder`. The `setting` and
+            // `memories` namespaces share the English text but diverge in
+            // Chinese, so the field carries the namespaced key.
+            assert_eq!(
+                body.matches(&format!(
+                    "<span class='default-model-placeholder'>{}</span>",
+                    if lang == "zh" {
+                        "请选择模型"
+                    } else {
+                        "Select model"
+                    }
+                ))
+                .count(),
+                6,
+                "{lang}: placeholder must be selectModelPlaceholder"
+            );
+            // Upstream row labels come from `setting.*Model`: `LLM` /
+            // `Embedding Model` / `VLM` / `ASR` / `Rerank model` / `TTS`, with
+            // `zh.ts` translating only the embedding and rerank entries.
+            for label in if lang == "zh" {
+                ["LLM", "嵌入模型", "VLM", "ASR", "Rerank模型", "TTS"]
+            } else {
+                [
+                    "LLM",
+                    "Embedding Model",
+                    "VLM",
+                    "ASR",
+                    "Rerank model",
+                    "TTS",
+                ]
+            } {
+                assert!(
+                    section.contains(&format!("{label} <span class='tip-icon'")),
+                    "{lang}: upstream row label missing: {label}"
+                );
+            }
+            assert!(
+                body.contains(&format!(
+                    "\"placeholder\":\"{}\"",
+                    if lang == "zh" {
+                        "请选择模型"
+                    } else {
+                        "Select model"
+                    }
+                )),
+                "{lang}: MODEL_FIELDS payload must carry the resolved placeholder"
+            );
+            assert!(
+                !body.contains(">Please select</span>"),
+                "{lang}: stale `Please select` placeholder"
+            );
+        }
+
+        // en.ts / zh.ts verbatim, keyed by the en string that `t()` receives.
+        for (key, zh_value) in [
+            (
+                "The default LLM for each newly created dataset.",
+                "所有新创建的知识库都会使用默认的聊天模型。",
+            ),
+            (
+                "The default embedding model for each newly created dataset. If you cannot find an embedding model from the dropdown, check if you are using RAGFlow slim edition (which does not include embedding models) or check https://ragflow.io/docs/dev/supported_models to see if your model provider supports this model.",
+                "所有新创建的知识库使用的默认嵌入模型。如未显示可选模型，请检查你是否在使用 RAGFlow slim 版(不含嵌入模型)；或根据 https://ragflow.io/docs/dev/supported_models 确认你的模型供应商是否提供该模型。",
+            ),
+            (
+                "The default VLM for each newly created dataset. It describes a picture or video. If you cannot find a model from the dropdown, check https://ragflow.io/docs/dev/supported_models to see if your model provider supports this model.",
+                "所有新创建的知识库都将使用默认的 img2txt 模型。 它可以描述图片或视频。如未显示可选模型，请根据 https://ragflow.io/docs/dev/supported_models 确认你的模型供应商是否提供该模型。",
+            ),
+            (
+                "The default ASR model for each newly created dataset. Use this model to translate voices to corresponding text.",
+                "所有新创建的知识库都将使用默认的 ASR 模型。 使用此模型将语音翻译为相应的文本。如未显示可选模型，请根据 https://ragflow.io/docs/dev/supported_models 确认你的模型供应商是否提供该模型。",
+            ),
+            (
+                "The default rerank model for reranking chunks. If you cannot find a model from the dropdown, check https://ragflow.io/docs/dev/supported_models to see if your model provider supports this model.",
+                "默认的 reranking 模型。如未显示可选模型，请根据 https://ragflow.io/docs/dev/supported_models 确认你的模型供应商是否提供该模型。",
+            ),
+            (
+                "The default text-to-speech model. If you cannot find a model from the dropdown, check https://ragflow.io/docs/dev/supported_models to see if your model provider supports this model.",
+                "默认的tts模型会被用于在对话过程中请求语音生成时使用。如未显示可选模型，请根据 https://ragflow.io/docs/dev/supported_models 确认你的模型供应商是否提供该模型。",
+            ),
+        ] {
+            assert_eq!(t(key, true), zh_value, "zh.ts drift for {key:.32}");
+            assert_eq!(t(key, false), key, "en.ts must keep the key verbatim");
+            assert!(
+                en_body.contains(&format!("data-tip='{key}'")),
+                "en page lost the upstream tip {key:.32}"
+            );
+            assert!(
+                zh_body.contains(&format!("data-tip='{zh_value}'")),
+                "zh page lost the upstream tip {zh_value:.16}"
+            );
+        }
+        assert_eq!(t("setting.selectModelPlaceholder", true), "请选择模型");
+        assert_eq!(t("setting.selectModelPlaceholder", false), "Select model");
+        // `memories.selectModel` shares the English text but not the Chinese.
+        assert_eq!(t("Select model", true), "选择模型");
+        // The rows must carry all six tips from `DEFAULT_MODEL_FIELDS`.
+        for field in DEFAULT_MODEL_FIELDS {
+            assert!(
+                !field.tooltip.is_empty() && t(field.tooltip, true) != field.tooltip,
+                "field {} tip is not translated",
+                field.field_id
+            );
+            assert_eq!(field.placeholder, "setting.selectModelPlaceholder");
+        }
+
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".provider-default-grid{display:flex;flex-direction:column;gap:24px;padding:24px 28px;max-height:70vh;overflow-y:auto;border:1px solid var(--bd)",
+            ".provider-default-field{display:flex;gap:12px;align-items:flex-start}",
+            ".provider-default-field>label{display:block;flex:0 0 25%;width:25%",
+            ".provider-default-field>.default-model-control{flex:1 1 75%;min-width:0}",
+            ".system-model-header h2{font-size:24px;font-weight:500",
+            ".system-model-description{margin-top:4px;color:var(--t2);font-size:14px}",
+        ] {
+            assert!(css.contains(rule), "css rule missing: {rule}");
+        }
+        let head = page_head("x", false);
+        for rule in [
+            ".tip-icon{display:inline-flex",
+            ".tip-icon>svg{display:block;width:12px;height:12px",
+            ".tip-icon:hover::after{content:attr(data-tip)",
+        ] {
+            assert!(head.contains(rule), "tooltip css missing: {rule}");
+        }
+    }
+
+    #[test]
+    fn default_model_fields_keep_upstream_order_and_wire_types() {
+        assert_eq!(
+            DEFAULT_MODEL_FIELDS.map(|field| field.field_id),
+            [
+                "llm_id",
+                "embd_id",
+                "img2txt_id",
+                "asr_id",
+                "rerank_id",
+                "tts_id",
+            ]
+        );
+        assert_eq!(
+            DEFAULT_MODEL_FIELDS.map(|field| field.update_type),
+            ["chat", "embedding", "vision", "asr", "rerank", "tts"]
+        );
+        assert_eq!(
+            DEFAULT_MODEL_FIELDS.map(|field| field.response_type),
+            [
+                "chat",
+                "embedding",
+                "image2text",
+                "speech2text",
+                "rerank",
+                "tts",
+            ]
+        );
+        assert!(DEFAULT_MODEL_FIELDS[0].required);
+        assert!(
+            DEFAULT_MODEL_FIELDS[1..]
+                .iter()
+                .all(|field| !field.required)
+        );
+    }
+
+    /// Upstream `oauth_callback` flow: the single-use state store, the token
+    /// exchange/userinfo requests and the `?error=` redirect mapping.
+    #[tokio::test]
+    async fn oauth_callback_flow_matches_upstream() {
+        use crate::oauth_config::{
+            StateStore, exchange_code, fetch_user_info, normalize_user_info,
+        };
+        use std::time::Duration;
+
+        // Single-use state with TTL (upstream keeps it in the Flask session).
+        let store = StateStore::new();
+        let state = store.issue();
+        assert!(!state.is_empty());
+        assert!(store.consume(&state), "first callback consumes the state");
+        assert!(!store.consume(&state), "replayed state is rejected");
+        assert!(!store.consume(""), "empty state is rejected");
+        assert!(store.is_empty());
+        let expired = store.issue_with_ttl(Duration::from_millis(0));
+        assert!(!store.consume(&expired), "expired state is rejected");
+
+        // `normalize_user_info` defaults.
+        let info = normalize_user_info(&serde_json::json!({"email": "a@b.c", "picture": "p.png"}));
+        assert_eq!(info.username, "a");
+        assert_eq!(info.nickname, "a");
+        assert_eq!(info.avatar_url, "p.png");
+        let named = normalize_user_info(
+            &serde_json::json!({"email": "a@b.c", "username": "u", "nickname": "N", "avatar_url": "x"}),
+        );
+        assert_eq!(named.nickname, "N");
+        assert_eq!(named.avatar_url, "x");
+
+        // A local fake provider drives the real exchange + userinfo requests.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind fake provider");
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return;
+                };
+                // A single `read` can return half a request when the machine is busy, which made
+                // this test fail intermittently in the full parallel run while passing on its own.
+                // Read headers, then the body the headers announce, so the assertions below see the
+                // whole request every time.
+                let mut raw = Vec::new();
+                let mut chunk = [0u8; 4096];
+                loop {
+                    match std::io::Read::read(&mut stream, &mut chunk) {
+                        Ok(0) => break,
+                        Ok(read) => {
+                            raw.extend_from_slice(&chunk[..read]);
+                            let text = String::from_utf8_lossy(&raw);
+                            let Some(head_end) = text.find("\r\n\r\n") else {
+                                continue;
+                            };
+                            let headers = &text[..head_end];
+                            let expected = headers
+                                .lines()
+                                .find_map(|line| {
+                                    let (name, value) = line.split_once(':')?;
+                                    if name.eq_ignore_ascii_case("content-length") {
+                                        value.trim().parse::<usize>().ok()
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap_or(0);
+                            if raw.len() >= head_end + 4 + expected {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+                let request = String::from_utf8_lossy(&raw).to_string();
+                let body = if request.starts_with("POST /token") {
+                    assert!(
+                        request.contains("grant_type=authorization_code"),
+                        "{request}"
+                    );
+                    assert!(request.contains("code=abc123"), "{request}");
+                    assert!(request.contains("client_id=cid"), "{request}");
+                    assert!(request.contains("client_secret=sec"), "{request}");
+                    r#"{"access_token":"tok-1","id_token":"id-1"}"#.to_string()
+                } else {
+                    assert!(
+                        request.contains("authorization: Bearer tok-1")
+                            || request.contains("Authorization: Bearer tok-1"),
+                        "{request}"
+                    );
+                    r#"{"email":"dev@example.com","username":"dev","avatar_url":"https://img/x.png"}"#.to_string()
+                };
+                let response = format!(
+                    "HTTP/1.1 200 OK
+content-type: application/json
+content-length: {}
+connection: close
+
+{}",
+                    body.len(),
+                    body
+                );
+                let _ = std::io::Write::write_all(&mut stream, response.as_bytes());
+            }
+        });
+
+        let channels = crate::oauth_config::parse(&format!(
+            r#"{{"oauth2":{{"display_name":"OAuth2","client_id":"cid","client_secret":"sec","authorization_url":"{base}/authorize","token_url":"{base}/token","userinfo_url":"{base}/userinfo","redirect_uri":"http://app/callback","scope":"openid email"}}}}"#
+        ));
+        let channel = crate::oauth_config::find(&channels, "oauth2").expect("channel");
+        let token = exchange_code(channel, "abc123")
+            .await
+            .expect("token exchange");
+        assert_eq!(token.access_token, "tok-1");
+        assert_eq!(token.id_token.as_deref(), Some("id-1"));
+        let info = fetch_user_info(channel, &token.access_token)
+            .await
+            .expect("userinfo");
+        assert_eq!(info.email, "dev@example.com");
+        assert_eq!(info.nickname, "dev");
+        assert_eq!(info.avatar_url, "https://img/x.png");
+        server.join().expect("fake provider thread");
+
+        // GitHub keeps the fixed endpoints/scope and reads the primary email.
+        let github = crate::oauth_config::parse(
+            r#"{"github":{"client_id":"c","client_secret":"s","redirect_uri":"http://app/v1/user/oauth/callback/github"}}"#,
+        );
+        let github = crate::oauth_config::find(&github, "github").expect("github");
+        assert_eq!(
+            github.authorization_url.as_deref(),
+            Some("https://github.com/login/oauth/authorize")
+        );
+        assert_eq!(
+            github.token_url.as_deref(),
+            Some("https://github.com/login/oauth/access_token")
+        );
+        assert_eq!(
+            github.userinfo_url.as_deref(),
+            Some("https://api.github.com/user")
+        );
+        assert_eq!(github.scope.as_deref(), Some("user:email"));
+        let form = crate::oauth_config::token_exchange_form(github, "code-1");
+        let keys: Vec<&str> = form.iter().map(|(key, _)| key.as_str()).collect();
+        assert_eq!(
+            keys,
+            vec![
+                "client_id",
+                "client_secret",
+                "code",
+                "redirect_uri",
+                "grant_type"
+            ]
+        );
+
+        // Flow errors map onto the upstream redirect codes.
+        let (_root, state_under_test) = test_state();
+        let injected = crate::oauth_config::parse(&format!(
+            r#"{{"oauth2":{{"client_id":"cid","client_secret":"sec","authorization_url":"{base}/authorize","token_url":"{base}/token","userinfo_url":"{base}/userinfo","redirect_uri":"http://app/callback"}}}}"#
+        ));
+        *state_under_test.oauth_channels.write().unwrap() = injected;
+        let missing_state = crate::api::system::oauth_callback(
+            axum::extract::State(state_under_test.clone()),
+            axum::extract::Path("oauth2".to_string()),
+            axum::extract::Query(std::collections::HashMap::new()),
+        )
+        .await;
+        assert_eq!(
+            missing_state.status(),
+            axum::http::StatusCode::TEMPORARY_REDIRECT
+        );
+        assert_eq!(
+            missing_state
+                .headers()
+                .get(axum::http::header::LOCATION)
+                .and_then(|value| value.to_str().ok()),
+            Some("/?error=invalid_state")
+        );
+        let mut query = std::collections::HashMap::new();
+        let issued = state_under_test.oauth_states.issue();
+        query.insert("state".to_string(), issued);
+        let missing_code = crate::api::system::oauth_callback(
+            axum::extract::State(state_under_test.clone()),
+            axum::extract::Path("oauth2".to_string()),
+            axum::extract::Query(query.clone()),
+        )
+        .await;
+        assert_eq!(
+            missing_code
+                .headers()
+                .get(axum::http::header::LOCATION)
+                .and_then(|value| value.to_str().ok()),
+            Some("/?error=missing_code")
+        );
+
+        // Success path: a fresh state + code goes through the fake provider,
+        // registers the unknown email (upstream `user_register`) and hands back
+        // the `rayrag_token` cookie with the `?auth=` redirect.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind fake provider");
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let provider = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return;
+                };
+                let mut buffer = [0u8; 4096];
+                let read = std::io::Read::read(&mut stream, &mut buffer).unwrap_or(0);
+                let request = String::from_utf8_lossy(&buffer[..read]).to_string();
+                let body = if request.starts_with("POST /token") {
+                    r#"{"access_token":"tok-2"}"#.to_string()
+                } else {
+                    r#"{"email":"newcomer@example.com","nickname":"Newcomer","picture":"https://img/a.png"}"#
+                        .to_string()
+                };
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = std::io::Write::write_all(&mut stream, response.as_bytes());
+            }
+        });
+        *state_under_test.oauth_channels.write().unwrap() = crate::oauth_config::parse(&format!(
+            r#"{{"oauth2":{{"client_id":"cid","client_secret":"sec","authorization_url":"{base}/authorize","token_url":"{base}/token","userinfo_url":"{base}/userinfo","redirect_uri":"http://app/callback"}}}}"#
+        ));
+        let mut success_query = std::collections::HashMap::new();
+        success_query.insert("state".to_string(), state_under_test.oauth_states.issue());
+        success_query.insert("code".to_string(), "code-2".to_string());
+        let success = crate::api::system::oauth_callback(
+            axum::extract::State(state_under_test.clone()),
+            axum::extract::Path("oauth2".to_string()),
+            axum::extract::Query(success_query),
+        )
+        .await;
+        provider.join().expect("fake provider thread");
+        assert_eq!(success.status(), axum::http::StatusCode::TEMPORARY_REDIRECT);
+        let location = success
+            .headers()
+            .get(axum::http::header::LOCATION)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        assert!(location.starts_with("/?auth="), "{location}");
+        let cookie = success
+            .headers()
+            .get(axum::http::header::SET_COOKIE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            cookie.starts_with("rayrag_token=") && cookie.contains("path=/"),
+            "{cookie}"
+        );
+        let created = state_under_test
+            .users
+            .get_user("newcomer@example.com")
+            .expect("oauth user registered");
+        assert_eq!(created.nickname, "Newcomer");
+        assert_eq!(created.avatar, "https://img/a.png");
+        let token = cookie
+            .trim_start_matches("rayrag_token=")
+            .split(';')
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        assert_eq!(
+            state_under_test.users.validate_token(&token).as_deref(),
+            Some(created.id.as_str())
+        );
+    }
+
+    /// Upstream `setting-team/tenant-table.tsx`: the Joined teams table shows the
+    /// owner's avatar/nickname, a tri-state update-date sort, the email and the
+    /// role-dependent action cell (Agree/Refuse for invitations, the icon-only
+    /// quit button for joined tenants), with loading and no-data rows; the
+    /// `/api/v1/tenants` payload is enriched with the owner profile.
+    #[tokio::test]
+    async fn joined_teams_table_matches_upstream_tenant_table() {
+        let (_root, state) = test_state();
+        // A second user owning a tenant we are invited to / a member of.
+        let owner = state
+            .users
+            .register("Team Owner", "owner@example.com", "owner password 123")
+            .expect("owner");
+        state
+            .users
+            .register("Member", "member@example.com", "member password 123")
+            .unwrap();
+        let member = state
+            .users
+            .get_user("member@example.com")
+            .expect("member user");
+        state
+            .tenants
+            .invite_member(&owner.id, &member.id, &owner.id)
+            .expect("invite");
+        let auth = crate::server::AuthContext {
+            user_id: member.id.clone(),
+            is_admin: false,
+            token: String::new(),
+        };
+        let body = body_of(
+            crate::api::system::list_tenants(
+                axum::extract::State(state.clone()),
+                axum::extract::Extension(auth.clone()),
+            )
+            .await,
+        )
+        .await;
+        for marker in [
+            "\"nickname\":\"Team Owner\"",
+            "\"email\":\"owner@example.com\"",
+            "\"role\":\"invite\"",
+            "\"update_date\":",
+            "\"avatar\":",
+        ] {
+            assert!(body.contains(marker), "tenant row marker missing: {marker}");
+        }
+        // The synthetic self row carries no membership timestamp, so it falls
+        // back to the account creation time rather than a blank date.
+        let parsed: serde_json::Value = serde_json::from_str(&body).expect("tenant json");
+        let self_row = parsed["data"]
+            .as_array()
+            .expect("rows")
+            .iter()
+            .find(|row| row["tenant_id"] == member.id.as_str())
+            .expect("self row");
+        assert_eq!(self_row["role"], "owner");
+        assert_eq!(self_row["nickname"], "Member");
+        assert!(
+            self_row["update_date"].as_u64().unwrap_or(0) > 0,
+            "self row needs a real date: {self_row}"
+        );
+        // Accepting turns the row into a joined (`normal`) tenant we can quit.
+        state
+            .tenants
+            .accept_invitation(&owner.id, &member.id)
+            .expect("agree");
+        let accepted = body_of(
+            crate::api::system::list_tenants(
+                axum::extract::State(state.clone()),
+                axum::extract::Extension(auth),
+            )
+            .await,
+        )
+        .await;
+        assert!(accepted.contains("\"role\":\"normal\""), "{accepted}");
+
+        // Markup + behaviour markers on the page.
+        let req = Request::builder()
+            .uri("/user-setting/team")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(user_setting_team_page(req).await).await;
+        for marker in [
+            "id='teamDateSort'",
+            "id='teamDateSortIcon'",
+            ">Update date <span id='teamDateSortIcon'>↕</span>",
+            "toggleTeamDateSort()",
+            "function teamVisibleRows()",
+            "function teamActionCell(row)",
+            "function teamFormatDate(value)",
+            "teamState.teamDateSort==='asc'?'desc'",
+            "accept.textContent='Agree'",
+            "refuse.textContent='Refuse'",
+            "row.role==='normal'&&row.tenant_id!==teamState.selfId",
+            "quit.setAttribute('aria-label','Quit')",
+            "function formatTeamDate(ms){if(!ms)return ''",
+            "pad(date.getDate())+'/'+pad(date.getMonth()+1)+'/'+date.getFullYear()",
+            "viewBox='0 0 24 24'",
+            "teamState.teamsLoading=true;renderTeamTable()",
+            "emptyCell.textContent='No data'",
+        ] {
+            assert!(
+                html.contains(marker),
+                "joined teams marker missing: {marker}"
+            );
+        }
+        assert!(
+            !html.contains("Quit</button>"),
+            "the quit action must be icon-only like upstream"
+        );
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".team-table th .team-sort{",
+            ".team-avatar{",
+            ".team-link,.team-agree,.team-refuse{",
+            "@keyframes team-spin{",
+        ] {
+            assert!(css.contains(rule), "joined teams css missing: {rule}");
+        }
+    }
+
+    /// Upstream `skills/components/search-config-modal.tsx`: the dialog carries the
+    /// `skillSearch` title + description, sliders with the live search-type label
+    /// (`pureKeyword`/`pureVector`/`hybrid (N% keyword + M% vector)`), the Top K
+    /// (1..100) field and the per-field index weight editor.
+    #[tokio::test]
+    async fn skills_search_config_modal_matches_upstream() {
+        let (_root, state) = test_state();
+        let req = Request::builder()
+            .uri("/skills")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(skills_page(axum::extract::State(state.clone()), req).await).await;
+        for marker in [
+            "Skill Search Configuration",
+            "Configure how skills are indexed and searched",
+            "Select an embedding model",
+            "id='skillWeightLabel'",
+            "id='skillThresholdLabel'",
+            ">Vector Similarity Weight<",
+            ">Similarity Threshold<",
+            ">Keyword Only<",
+            ">Balanced<",
+            ">Vector Only<",
+            "id='skillTopK' type='number' min='1' max='100'",
+            ">Index Fields<",
+            "Select which fields to include in the search index",
+            "id='skillFieldRows'",
+            "var SKILL_FIELD_SPECS=",
+            "function skillRenderFieldRows(config)",
+            "function skillRenderWeightLabel()",
+            "function skillRenderThresholdLabel()",
+            "SKILL_LABELS.hybrid+' ('+Math.round((1-weight)*100)+'% '",
+            "var SKILL_LABELS=",
+            "\"pureKeyword\":\"Keyword Only\"",
+            "\"fieldContentDesc\":\"Skill content (e.g., README)\"",
+        ] {
+            assert!(
+                html.contains(marker),
+                "skills modal marker missing: {marker}"
+            );
+        }
+        assert!(
+            !html.contains("skillContentEnabled"),
+            "the single content checkbox is replaced by the per-field editor"
+        );
+        // Saving reads every field row rather than hard-coded weights.
+        assert!(html.contains("fields[key]={enabled:box?!!box.checked:false"));
+        let zh_req = Request::builder()
+            .uri("/skills")
+            .header("Cookie", "lang=zh-CN")
+            .body(Body::empty())
+            .unwrap();
+        let zh_html = body_of(skills_page(axum::extract::State(state), zh_req).await).await;
+        for marker in [
+            "技能搜索配置",
+            "配置技能的索引和搜索方式",
+            "向量相似度权重",
+            "仅关键词",
+            "索引字段",
+            "\"hybrid\":\"混合搜索\"",
+        ] {
+            assert!(
+                zh_html.contains(marker),
+                "zh skills modal copy missing: {marker}"
+            );
+        }
+    }
+
+    /// Upstream `dataset_api.list_tags` / `delete_tags` / `rename_tag` +
+    /// `tag-tabs.tsx`: tags aggregate across the dataset's document metadata and
+    /// the Configuration tab exposes the Cloud/Table switch (word cloud sized by
+    /// count, table rows with rename/delete).
+    #[tokio::test]
+    async fn dataset_tags_aggregate_rename_and_delete_across_documents() {
+        use crate::api::dataset_tags::{delete_tags, list_tags, rename_tag, tag_counts};
+        use crate::api::document_metadata::MetadataUpdate;
+
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Tags KB", "d").unwrap();
+        // Upstream tags come from the chunks tag_kwd field, not document metadata.
+        {
+            let mut engine = state.engine.write().unwrap();
+            let mut chunks = Vec::new();
+            for (chunk_id, tags) in [
+                ("chunk-1", vec!["Water", "Fish"]),
+                ("chunk-2", vec!["Water"]),
+                ("chunk-3", vec!["Feed", "Water"]),
+            ] {
+                let mut metadata = std::collections::HashMap::new();
+                metadata.insert("kb_id".to_string(), kb.id.clone());
+                metadata.insert("doc_id".to_string(), chunk_id.to_string());
+                metadata.insert("tag_kwd".to_string(), tags.join(","));
+                chunks.push(crate::search::IndexedChunk {
+                    id: chunk_id.to_string(),
+                    doc_name: format!("{chunk_id}.txt"),
+                    content: String::new(),
+                    embedding: vec![0.0],
+                    token_count: 1,
+                    position: 0,
+                    metadata,
+                });
+            }
+            engine.index(chunks);
+        }
+        // `GET` payload: `[[tag, count], …]`, count desc then name.
+        let counts = tag_counts(&state, &kb.id);
+        assert_eq!(
+            counts,
+            vec![
+                ("Water".to_string(), 3),
+                ("Feed".to_string(), 1),
+                ("Fish".to_string(), 1)
+            ]
+        );
+        let listed = body_of(
+            list_tags(
+                axum::extract::State(state.clone()),
+                axum::extract::Path(kb.id.clone()),
+            )
+            .await,
+        )
+        .await;
+        assert!(listed.contains("[\"Water\",3]"), "{listed}");
+        // Unknown dataset → HTTP 200 with the upstream "no authorization" data error.
+        let missing = list_tags(
+            axum::extract::State(state.clone()),
+            axum::extract::Path("nope".to_string()),
+        )
+        .await;
+        assert_eq!(missing.status(), axum::http::StatusCode::OK);
+        let missing = body_of(missing).await;
+        assert!(missing.contains("no authorization"), "{missing}");
+
+        // Rename propagates to every document and de-duplicates.
+        let renamed = rename_tag(
+            axum::extract::State(state.clone()),
+            axum::extract::Path(kb.id.clone()),
+            axum::body::Bytes::from_static(br#"{"from_tag":"Water","to_tag":"H2O"}"#),
+        )
+        .await;
+        assert_eq!(renamed.status(), axum::http::StatusCode::OK);
+        assert_eq!(
+            tag_counts(&state, &kb.id),
+            vec![
+                ("H2O".to_string(), 3),
+                ("Feed".to_string(), 1),
+                ("Fish".to_string(), 1)
+            ]
+        );
+        // Validation mirrors the upstream messages.
+        let missing_fields = rename_tag(
+            axum::extract::State(state.clone()),
+            axum::extract::Path(kb.id.clone()),
+            axum::body::Bytes::from_static(b"{}"),
+        )
+        .await;
+        assert_eq!(missing_fields.status(), axum::http::StatusCode::OK);
+        let missing_fields = body_of(missing_fields).await;
+        assert!(
+            missing_fields.contains("Lack of from_tag"),
+            "{missing_fields}"
+        );
+        let empty_tag = rename_tag(
+            axum::extract::State(state.clone()),
+            axum::extract::Path(kb.id.clone()),
+            axum::body::Bytes::from_static(br#"{"from_tag":"  ","to_tag":"x"}"#),
+        )
+        .await;
+        assert_eq!(empty_tag.status(), axum::http::StatusCode::OK);
+        let empty_tag = body_of(empty_tag).await;
+        assert!(empty_tag.contains("must not be empty"), "{empty_tag}");
+
+        // Delete removes the listed tags from every document.
+        let deleted = delete_tags(
+            axum::extract::State(state.clone()),
+            axum::extract::Path(kb.id.clone()),
+            axum::body::Bytes::from_static(br#"{"tags":["Fish","Feed"]}"#),
+        )
+        .await;
+        assert_eq!(deleted.status(), axum::http::StatusCode::OK);
+        assert_eq!(tag_counts(&state, &kb.id), vec![("H2O".to_string(), 3)]);
+        let lacking = delete_tags(
+            axum::extract::State(state.clone()),
+            axum::extract::Path(kb.id.clone()),
+            axum::body::Bytes::from_static(b"{}"),
+        )
+        .await;
+        assert_eq!(lacking.status(), axum::http::StatusCode::OK);
+        let lacking = body_of(lacking).await;
+        assert!(lacking.contains("Lack of tags"), "{lacking}");
+
+        // The Configuration tab renders the upstream Cloud/Table surface.
+        let request = Request::builder()
+            .uri("/dataset/configuration/x")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(dataset_page(State(state), Path(kb.id.clone()), request).await).await;
+        for marker in [
+            "data-testid='ds-tag-tabs'",
+            "id='dsTagTabCloud'",
+            "id='dsTagTabTable'",
+            "id='dsTagCloud'",
+            "id='dsTagTableWrap'",
+            "id='dsTagRows'",
+            "id='dsTagEmpty'",
+            "id='dsTagStatus'",
+            "dsTagTab('cloud')",
+            "function dsTagLoad()",
+            "function dsTagRender()",
+            "function dsTagRenameStart(",
+            "function dsTagDelete(",
+            "dsTagRenameModal",
+            "dsTagDeleteModal",
+            "dsTagSubmitRename",
+            "dsTagSubmitDelete",
+            "/tags',{method:method",
+            "dsTagLoad();",
+            ">Tag cloud<",
+            ">Tag table<",
+        ] {
+            assert!(html.contains(marker), "tag tab marker missing: {marker}");
+            assert!(
+                !html.contains("b.push_str("),
+                "the rendered dataset page contains Rust source"
+            );
+        }
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".ds-tag-cloud{display:flex",
+            ".ds-tag-chip{",
+            ".ds-tag-table{width:100%",
+        ] {
+            assert!(css.contains(rule), "tag css missing: {rule}");
+        }
+    }
+
+    /// Upstream `next-search/search-setting.tsx` rerank slice: the switch carries
+    /// the `search.rerankModel` label, enabling it reveals the shared rerank
+    /// model tree (required — the drawer shows the upstream validation message),
+    /// disabling it restores `top_k = 1024`, and the retrieval call always uses
+    /// the upstream endpoint with `rerank_id` only when the switch is on.
+    #[tokio::test]
+    async fn search_page_rerank_field_matches_upstream_search_setting() {
+        let state = test_state().1;
+        let req = axum::http::Request::builder()
+            .uri("/search")
+            .header("Cookie", "lang=en")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let html = body_of(search_page(axum::extract::State(state.clone()), req).await).await;
+        for marker in [
+            "id='rerank' data-testid='search-settings-rerank' onchange='searchRerankToggle();ssRerankSync()'",
+            "Rerank model</span>",
+            "id='searchRerankRow'",
+            "id='searchRerankError'",
+            "Rerank model is required when rerank is enabled",
+            "data-testid='default-model-rerank_id'",
+            "SEARCH_RERANK_TOPK_DEFAULT=1024",
+            "function searchRerankSelected()",
+            "function searchRerankHideError()",
+            "if(searchRerankWasOn&&!on)",
+            "if(r&&!searchRerankSelected())",
+            "var e='/api/v1/retrieval'",
+        ] {
+            assert!(
+                html.contains(marker),
+                "search rerank marker missing: {marker}"
+            );
+        }
+        assert!(
+            !html.contains("var e=r?'/api/v1/retrieval':'/api/v1/search'"),
+            "the search page must always call the upstream retrieval endpoint"
+        );
+        let zh_req = axum::http::Request::builder()
+            .uri("/search")
+            .header("Cookie", "lang=zh-CN")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let zh_html = body_of(search_page(axum::extract::State(state), zh_req).await).await;
+        assert!(zh_html.contains("重排模型"), "zh rerank label missing");
+        assert!(
+            zh_html.contains("启用重排时必须选择重排模型"),
+            "zh rerank validation copy missing"
+        );
+    }
+
+    /// Upstream `PermissionFormField` + `general-form.tsx`: the permission field
+    /// is the *same* `SelectWithSearch` as the language field, over
+    /// `Object.values(PermissionRole)` with the `knowledgeConfiguration` copy
+    /// (testId `ds-settings-basic-permissions-select`). Two options mean
+    /// upstream's `showSearch` stays false, so the popover has no command input;
+    /// the avatar keeps the shared `AvatarUpload` test ids.
+    #[tokio::test]
+    async fn dataset_permission_and_avatar_match_upstream_fields() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Perm KB", "d").unwrap();
+        let request = Request::builder()
+            .uri("/dataset/configuration/x")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html =
+            body_of(dataset_page(State(state.clone()), Path(kb.id.clone()), request).await).await;
+        let trigger_at = html
+            .find("data-testid='ds-settings-basic-permissions-select'")
+            .expect("permissions combobox");
+        let trigger_start = html[..trigger_at].rfind("<button").expect("trigger start");
+        let trigger_end = html[trigger_at..].find("</button>").expect("trigger end") + trigger_at;
+        let trigger = &html[trigger_start..trigger_end];
+        for attribute in [
+            "id='cfgPerm'",
+            "role='combobox'",
+            "aria-expanded='false'",
+            "aria-controls='cfgPermPop'",
+            "data-value='me'",
+        ] {
+            assert!(
+                trigger.contains(attribute),
+                "permissions trigger missing {attribute}"
+            );
+        }
+        let list_at = html.find("id='cfgPermList'").expect("permission list");
+        let list_end = html[list_at..].find("</td></tr>").expect("row end") + list_at;
+        let list = &html[list_at..list_end];
+        let mut seen = Vec::new();
+        for chunk in list.split("data-value='").skip(1) {
+            seen.push(chunk.split('\'').next().unwrap_or_default().to_string());
+        }
+        assert_eq!(
+            seen,
+            vec!["me".to_string(), "team".to_string()],
+            "the field offers exactly PermissionRole"
+        );
+        assert!(
+            list.contains(">Only me<") && list.contains(">Team<"),
+            "option labels come from knowledgeConfiguration.me/team"
+        );
+        assert!(
+            !html.contains("id='cfgPermSearch'"),
+            "two options are below upstream's five-option search threshold"
+        );
+        assert!(
+            html.contains(
+                "swsRegister('cfgPerm',[[\"me\",\"Only me\"],[\"team\",\"Team\"]],'me',false)"
+            ),
+            "the client registry mirrors the server list"
+        );
+        assert!(
+            html.contains("swsSet('cfgPerm',(kb.permission==='team')?'team':'me')")
+                && html.contains("permission:(swsValue('cfgPerm')==='team'?'team':'me')"),
+            "the field round-trips through loadConfig/saveConfig"
+        );
+        for marker in [
+            ">Permissions",
+            "If it is set to &#39;Team&#39;, all your team members will be able to manage the dataset.",
+            "data-testid='ds-settings-basic-avatar-upload'",
+            "id='cfgAvatarAdd'",
+            "id='cfgAvatarPreviewWrap'",
+            "id='cfgAvatarRemove'",
+            "function cfgAvatarSet(",
+            "cfgAvatarCrop(file)",
+            "DATASET_AVATAR_EXT.test(file.name)",
+            "removeDatasetAvatar()",
+        ] {
+            assert!(
+                html.contains(marker),
+                "dataset settings marker missing: {marker}"
+            );
+        }
+        assert!(
+            !html.contains("value='private'"),
+            "the permission field must no longer offer the legacy `private` value"
+        );
+        for marker in [
+            "openPermPicker",
+            "cfgPermissionSet",
+            "input-select-trigger' id='cfgPermTrigger'",
+        ] {
+            assert!(
+                !html.contains(marker),
+                "the legacy picker must be gone: {marker}"
+            );
+        }
+        // The store normalises both spellings to the upstream `me`.
+        assert_eq!(crate::kb::normalize_permission("private"), "me");
+        assert_eq!(crate::kb::normalize_permission("me"), "me");
+        assert_eq!(crate::kb::normalize_permission("team"), "team");
+        let created = state
+            .kbs
+            .create_for_with_permission("u2", "Legacy", "d", "private")
+            .expect("legacy permission accepted");
+        assert_eq!(created.permission, "me");
+        let updated = state
+            .kbs
+            .update_config(&created.id, Some("private"), None, None, None)
+            .expect("update")
+            .expect("kb");
+        assert_eq!(updated.permission, "me");
+        let team = state
+            .kbs
+            .update_config(&created.id, Some("team"), None, None, None)
+            .expect("update")
+            .expect("kb");
+        assert_eq!(team.permission, "team");
+        // zh copy for the field.
+        let zh_request = Request::builder()
+            .uri("/dataset/configuration/x")
+            .header("Cookie", "lang=zh-CN")
+            .body(Body::empty())
+            .unwrap();
+        let zh_html = body_of(dataset_page(State(state), Path(kb.id), zh_request).await).await;
+        for marker in [
+            "权限",
+            "只有我",
+            "团队",
+            "如果把知识库权限设为“团队”，则所有团队成员都可以操作该知识库。",
+        ] {
+            assert!(
+                zh_html.contains(marker),
+                "zh permission copy missing: {marker}"
+            );
+        }
+    }
+
+    /// The legacy `/kbs/{id}` surface renders the same permission field, so it
+    /// needs the shared component registered too (its inline picker was removed
+    /// with the `input-select` markup and the handler went undefined).
+    #[tokio::test]
+    async fn legacy_kb_detail_page_registers_the_permission_field() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Legacy KB", "d").unwrap();
+        let html = body_of(
+            kb_detail_page(
+                State(state),
+                Path(kb.id),
+                Request::builder()
+                    .uri("/kbs/x")
+                    .header("Cookie", "lang=en")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        assert!(
+            html.contains("data-testid='ds-settings-basic-permissions-select'")
+                && html.contains("swsRegister('cfgPerm',"),
+            "the legacy page must wire the shared permission picker"
+        );
+        assert!(
+            !html.contains("openPermPicker"),
+            "the missing-handler markup is gone"
+        );
+    }
+
+    /// The dataset Logs panel runs its `loadLogs()` fetch before the page's
+    /// shared helper block has necessarily executed, so `badge` must be defined
+    /// inside the Logs script itself (a race on the first paint used to throw
+    /// `ReferenceError: badge is not defined` and leave the table empty).
+    #[tokio::test]
+    async fn dataset_logs_script_defines_badge_before_use() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Logs KB", "d").unwrap();
+        let request = Request::builder()
+            .uri("/dataset/logs/x")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(dataset_page(State(state), Path(kb.id.clone()), request).await).await;
+        assert!(
+            !html.contains("📂") && !html.contains("⚙️") && !html.contains("🧪"),
+            "dataset tab bar must not use emoji glyphs"
+        );
+        let logs_marker = html.find("id='logBody'").expect("logs table");
+        let definition = html.find("function logStatusClass(").expect("badge helper");
+        let first_call = html
+            .find("logStatusClass(log.operation_status)")
+            .expect("badge call");
+        assert!(
+            definition > logs_marker,
+            "the Logs script must follow its table markup"
+        );
+        assert!(
+            definition < first_call,
+            "logStatusClass definition (at {definition}) must precede its first call (at {first_call})"
+        );
+        let load = html
+            .find("function loadLogs(")
+            .expect("loadLogs definition");
+        let boot = html.find("loadLogs();").expect("loadLogs boot call");
+        assert!(load < boot, "loadLogs must be defined before the boot call");
+        assert!(html.contains("logs-stat-grid"), "stat card grid");
+        assert!(
+            html.contains("id='logsTabDataset'") && html.contains("id='logStatus'"),
+            "log tabs and status filter"
+        );
+        assert!(
+            html.contains("data-testid='process-log-modal'"),
+            "process log modal"
+        );
+    }
+
+    /// Upstream login channels + `disablePasswordLogin`: the channel list comes
+    /// from `GET /api/v1/auth/login/channels` (`{channel, display_name, icon}`),
+    /// each button performs the upstream GET redirect to
+    /// `/api/v1/auth/login/{channel}`, and SSO-only mode hides both password
+    /// forms and the register/login toggles.
+    #[tokio::test]
+    async fn login_channels_and_sso_only_mode_match_upstream() {
+        let req = axum::http::Request::builder()
+            .uri("/login")
+            .header("Cookie", "lang=en")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let html = body_of(login_page(req).await).await;
+        for marker in [
+            "'/api/v1/auth/login/'+encodeURIComponent(channel)",
+            "loadAuthChannels()",
+            "id='authChannels'",
+            "auth-channel",
+            "authPasswordLoginDisabled()",
+            "applyAuthSystemConfig",
+            "config.disablePasswordLogin===true",
+            "loginForm.hidden=authPasswordLoginDisabled()",
+            "regForm.hidden=authPasswordLoginDisabled()",
+            "classList.toggle('auth-channels-solo',authPasswordLoginDisabled())",
+            "authPasswordLoginDisabled()||!authRegisterEnabled()",
+        ] {
+            assert!(
+                html.contains(marker),
+                "login channel marker missing: {marker}"
+            );
+        }
+        // Registry parsing follows the upstream `oauth:` shape.
+        let channels = crate::oauth_config::parse(
+            r#"{"github":{"type":"github","icon":"github","display_name":"Github","client_id":"cid","client_secret":"sec","redirect_uri":"https://app/v1/user/oauth/callback/github","authorization_url":"https://github.com/login/oauth/authorize","scope":"read:user"},
+                "oidc":{"display_name":"OIDC","issuer":"https://idp.example.com/protocol/openid-connect","client_id":"cid2","scope":"openid email profile"}}"#,
+        );
+        assert_eq!(
+            crate::oauth_config::channel_names(&channels),
+            vec!["github".to_string(), "oidc".to_string()]
+        );
+        let github = crate::oauth_config::find(&channels, "github").expect("github channel");
+        assert_eq!(github.display_name, "Github");
+        assert_eq!(github.icon, "github");
+        let url = github
+            .authorization_request("state-1")
+            .expect("authorization url");
+        assert!(
+            url.starts_with("https://github.com/login/oauth/authorize?"),
+            "{url}"
+        );
+        for part in [
+            "response_type=code",
+            "client_id=cid",
+            "redirect_uri=https%3A%2F%2Fapp%2Fv1%2Fuser%2Foauth%2Fcallback%2Fgithub",
+            "scope=read%3Auser",
+            "state=state-1",
+        ] {
+            assert!(
+                url.contains(part),
+                "authorization url missing {part}: {url}"
+            );
+        }
+        // OIDC entries derive the endpoint from `issuer`; defaults follow upstream.
+        let oidc = crate::oauth_config::find(&channels, "oidc").expect("oidc channel");
+        assert_eq!(
+            oidc.authorization_url.as_deref(),
+            Some("https://idp.example.com/protocol/openid-connect/auth")
+        );
+        let bare = crate::oauth_config::parse(r#"{"jumpcloud":{}}"#);
+        assert_eq!(bare[0].display_name, "Jumpcloud");
+        assert_eq!(bare[0].icon, "sso");
+        assert!(crate::oauth_config::parse("not-json").is_empty());
+    }
+
+    /// The embedded search bot needs a surface too: the ask card streams `POST /searchbots/ask` and
+    /// shows the answer with its sources.
+    #[tokio::test]
+    async fn the_ask_card_streams_the_search_bot_answer() {
+        let (_root, state) = test_state();
+        let req = axum::http::Request::builder()
+            .uri("/search")
+            .header("Cookie", "lang=en")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let html = body_of(search_page(State(state), req).await).await;
+        assert_inline_scripts_balance(&html, "/search");
+        for marker in [
+            "data-testid='ask-card'",
+            "data-testid='ask-question'",
+            "data-testid='ask-send'",
+            "data-testid='ask-status'",
+            "data-testid='ask-answer'",
+            "data-testid='ask-refs'",
+            // The stream is consumed frame by frame, and the done frame is recognised.
+            "'/api/v1/searchbots/ask'",
+            "payload.data===true",
+            "searchDocsSelectedKbs",
+        ] {
+            assert!(html.contains(marker), "missing {marker}");
+        }
+        let leftover: Vec<&str> = html
+            .match_indices('@')
+            .map(|(index, _)| &html[index..(index + 24).min(html.len())])
+            .filter(|slice| slice.chars().nth(1).is_some_and(|c| c.is_ascii_uppercase()))
+            .collect();
+        assert!(
+            leftover.is_empty(),
+            "unsubstituted placeholders {leftover:?}"
+        );
+    }
+
+    /// The reset flow needs a surface, not only endpoints: the captcha image, the answer box, the
+    /// code and the new password. The placeholders are checked too, because a template substituted
+    /// with the wrong token set would render `@TITLE@` to the user.
+    #[tokio::test]
+    async fn the_reset_card_offers_the_whole_flow_without_leftover_placeholders() {
+        for lang in ["en", "zh"] {
+            let req = axum::http::Request::builder()
+                .uri("/login")
+                .header("Cookie", format!("lang={lang}"))
+                .body(axum::body::Body::empty())
+                .unwrap();
+            let html = body_of(login_page(req).await).await;
+            assert_inline_scripts_balance(&html, "/login");
+            for marker in [
+                "id='resetCard'",
+                "data-testid='reset-card'",
+                "data-testid='reset-email'",
+                "data-testid='reset-captcha-image'",
+                "data-testid='reset-captcha'",
+                "data-testid='reset-reload'",
+                "data-testid='reset-send'",
+                "data-testid='reset-code'",
+                "data-testid='reset-new-password'",
+                "data-testid='reset-submit'",
+                "data-testid='reset-status'",
+                // The image is fetched from the endpoint that issues the answer.
+                "'/api/v1/auth/password/forgot/captcha?email='+encodeURIComponent(address)",
+                "'/api/v1/auth/password/forgot/otp'",
+                "'/api/v1/auth/password/reset'",
+            ] {
+                assert!(html.contains(marker), "{lang}: missing {marker}");
+            }
+            let leftover: Vec<&str> = html
+                .match_indices('@')
+                .map(|(index, _)| &html[index..(index + 20).min(html.len())])
+                .filter(|slice| slice.chars().nth(1).is_some_and(|c| c.is_ascii_uppercase()))
+                .collect();
+            assert!(
+                leftover.is_empty(),
+                "{lang}: unsubstituted placeholders {leftover:?}"
+            );
+        }
+    }
+
+    /// Upstream `login-next/bg.tsx` (BgSvg) + `components/spotlight.tsx` and the
+    /// `useSystemConfig()` register gate: the login page paints the three neon
+    /// arcs with their 16s dash flow, three radial spotlights, and hides the
+    /// sign-up toggle when `registerEnabled === 0`.
+    #[tokio::test]
+    async fn login_page_paints_upstream_background_and_honours_register_gate() {
+        let req = axum::http::Request::builder()
+            .uri("/login")
+            .header("Cookie", "lang=en")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let html = body_of(login_page(req).await).await;
+        for marker in [
+            "class='auth-bg'",
+            "auth-bg-top",
+            "auth-bg-middle",
+            "auth-bg-bottom",
+            "viewBox='0 0 1440 240'",
+            "viewBox='0 0 1440 466'",
+            "viewBox='0 0 1440 704'",
+            "preserveAspectRatio='none'",
+            "stroke='#00BEB4'",
+            "stroke-dasharray='50,600'",
+            "class='animate-glow mask-path'",
+            "class='animate-highlight mask-path'",
+            "feGaussianBlur in='SourceGraphic' stdDeviation='5.2'",
+            "feGaussianBlur in='SourceGraphic' stdDeviation='5.5'",
+            "<stop offset='50%' stop-color='#80FFF8' stop-opacity='1'/>",
+            "<stop offset='48%' stop-color='#FFD700' stop-opacity='0.3'/>",
+            "spotlight spotlight-main",
+            "spotlight spotlight-left",
+            "spotlight spotlight-right",
+            "--sx:50%;--sy:190%;--so:0.4;--sc:60%",
+            "--sx:10%;--sy:-10%;--so:0.3;--sc:12%",
+            "--sx:90%;--sy:-10%;--so:0.3;--sc:12%",
+            "id='authSwitchToRegister'",
+            "id='authSwitchToLogin'",
+            "loadAuthSystemConfig()",
+            "fetch('/api/v1/system/config')",
+            "config.registerEnabled!==0",
+            "if(!authFlipped&&(authPasswordLoginDisabled()||!authRegisterEnabled()))return",
+        ] {
+            assert!(
+                html.contains(marker),
+                "login background marker missing: {marker}"
+            );
+        }
+        // The two upstream system endpoints back the gate.
+        let state = test_state().1;
+        let version = body_of(crate::api::system::system_version_public().await).await;
+        assert!(version.contains("\"code\":0"), "version payload shape");
+        assert!(version.contains(&format!("\"data\":\"v{}\"", crate::build_info::VERSION)));
+        let config =
+            body_of(crate::api::system::system_config(axum::extract::State(state)).await).await;
+        assert!(
+            config.contains("\"registerEnabled\":1")
+                && config.contains("\"disablePasswordLogin\":false"),
+            "system config payload must expose both upstream fields: {config}"
+        );
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".auth-bg-top{height:240px}",
+            ".auth-bg-middle{height:466px;margin-top:-192px}",
+            ".auth-bg-bottom{height:704px;margin-top:-288px}",
+            "@keyframes auth-glow{0%{stroke-dashoffset:0}100%{stroke-dashoffset:-650}}",
+            ".spotlight{position:absolute;inset:0;z-index:-1",
+        ] {
+            assert!(css.contains(rule), "login background css missing: {rule}");
+        }
+    }
+
+    /// Upstream `profile/index.tsx` + `components/avatar-upload.tsx`: the page
+    /// header is `setting.profile` + `setting.profileDescription`, rows use a
+    /// 190px label column with a bordered value box and a `PenLine` edit button,
+    /// the avatar renders the AvatarUpload plus-button / preview+pencil /
+    /// remove-X states with `setting.avatarTip`, and every interactive label is
+    /// localized (nested `setting.*` keys).
+    #[tokio::test]
+    async fn profile_page_matches_upstream_rows_and_avatar_upload() {
+        let (_root, state) = test_state();
+        let en = axum::http::Request::builder()
+            .uri("/user-setting/profile")
+            .header("Cookie", "lang=en")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let body = body_of(user_setting_profile_page(en).await).await;
+        for marker in [
+            "<h2 class='profile-title'>Profile</h2>",
+            "Update your photo and personal details here.",
+            "<label>Name</label>",
+            "<label>Avatar</label>",
+            "<label>Time zone</label>",
+            "<label>Email</label>",
+            "<label>Password</label>",
+            "Once registered, E-mail cannot be changed.",
+            "This will be displayed on your profile.",
+            "id='profileAvatarUpload'",
+            "id='profileAvatarAdd'",
+            "id='profileAvatarPreview'",
+            "id='profileAvatarRemove'",
+            "aria-label='Remove image'",
+            "avatar-upload-pencil",
+            "profile-edit-btn",
+            "class='profile-box'",
+            "removeProfileAvatar()",
+            "profileAvatarCrop",
+            "PROFILE_AVATAR_EXT",
+            "PROFILE_AVATAR_EXT=/\\.(jpg|jpeg|png|webp|bmp)$/i",
+            "PROFILE_NAME_PATTERN",
+            "PROFILE_LABELS.nameRequired",
+            "PROFILE_LABELS.confirmPasswordMessage",
+            "profileAvatarSet(user.avatar||''",
+        ] {
+            assert!(body.contains(marker), "profile marker missing: {marker}");
+        }
+        // The label table is injected as JSON (both locales).
+        for label in [
+            "\"nameRequired\":\"Please input your username!\"",
+            "\"confirmPasswordMessage\":\"Please confirm your password!\"",
+        ] {
+            assert!(
+                body.contains(label),
+                "profile label payload missing: {label}"
+            );
+        }
+        assert!(
+            !body.contains("__PROFILE_LABELS__"),
+            "the profile label placeholder must be substituted"
+        );
+        let zh = axum::http::Request::builder()
+            .uri("/user-setting/profile")
+            .header("Cookie", "lang=zh-CN")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let zh_body = body_of(user_setting_profile_page(zh).await).await;
+        for marker in [
+            "<h2 class='profile-title'>概要</h2>",
+            "在此更新您的照片和个人详细信息。",
+            "<label>用户名</label>",
+            "<label>头像</label>",
+            "<label>时区</label>",
+            "<label>邮箱</label>",
+            "<label>密码</label>",
+            "一旦注册，电子邮件将无法更改。",
+            "这会在你的个人主页展示",
+            "编辑",
+            "\"nameRequired\":\"请输入用户名\"",
+        ] {
+            assert!(
+                zh_body.contains(marker),
+                "zh profile marker missing: {marker}"
+            );
+        }
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".profile-row label{width:190px",
+            ".avatar-upload-add{display:inline-flex;width:64px;height:64px",
+            ".avatar-upload-remove{position:absolute;top:-8px;right:-8px",
+        ] {
+            assert!(css.contains(rule), "profile css missing: {rule}");
+        }
+    }
+
+    /// Upstream `un-add-model.tsx` (Available models) + `local-llm-configs.ts`:
+    /// the pill label and its count are adjacent siblings (CSS margin only), the
+    /// card exposes a hover-only `setting.addTheModel` button, and the
+    /// non-picker local factories render the explicit LocalLlmConfigs field set
+    /// (model_type subset, model_name, max_tokens=8192, is_tools, vision) while
+    /// the picker factories rely on the model list instead.
+    #[tokio::test]
+    async fn available_models_pills_and_local_provider_fields_match_upstream() {
+        let (_root, state) = test_state();
+        let req = axum::http::Request::builder()
+            .uri("/user-setting/model")
+            .header("Cookie", "lang=en")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let body = body_of(providers_page(axum::extract::State(state.clone()), req).await).await;
+        // Counts sit immediately after the label, exactly like upstream JSX.
+        assert!(
+            body.contains(">All<span id='providerCountAll'></span></button>"),
+            "the All pill must not put a literal space before its count"
+        );
+        for tag in [
+            "chat",
+            "embedding",
+            "rerank",
+            "tts",
+            "speech2text",
+            "image2text",
+            "ocr",
+        ] {
+            let marker = format!("<span id='providerCount-{tag}'></span></button>");
+            assert!(body.contains(&marker), "count span missing for {tag}");
+        }
+        assert!(
+            !body.contains("All <span id='providerCountAll'"),
+            "stale spaced pill markup still present"
+        );
+        // Card action copy comes from `setting.addTheModel`.
+        assert!(body.contains("aria-label='Add'"));
+        assert!(body.contains("showProviderInstanceModal(this.closest"));
+        // LocalLlmConfigs field sets for the non-picker local factories.
+        for provider in [
+            "ModelScope",
+            "RAGcon",
+            "TogetherAI",
+            "Replicate",
+            "HuggingFace",
+            "GPUStack",
+        ] {
+            let marker = format!("'{provider}':{{localStyle:true");
+            assert!(
+                body.contains(&marker),
+                "missing local config for {provider}"
+            );
+        }
+        // Upstream `buildLocalConfig` leaves model_type unselected.
+        for provider in [
+            "ModelScope",
+            "RAGcon",
+            "TogetherAI",
+            "Replicate",
+            "HuggingFace",
+            "GPUStack",
+        ] {
+            let config_start = body
+                .find(&format!("'{provider}':{{localStyle:true"))
+                .unwrap_or_else(|| panic!("local config for {provider}"));
+            let config_end = body[config_start..].find("]},").expect("config end") + config_start;
+            assert!(
+                !body[config_start..config_end].contains("typeDefault:"),
+                "{provider} must not preselect a model type"
+            );
+        }
+        for marker in [
+            "visionToImage2Text:true",
+            "baseLabel:'Base url'",
+            "label:'Enable tool call'",
+            "label:'Does it support Vision?'",
+            "onTypes:['chat','image2text']",
+            "localStyleModelTypes(config)",
+            "modelEntry.extra={is_tools:tools.checked}",
+            "id='piProviderOrderField'",
+            "id='piProviderOrder'",
+            "provider_order=order.value.trim()",
+            "document.getElementById('piVisionField').hidden=true",
+        ] {
+            assert!(
+                body.contains(marker),
+                "local provider marker missing: {marker}"
+            );
+        }
+        // Upstream gates the picker factories' vision switch on model_type, which
+        // the picker removes, so it must never render for them.
+        assert!(
+            !body.contains(
+                "document.getElementById('piVisionField').hidden=!!providerSpecialConfig||!picker"
+            ),
+            "picker factories must not expose the generic Vision switch"
+        );
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".provider-model-chevron{display:inline-flex;align-items:center;transform:rotate(0deg);transition:transform .2s}",
+            ".provider-model-trigger.open .provider-model-chevron{transform:rotate(180deg)}",
+            ".provider-model-spinner{display:inline-block;width:16px;height:16px;flex:0 0 16px;border:2px solid var(--bd);border-right-color:transparent;border-radius:50%;animation:team-spin 1s linear infinite}",
+            ".provider-chip span{margin-left:4px;font-variant-numeric:tabular-nums;opacity:.6}",
+        ] {
+            assert!(css.contains(rule), "picker css missing: {rule}");
+        }
+        // The settings table can be intrinsically wide; the grid item shrinks and
+        // the card scrolls instead of pushing the page (CDP regression).
+        let css = include_str!("web_css.txt");
+        assert!(css.contains(".ds-content{min-width:0}"));
+        assert!(css.contains(".ds-content>.card{overflow-x:auto}"));
+        // Both languages keep the count adjacent (no literal space in the markup).
+        let zh_req = axum::http::Request::builder()
+            .uri("/user-setting/model")
+            .header("Cookie", "lang=zh-CN")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let zh_body = body_of(providers_page(axum::extract::State(state), zh_req).await).await;
+        assert!(zh_body.contains(">All<span id='providerCountAll'></span></button>"));
+        assert!(zh_body.contains(">添加</button>"), "zh Add label missing");
+    }
+
+    /// Upstream `un-add-model.tsx` renders the provider tags through
+    /// `sortModelTypes` (`orderMap`) and derives the `ArrowUpRight` doc link
+    /// from `constants/llm.ts::APIMapUrl`. The catalog order, the provider
+    /// count and the per-type chip counts were machine-diffed against the
+    /// pinned `conf/llm_factories.json` (63 providers, rank desc then name,
+    /// counts chat 37 / embedding 25 / rerank 10 / tts 8 / speech2text 11 /
+    /// image2text 17 / ocr 4); this test locks the two remaining details.
+    #[tokio::test]
+    async fn available_cards_sort_tags_and_link_only_upstream_apimap_urls() {
+        let (_root, state) = test_state();
+        let req = axum::http::Request::builder()
+            .uri("/user-setting/model")
+            .header("Cookie", "lang=en")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let body = body_of(providers_page(axum::extract::State(state), req).await).await;
+        // `orderMap`: tts (4) before speech2text/asr (5), ocr (7) last.
+        for marker in [
+            "data-provider='OpenAI' data-name='openai' data-k='chat embedding tts speech2text'",
+            "data-provider='StepFun' data-name='stepfun' data-k='chat tts speech2text image2text'",
+            "data-provider='Tongyi-Qianwen' data-name='tongyi-qianwen' data-k='chat embedding rerank tts speech2text image2text ocr'",
+        ] {
+            assert!(body.contains(marker), "card tag order mismatch: {marker}");
+        }
+        // The doc link only exists for the 47 upstream `APIMapUrl` factories.
+        assert!(
+            body.contains("OpenAI API key page"),
+            "OpenAI doc link missing"
+        );
+        assert!(body.contains("https://platform.openai.com/api-keys"));
+        assert!(
+            body.contains("https://longcat.chat/platform/api_keys"),
+            "LongCat link"
+        );
+        for engine in [
+            "Ollama",
+            "VLLM",
+            "LM-Studio",
+            "LocalAI",
+            "Xinference",
+            "New API",
+        ] {
+            assert_eq!(
+                provider_api_key_url(engine),
+                None,
+                "{engine} has no upstream APIMapUrl entry and must not render a card link"
+            );
+        }
+        assert_eq!(
+            provider_api_key_url("OpenAI"),
+            Some("https://platform.openai.com/api-keys")
+        );
+        assert_eq!(
+            provider_api_key_url("Meituan"),
+            provider_api_key_url("LongCat"),
+            "upstream maps both Meituan and LongCat to the same console"
+        );
+        assert_eq!(provider_api_key_url("Unknown"), None);
+    }
+
+    /// Upstream `pages/admin/users.tsx`: the user table carries a global search
+    /// box (`header.search`), sortable columns (this file does *not* disable
+    /// sorting, unlike the service table) and the same footer pagination.
+    #[tokio::test]
+    async fn admin_users_table_searches_sorts_and_paginates() {
+        let (_root, state) = test_state();
+        let admin = state
+            .users
+            .create_user("users@example.com", "secret-passphrase", "admin")
+            .unwrap();
+        let token = state.users.issue_token_for(&admin.id).unwrap();
+        let body = body_of(
+            admin_users_page(
+                State(state),
+                Request::builder()
+                    .uri("/admin/users")
+                    .header("cookie", "lang=en")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        for marker in [
+            "id='adminUserSearch'",
+            "aria-label='Search users'",
+            "data-testid='admin-users-pagination'",
+            "data-testid='admin-users-sort-email'",
+            "data-testid='admin-users-sort-status'",
+            "function adminUserSort(key)",
+            "function adminRenderUserPager(total)",
+            "function adminUserSortMarks()",
+            // Upstream: own row → badge, other rows → an active/inactive select.
+            "statusBadge.dataset.testid='admin-user-status-badge'",
+            "statusSelect.dataset.testid='admin-user-status-select'",
+            "String(user.email||user.username||'')===String(ADMIN_ME||'')",
+            "var ADMIN_ME=",
+            "adminUserPageSizeChange(this.value)",
+            "['email','username','nickname','role','status'].some(",
+        ] {
+            assert!(
+                body.contains(marker),
+                "admin users marker missing: {marker}"
+            );
+        }
+        // Reset must clear the search box and the sort state as well.
+        assert!(body.contains(
+            "adminUserSortKey='';adminUserSortDesc=false;adminUserPage=1;adminRenderUsers()"
+        ));
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".admin-sortable{cursor:pointer}",
+            ".admin-sort-mark{display:inline-block;min-width:10px;margin-left:4px;color:var(--p)}",
+        ] {
+            assert!(css.contains(rule), "users table css missing: {rule}");
+        }
+    }
+
+    /// Upstream `pages/admin/forms/user-form.tsx` + `forms/change-password-form.tsx`:
+    /// react-hook-form renders one `FormMessage` per field, so the console has to
+    /// show *per-field* messages rather than a single dialog-level line. The zod
+    /// resolvers decide the copy: the create form wants a valid e-mail
+    /// (`admin.invalidEmail`), at least six password characters
+    /// (`admin.passwordMinLength` — the upstream string still says eight) and a
+    /// confirmation that is present (`admin.confirmPasswordRequired`) and equal
+    /// (`admin.confirmPasswordDoNotMatch`); the change form wants eight characters
+    /// on both password fields plus the same equality rule, and shows the target
+    /// account in a read-only e-mail row.
+    #[tokio::test]
+    async fn admin_user_forms_render_upstream_field_validation() {
+        let (_root, state) = test_state();
+        let admin = state
+            .users
+            .create_user("forms@example.com", "secret-passphrase", "admin")
+            .unwrap();
+        let token = state.users.issue_token_for(&admin.id).unwrap();
+        let body = body_of(
+            admin_users_page(
+                State(state),
+                Request::builder()
+                    .uri("/admin/users")
+                    .header("cookie", "lang=en")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+
+        assert_inline_scripts_balance(&body, "/admin/users");
+        for marker in [
+            // Create-user form: three validated fields, each with its own slot.
+            "data-testid='admin-create-user-email' oninput='adminCreateUserErrors()'",
+            "data-testid='admin-create-user-email-error'",
+            "data-testid='admin-create-user-password-error'",
+            "data-testid='admin-create-user-confirm'",
+            "data-testid='admin-create-user-confirm-error'",
+            "<span>Confirm password</span>",
+            // Change-password form: read-only e-mail plus two validated fields.
+            "id='adminPasswordEmail' readonly data-testid='admin-password-email'",
+            "data-testid='admin-new-password'",
+            "data-testid='admin-new-password-error'",
+            "data-testid='admin-new-password-confirm'",
+            "data-testid='admin-new-password-confirm-error'",
+            "<span>Confirm new password</span>",
+            "<span>New password</span>",
+            // E-mail validity mirrors zod's `z.string().email()`.
+            r"function adminValidEmail(value){return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value||''))}",
+            "var emailError=adminValidEmail(email)?'':'Please input a valid email address!'",
+            "var passwordError=password.length>=6?'':'Password must be more than 8 characters.'",
+            "var confirmError=!confirm?'Please confirm your password!':(password===confirm?'':'The password that you entered do not match!')",
+            "document.getElementById('adminNewUserEmailError').textContent=emailError",
+            "document.getElementById('adminNewUserPasswordError').textContent=passwordError",
+            "document.getElementById('adminNewUserConfirmError').textContent=confirmError",
+            "return !emailError&&!passwordError&&!confirmError}",
+            // The change form validates eight characters on both fields.
+            "var passwordError=password.length>=8?'':'Password must be more than 8 characters.'",
+            "var confirmError=confirm.length>=8?(password===confirm?'':'The password that you entered do not match!'):'Please confirm your password!'",
+            "document.getElementById('adminNewPasswordError').textContent=passwordError",
+            "document.getElementById('adminNewPasswordConfirmError').textContent=confirmError",
+            "return !passwordError&&!confirmError}",
+            // Submitting is blocked while a resolver reports an error.
+            "error.textContent='';if(!adminCreateUserErrors())return;",
+            "error.textContent='';if(!adminPasswordErrors())return;",
+            // Opening either dialog resets the values *and* the message slots, so a
+            // fresh form never starts out red.
+            "document.getElementById('adminNewUserConfirm').value=''",
+            "['adminNewUserEmailError','adminNewUserPasswordError','adminNewUserConfirmError'].forEach(function(id){document.getElementById(id).textContent=''})",
+            "document.getElementById('adminNewPasswordConfirm').value=''",
+            "document.getElementById('adminNewPasswordError').textContent='';document.getElementById('adminNewPasswordConfirmError').textContent=''",
+            // The password dialog fills the read-only e-mail row with its target.
+            "var email=document.getElementById('adminPasswordEmail');if(email)email.value=ADMIN_PASSWORD_TARGET;",
+        ] {
+            assert!(body.contains(marker), "admin form marker missing: {marker}");
+        }
+
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".admin-field span.admin-field-error{display:block;margin-top:4px;margin-bottom:0;color:var(--d);font-size:13px;font-weight:500}",
+            ".admin-field span.admin-field-error:empty{display:none}",
+            ".admin-field input[readonly]{background:var(--bgc);color:var(--t2);cursor:default}",
+        ] {
+            assert!(css.contains(rule), "admin form css missing: {rule}");
+        }
+    }
+
+    /// Upstream `components/avatar-upload.tsx` crops through a 300px stage holding the
+    /// scaled image plus a dashed selection box masked by
+    /// `box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5)`. The selection starts at 80% of
+    /// the smaller side (`initCropArea`), is dragged in image coordinates with the
+    /// position clamped to the picture, and resizes on the wheel by 0.9/1.1 with a
+    /// 20px floor while keeping its centre ratio. Confirming draws the selection into
+    /// a 64x64 canvas and emits a PNG data URL.
+    #[tokio::test]
+    async fn avatar_crop_matches_the_upstream_interactive_crop() {
+        let (_root, state) = test_state();
+        let body =
+            body_of(user_setting_profile_page(english_request("/user-setting/profile")).await)
+                .await;
+        assert_inline_scripts_balance(&body, "/user-setting/profile");
+        for marker in [
+            // 80% of the smaller side, centred in image coordinates.
+            "function cfgAvatarCropArea(img){var side=Math.min(img.width,img.height)*0.8;return {size:side,x:(img.width-side)/2,y:(img.height-side)/2}",
+            // Drag with the position clamped to the picture.
+            "var dx=(event.clientX-startX)/scale;var dy=(event.clientY-startY)/scale;area.x=Math.max(0,Math.min(originX+dx,img.width-area.size));area.y=Math.max(0,Math.min(originY+dy,img.height-area.size));",
+            // Wheel zoom, upstream's factors and floor.
+            "var zoom=function(event){var delta=event.deltaY>0?0.9:1.1;var size=Math.max(20,Math.min(area.size*delta,Math.min(img.width,img.height)));",
+            "var centerX=(area.x+area.size/2)/img.width;var centerY=(area.y+area.size/2)/img.height;",
+            "area.x=Math.max(0,Math.min(centerX*img.width-size/2,img.width-size));area.y=Math.max(0,Math.min(centerY*img.height-size/2,img.height-size));",
+            "stage.addEventListener('wheel',zoom,{passive:false});modal._resolve=resolve;modal.classList.add('show');setTimeout(apply,0)})})}",
+            // The dialog's promise plumbing: OK resolves the crop, cancel resolves null,
+            // and the profile uploads through the same dialog upstream uses.
+            "function openAvatarCropModal(file,inputId,previewId,statusId){return new Promise(function(resolve){return cfgAvatarLoad(file).then(function(img){",
+            "modal.classList.remove('show');if(modal._resolve)modal._resolve(value);return value}",
+            "function avatarCropCancel(){var modal=document.getElementById('avatarCropModal');modal.classList.remove('show');if(modal._resolve)modal._resolve(null)}",
+            "var dataUrl=await openAvatarCropModal(file,'','profileAvatarPreview','');if(dataUrl===null){input.value='';return}",
+            // The 64x64 output canvas.
+            "canvas.width=64;canvas.height=64",
+        ] {
+            assert!(
+                body.contains(marker),
+                "avatar crop marker missing: {marker}"
+            );
+        }
+        let crop_box = body
+            .split("data-testid='avatar-crop-dialog'")
+            .nth(1)
+            .expect("crop dialog markup");
+        assert!(crop_box.contains("id='avatarCropBox'"));
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".avatar-crop-box{position:absolute;border:2px dashed #fff;box-shadow:0 0 0 9999px rgba(0,0,0,.5);cursor:move}",
+            ".avatar-crop-stage{position:relative;width:100%;height:320px;overflow:hidden;border:1px solid var(--bd);border-radius:var(--rs);background:var(--bgc);touch-action:none}",
+        ] {
+            assert!(css.contains(rule), "avatar crop css missing: {rule}");
+        }
+    }
+
+    /// Upstream `next-search/hooks.ts::usePendingMindMap` is a *synthetic* ramp: a
+    /// one-second interval bumps a counter, clears itself once the counter passes
+    /// 40, and the sheet's `Progress` shows `Number(((count / 43) * 100).toFixed(0))`
+    /// — so the bar walks 2% a second and settles at 98%, never 100. `Progress`
+    /// itself is `h-1 min-w-10 rounded-full bg-bg-accent` with the indicator moved
+    /// by `translateX(-(100 - value)%)`. RayRAG animated a fixed 40% strip with CSS
+    /// keyframes instead.
+    #[tokio::test]
+    async fn search_mindmap_progress_follows_the_upstream_pending_hook() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Mind KB", "d").unwrap();
+        let body = body_of(
+            search_page(
+                State(state),
+                Request::builder()
+                    .uri("/search")
+                    .header("Cookie", "lang=en")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        let _ = kb;
+        assert_inline_scripts_balance(&body, "/search");
+        for marker in [
+            // Radix `Progress` shape: track + `translateX` indicator with aria values.
+            "<div class='mind-progress' id='mindProgress' role='progressbar' aria-valuemin='0' aria-valuemax='100' aria-valuenow='0' hidden><span class='mind-progress-bar' id='mindProgressBar'></span></div>",
+            "var MIND_PROGRESS_TIMER=null;var MIND_PROGRESS_COUNT=0;",
+            "function mindProgressPercent(count){return Number(((count/43)*100).toFixed(0))}",
+            "bar.style.transform='translateX(-'+(100-percent)+'%)'",
+            "MIND_PROGRESS_TIMER=setInterval(function(){if(MIND_PROGRESS_COUNT>40){mindProgressStop()}MIND_PROGRESS_COUNT+=1;mindProgressRender()},1000)",
+            // Started when the sheet opens, stopped on every terminal branch.
+            "if(progress)progress.hidden=false;mindProgressStart();",
+            ".then(function(data){mindProgressStop();if(progress)progress.hidden=true;",
+            ".catch(function(error){mindProgressStop();if(progress)progress.hidden=true;",
+            "if(sheet)sheet.hidden=true;mindProgressStop();",
+        ] {
+            assert!(
+                body.contains(marker),
+                "mind progress marker missing: {marker}"
+            );
+        }
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".mind-progress{position:relative;width:100%;min-width:40px;height:4px;margin-bottom:12px;border-radius:9999px;background:rgba(76,164,231,.05);overflow:hidden}",
+            ".mind-progress-bar{display:block;width:100%;height:100%;flex:1;background:var(--p);transition:transform .2s;transform:translateX(-100%)}",
+        ] {
+            assert!(css.contains(rule), "mind progress css missing: {rule}");
+        }
+        // The keyframe animation it replaced is gone.
+        assert!(!css.contains("@keyframes mindProgress"));
+        assert!(!css.contains("animation:mindProgress"));
+    }
+
+    /// Upstream `add-custom-model-dialog.tsx` builds its fields through
+    /// `DynamicForm`, which renders a message under every invalid field: `name` is
+    /// required ("<label> is required" = `setting.modelNameRequired`) with the
+    /// `customValidate` duplicate check (`setting.modelNameDuplicate`), and
+    /// `max_tokens` is a coerced number with `.min(0, modelMaxTokensMinMessage)`.
+    /// RayRAG used to write the first failure into the dialog-level `#pcmError`
+    /// line, which hides which field is wrong.
+    #[tokio::test]
+    async fn provider_custom_model_dialog_reports_errors_per_field() {
+        let (_root, state) = test_state();
+        let body = body_of(providers_page(State(state), english_request("/providers")).await).await;
+        assert_inline_scripts_balance(&body, "/providers");
+        assert!(
+            !body.contains("📝") && !body.contains("🔊"),
+            "speech controls must not use emoji glyphs"
+        );
+        for marker in [
+            // One slot per validated field, next to the shared dialog-level line.
+            "<input id='pcmName' name='name' autocomplete='off' oninput='pcmValidate()'></label><p id='pcmNameError' class='provider-instance-error' data-testid='pcm-name-error'></p>",
+            "<input id='pcmMaxTokens' name='max_tokens' type='number' min='0' value='0' oninput='pcmValidate()'></label><p id='pcmMaxTokensError' class='provider-instance-error' data-testid='pcm-max-tokens-error'></p>",
+            "<p id='pcmError' class='provider-instance-error'></p>",
+            // The resolvers mirror DynamicForm's schema.
+            "function pcmSetError(id,message){var node=document.getElementById(id);if(node)node.textContent=message}",
+            "function pcmNameErrorValue(){var name=document.getElementById('pcmName').value.trim();if(!name)return PI_PICKER_LABELS.modelName+' is required';",
+            "return piModels.some(function(model){return model.name===name})?PI_PICKER_LABELS.modelNameDuplicate:''}",
+            "function pcmMaxTokensErrorValue(){var raw=document.getElementById('pcmMaxTokens').value;var value=raw===''?Number.NaN:Number(raw);if(!Number.isFinite(value))return PI_PICKER_LABELS.modelMaxTokensMin;return value<0?PI_PICKER_LABELS.modelMaxTokensMin:''}",
+            "function pcmClearErrors(){pcmSetError('pcmNameError','');pcmSetError('pcmMaxTokensError','');pcmSetError('pcmError','')}",
+            "function pcmValidate(){var nameError=pcmNameErrorValue();var tokensError=pcmMaxTokensErrorValue();pcmSetError('pcmNameError',nameError);pcmSetError('pcmMaxTokensError',tokensError);return !nameError&&!tokensError}",
+            // The submit writes the slots and blocks on them.
+            "pcmClearErrors();if(editing){pcmSetError('pcmNameError','');pcmSetError('pcmMaxTokensError',Number.isFinite(maxTokens)&&maxTokens>=0?'':PI_PICKER_LABELS.modelMaxTokensMin);if(!Number.isFinite(maxTokens)||maxTokens<0)return}else if(!pcmValidate()){return}",
+            // Opening the dialog clears whatever the previous attempt left behind.
+            "function showProviderCustomModel(mode,modelName){var modal=document.getElementById('providerCustomModelModal');pcmClearErrors();",
+        ] {
+            assert!(body.contains(marker), "pcm dialog marker missing: {marker}");
+        }
+        // The old single-line writes are gone.
+        assert!(
+            !body.contains("var error=document.getElementById('pcmError');if(!editing&&!name)")
+        );
+    }
+
+    /// RayRAG extension: the custom provider/model dialogs query the public model
+    /// catalogue (`https://models.agent-one.dev/list`) instead of asking the
+    /// operator to know a model's capabilities, context window and price by heart.
+    /// The dialog keeps working when the catalogue is unreachable — the lookup is an
+    /// aid, never a dependency.
+    #[tokio::test]
+    async fn provider_dialogs_look_custom_models_up_in_the_public_catalogue() {
+        let (_root, state) = test_state();
+        let body = body_of(providers_page(State(state), english_request("/providers")).await).await;
+        assert_inline_scripts_balance(&body, "/providers");
+        assert!(
+            !body.contains("📝") && !body.contains("🔊"),
+            "speech controls must not use emoji glyphs"
+        );
+        for marker in [
+            // The lookup row and its result panel sit between the name field and the
+            // model-type multi-select they fill in.
+            "id='pcmCatalog'",
+            "id='pcmLookupButton'",
+            "data-testid='pcm-catalog-lookup'",
+            "onclick='pcmLookupCatalog()'",
+            "id='pcmLookupStatus'",
+            "data-testid='pcm-catalog-status'",
+            "id='pcmCatalogResult'",
+            "data-testid='pcm-catalog-result'",
+            // The provider dialog resolves an endpoint to a provider and its models.
+            "id='apLookup'",
+            "data-testid='ap-catalog-lookup'",
+            "onclick='apLookupCatalog()'",
+            "id='apCatalogStatus'",
+            "id='apModelSearchStatus'",
+            // The page script: one API helper, a row renderer, the fill and the reset.
+            "function pcmCatalogApi(url)",
+            "function pcmCatalogChips(model)",
+            "function pcmCatalogSummaryText(catalog)",
+            "function pcmCatalogPriceText(model)",
+            "function pcmCatalogRow(entry,status)",
+            "function pcmRenderCatalogResult(data,query)",
+            "function pcmResetCatalog()",
+            "async function pcmLookupCatalog()",
+            "async function pcmFillModelSuggestions(providerId)",
+            "async function apLookupCatalog()",
+            "pcmCatalogApi('/api/v1/model-catalog/lookup?'+query.toString())",
+            "'/api/v1/model-catalog/providers?base_url='+encodeURIComponent(base)",
+            "'/api/v1/model-catalog/providers?provider='+encodeURIComponent(providerId)",
+            // The lookup fills fields left at their defaults; overwriting a typed
+            // value needs the explicit button.
+            "function pcmApplyCatalogEntry(entry){var model=entry&&entry.model;if(!model)return;var types=entry.suggested_model_types||[];if(types.length)piMsSetSelection('pcmTypes',types);",
+            "apply.textContent=PI_PICKER_LABELS.catalogApply",
+            "status.textContent=PI_PICKER_LABELS.catalogApplied",
+            // Opening clears the previous answer, closing clears it again.
+            "pcmClearErrors();pcmResetCatalog();var editing=mode==='edit';",
+            "function closeProviderCustomModel(){var modal=document.getElementById('providerCustomModelModal');pcmResetCatalog();",
+            "lookup.textContent=PI_PICKER_LABELS.catalogLookup",
+            "lookup.textContent=PI_PICKER_LABELS.catalogLookupProvider",
+            // Copy for the empty and failing answers.
+            "PI_PICKER_LABELS.catalogNeedName",
+            "PI_PICKER_LABELS.catalogNoMatch",
+            "PI_PICKER_LABELS.catalogUnavailable",
+            "data.catalog.last_error",
+            "status.textContent=PI_PICKER_LABELS.catalogUnavailable+': '+((error&&error.message)||String(error))",
+            "PI_PICKER_LABELS.modelSuggestionsUnavailable+': '+((error&&error.message)||String(error))",
+            "\"catalogLookup\":\"Look up model info\"",
+            "\"modelSuggestionsUnavailable\":\"Model suggestions unavailable\"",
+            "\"catalogApply\":\"Use these values\"",
+            "\"catalogTools\":\"Tool calls\"",
+        ] {
+            assert!(body.contains(marker), "catalogue marker missing: {marker}");
+        }
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".pcm-catalog-panel{display:grid;gap:8px;max-height:220px;",
+            ".pcm-catalog-chip{",
+            ".pcm-catalog-apply{margin-left:auto}",
+            ".pcm-catalog-panel[hidden]{display:none!important}",
+        ] {
+            assert!(css.contains(rule), "catalogue css missing: {rule}");
+        }
+
+        // The Chinese dialog uses the same table.
+        let (_zh_root, zh_state) = test_state();
+        let zh_request = axum::http::Request::builder()
+            .uri("/user-setting/model")
+            .header("cookie", "lang=zh-CN")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let zh_body = body_of(providers_page(State(zh_state), zh_request).await).await;
+        for marker in [
+            "\"catalogLookup\":\"查询模型信息\"",
+            "\"catalogLookupProvider\":\"查询提供商\"",
+            "\"catalogApply\":\"使用这些信息\"",
+            "\"catalogModels\":\"个模型\"",
+            "\"catalogNoMatch\":\"模型目录中未找到\"",
+            "\"modelSuggestionsUnavailable\":\"模型建议加载失败\"",
+        ] {
+            assert!(
+                zh_body.contains(marker),
+                "zh catalogue label missing: {marker}"
+            );
+        }
+    }
+
+    /// Upstream `pages/login-next/index.tsx` resolves both faces through one zod
+    /// schema — `email: z.string().email().min(1,{message: emailPlaceholder})`,
+    /// `password: z.string().min(1,{message: passwordPlaceholder})` and a required
+    /// nickname on the register face (`NICKNAME_PATTERN`, message
+    /// `setting.usernameInvalidCharacters`) — and renders a `FormMessage` under
+    /// every field, with the remember-me label tinted by its checkbox. The card is
+    /// `max-w-[540px] rounded-2xl pt-14 pl-10 pr-10 pb-2 border shadow-xl`, the
+    /// submit is the `metallic-gradient` button with a 2px teal underline at
+    /// `my-8`, and the two switch rows sit at `mt-10`.
+    #[tokio::test]
+    async fn login_page_validates_per_field_like_the_upstream_schema() {
+        let body = body_of(login_page(english_request("/login")).await).await;
+        assert_inline_scripts_balance(&body, "/login");
+        for marker in [
+            // One slot per field on both faces.
+            "data-testid='auth-email-error' id='loginEmailError'",
+            "data-testid='auth-password-error' id='loginPasswordError'",
+            "data-testid='auth-register-email-error' id='regEmailError'",
+            "data-testid='auth-nickname-error' id='regNicknameError'",
+            "data-testid='auth-register-password-error' id='regPasswordError'",
+            // Schema copy, injected per locale.
+            "var AUTH_EMAIL_REQUIRED=",
+            "var AUTH_PASSWORD_REQUIRED=",
+            "var AUTH_EMAIL_INVALID=",
+            "var AUTH_NICKNAME_REQUIRED=",
+            "var AUTH_NICKNAME_INVALID=",
+            "var AUTH_NICKNAME_PATTERN=/^[\\p{L}\\p{N} ._'-]+$/u;",
+            // Resolvers mirror the schema and gate both submits.
+            "function authValidEmail(value){var email=String(value||'').trim();if(!email)return false;",
+            "function authEmailError(value){var email=String(value||'').trim();if(!email)return AUTH_EMAIL_REQUIRED;",
+            "function authPasswordError(value){return String(value||'')?'':AUTH_PASSWORD_REQUIRED}",
+            "function authNicknameError(value){var nickname=String(value||'').trim();if(!nickname)return AUTH_NICKNAME_REQUIRED;",
+            "function authErrors(){",
+            "function authRegisterErrors(){",
+            "authNotice('',true);if(!authErrors())return;",
+            "if(!authRegisterErrors())return;",
+            // Upstream `useRegister`: the sign-up POST goes to `${restAPIv1}/users`,
+            // a zero code shows `message.registered` (`Registered!` / `注册成功`) and
+            // flips back to the login face, and a message carrying
+            // 'registration is disabled' shows `message.registerDisabled` instead.
+            "var AUTH_REGISTERED=",
+            "var AUTH_REGISTER_DISABLED=",
+            "function authNotice(text,error){var node=document.getElementById('error');if(!node)return;",
+            "node.classList.toggle('success',!error);clearTimeout(authNotice.timer);",
+            "if(!error&&text)authNotice.timer=setTimeout(function(){node.textContent=''},3000)}",
+            "fetch('/api/v1/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nickname:n,email:e,password:p})})",
+            "if(d.code===0){authNotice(AUTH_REGISTERED,false);authFlipped=false;setActiveFace(true);document.getElementById('email').value=e}",
+            "else if(String(d.message||'').indexOf('registration is disabled')>=0){authNotice(AUTH_REGISTER_DISABLED,true)}",
+            "else{authNotice(d.message,true)}}).catch(function(error){authNotice(error.message,true)})}",
+            // Remember-me tint + the labelled inputs.
+            "<label class='auth-remember' id='authRememberLabel'><input id='remember' class='auth-checkbox' type='checkbox' onchange='authRememberTint()'>",
+            "function authRememberTint(){var label=document.getElementById('authRememberLabel');if(label)return;",
+            "label.classList.toggle('checked',document.getElementById('remember').checked)",
+        ] {
+            if marker
+                == "function authRememberTint(){var label=document.getElementById('authRememberLabel');if(label)return;"
+            {
+                continue;
+            }
+            assert!(
+                body.contains(marker),
+                "auth schema marker missing: {marker}"
+            );
+        }
+        assert!(body.contains(
+            "function authRememberTint(){var label=document.getElementById('authRememberLabel');if(!label)return;label.classList.toggle('checked',document.getElementById('remember').checked)}"
+        ));
+        let css = include_str!("web_css.txt");
+        for rule in [
+            "--t:#f6f6f7;--metallic:#46464a;",
+            "--metallic:#fafafa;",
+            ".auth-stage .auth-card{width:100%;max-width:540px;margin:0 auto;padding:56px 40px 8px;border-radius:10px;border:1px solid var(--bd);box-shadow:var(--shl);backdrop-filter:blur(4px)}",
+            ".auth-heading{margin-bottom:32px;text-align:center}.auth-stage .auth-card .auth-heading h2{font-size:20px;font-weight:600}",
+            ".auth-form{display:flex;flex-direction:column;gap:32px}",
+            ".auth-message{margin-top:8px;color:var(--d);font-size:14px;font-weight:500}.auth-message:empty{display:none}",
+            ".auth-remember.checked{color:var(--t)}",
+            ".auth-switch{margin-top:40px;text-align:right;font-size:14px;color:var(--tm)}",
+            ".auth-channels{display:flex;flex-direction:column;gap:0;margin-top:12px;border:1px solid var(--bd)}",
+            // The success tint of the register notice (antd `message.success`).
+            ".auth-error.success{color:#3ecf8e}",
+        ] {
+            assert!(css.contains(rule), "auth css missing: {rule}");
+        }
+        assert!(css.contains(".auth-form .auth-submit{width:100%;margin:32px 0;height:40px;padding:0 16px;font-size:14px;background:linear-gradient(104deg,var(--t) 30%,var(--metallic) 50%,var(--t) 70%);color:var(--bg);border:0;border-bottom:2px solid #00BEB4;border-radius:var(--rs)}"));
+        assert!(!css.contains(".auth-card{max-width:400px;margin:100px auto}"));
+    }
+
+    /// Upstream `pages/admin/login.tsx`: three `Spotlight` layers over the `BgSvg`
+    /// bands, an absolutely positioned head (brand `mt-12 ml-12`, title
+    /// `mt-[6.5rem] text-4xl font-medium mb-12`), the 540px column at `mt-72 mb-48`
+    /// with a card split into `CardContent px-10 pt-14 pb-10` and `CardFooter
+    /// px-10 pt-8 pb-14`, one `FormMessage` per field fed by the zod schema
+    /// (`.min(1, {message: emailPlaceholder})` / `.min(1, {message:
+    /// passwordPlaceholder})`), a remember-me checkbox that tints its label, and a
+    /// `variant="highlighted" size="lg" block loading` submit.
+    #[tokio::test]
+    async fn admin_console_login_matches_the_upstream_form() {
+        let (_root, state) = test_state();
+        let body = body_of(
+            admin_page(
+                State(state),
+                Request::builder()
+                    .uri("/admin")
+                    .header("cookie", "lang=en")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        assert_inline_scripts_balance(&body, "/admin");
+        for marker in [
+            // Spotlight trio + head geometry.
+            "<div class='auth-spotlight auth-spotlight-main' aria-hidden='true'></div>",
+            "<div class='auth-spotlight auth-spotlight-left' aria-hidden='true'></div>",
+            "<div class='auth-spotlight auth-spotlight-right' aria-hidden='true'></div>",
+            "<div class='admin-login-head'><div class='admin-login-brand'><img class='admin-logo' src='/logo.svg' alt='logo'>",
+            "<div class='admin-login-center'><div class='admin-login-column'><div class='admin-login-card card'><div class='admin-login-body'>",
+            // One message slot per field, fed by the schema.
+            "<form class='admin-login-form' id='adminLoginForm' onsubmit='event.preventDefault();adminConsoleLogin()'>",
+            "data-testid='admin-email-error' id='adminEmailError'",
+            "data-testid='admin-password-error' id='adminPasswordError'",
+            "var ADMIN_LOGIN_EMAIL_REQUIRED=",
+            "var ADMIN_LOGIN_PASSWORD_REQUIRED=",
+            "function adminConsoleErrors(){var emailError=adminConsoleEmailError(document.getElementById('adminEmail').value);",
+            "if(!email)return ADMIN_LOGIN_EMAIL_REQUIRED;",
+            r"return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)?'':'Invalid email'",
+            "var passwordError=document.getElementById('adminPassword').value?'':ADMIN_LOGIN_PASSWORD_REQUIRED;",
+            "error.textContent='';if(!adminConsoleErrors())return;",
+            // Remember-me label tints with the checkbox state.
+            "<label class='admin-login-remember' id='adminRememberLabel'>",
+            "onchange='adminConsoleRememberTint()'",
+            "label.classList.toggle('checked',document.getElementById('adminRemember').checked)",
+            "adminConsoleRememberTint();</script>",
+            // Submit sits in the card footer with the loading spinner.
+            "<div class='admin-login-footer'><button class='btn btn-hl btn-block admin-login-submit' id='adminLoginButton' data-testid='admin-login-submit' type='submit' form='adminLoginForm'>",
+            "button.disabled=true;button.classList.add('loading');",
+            "button.disabled=false;button.classList.remove('loading');",
+        ] {
+            assert!(
+                body.contains(marker),
+                "admin login marker missing: {marker}"
+            );
+        }
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".auth-spotlight{position:absolute;inset:0;z-index:-1;opacity:.8;border-radius:8px;backdrop-filter:blur(30px);pointer-events:none}",
+            ".auth-spotlight-main{background:radial-gradient(circle at 50% 190%,rgba(128,255,248,.4) 0%,rgba(128,255,248,0) 60%)}",
+            ".auth-spotlight-left{background:radial-gradient(circle at 10% -10%,rgba(128,255,248,.3) 0%,rgba(128,255,248,0) 12%)}",
+            ".auth-spotlight-right{background:radial-gradient(circle at 90% -10%,rgba(128,255,248,.3) 0%,rgba(128,255,248,0) 12%)}",
+            ".admin-login-head{position:absolute;top:12px;left:0;width:100%}",
+            ".admin-login-title{margin:104px auto 48px;font-size:36px;font-weight:500;text-align:center}",
+            ".admin-login-column{width:100%;max-width:540px;margin:288px 0 192px}",
+            ".admin-login-body{padding:56px 40px 40px}",
+            ".admin-login-footer{padding:32px 40px 56px}",
+            ".admin-login-form{display:flex;flex-direction:column;gap:32px;color:var(--t)}",
+            ".admin-login-remember-row{margin-top:-12px}",
+            ".admin-login-remember.checked{color:var(--t)}",
+            ".admin-login-remember input.admin-login-checkbox{appearance:none;-webkit-appearance:none;width:14px;height:14px;flex:0 0 14px;margin:0;padding:0;border:1px solid var(--tm);border-radius:2px;background:transparent;position:static;cursor:pointer;transition:background-color .15s,border-color .15s}",
+            ".btn-hl{background:var(--t);color:var(--bg);border-bottom:4px solid var(--p);border-radius:8px;height:40px;padding:0 16px;gap:8px;font-size:14px;font-weight:500;justify-content:center}",
+            ".btn-block{display:flex;width:100%}",
+        ] {
+            assert!(css.contains(rule), "admin login css missing: {rule}");
+        }
+    }
+
+    /// Upstream `layouts/root-layout.tsx` publishes the signed-in console identity
+    /// through a context that also records *where* it came from, and
+    /// `layouts/../login.tsx` fills the `Authorization` / `token` / `userInfo`
+    /// localStorage trio before navigating; `layouts/navigation-layout.tsx` clears
+    /// it again on logout (`authorizationUtil.removeAll()` + `{userInfo: null,
+    /// source: null}`). `pages/admin/users.tsx` then reads `userInfo?.email` for the
+    /// own-row tests. The server keeps guarding the routes, so the cache only ever
+    /// has to stay recognisable across reloads.
+    #[tokio::test]
+    async fn admin_console_keeps_the_upstream_current_user_info_cache() {
+        let (_root, state) = test_state();
+        let admin = state
+            .users
+            .create_user("identity@example.com", "secret-passphrase", "admin")
+            .unwrap();
+        let token = state.users.issue_token_for(&admin.id).unwrap();
+        let login = body_of(
+            admin_page(
+                State(state.clone()),
+                Request::builder()
+                    .uri("/admin")
+                    .header("cookie", "lang=en")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        let users = body_of(
+            admin_users_page(
+                State(state),
+                Request::builder()
+                    .uri("/admin/users")
+                    .header("cookie", "lang=en")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        for (page, html) in [("/admin", &login), ("/admin/users", &users)] {
+            assert_inline_scripts_balance(html, page);
+            for marker in [
+                // The context starts empty and reads the cache on demand.
+                "var ADMIN_USER_INFO={userInfo:null,source:null};",
+                "function adminSetUserInfo(userInfo,source){ADMIN_USER_INFO={userInfo:userInfo||null,source:userInfo?source:null}}",
+                "if(ADMIN_USER_INFO.source)return ADMIN_USER_INFO;",
+                "var cached=JSON.parse(raw);",
+                "adminSetUserInfo(cached,'localStorage');",
+                // The three keys `authorizationUtil` owns.
+                "function adminConsoleRememberIdentity(authorization,token,userInfo){localStorage.setItem('Authorization',authorization);localStorage.setItem('token',token);localStorage.setItem('userInfo',JSON.stringify(userInfo))}",
+                "function adminConsoleForgetIdentity(){localStorage.removeItem('Authorization');localStorage.removeItem('token');localStorage.removeItem('userInfo')}",
+            ] {
+                assert!(
+                    html.contains(marker),
+                    "{page} identity marker missing: {marker}"
+                );
+            }
+        }
+        // Login writes the trio with `name: nickname` and lifts the identity as a
+        // server response, logout clears both the cache and the context.
+        for marker in [
+            "var loginData=result.data.data||{};",
+            "adminConsoleRememberIdentity('Bearer '+token,token,Object.assign({},loginData,{name:loginData.nickname}));",
+            "adminSetUserInfo(loginData,'serverRequest');",
+            "location.href='/admin/services'",
+        ] {
+            assert!(
+                login.contains(marker),
+                "/admin login identity marker missing: {marker}"
+            );
+        }
+        // The own-row check prefers the cached identity exactly like upstream.
+        assert!(users.contains("var ADMIN_ME_SERVER="));
+        assert!(users.contains("var ADMIN_ME=adminConsoleIdentityEmail()||ADMIN_ME_SERVER;"));
+        assert!(users.contains(
+            "function adminConsoleIdentityEmail(){var info=adminCurrentUserInfo().userInfo;return info&&info.email?String(info.email):''}"
+        ));
+        let shell = admin_console_shell(AdminConsoleSection::Services, "", false);
+        for marker in [
+            "adminConsoleForgetIdentity();adminSetUserInfo(null,null);",
+            "function adminConsoleLogout(){fetch('/api/v1/admin/logout')",
+        ] {
+            assert!(
+                shell.contains(marker),
+                "console logout marker missing: {marker}"
+            );
+        }
+    }
+
+    /// Upstream `pages/admin/user-detail.tsx` renders both asset tables through a
+    /// single visible column — an avatar plus the dataset `name` / agent `title` —
+    /// with the `TableHeader` block commented out and `TableEmpty` (one cell,
+    /// `h-24 text-center`, `common.noResults`) when there is nothing to show; the
+    /// tabs are bordered pills that fill on the active one, and the way back is an
+    /// outline `Button` with `LucideArrowLeft`.
+    #[tokio::test]
+    async fn admin_user_detail_asset_tables_match_the_upstream_single_column() {
+        let (_root, state) = test_state();
+        let admin = state
+            .users
+            .create_user("detail@example.com", "secret-passphrase", "admin")
+            .unwrap();
+        let token = state.users.issue_token_for(&admin.id).unwrap();
+        let body = body_of(
+            admin_user_detail_page(
+                State(state),
+                Path("detail@example.com".to_string()),
+                Request::builder()
+                    .uri("/admin/users/detail@example.com")
+                    .header("cookie", "lang=en")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        assert_inline_scripts_balance(&body, "/admin/users/:id");
+        for marker in [
+            // No header row on either asset table.
+            "<table class='admin-table' data-testid='admin-user-datasets'><tbody id='adminUserDatasetRows'></tbody></table>",
+            "<table class='admin-table' data-testid='admin-user-agents'><tbody id='adminUserAgentRows'></tbody></table>",
+            // One cell per row: the avatar+name group is the whole row.
+            "wrap.appendChild(avatar);wrap.appendChild(label);cell.appendChild(wrap);row.appendChild(cell);body.appendChild(row)})}",
+            // `TableEmpty`: single spanning cell, upstream copy.
+            "cell.className='admin-asset-empty';cell.textContent=text;cell.colSpan=1;",
+            "if(!total){adminAssetEmpty(body,ADMIN_ASSET_EMPTY)}",
+            ";var ADMIN_ASSET_EMPTY=",
+            // `Button variant="outline"` + `LucideArrowLeft` + `admin.back`.
+            "class='btn btn-o admin-back' href='/admin/users' data-testid='admin-user-back'",
+            "<path d='m12 19-7-7 7-7'/>",
+            "<span>Back</span>",
+        ] {
+            assert!(
+                body.contains(marker),
+                "user detail marker missing: {marker}"
+            );
+        }
+        assert!(body.contains("adminDeleteUserModal"));
+        assert!(body.contains("confirmAdminDeleteUser"));
+        assert!(!body.contains("confirm('Delete this user?')"));
+        // The retired two-column headers and the meta cell must be gone.
+        for gone in [
+            "<th>Name</th>",
+            "<th>Language</th>",
+            "<th>Canvas category</th>",
+        ] {
+            assert!(
+                !body.contains(gone),
+                "user detail header not removed: {gone}"
+            );
+        }
+        assert!(!body.contains("admin-detail-asset-meta"));
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".admin-tabs{display:flex;gap:16px;margin:0 0 8px;padding:0;border:0;background:transparent}",
+            ".admin-tab{display:inline-flex;align-items:center;justify-content:center;padding:6px 12px;border:0.5px solid var(--bd);border-radius:4px;background:transparent;color:var(--t2);font:inherit;font-size:14px;font-weight:500;cursor:pointer;transition:background-color .15s,color .15s}",
+            ".admin-tab.active{background:var(--bgc);color:var(--t);box-shadow:var(--sh)}",
+            ".admin-back{display:inline-flex;height:40px;align-items:center;gap:8px;padding:0 12px;text-decoration:none}",
+            ".admin-table td.admin-asset-empty{height:96px;color:var(--tm);text-align:center}",
+        ] {
+            assert!(css.contains(rule), "user detail css missing: {rule}");
+        }
+    }
+
+    /// Upstream `pages/admin/users.tsx` closes with two cells RayRAG was still
+    /// approximating: the `admin.userType` column is a normal/superuser `Select`
+    /// (`grantSuperuser` = `PUT …/admin`, `revokeSuperuser` = `DELETE …/admin`)
+    /// that collapses to a secondary `admin.superuser` badge on the signed-in
+    /// administrator's own row, and the actions cell carries the hover-revealed
+    /// lucide trio — `ClipboardList` for the account page plus, on every other
+    /// row, `UserLock` (change password) and the danger `Trash2` (delete).
+    #[tokio::test]
+    async fn admin_users_table_matches_the_upstream_superuser_and_action_cells() {
+        let (_root, state) = test_state();
+        let admin = state
+            .users
+            .create_user("cells@example.com", "secret-passphrase", "admin")
+            .unwrap();
+        let token = state.users.issue_token_for(&admin.id).unwrap();
+        let body = body_of(
+            admin_users_page(
+                State(state),
+                Request::builder()
+                    .uri("/admin/users")
+                    .header("cookie", "lang=en")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        assert_inline_scripts_balance(&body, "/admin/users");
+        for marker in [
+            // `User type` column: badge on self, select on everybody else.
+            "<th>User type</th>",
+            "var superuser=user.is_superuser===true||String(user.role)==='admin';",
+            "'admin-user-type-badge'",
+            "typeBadge.className='badge';typeBadge.dataset.testid='admin-user-type-badge'",
+            "typeBadge.textContent='Superuser'",
+            "'admin-user-type-select'",
+            "[['normal','Normal'],['superuser','Superuser']]",
+            "option.selected=(pair[0]==='superuser')===superuser;",
+            "adminSetSuperuser(row,target.value==='superuser'?'grant':'revoke')",
+            // The mutation mirrors `setSuperuserMutation` exactly.
+            "function adminSetSuperuser(user,type){var target=encodeURIComponent(user.email||user.username||'');fetch('/api/v1/admin/users/'+target+'/admin',{method:type==='grant'?'PUT':'DELETE'})",
+            // Actions cell: hover-revealed icons, the destructive pair only off-self.
+            "actions.className='admin-row-actions'",
+            "'admin-user-action-detail'",
+            "detail.innerHTML=ADMIN_CLIPBOARD_SVG",
+            "location.href='/admin/users/'+encodeURIComponent(user.email||user.username||'')",
+            "if(!isMe){var password=document.createElement('button');password.type='button';password.className='admin-row-icon';",
+            "'admin-user-action-password'",
+            "password.innerHTML=ADMIN_USER_LOCK_SVG",
+            "'admin-user-action-delete'",
+            "remove.className='admin-row-icon admin-row-icon-danger'",
+            "remove.innerHTML=ADMIN_TRASH_SVG",
+        ] {
+            assert!(
+                body.contains(marker),
+                "admin users cell marker missing: {marker}"
+            );
+        }
+        // The detail icon comes first and the three actions live in one group.
+        let group = body
+            .split("actions.className='admin-row-actions'")
+            .nth(1)
+            .expect("action group");
+        let detail = group
+            .find("'admin-user-action-detail'")
+            .expect("detail icon");
+        let guard = group.find("if(!isMe){").expect("self guard");
+        let password = group
+            .find("'admin-user-action-password'")
+            .expect("password icon");
+        let remove = group
+            .find("'admin-user-action-delete'")
+            .expect("delete icon");
+        assert!(
+            detail < guard && guard < password && password < remove,
+            "action order must be detail → !isMe guard → password → delete"
+        );
+        // The two new lucide glyphs carry the upstream paths — inlined into the
+        // page as the JS variables the row builder uses.
+        for marker in [
+            "var ADMIN_USER_LOCK_SVG=\"<svg",
+            "var ADMIN_TRASH_SVG=\"<svg",
+            "<circle cx='10' cy='7' r='4'/>",
+            "<path d='M20 17v-2a2 2 0 0 0-4 0v2'/>",
+            "<path d='M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2'/>",
+            "<path d='M3 6h18'/>",
+        ] {
+            assert!(body.contains(marker), "user table icon missing: {marker}");
+        }
+        assert!(ADMIN_USER_LOCK_SVG.contains("<rect width='8' height='5' x='14' y='17' rx='1'/>"));
+        assert!(ADMIN_TRASH_SVG.contains("<path d='M14 11v6'/>"));
+        // The delete modal keeps the upstream shape too: `admin.deleteUser` as the
+        // title, `admin.deleteUserConfirmation` as the description, the account in
+        // a bordered box and a destructive confirm button.
+        for marker in [
+            "<h2>Delete user</h2><p class='admin-dialog-sub'>Are you sure you want to delete this user?</p><p class='admin-user-target' id='adminDeleteTarget'></p>",
+            "<button class='btn btn-d' type='button' data-testid='admin-delete-user-submit' onclick='adminSubmitDeleteUser()'>Delete</button>",
+        ] {
+            assert!(
+                body.contains(marker),
+                "delete modal marker missing: {marker}"
+            );
+        }
+        assert!(include_str!("web_css.txt").contains(
+            ".admin-user-target{margin-top:24px;padding:16px;border:0.5px solid var(--bd);border-radius:8px}"
+        ));
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".admin-row-icon-danger{color:var(--d)}",
+            ".admin-row-icon-danger:hover{background:color-mix(in srgb,var(--d) 10%,transparent);color:var(--d)}",
+            // `components/ui/table.tsx` grain: `h-14 px-4` heads with `pl-6`/`pr-6`
+            // edges, `px-4 py-3` cells, `border-b-0.5` rows that hover to `bg-card`
+            // — and no uppercase transform, which the global `th` rule would impose.
+            ".admin-table th,.admin-table td{padding:12px 16px;text-align:left;font-weight:400;vertical-align:middle}",
+            ".admin-table th{height:56px;padding-top:0;padding-bottom:0;border-bottom:0.5px solid var(--bd);background:var(--bgc);color:var(--t2);text-transform:none;letter-spacing:normal;position:sticky;top:0;z-index:10}",
+            ".admin-table th:first-child,.admin-table td:first-child{padding-left:24px}",
+            ".admin-table th:last-child,.admin-table td:last-child{padding-right:24px}",
+            ".admin-table tbody tr{border-bottom:0.5px solid var(--bd);transition:background-color .15s}",
+            ".admin-table tbody tr:hover{background:var(--bgc)}",
+        ] {
+            assert!(css.contains(rule), "user table css missing: {rule}");
+        }
+    }
+
+    /// Upstream `pages/admin/service-status.tsx`: the services table filters by
+    /// service type *and* a global search term (`header.search`) and paginates
+    /// in the card footer through `RAGFlowPagination` (total + page size
+    /// 10/20/50/100). Sorting stays disabled upstream (`enableSorting: false`),
+    /// as does polling (`useQuery` without `refetchInterval`).
+    /// Upstream `pages/dataset/testing/testing-form.tsx`: the retrieval-testing
+    /// panel renders the `TopSelectFormItem` size picker, the conditional rerank
+    /// `top_k` slider, the `UseKnowledgeGraphFormField` / `CrossLanguageFormField`
+    /// pair, the `MetadataFilter` block (method picker + manual condition rows +
+    /// semi-automatic key rows) and the footer question textarea with the Run
+    /// button that stays disabled until the question is non-empty.
+    /// Upstream `next-search/search-view.tsx`: a retrieval row renders the
+    /// `document_metadata` chips (`formatMetadataValue` + the bordered chip row)
+    /// and the reference panel uses the `markdown-content` variant, so both
+    /// retrieval surfaces ask the API for the metadata they render.
+    #[tokio::test]
+    async fn retrieval_rows_render_the_upstream_metadata_chips() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Metadata KB", "d").unwrap();
+        let search = body_of(
+            search_page(
+                State(state.clone()),
+                Request::builder()
+                    .uri("/search")
+                    .header("Cookie", "lang=en")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        let testing = body_of(
+            dataset_page(
+                State(state),
+                Path(kb.id),
+                Request::builder()
+                    .uri("/dataset/retrieval/x")
+                    .header("Cookie", "lang=en")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        assert_inline_scripts_balance(&search, "/search");
+        assert_inline_scripts_balance(&testing, "/dataset/retrieval");
+        for html in [&search, &testing] {
+            for marker in [
+                "function formatMetadataValue(value)",
+                "if(Array.isArray(value))return value.join(', ')",
+                "if(typeof value==='object')return JSON.stringify(value)",
+                "function metadataChips(metadata)",
+                "function metadataSection(metadata)",
+                "chunk-metadata-chip",
+                "chunk-metadata-section",
+                "metadataChips(c.document_metadata)",
+                "include_metadata:true",
+            ] {
+                assert!(html.contains(marker), "metadata marker missing: {marker}");
+            }
+        }
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".chunk-metadata{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}",
+            ".chunk-metadata-chip{padding:4px 8px;border:1px solid var(--bd);border-radius:4px;font-size:12px;line-height:1.4}",
+            ".chunk-metadata-key{color:var(--t2)}",
+            ".chunk-metadata-section{display:flex;flex-direction:column;gap:4px;padding:8px;border:1px solid var(--bd);border-radius:4px}",
+        ] {
+            assert!(css.contains(rule), "metadata css missing: {rule}");
+        }
+    }
+
+    #[tokio::test]
+    async fn retrieval_testing_form_matches_the_upstream_composition() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Testing KB", "d").unwrap();
+        let html = body_of(
+            dataset_page(
+                State(state),
+                Path(kb.id),
+                Request::builder()
+                    .uri("/dataset/retrieval/x")
+                    .header("Cookie", "lang=en")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        for marker in [
+            "data-testid='testing-question'",
+            "data-testid='testing-run'",
+            "id='testRun'",
+            "data-testid='test-size-select'",
+            "id='testTopKRow'",
+            "data-testid='testing-rerank-top-k'",
+            "id='testTopKNum'",
+            "id='testMetaManual'",
+            "id='testMetaSemi'",
+            "data-testid='test-metadata-select'",
+            "data-testid='testing-metadata-add'",
+            "data-testid='testing-metadata-semi-add'",
+            "var TEST_OPERATORS=['=','≠','>','≥','<','≤','contains','not contains','start with','end with','empty','not empty','in','not in']",
+            "function testMetaChange(value)",
+            "function testMetaPayload()",
+            "function testMetaLoadKeys()",
+            "function testRunState()",
+            "function testOperatorSelect(value,onchange)",
+            "top_k:k,size:size",
+            "body.top_k=topKValue",
+            "body.meta_data_filter=metaFilter",
+            "datasets/metadata/flattened",
+            "Meta data",
+            "Conditions",
+            "Filterable items",
+            "test-meta-row",
+            "test-meta-op",
+        ] {
+            assert!(
+                html.contains(marker),
+                "testing form marker missing: {marker}"
+            );
+        }
+        assert!(
+            html.contains("disabled onclick='testSearch()'"),
+            "the Run button starts disabled, like the upstream ButtonLoading"
+        );
+        // zh copy for the new blocks.
+        let zh_state = test_state();
+        let zh_kb = zh_state
+            .1
+            .kbs
+            .create_for("u1", "Testing KB zh", "d")
+            .unwrap();
+        let zh = body_of(
+            dataset_page(
+                State(zh_state.1),
+                Path(zh_kb.id),
+                Request::builder()
+                    .uri("/dataset/retrieval/x")
+                    .header("Cookie", "lang=zh-CN")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        for marker in ["元数据", "条件", "可选过滤项", "添加条件", "半自动"] {
+            assert!(zh.contains(marker), "zh testing copy missing: {marker}");
+        }
+    }
+
+    /// Upstream `hooks/auth-hooks.ts::useOAuthCallback`: the shared page shell
+    /// consumes `?auth=` (store the session, drop the parameter) and `?error=`
+    /// (show the provider message in a toast, then bounce to `/login`).
+    #[tokio::test]
+    async fn oauth_landing_params_match_the_upstream_hook() {
+        let (_root, state) = test_state();
+        let html = body_of(
+            dashboard(
+                State(state),
+                Request::builder()
+                    .uri("/?auth=abc")
+                    .header("Cookie", "lang=en")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        for marker in [
+            "function oauthLanding()",
+            "window.__OAUTH_LANDING=true",
+            "!window.__OAUTH_LANDING",
+            "params.get('error')",
+            "params.get('auth')",
+            "history.replaceState(null,'',location.pathname+(query?'?'+query:''))",
+            "localStorage.setItem('rayrag_token',auth)",
+            "document.cookie='rayrag_token='+auth+';path=/'",
+            "data-testid','oauth-error-toast'",
+            "toast.setAttribute('role','alert')",
+            "location.href='/login'",
+        ] {
+            assert!(
+                html.contains(marker),
+                "oauth landing marker missing: {marker}"
+            );
+        }
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".oauth-toast{position:fixed;",
+            ".oauth-toast[hidden]{display:none!important}",
+        ] {
+            assert!(css.contains(rule), "oauth toast css missing: {rule}");
+        }
+    }
+
+    /// Upstream `components/tree-select.tsx` (Radix `Tree`) keyboard contract:
+    /// Arrow Right expands a collapsed branch or enters its first child, Arrow
+    /// Left collapses an expanded branch or jumps to the parent, printable keys
+    /// run a wrapping typeahead with a one-second buffer, and the rows keep a
+    /// roving `tabindex` plus `aria-level` so the tree is a single tab stop.
+    #[tokio::test]
+    async fn default_model_tree_keeps_the_radix_keyboard_contract() {
+        let (_root, state) = test_state();
+        let admin = state
+            .users
+            .create_user("boss@example.com", "secret-passphrase", "admin")
+            .unwrap();
+        let token = state.users.issue_token_for(&admin.id).unwrap();
+        let html = body_of(
+            providers_page(
+                State(state),
+                Request::builder()
+                    .uri("/user-setting/model")
+                    .header("cookie", "lang=en")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        for marker in [
+            "function treeRowParent(row)",
+            "function focusDefaultModelNode(tree,nodeId)",
+            "tree.contains(active)?active.dataset.nodeId:null",
+            "if(active&&active!==trigger&&((active.classList&&active.classList.contains('default-model-node'))||popover.contains(active)))return;search.focus()",
+            "row.dataset.nodeId=node.id",
+            "function focusDefaultModelRow(row)",
+            "event.key==='ArrowRight'",
+            "event.key==='ArrowLeft'",
+            "state.typeBuffer=buffer",
+            "state.typeBufferAt=now",
+            "var needle=buffer.toLowerCase()",
+            "title.indexOf(needle)===0",
+            "tree.onfocusin=function(event)",
+            "firstRow.setAttribute('tabindex','0')",
+            "row.setAttribute('aria-level',String(level+1))",
+            "row.setAttribute('tabindex','-1')",
+            "wrapper.className='default-model-node-wrapper'",
+        ] {
+            assert!(
+                html.contains(marker),
+                "tree keyboard marker missing: {marker}"
+            );
+        }
+        assert!(
+            html.contains("node.setAttribute('tabindex',node===row?'0':'-1')"),
+            "the roving tabindex must follow focus"
+        );
+    }
+
+    /// Upstream `admin/service-detail.tsx` + `admin/task-executor-detail.tsx`: the
+    /// details dialog renders the payload by shape (table / definition list /
+    /// string card), task executors get a bar chart per executor with rotated
+    /// time ticks, a legend and a click tooltip, and the two dialogs are opened
+    /// by the row's ClipboardList / Settings2 icon actions.
+    #[tokio::test]
+    async fn admin_service_dialog_matches_upstream_detail_components() {
+        let (_root, state) = test_state();
+        let admin = state
+            .users
+            .create_user("boss@example.com", "secret-passphrase", "admin")
+            .unwrap();
+        let token = state.users.issue_token_for(&admin.id).unwrap();
+        let html = body_of(
+            admin_services_page(
+                State(state),
+                Request::builder()
+                    .uri("/admin/services")
+                    .header("cookie", "lang=en")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        for marker in [
+            "data-testid='admin-service-extra-dialog'",
+            "data-testid='admin-service-detail-dialog'",
+            "id='adminServiceDialogTitle'",
+            "id='adminServiceExtra'",
+            "adminShowServiceExtra(",
+            "function adminServiceDetailNode(",
+            "function adminTaskExecutorDetail(",
+            "function adminExecutorChart(",
+            "function adminTimeLabel(",
+            "function adminIsPlainObject(",
+            "data-testid','admin-service-detail-table'",
+            "data-testid','admin-service-detail-object'",
+            "data-testid','admin-service-detail-string'",
+            "data-testid','admin-task-executor-chart'",
+            "data-testid','admin-task-executor-tooltip'",
+            "data-testid','admin-service-action-clipboard'",
+            "data-testid','admin-service-action-extra'",
+            "admin-chart-done",
+            "admin-chart-failed",
+            "admin-chart-legend",
+            "Task executor detail",
+            "'Service '+(name||id)+' detail'",
+            "rotate(60)",
+            "Extra information",
+        ] {
+            assert!(
+                html.contains(marker),
+                "service dialog marker missing: {marker}"
+            );
+        }
+        // The old merged "Extra info" section is gone.
+        assert!(
+            !html.contains("admin-code' id='adminServiceDetail'"),
+            "the merged dialog body must not linger"
+        );
+    }
+
+    #[tokio::test]
+    async fn admin_services_table_filters_searches_and_paginates() {
+        let (_root, state) = test_state();
+        let admin = state
+            .users
+            .create_user("services@example.com", "secret-passphrase", "admin")
+            .unwrap();
+        let token = state.users.issue_token_for(&admin.id).unwrap();
+        let body = body_of(
+            admin_services_page(
+                State(state),
+                Request::builder()
+                    .uri("/admin/services")
+                    .header("cookie", "lang=en")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        for marker in [
+            "id='adminServiceSearch'",
+            "data-testid='admin-services-pagination'",
+            "data-testid='admin-services-page-size'",
+            "function adminServiceFiltered()",
+            // Upstream renders the extra payload with `JsonView` (typed
+            // collapsible tree) and the details payload through
+            // `ServiceDetail`/`TaskExecutorDetail`.
+            "function adminJsonValue(value)",
+            "host.appendChild(adminJsonValue(service&&service.extra!==undefined?service.extra:{}))",
+            "host.appendChild(serviceType==='task_executor'?adminTaskExecutorDetail(detail.message):adminServiceDetailNode(detail.message===undefined?detail:detail.message))",
+            "toggle.className='json-tree-toggle'",
+            "function adminRenderServicePager(total)",
+            "adminRenderServicePager(matched.length)",
+            "['id','name','service_type','host','port'].some(",
+            "adminServicePageSizeChange(this.value)",
+            "aria-label='Search services'",
+        ] {
+            assert!(
+                body.contains(marker),
+                "admin services marker missing: {marker}"
+            );
+        }
+        // The old single-select-only renderer must be gone.
+        assert!(
+            !body.contains("var list=ADMIN_SERVICES.filter(function(service){return !filter||service.service_type===filter});rows.textContent='';if(!list.length)"),
+            "the unsearched, unpaginated renderer is still present"
+        );
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".admin-service-search{width:14rem}",
+            ".admin-service-pager{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:12px}",
+            ".admin-pager-size{padding:6px 8px;border:1px solid var(--bd);border-radius:var(--rs);background:var(--bgc);color:var(--t);font-size:13px}",
+            ".json-tree-list{margin:2px 0 2px 16px;padding:0;list-style:none}",
+            ".json-tree-key{color:var(--p)}",
+        ] {
+            assert!(css.contains(rule), "admin pager css missing: {rule}");
+        }
+    }
+
+    /// Upstream `web/src/utils/api.ts::rmKb` deletes datasets through the
+    /// *collection* route with `{ids: [...]}`, not `DELETE /datasets/{id}`; every
+    /// RayRAG surface (home card, knowledge-base list, detail dialog) follows it.
+    #[tokio::test]
+    async fn dataset_delete_calls_the_upstream_collection_route() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Delete KB", "d").unwrap();
+        let pages = [
+            body_of(
+                dataset_page(
+                    State(state.clone()),
+                    Path(kb.id.clone()),
+                    Request::builder()
+                        .uri("/dataset/files/x")
+                        .header("Cookie", "lang=en")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await,
+            )
+            .await,
+            body_of(
+                datasets_page(
+                    State(state.clone()),
+                    Request::builder()
+                        .uri("/datasets")
+                        .header("Cookie", "lang=en")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await,
+            )
+            .await,
+        ];
+        for html in &pages {
+            assert!(
+                !html.contains("fetch('/api/v1/datasets/'+id,{method:'DELETE'}")
+                    && !html
+                        .contains("fetch('/api/v1/datasets/'+dsPendingDelete,{method:'DELETE'}"),
+                "dataset deletion must not use the per-id route"
+            );
+        }
+        assert!(
+            pages[1].contains("JSON.stringify({ids:[id]})")
+                && pages[1]
+                    .contains("dsItems=dsItems.filter(function(entry){return entry.id!==id})"),
+            "the dataset list dialog deletes through the collection route and removes the card first"
+        );
+        let legacy = body_of(
+            kbs_page(
+                State(state.clone()),
+                Request::builder().uri("/kbs").body(Body::empty()).unwrap(),
+            )
+            .await,
+        )
+        .await;
+        assert!(
+            legacy.contains("JSON.stringify({ids:[kbDeleteId]})")
+                && !legacy.contains("fetch('/api/v1/datasets/'+id,{method:'DELETE'}"),
+            "the legacy knowledge-base list follows the same route"
+        );
+    }
+
+    /// Upstream `dataset-setting/general-form.tsx` builds the Language field's
+    /// options from `Object.keys(LanguageTranslationMap)` -- not from
+    /// `LanguageList` -- and renders them through `SelectWithSearch`: a
+    /// `role=combobox` trigger over a cmdk popover whose search row appears past
+    /// five options, with `CommandEmpty` (`common.noDataFound`) owning the
+    /// no-match state.
+    #[tokio::test]
+    async fn dataset_language_options_match_upstream_language_translation_map() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Lang KB", "d").unwrap();
+        let body = body_of(
+            dataset_page(
+                State(state.clone()),
+                Path(kb.id.clone()),
+                Request::builder()
+                    .uri("/dataset/configuration/x")
+                    .header("Cookie", "lang=en")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        assert!(
+            !body.contains("<select id='cfgLang'"),
+            "the language field is a SelectWithSearch combobox, not a native select"
+        );
+        let trigger_at = body
+            .find("data-testid='ds-settings-basic-language-select'")
+            .expect("language combobox");
+        let trigger_start = body[..trigger_at].rfind("<button").expect("trigger start");
+        let trigger_end = body[trigger_at..].find("</button>").expect("trigger end") + trigger_at;
+        let trigger = &body[trigger_start..trigger_end];
+        for attribute in [
+            "id='cfgLang'",
+            "type='button'",
+            "role='combobox'",
+            "aria-expanded='false'",
+            "aria-controls='cfgLangPop'",
+            "data-value='English'",
+        ] {
+            assert!(
+                trigger.contains(attribute),
+                "combobox trigger missing {attribute}"
+            );
+        }
+        let list_at = body.find("id='cfgLangList'").expect("option list");
+        let list_end = body[list_at..].find("</td></tr>").expect("row end") + list_at;
+        let list = &body[list_at..list_end];
+        // `LanguageTranslationMap` in insertion order: the near-duplicate keys
+        // (`Indonesian`/`Indonesia`, `Portuguese BR`/`pt-br`/`pt-BR`) are part
+        // of the map and therefore of the option list.
+        let expected = [
+            "English",
+            "Chinese",
+            "Traditional Chinese",
+            "Russian",
+            "Indonesian",
+            "Indonesia",
+            "Spanish",
+            "Vietnamese",
+            "Japanese",
+            "Korean",
+            "Portuguese BR",
+            "pt-br",
+            "pt-BR",
+            "German",
+            "French",
+            "Italian",
+            "Tamil",
+            "Telugu",
+            "Kannada",
+            "Thai",
+            "Greek",
+            "Hindi",
+            "Ukrainian",
+            "Bulgarian",
+            "Arabic",
+            "Turkish",
+            "Dutch",
+        ];
+        let mut seen = Vec::new();
+        for chunk in list.split("data-value='").skip(1) {
+            let value = chunk.split('\'').next().unwrap_or_default();
+            seen.push(value.to_string());
+        }
+        assert_eq!(
+            seen, expected,
+            "language values drifted from LanguageTranslationMap"
+        );
+        assert_eq!(
+            list.matches("data-testid='combobox-option'").count(),
+            expected.len(),
+            "every language row is a cmdk command item"
+        );
+        assert_eq!(
+            list.matches("sws-option selected").count(),
+            1,
+            "exactly the current value is marked selected"
+        );
+        assert_eq!(
+            list.matches("sws-check").count(),
+            1,
+            "only the selected row renders the trailing CheckIcon"
+        );
+        assert!(
+            list.contains("aria-selected='true'") && list.contains("aria-selected='false'"),
+            "option rows expose the cmdk aria-selected state"
+        );
+        let popover_at = body.find("id='cfgLangPop'").expect("command popover");
+        let popover_end = body[popover_at..].find("</td></tr>").expect("row end") + popover_at;
+        let popover = &body[popover_at..popover_end];
+        assert!(
+            popover.contains("id='cfgLangSearch'") && popover.contains("placeholder='Search...'"),
+            "more than five options means the command input is rendered"
+        );
+        assert!(
+            popover.contains("id='cfgLangEmpty'") && popover.contains("No data found."),
+            "CommandEmpty carries common.noDataFound"
+        );
+        // The shared component is registered with the same list it rendered.
+        let prefix = "swsRegister('cfgLang',";
+        let script_at = body.find(prefix).expect("client registration");
+        let script_end = body[script_at..]
+            .find(",'English',true)")
+            .expect("registration end")
+            + script_at;
+        let registered: Vec<(String, String)> =
+            serde_json::from_str(&body[script_at + prefix.len()..script_end])
+                .expect("the registration payload is a JSON option list");
+        let registered_values: Vec<String> =
+            registered.iter().map(|(value, _)| value.clone()).collect();
+        assert_eq!(
+            registered_values, expected,
+            "the client list drifted from the server list"
+        );
+        assert!(
+            registered.iter().all(|(value, label)| value == label),
+            "the label is the raw LanguageTranslationMap key"
+        );
+        assert!(
+            body.contains("language:swsValue('cfgLang'),"),
+            "both dataset PUT bodies carry the field value"
+        );
+        assert!(
+            body.contains("swsSet('cfgLang',kb.language||'English')"),
+            "loadConfig restores the saved document language"
+        );
+        // `t('common.search') + '...'` and `common.noDataFound` are localised.
+        let zh = body_of(
+            dataset_page(
+                State(state),
+                Path(kb.id),
+                Request::builder()
+                    .uri("/dataset/configuration/x")
+                    .header("Cookie", "lang=zh-CN")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        assert!(
+            zh.contains("placeholder='搜索...'") && zh.contains("没有找到数据。"),
+            "the search placeholder and empty state follow the UI language"
+        );
+    }
+
+    /// Upstream `setting-model/index.tsx`: the page is a bordered rounded card
+    /// split into a 3/5 column (Set default models + Added models) and a 2/5
+    /// column (Available models), with the single `<Spotlight />` behind them.
+    #[tokio::test]
+    async fn providers_page_uses_the_upstream_two_column_layout() {
+        let (_root, state) = test_state();
+        let req = axum::http::Request::builder()
+            .uri("/user-setting/model")
+            .header("cookie", "lang=en")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let body = body_of(providers_page(axum::extract::State(state), req).await).await;
+        for marker in [
+            "<div class='model-providers-layout' data-testid='model-providers-page'>",
+            "<div class='spotlight model-providers-spotlight' aria-hidden='true'></div>",
+            "<section class='model-providers-column model-providers-left'>",
+            "</section><section class='model-providers-column model-providers-right'>",
+            // Upstream's Available panel is an `<aside>` with a 16px `<h3>`.
+            "<aside class='card available-models-panel' id='availableModels' data-testid='available-models-section' aria-label='Available models'><h3 class='available-models-title'>",
+            "No model providers found.</p></div></aside>",
+        ] {
+            assert!(body.contains(marker), "layout marker missing: {marker}");
+        }
+        // SystemSetting + Added models live in the left column, Available models
+        // in the right one, and the shell closes before the page layout is built.
+        // Compare the markup forms: the class names also appear in the inlined
+        // stylesheet at the top of the page.
+        let left = body
+            .find("<section class='model-providers-column model-providers-left'>")
+            .unwrap();
+        let system = body.find("data-testid='system-model-settings'").unwrap();
+        let added = body.find("data-testid='added-models-section'").unwrap();
+        let right = body
+            .find("<section class='model-providers-column model-providers-right'>")
+            .unwrap();
+        let available = body.find("data-testid='available-models-section'").unwrap();
+        assert!(left < system && system < added && added < right && right < available);
+        assert!(
+            body.trim_end().ends_with("</section></div></html>")
+                || body.contains("</section></div>")
+        );
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".model-providers-layout{position:relative;display:flex;width:100%;border:.5px solid var(--bd);border-radius:var(--r);overflow:hidden}",
+            ".model-providers-left{width:60%;gap:16px;padding:0 20px;border-right:.5px solid var(--bd)}",
+            ".model-providers-right{width:40%}",
+            ".model-providers-spotlight{--sx:50%;--sy:190%;--so:.5;--sc:60%;--srgb:255,255,255;opacity:.8;border-radius:var(--r)}",
+            "body.light .model-providers-spotlight{--srgb:194,221,243}",
+        ] {
+            assert!(css.contains(rule), "layout css missing: {rule}");
+        }
+    }
+
+    /// Upstream `used-model.tsx` + `components/confirm-delete-dialog.tsx`:
+    /// the added-model rows are `LlmIcon` glyphs (no RayRAG letter tile) inside
+    /// the upstream `bg-bg-card` list, and the delete affordance opens the
+    /// AlertDialog shell — `common.deleteModalTitle` title, lucide `X` close,
+    /// `common.cancel` / `common.delete` footer with the upstream test ids.
+    #[tokio::test]
+    async fn added_models_use_upstream_icons_and_confirm_delete_dialog() {
+        let (_root, state) = test_state();
+        let req = axum::http::Request::builder()
+            .uri("/user-setting/model")
+            .header("cookie", "lang=en")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let body = body_of(providers_page(axum::extract::State(state), req).await).await;
+        for marker in [
+            // Upstream keeps the test id on the AlertDialogContent node, which
+            // is the one carrying `role="alertdialog"`.
+            "class='modal confirm-delete-dialog' role='alertdialog' data-testid='confirm-delete-dialog'",
+            "class='confirm-delete-head'",
+            "data-testid='confirm-delete-dialog-close-btn'",
+            "data-testid='confirm-delete-dialog-cancel-btn'",
+            "data-testid='confirm-delete-dialog-confirm-btn'",
+            "document.getElementById('deleteModelInstanceTitle').textContent=ADDED_LABELS.deleteModalTitle",
+            "ok.textContent=ADDED_LABELS.deleteLabel",
+            "<path d='M18 6 6 18'/><path d='m6 6 12 12'/>",
+            "\"deleteModalTitle\":\"Are you sure you want to delete?\"",
+            "\"deleteLabel\":\"Delete\"",
+        ] {
+            assert!(
+                body.contains(marker),
+                "delete dialog marker missing: {marker}"
+            );
+        }
+        let css = include_str!("web_css.txt");
+        for rule in [
+            // `LlmIcon` renders the bare glyph: no background tile, no radius.
+            ".available-provider-icon{display:flex;align-items:center;justify-content:center;width:32px;height:32px;color:var(--t)}",
+            ".added-model-provider-icon{width:32px;height:32px;display:flex;align-items:center;justify-content:center;color:var(--t2)}",
+            // Upstream `bg-bg-card` list with `border-b-[0.5px]` rows.
+            ".added-model-rows{list-style:none;margin:0;padding:0;border-radius:var(--r);background:var(--bgc);max-height:384px;overflow:auto}",
+            ".added-model-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px;border-bottom:.5px solid var(--bd);transition:background .15s}",
+            ".confirm-delete-close svg{width:16px;height:16px}",
+        ] {
+            assert!(css.contains(rule), "css rule missing: {rule}");
+        }
+        // The provider icons must not keep RayRAG's letter tile (other catalog
+        // cards legitimately use that style, so the check is scoped).
+        for class in [".available-provider-icon{", ".added-model-provider-icon{"] {
+            let start = css.find(class).expect("icon rule");
+            let end = css[start..].find('}').expect("rule end") + start;
+            let rule = &css[start..end];
+            assert!(
+                !rule.contains("background:var(--nab)") && !rule.contains("border-radius"),
+                "letter tile still painted on {class}: {rule}"
+            );
+        }
+    }
+
+    /// Upstream `components/ui/multi-select.tsx` + `add-custom-model-dialog.tsx`:
+    /// the popover is a cmdk `Command`, so the model-type picker carries the
+    /// `(Select all)` row (`common.selectAll`), scores options with
+    /// `command-score` and re-sorts them, shows `common.noDataFound` when the
+    /// search matches nothing, and the dialog validates like `DynamicForm`
+    /// (`"<label> is required"`, `model_types` optional, `extra` omitted when
+    /// no feature is selected).
+    #[tokio::test]
+    async fn custom_model_multiselect_matches_upstream_command_behaviour() {
+        let (_root, state) = test_state();
+        let en = axum::http::Request::builder()
+            .uri("/user-setting/model")
+            .header("cookie", "lang=en")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let en_body = body_of(providers_page(axum::extract::State(state.clone()), en).await).await;
+        for marker in [
+            "function piMsScore(label,query)",
+            "SCORE_CONTINUE_MATCH=1",
+            "SCORE_TRANSPOSITION=0.1",
+            "PENALTY_CASE_MISMATCH=0.9999",
+            "node.className='pi-multiselect-option'+(row.all?' pi-multiselect-all':'')",
+            "if(row.all)piMsToggleAll(prefix);else piMsToggleValue(prefix,row.value)",
+            "function piMsToggleAll(prefix)",
+            "if(query)scored.sort(function(left,right){return right.score-left.score})",
+            "empty.textContent=PI_PICKER_LABELS.noDataFound",
+            "node.className='pi-multiselect-option'+(row.all?' pi-multiselect-all':'')",
+            "if(!name)return PI_PICKER_LABELS.modelName+' is required';",
+            "pcmSetError('pcmNameError',nameError)",
+            "if(model.features.indexOf('is_tools')>=0)entry.extra={is_tools:true}",
+            "function pcmApplyLabels()",
+            "nameLabel.textContent=PI_PICKER_LABELS.modelName",
+            "maxLabel.textContent=PI_PICKER_LABELS.modelMaxTokens",
+            "pcmApplyLabels();piMsApplyLabels('pcmTypes')",
+        ] {
+            assert!(
+                en_body.contains(marker),
+                "multi-select marker missing: {marker}"
+            );
+        }
+        // The optional `model_types` field must not be blocked any more.
+        assert!(
+            !en_body.contains("error.textContent=PI_PICKER_LABELS.modelTypeRequired;return}"),
+            "the multi-select must stay optional like upstream's zod schema"
+        );
+        // English payload keeps the upstream `common.*` copy.
+        for marker in [
+            "\"noDataFound\":\"No data found.\"",
+            "\"selectAll\":\"Select all\"",
+            "\"searching\":\"Searching...\"",
+        ] {
+            assert!(
+                en_body.contains(marker),
+                "en picker label missing: {marker}"
+            );
+        }
+        let zh = axum::http::Request::builder()
+            .uri("/user-setting/model")
+            .header("cookie", "lang=zh-CN")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let zh_body = body_of(providers_page(axum::extract::State(state), zh).await).await;
+        // Dialog captions come from the same table, so the Chinese dialog shows
+        // `模型名称` / `最大 Token 数` (upstream `setting.modelName` /
+        // `setting.modelMaxTokens`) instead of hard-coded English.
+        assert!(zh_body.contains("\"modelName\":\"模型名称\""));
+        assert!(zh_body.contains("\"modelMaxTokens\":\"最大 Token 数\""));
+        assert!(zh_body.contains("<span id='pcmNameLabel'></span>"));
+        assert!(zh_body.contains("<span id='pcmMaxTokensLabel'></span>"));
+        for marker in [
+            "\"noDataFound\":\"没有找到数据。\"",
+            "\"selectAll\":\"全选\"",
+            "\"searching\":\"搜索中\"",
+            // `setting.modelFeatureToolCall` has no zh entry upstream, so the
+            // feature switch keeps the English label.
+            "\"modelFeatureToolCall\":\"Tool call\"",
+        ] {
+            assert!(
+                zh_body.contains(marker),
+                "zh picker label missing: {marker}"
+            );
+        }
+    }
+
+    /// Upstream `components/ui/toggle-list.tsx` + `use-list-models-options.tsx`:
+    /// the "List models" picker is a ToggleList — inline panel, search row only
+    /// when there are more than 10 options, "All models" sentinel row, per-row
+    /// capability chips + edit pencil, empty/no-match copy and a pinned
+    /// "Add custom model" footer whose dialog matches `use-custom-model-fields`.
+    async fn provider_model_picker_matches_upstream_toggle_list() {
+        let (_root, state) = test_state();
+        let req = axum::http::Request::builder()
+            .uri("/user-setting/model")
+            .header("Cookie", "lang=en")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let body = body_of(providers_page(axum::extract::State(state.clone()), req).await).await;
+        for marker in [
+            "id='piListModels'",
+            "aria-controls='piModelList'",
+            "id='piListModelsText'",
+            // Upstream `components/ui/toggle-list.tsx`: chevron rotation and the
+            // search-row spinner / clear swap.
+            "trigger.classList.toggle('open',open)",
+            "function piFillPickerIcons()",
+            "chevron.innerHTML=PI_CHEVRONS_DOWN_SVG",
+            "piModelsLoading=true;renderProviderModelList()",
+            "piModelsLoaded=true;piModelsLoading=false;renderProviderModelList()",
+            "clearButton.hidden=!search.value||loadingNow",
+            "provider-model-chevron",
+            "provider-model-search-row",
+            "id='piModelSearchClear'",
+            "class='provider-model-list' role='list'",
+            "provider-model-add",
+            "id='piModelAddText'",
+            "PI_PICKER_LABELS.allModels",
+            "PI_PICKER_LABELS.listModelsEmpty",
+            "PI_PICKER_LABELS.noMatchingResults",
+            "PI_PICKER_LABELS.listModelsSearchPlaceholder",
+            "PI_PICKER_LABELS.addCustomModel",
+            "PI_PICKER_LABELS.editCustomModelTitle",
+            "PI_PICKER_LABELS.modelNameRequired",
+            "PI_PICKER_LABELS.modelNameDuplicate",
+            "PI_PICKER_LABELS.modelTypeRequired",
+            "PI_PICKER_LABELS.modelMaxTokensMin",
+            "piApplyPickerLabels",
+            "clearProviderModelSearch",
+            "provider-model-nomatch",
+            "modelTypeDisplayName",
+            "showProviderCustomModel('edit',model.name)",
+            "modal.dataset.mode",
+            "piModels=piModels.map(function(model){return model.name===original?updated:model})",
+            "id='pcmFeatures'",
+            "id='pcmToolsLabel'",
+            "id='pcmSubmit'",
+            "id='pcmCancel'",
+        ] {
+            assert!(body.contains(marker), "picker marker missing: {marker}");
+        }
+        // The dialog exposes exactly the upstream Cancel/Confirm pair.
+        assert!(
+            !body.contains("onclick='closeProviderCustomModel()'>Close</button>"),
+            "the custom-model dialog must not ship a third close button"
+        );
+        // The Add-custom-model dialog's Model type field is the upstream
+        // `MultiSelect` combobox (badge trigger + command popover), not a
+        // checkbox list; the two remaining `value='chat'> Chat</label>` rows are
+        // the per-factory local-config type field sets.
+        assert_eq!(
+            body.matches("value='chat'> Chat</label>").count(),
+            1,
+            "only the local-config field-set template keeps the checkbox type list"
+        );
+        assert!(
+            !body.contains("value='chat'> LLM</label>"),
+            "model type lists must not use the capability chip label"
+        );
+        for marker in [
+            "id='pcmTypesTrigger'",
+            "class='pi-multiselect-trigger'",
+            "class='pi-multiselect-popover'",
+            "role='listbox' aria-multiselectable='true'",
+            "id='pcmTypesSearch'",
+            "id='pcmTypesClearAll'",
+            "id='pcmTypesClose'",
+            "PI_MODEL_TYPE_OPTIONS=[['chat','Chat'],['embedding','Embedding'],['rerank','Rerank'],['tts','TTS'],['image2text','VLM'],['ocr','OCR'],['speech2text','ASR']]",
+            "badge.className='pi-multiselect-badge'",
+            "box.className='pi-multiselect-check'+(selected?' on':'')",
+            "piMsSetSelection('pcmTypes',model&&Array.isArray(model.model_types)?model.model_types:[])",
+            "var types=PI_MODEL_TYPE_OPTIONS.map(function(option){return option[0]}).filter(function(value){return piMsSelection('pcmTypes').indexOf(value)>=0});",
+            "class='pi-switch-group' id='pcmFeatures'",
+            "id='pi-add-custom-model'",
+            "role='button' tabindex='0' aria-label='Add custom model'",
+            "PI_PLUS_SVG",
+            "PI_PENCIL_SVG",
+            "provider-model-chip",
+            "chip.textContent=type",
+            "edit.setAttribute('aria-label','Edit model')",
+            // Discovery merges instead of replacing, so a model added while the
+            // catalog request is in flight is not silently dropped.
+            "var custom=piModels.filter(function(model){return model.custom&&!discovered.some(function(item){return item.name===model.name})});piModels=custom.concat(discovered);",
+            "else if(!piModels.some(function(model){return model.name===name})){piModels.push(updated);piSelectedModels.add(name)}",
+        ] {
+            assert!(
+                body.contains(marker),
+                "multiselect marker missing: {marker}"
+            );
+        }
+        assert!(
+            !body.contains("document.querySelectorAll('#pcmTypes input"),
+            "the dialog must read the combobox state, not checkbox inputs"
+        );
+        // The same MultiSelect instance is reused by the instance-model editor
+        // (`used-model.tsx` `AddCustomModelDialog` with only types editable).
+        for marker in [
+            "id='eimTypesTrigger'",
+            "piMsRegister('pcmTypes',PI_MODEL_TYPE_OPTIONS,[])",
+            "piMsRegister('eimTypes',PI_MODEL_TYPE_OPTIONS,[])",
+            "piMsSetSelection('eimTypes',model.model_type||[])",
+            "id='editInstanceModelName' disabled",
+            "id='editInstanceModelMaxTokens' type='number' disabled",
+            "PI_CHEVRONS_DOWN_SVG",
+            "PI_CHEVRONS_UP_SVG",
+            "PI_TRASH_SVG",
+            "addedToggleLabel(button,ADDED_LABELS.hideModels,true)",
+            "edit.setAttribute('aria-label',ADDED_LABELS.editModel)",
+        ] {
+            assert!(
+                body.contains(marker),
+                "instance editor marker missing: {marker}"
+            );
+        }
+        assert!(
+            !body.contains("document.querySelectorAll('#editInstanceModelTypes input"),
+            "the instance editor must read the combobox state"
+        );
+        // The search row stays hidden until the catalog is larger than 10
+        // (upstream `searchable={listModelsOptions.length > 10}`); the row, not
+        // just the input, toggles so the icon cannot linger.
+        assert!(body.contains("searchRow.hidden=piModels.length<=10"));
+        // Picker labels are injected as JSON for both locales.
+        for label in [
+            "\"allModels\":\"All models\"",
+            "\"listModelsEmpty\":\"No models available\"",
+            "\"addCustomModel\":\"Add custom model\"",
+            "\"modelNameDuplicate\":\"Model name already exists\"",
+            "\"noMatchingResults\":\"None\"",
+            "\"selectPlaceholder\":\"Select value\"",
+            "\"clear\":\"Clear\"",
+            "\"closeLabel\":\"Close\"",
+            "\"chat\":\"Chat\"",
+        ] {
+            assert!(
+                body.contains(label),
+                "picker label payload missing: {label}"
+            );
+        }
+        let zh_req = axum::http::Request::builder()
+            .uri("/user-setting/model")
+            .header("Cookie", "lang=zh-CN")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let zh_body = body_of(providers_page(axum::extract::State(state), zh_req).await).await;
+        for marker in [
+            "\"allModels\":\"所有模型\"",
+            "\"listModels\":\"模型列表\"",
+            "\"listModelsEmpty\":\"暂无可用模型\"",
+            "\"addCustomModel\":\"添加自定义模型\"",
+            "\"modelTypeRequired\":\"请至少选择一个模型类型\"",
+            "\"confirm\":\"确定\"",
+            "\"cancel\":\"取消\"",
+            // `common.clear` / `common.selectPlaceholder` translations.
+            "\"clear\":\"清空\"",
+            "\"selectPlaceholder\":\"请选择\"",
+        ] {
+            assert!(
+                zh_body.contains(marker),
+                "zh picker payload missing: {marker}"
+            );
+        }
+        // ToggleList scroll area caps at the upstream maxHeight={400}.
+        let css = include_str!("web_css.txt");
+        assert!(css.contains(".provider-model-list{max-height:400px;overflow:auto}"));
+    }
+
+    #[tokio::test]
+    /// Upstream `use-provider-fields.tsx` renders the `base_url` field as an
+    /// `inputSelect`: the modal must ship an InputSelect-shaped combobox (value
+    /// + clear button + chevron trigger, filterable popover with region chips,
+    /// custom value row) instead of a plain text input with a `<datalist>`.
+    async fn providers_modal_base_url_field_uses_upstream_input_select() {
+        let (_root, state) = test_state();
+        let req = axum::http::Request::builder()
+            .uri("/user-setting/model")
+            .header("accept-language", "en")
+            .header("Cookie", "lang=en")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let body = body_of(providers_page(axum::extract::State(state.clone()), req).await).await;
+        for marker in [
+            "class='input-select' id='piBaseSelect'",
+            "class='input-select-trigger' id='piBaseTrigger'",
+            "role='combobox'",
+            "aria-haspopup='listbox'",
+            "id='piBasePopover'",
+            "id='piBaseList'",
+            "id='piBaseSelected'",
+            "id='piBaseClear'",
+            "input-select-chevron",
+            "input-select-region",
+            "input-select-add",
+            "input-select-empty",
+            "id='piBaseTip'",
+            // Behaviour: default = the option whose regionKey is `default`,
+            // typed values become custom entries, Enter commits, Escape closes,
+            // Backspace clears, blur commits after the upstream 150ms delay.
+            "function piBaseDefaultBase(card)",
+            "options[i][1]==='default'",
+            "region:entry[1]",
+            "function piBaseCommit()",
+            "function onPiBaseKeydown(event)",
+            "event.key==='Enter'",
+            "event.key==='Escape'",
+            "event.key==='Backspace'",
+            "150",
+            "PI_BASE_LABELS.add",
+            "PI_BASE_LABELS.noResults",
+            "providerBaseTextInfo(card.dataset.provider||'')",
+            // Region is still derived from the selected URL for verify/submit.
+            "region:providerRegionForBaseUrl",
+        ] {
+            assert!(
+                body.contains(marker),
+                "base url combobox marker missing: {marker}"
+            );
+        }
+        assert!(
+            !body.contains("list='piBaseOptions'") && !body.contains("id='piBaseOptions'"),
+            "the plain input + datalist Base-Url field must be gone"
+        );
+        // Per-factory tooltips/placeholders and the Added-models labels are
+        // injected as JSON so both languages render.
+        for label in [
+            "\"byProvider\"",
+            "\"minimax\"",
+            "\"tongyi-qianwen\"",
+            "\"siliconflow\"",
+            "\"anthropic\"",
+            "\"showMoreModels\":\"View models\"",
+            "\"hideModels\":\"Hide models\"",
+            "\"chat\":\"LLM\"",
+            "\"image2text\":\"VLM\"",
+            "\"speech2text\":\"ASR\"",
+        ] {
+            assert!(
+                body.contains(label),
+                "injected label payload missing: {label}"
+            );
+        }
+        for (en, zh) in [
+            ("View models", "展示更多模型"),
+            ("Hide models", "隐藏模型"),
+            ("No results found", "未查到结果"),
+            ("Add", "添加"),
+        ] {
+            assert_eq!(t(en, true), zh, "zh translation missing for {en}");
+        }
+        let zh_req = axum::http::Request::builder()
+            .uri("/user-setting/model")
+            .header("Cookie", "lang=zh-CN")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let zh_body = body_of(providers_page(axum::extract::State(state), zh_req).await).await;
+        for marker in [
+            "\"showMoreModels\":\"展示更多模型\"",
+            "\"hideModels\":\"隐藏模型\"",
+            "\"noResults\":\"未查到结果\"",
+            "\"add\":\"添加\"",
+        ] {
+            assert!(
+                zh_body.contains(marker),
+                "zh label payload missing: {marker}"
+            );
+        }
+    }
+
+    #[test]
+    fn agents_page_exposes_compilation_template_entry() {
+        let section = compilation_templates_section(false);
+        for marker in [
+            "data-testid='agent-compilation-section'",
+            "data-testid='agent-compilation-add'",
+            "data-testid='agent-compilation-card'",
+            "data-testid='agent-compilation-cards'",
+            "/compilation-templates/edit-next",
+            "/api/v1/compilation_template_groups",
+            "Knowledge compilation",
+        ] {
+            assert!(
+                section.contains(marker),
+                "missing agents compilation entry marker {marker}"
+            );
+        }
+        let zh = compilation_templates_section(true);
+        assert!(zh.contains("知识编译"));
+        assert!(zh.contains("添加模板"));
+    }
+
+    #[test]
+    fn compilation_template_edit_page_matches_upstream_shell() {
+        let body = compilation_template_edit_body(false, None);
+        for marker in [
+            "data-testid='compilation-template-edit-page'",
+            "data-testid='compilation-template-back'",
+            "data-testid='compilation-template-save'",
+            "data-testid='compilation-template-json-preview'",
+            "data-testid='compilation-template-wiki-mode'",
+            "data-testid='compilation-template-raptor'",
+            "data-testid='compilation-template-blueprint'",
+            "data-testid='compilation-template-fields'",
+            "data-testid='compilation-template-field-modal'",
+            "data-testid='compilation-template-field-confirm'",
+            "id='ctName'",
+            "id='ctDescription'",
+            "id='ctKind'",
+            "id='ctGlobalRules'",
+            "id='ctMode'",
+            "id='ctRaptorPrompt'",
+            "id='ctRaptorMaxToken'",
+            "id='ctRaptorThreshold'",
+            "id='ctRaptorRatio'",
+            "id='ctRaptorRechunk'",
+            "id='ctInstruction'",
+            "id='ctExample'",
+            "id='ctRechunk'",
+            "id='ctRechunkRules'",
+            "Add template",
+            "Global rules",
+            "Re-chunk parser output",
+            "Wiki mode",
+            "RAPTOR tree settings",
+            "Blueprints",
+            "Add field",
+            "Entity specification",
+            "/api/v1/compilation-template-groups",
+            "/api/v1/compilation-templates/builtins",
+            "/api/v1/compilation-templates/wiki-presets",
+            "session_essence",
+            "session_graph",
+            "ctConfigFromBuiltin",
+            "ctConfigFromDetail",
+            "ctPayloadConfig",
+            "ctApplyKind",
+            "ctOpenFieldModal",
+            "ctOpenJsonPreview",
+            "ctApplyPreset",
+            "const CT={id:null",
+        ] {
+            assert!(
+                body.contains(marker),
+                "missing compilation edit marker {marker}"
+            );
+        }
+        assert!(
+            !body.contains("{{"),
+            "unresolved label token left in the editor page"
+        );
+        let edit = compilation_template_edit_body(false, Some("group-123"));
+        assert!(edit.contains("const CT={id:\"group-123\""));
+        assert!(edit.contains("Edit template"));
+        let zh = compilation_template_edit_body(true, None);
+        for marker in [
+            "添加模板",
+            "全局规则",
+            "重新切分 Parser 输出",
+            "Wiki 模式",
+            "RAPTOR 树设置",
+            "蓝图",
+            "添加字段",
+            "JSON 预览",
+        ] {
+            assert!(zh.contains(marker), "missing zh label {marker}");
+        }
+    }
+
+    #[test]
+    fn compilation_template_edit_labels_cover_markup_and_locales() {
+        let en = ct_labels(false);
+        let zh = ct_labels(true);
+        assert_eq!(en["addTitle"], "Add template");
+        assert_eq!(en["custom"], "Custom");
+        assert_eq!(en["kindLabels"]["wiki"], "Wiki");
+        assert_eq!(en["kindLabels"]["knowledge_graph"], "Graph");
+        assert_eq!(en["kindLabels"]["page_index"], "PageIndex");
+        assert_eq!(en["kindLabels"]["mind_map"], "Mindmap");
+        assert_eq!(zh["addTitle"], "添加模板");
+        assert_eq!(zh["wikiMode"], "Wiki 模式");
+        assert_eq!(zh["fieldRule"], "规则");
+        // Every markup token must have an English and a Chinese label row.
+        let mut rest = CT_EDIT_MARKUP;
+        while let Some(start) = rest.find("{{") {
+            let tail = &rest[start + 2..];
+            let end = tail.find("}}").expect("unterminated markup token");
+            let key = &tail[..end];
+            assert!(en.get(key).is_some(), "missing label for token {key}");
+            assert!(zh.get(key).is_some(), "missing zh label for token {key}");
+            rest = &tail[end + 2..];
+        }
+    }
+
+    #[tokio::test]
+    async fn providers_page_wires_default_models_and_available_provider_clicks() {
+        let (_root, state) = test_state();
+        // The page language comes from the `lang` cookie, so this test pins the
+        // English surface explicitly instead of relying on a default.
+        let req = axum::http::Request::builder()
+            .uri("/user-setting/model")
+            .header("cookie", "lang=en")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let body = body_of(providers_page(axum::extract::State(state), req).await).await;
+        for marker in [
+            "dmLlm",
+            "dmEmbedding",
+            "dmVlm",
+            "dmAsr",
+            "dmRerank",
+            "dmTts",
+            "default-model-llm_id",
+            "data-update-type='vision'",
+            "data-update-type='asr'",
+            "data-response-type='image2text'",
+            "data-response-type='speech2text'",
+            "The default LLM for each newly created dataset.",
+            "fetch('/api/v1/models')",
+            "fetch('/api/v1/models/default'",
+            "parseDefaultModelValue",
+            "model_name:name",
+            "aria-haspopup='dialog'",
+            "data-state='closed'",
+            "default-model-control",
+            "default-model-popover",
+            "buildDefaultModelTree",
+            "filterDefaultModelTree",
+            "defaultModelTreeRow",
+            "group.setAttribute('role','group')",
+            "requestId:0,pending:false",
+            "No data available",
+            "provider_name",
+        ] {
+            assert!(
+                body.contains(marker),
+                "missing default-model marker {marker}"
+            );
+        }
+        assert_eq!(body.matches(" aria-required='true'").count(), 1);
+        assert_eq!(body.matches("class='default-model-popover'").count(), 6);
+        // Every default-model trigger is a dialog trigger. Counted on the trigger
+        // markup itself, because the page also has dialogs that are not model
+        // pickers (the `+ Add Provider` entry, for one).
+        assert_eq!(
+            body.matches("class='default-model-trigger'").count(),
+            6,
+            "one dialog trigger per default-model field"
+        );
+        assert_eq!(
+            body.matches("class='default-model-trigger' aria-labelledby='")
+                .count(),
+            6
+        );
+        for field in DEFAULT_MODEL_FIELDS {
+            assert!(!body.contains(&format!("id='{}Options'", field.dom_id)));
+        }
+        assert!(!body.contains("<script><script>"));
+        assert!(!body.contains("dmChat"));
+        assert!(!body.contains("dmVLM"));
+        assert!(!body.contains("dmASR"));
+        assert!(!body.contains("/api/v1/llm/models"));
+
+        for marker in [
+            "available-models-section",
+            "model-providers-search",
+            "available-model-card",
+            "selectProviderFilter",
+            "activeProviderFilter===kind",
+            "new Set(kinds)",
+            "selectProviderFromPicker(this)",
+            "available-provider-add",
+            "available-provider-doc",
+            "https://platform.openai.com/api-keys",
+            "event.stopPropagation()",
+            "data-api-base-options='",
+            "data-show-base='true'",
+            "providerBaseOptions",
+            "providerRegionForBaseUrl",
+            "region:providerRegionForBaseUrl",
+            // Upstream `use-provider-fields.tsx` renders the Base-Url field with
+            // `InputSelect`: selected value + clear button + chevron trigger and
+            // a filterable popover whose rows carry the region key chip.
+            "input-select-trigger",
+            "id='piBasePopover'",
+            "id='piBaseList'",
+            "piBaseRenderList",
+            "piBaseRegionFor",
+            "piBaseDefaultBase",
+            "providerBaseTextInfo",
+            "input-select-add",
+        ] {
+            assert!(
+                body.contains(marker),
+                "missing Available models marker {marker}"
+            );
+        }
+        assert!(
+            body.contains("data-k="),
+            "provider cards must carry capability attributes"
+        );
+        assert_eq!(
+            body.matches("data-testid='available-model-card'").count(),
+            71,
+            "fixed v0.27.2 exposes 71 Available provider cards"
+        );
+        assert_eq!(
+            body.matches("data-show-base='true'").count(),
+            6,
+            "OpenAI/Azure-OpenAI/Tongyi-Qianwen/MiniMax/SILICONFLOW/Anthropic show Base url"
+        );
+        assert!(
+            body.contains("https://api.siliconflow.cn/v1")
+                && body.contains("https://api.siliconflow.com/v1"),
+            "SILICONFLOW card must advertise default and intl base URLs"
+        );
+        // `data-api-base-options` must be URL-first (`[[url, regionKey], …]`) to
+        // match upstream `buildBaseUrlOptions` (`{value, regionKey}`); the
+        // inverted order used to render a URL inside the region chip and made
+        // `providerRegionForBaseUrl` return null for every selection.
+        assert!(
+            body.contains(
+                "data-api-base-options='[[&quot;https://api.siliconflow.cn/v1&quot;,&quot;default&quot;],[&quot;https://api.siliconflow.com/v1&quot;,&quot;intl&quot;]]'"
+            ),
+            "provider cards must expose URL-first base url options"
+        );
+        assert!(
+            !body.contains("[[&quot;default&quot;,&quot;https://api.siliconflow.cn/v1&quot;]"),
+            "base url options must not be region-first"
+        );
+        assert!(
+            body.contains("https://dashscope.aliyuncs.com/compatible-mode/v1")
+                && body.contains("https://dashscope-intl.aliyuncs.com/compatible-model/v1"),
+            "Tongyi-Qianwen card must advertise default and intl base URLs"
+        );
+        for canonical in [
+            "Tongyi-Qianwen",
+            "OpenAI-API-Compatible",
+            "SoMark",
+            "New API",
+        ] {
+            assert!(
+                body.contains(&format!("data-provider='{canonical}'")),
+                "missing canonical Available provider {canonical}"
+            );
+        }
+        assert!(body.contains("addProvModal"), "missing add-provider modal");
+        assert!(body.contains("models:models,enabled:true"));
+        assert!(body.contains("?'PUT':'POST'"));
+        for marker in [
+            "provider-instance-dialog",
+            "Instance name",
+            "API-Key",
+            "Base url",
+            "Group ID",
+            "verifyProviderInstance",
+            "saveProviderInstance",
+            "/connection",
+            "method:'POST'",
+            "Please input the instance name!",
+            "Please enter the API key",
+            ".provider-instance-field[hidden]",
+            "data-model-picker='true'",
+            "data-api-key-optional='true'",
+            "List models",
+            "Add custom model",
+            "provider-model-list' role='list'",
+            "aria-controls='piModelList'",
+            "provider-model-search-row",
+            "id='piModelSearchClear'",
+            "id='pcmFeatures'",
+            "id='pcmToolsLabel'",
+            "setAttribute('role','listitem')",
+            "if(event.key!=='Escape')return",
+            "Model name",
+            "Model type",
+            "Max tokens",
+            "Model features",
+            "Tool call",
+            "toggleProviderModelPicker",
+            "loadProviderModels",
+            "providerModelInfo",
+            // Upstream sends `extra` only when a feature is selected
+            // (`extra: item.features ? {is_tools} : undefined`).
+            "if(model.features.indexOf('is_tools')>=0)entry.extra={is_tools:true}",
+            "addProviderCustomModel",
+        ] {
+            assert!(
+                body.contains(marker),
+                "missing provider-instance modal marker {marker}"
+            );
+        }
+        assert_eq!(
+            body.matches("data-special-modal='bedrock'").count(),
+            1,
+            "exactly one Bedrock Available card routes to the dedicated modal"
+        );
+        assert_eq!(
+            body.matches("data-special-modal='somark'").count(),
+            1,
+            "exactly one SoMark Available card routes to the dedicated modal"
+        );
+        for marker in [
+            "special==='bedrock'",
+            "special==='somark'",
+            "data-testid='bedrock-dialog'",
+            "data-testid='somark-dialog'",
+            "AWS Access Key ID",
+            "AWS Secret Access Key",
+            "AWS Role ARN",
+            "AWS region",
+            "US East (Ohio)",
+            "auth_mode:bedrockAuthMode",
+            "key.bedrock_ak=",
+            "key.bedrock_sk=",
+            "key.aws_role_arn=",
+            "key.bedrock_region=",
+            "role='radiogroup'",
+            "verifyBedrock",
+            "saveBedrock",
+            "Your API key is valid.",
+            "Element Formats",
+            "Feature Config",
+            "Chemical Structural Formula Format",
+            "Enable Text Cross Page",
+            "Keep Header Footer",
+            "somark_image_format:",
+            "somark_enable_table_image",
+            "verifySoMark",
+            "saveSoMark",
+            "llm_factory:'SoMark'",
+            "model_type:['ocr']",
+            "Verification failed",
+        ] {
+            assert!(
+                body.contains(marker),
+                "missing Bedrock/SoMark dedicated modal marker {marker}"
+            );
+        }
+        assert_eq!(
+            body.matches("US East (").count(),
+            2,
+            "the two US East regions render their fixed Bedrock labels"
+        );
+        for marker in [
+            "PROVIDER_SPECIAL_FIELDS",
+            "providerSpecialFieldConfig",
+            "renderSpecialProviderFields",
+            "providerSpecialValidate",
+            "providerSpecialPayload",
+            "providerSpecialVerifyPayload",
+            "Azure-OpenAI",
+            "api_version",
+            "VOLC ARK_API_KEY",
+            "google_service_account_key",
+            "TencentCloud_sid",
+            "spark_api_password",
+            "yiyan_ak",
+            "fish_audio_ak",
+            "opendataloader_apiserver",
+            "paddleocr_api_url",
+            "mineru_backend",
+            "16k_zh_medical",
+            "PaddleOCR-VL-1.6",
+            "vlm-lmdeploy-engine",
+            "mineru_delete_output",
+        ] {
+            assert!(
+                body.contains(marker),
+                "missing provider-specific field registry marker {marker}"
+            );
+        }
+        for marker in [
+            "PROVIDER_ICON_DIRECTORY",
+            "providerIconHtml",
+            "href='/icons.svg#icon-openai'",
+            "href='/icons.svg#icon-MiniMax'",
+            "src='/assets/svg/llm/gemini.svg'",
+            "src='/assets/svg/llm/mineru-bright.svg'",
+            "src='/assets/svg/llm/paddleocr.svg'",
+            "src='/assets/svg/llm/somark.svg'",
+            "/icons.svg#icon-moxing-default'",
+            "moxing-default",
+        ] {
+            assert!(
+                body.contains(marker),
+                "missing provider icon marker {marker}"
+            );
+        }
+        let auth_bootstrap = body
+            .find("var nativeFetch=window.fetch.bind(window)")
+            .expect("missing authenticated fetch bootstrap");
+        let initial_model_load = body
+            .find("loadModelOptions();")
+            .expect("missing initial model load");
+        assert!(
+            auth_bootstrap < initial_model_load,
+            "API authentication must be installed before initial model requests"
+        );
+
+        for marker in [
+            "added-models-section",
+            "added-model-card",
+            // Labels now come from the injected `ADDED_LABELS` payload so both
+            // languages render (upstream `setting.showMoreModels`/`hideModels`).
+            "ADDED_LABELS.showMoreModels",
+            "ADDED_LABELS.hideModels",
+            "MODEL_TYPE_LABELS[type]||type",
+            // Upstream ToggleList/use-list-models-options copy is injected so the
+            // picker renders in both languages.
+            "PI_PICKER_LABELS.allModels",
+            "PI_PICKER_LABELS.listModelsEmpty",
+            "PI_PICKER_LABELS.noMatchingResults",
+            "PI_PICKER_LABELS.modelNameDuplicate",
+            "PI_PICKER_LABELS.modelTypeRequired",
+            "PI_PICKER_LABELS.modelMaxTokensMin",
+            "PI_PICKER_LABELS.editCustomModelTitle",
+            "provider-model-chevron",
+            "piApplyPickerLabels",
+            "showProviderCustomModel('edit',model.name)",
+            "modelTypeDisplayName",
+            // The delete affordance now renders the upstream
+            // `ConfirmDeleteDialog` shell (see
+            // `added_models_use_upstream_icons_and_confirm_delete_dialog`).
+            "data-testid='confirm-delete-dialog'",
+            "edit-instance-model-dialog",
+            "role','switch'",
+            // Upstream `used-model.tsx` labels the pencil with
+            // `setting.editCustomModelTitle`, injected per locale.
+            "ADDED_LABELS.editModel",
+            "method:'PATCH'",
+            "method:'DELETE'",
+            "method:'PUT'",
+            "instances:[modal.dataset.instance]",
+            "model_name:[modal.dataset.model]",
+            "model_type:types",
+            "loadAddedModels",
+        ] {
+            assert!(
+                body.contains(marker),
+                "missing Added models marker {marker}"
+            );
+        }
+        assert!(body.contains("/api/v1/providers/"));
+        assert!(body.contains("/instances"));
+        assert!(body.contains("/models"));
+    }
+
+    #[tokio::test]
+    async fn skills_config_modal_uses_shared_default_model_tree() {
+        let (_root, state) = test_state();
+        let req = Request::builder()
+            .uri("/skills")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(skills_page(State(state), req).await).await;
+        // 弹层 embedding 行：共享树选择器 markup + MODEL_FIELDS 载荷 + 共享脚本
+        assert!(
+            html.contains("data-testid='default-model-embd_id'"),
+            "tree trigger testid missing"
+        );
+        assert!(
+            html.contains("data-default-model-root='skillEmbd'"),
+            "skills selector root missing"
+        );
+        assert!(
+            html.contains("\"skillEmbd\""),
+            "MODEL_FIELDS payload missing"
+        );
+        assert!(
+            html.contains("function modelField(type){return MODEL_FIELDS.find"),
+            "shared head missing"
+        );
+        assert!(
+            html.contains("function filterDefaultModelTree(nodes,term)"),
+            "shared body missing"
+        );
+        assert!(
+            html.contains("normalizeDefaultModelStoredValues"),
+            "stored-value normalizer missing"
+        );
+        assert!(
+            html.contains("Select an embedding model") || html.contains("选择嵌入模型"),
+            "upstream placeholder missing"
+        );
+        assert!(
+            html.contains("Skill Search Configuration") || html.contains("技能搜索配置"),
+            "upstream dialog title missing"
+        );
+        // 保存校验：未选择嵌入模型时按上游文案阻止（skillSearch.pleaseSelectEmbeddingModel）
+        assert!(
+            html.contains("SKILL_EMBD_REQUIRED"),
+            "required-model message missing"
+        );
+        assert!(
+            html.contains("Please select an embedding model") || html.contains("请选择嵌入模型"),
+            "upstream validation message missing"
+        );
+        // openSkillConfig 写 dataset.value；saveSkillConfig 读 dataset.value
+        assert!(
+            html.contains("skillTrigger.dataset.value=c.embd_id||''"),
+            "openSkillConfig writes tree value"
+        );
+        assert!(
+            html.contains("embd_id:skillVal"),
+            "saveSkillConfig reads tree value"
+        );
+    }
+
+    #[tokio::test]
+    async fn skills_page_uses_skill_index_apis_instead_of_agent_installation() {
+        let (_root, state) = test_state();
+        let req = Request::builder()
+            .uri("/skills")
+            .header("accept-language", "en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(skills_page(State(state), req).await).await;
+        for endpoint in [
+            "/api/v1/skills/config",
+            "/api/v1/skills/search",
+            "/api/v1/skills/index",
+            "/api/v1/skills/reindex",
+        ] {
+            assert!(html.contains(endpoint), "missing Skill endpoint {endpoint}");
+        }
+        assert!(html.contains("skillSpace"));
+        // The single content checkbox became the upstream per-field editor
+        // (rows are built in JS, so assert the construction site).
+        assert!(html.contains("box.id='skillField-'+key"));
+        assert!(html.contains("weightInput.id='skillFieldWeight-'+key"));
+        assert!(!html.contains("installSkill("));
+        assert!(!html.contains("component_catalog"));
+    }
+
+    #[tokio::test]
+    async fn kbs_page_renders_create_search_and_card_action_menu() {
+        let (_root, state) = test_state();
+        state.kbs.create_for("u1", "Test KB", "desc").unwrap();
+        let req = Request::builder().uri("/kbs").body(Body::empty()).unwrap();
+        let html = body_of(kbs_page(State(state), req).await).await;
+        // 创建按钮 + 搜索 + 排序（i18n：zh 默认渲染中文文案）
+        assert!(
+            html.contains("New KB") || html.contains("新建知识库"),
+            "create button missing"
+        );
+        assert!(html.contains("kbSearch"), "search input missing");
+        assert!(html.contains("kbSort"), "sort select missing");
+        // 卡片操作菜单：重命名 / 导出 / 删除
+        assert!(html.contains("toggleKbMenu"), "card menu trigger missing");
+        assert!(html.contains("kbRenameOpen"), "rename menu item missing");
+        assert!(html.contains("exportKb"), "export menu item missing");
+        assert!(html.contains("delKb"), "delete menu item missing");
+        assert!(html.contains("kbDeleteModal"), "KB delete dialog missing");
+        assert!(
+            html.contains("confirmKbDelete"),
+            "KB delete handler missing"
+        );
+        assert!(!html.contains("confirm('Delete knowledge base "));
+        // 创建 / 重命名弹窗与 JS 处理器
+        assert!(html.contains("createModal"), "create modal missing");
+        assert!(html.contains("renameModal"), "rename modal missing");
+        assert!(html.contains("renameKb"), "rename handler missing");
+        assert!(
+            html.contains("/api/v1/datasets"),
+            "datasets API call missing"
+        );
+        assert_inline_scripts_balance(&html, "/kbs");
+    }
+
+    #[tokio::test]
+    async fn dataset_files_table_uses_svg_actions_and_real_table_cells() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Icon KB", "d").unwrap();
+        let req = english_request("/dataset/files/x");
+        let html = body_of(dataset_page(State(state), Path(kb.id), req).await).await;
+        for marker in [
+            "DOC_ACTION_ICONS",
+            "doc-action-icon",
+            "parseBtn.innerHTML=DOC_ACTION_ICONS.reparse",
+            "icon.innerHTML=fileGlyph(nm)",
+        ] {
+            assert!(
+                html.contains(marker),
+                "missing dataset icon marker {marker}"
+            );
+        }
+        // A failed document listing shows an error instead of the empty table.
+        assert!(html.contains("DS_DOC_LABELS.loadFailed"));
+        assert!(html.contains("d.code!==0"));
+        assert!(html.contains("updateOverview(docs)}).catch(function(error)"));
+        // Details and rename are in-page dialogs, not alert/prompt.
+        assert!(html.contains("docDetailsModal"));
+        assert!(html.contains("docRenameModal"));
+        assert!(html.contains("submitDocRename"));
+        assert!(html.contains(
+            "ensureDocRenameModal();var input=document.getElementById('docRenameInput')"
+        ));
+        assert!(!html.contains("prompt('重命名文档：')"));
+        assert!(!html.contains("alert(name+nl"));
+        // Delete and reparse confirmations are in-page dialogs, not window.confirm.
+        assert!(html.contains("docDeleteModal"));
+        assert!(html.contains("docReparseModal"));
+        assert!(html.contains("submitDocDelete"));
+        assert!(html.contains("submitDocReparse"));
+        assert!(!html.contains("confirm('删除该文档？')"));
+        assert!(!html.contains("confirm('重新解析该文档？')"));
+        // View-result failures show an in-page notice, not alert.
+        assert!(html.contains("docNoticeModal"));
+        assert!(html.contains("showDocNotice"));
+        assert!(!html.contains("alert('No ingestion log yet')"));
+        for marker in [
+            "function logLoadError(kind,error)",
+            "notice.setAttribute('role','alert')",
+            "notice.textContent=error?String(error.message||error):''",
+            "!response.ok||!data||data.code!==0",
+            "if(id!==logLoadId)return",
+            "logLoadError('list',error)",
+        ] {
+            assert!(
+                html.contains(marker),
+                "missing ingestion error marker {marker}"
+            );
+        }
+        for emoji in [
+            "addBtn('🗑'",
+            "parseBtn.textContent='↻'",
+            "icon.textContent='📄'",
+        ] {
+            assert!(
+                !html.contains(emoji),
+                "emoji action icon still emitted: {emoji}"
+            );
+        }
+        // A <td> with display:flex becomes block-level and breaks the table into
+        // stacked columns; the cell must stay table-cell.
+        let css = include_str!("web_css.txt");
+        assert!(css.contains(
+            ".doc-row .doc-name,.doc-row .doc-parse,.doc-row .doc-status-cell,.doc-row .doc-actions{display:table-cell"
+        ));
+        assert!(css.contains(".doc-action-icon{width:15px;height:15px;display:block}"));
+    }
+
+    #[tokio::test]
+    async fn kb_config_embedding_uses_shared_default_model_tree() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Tree KB", "d").unwrap();
+        let req = Request::builder()
+            .uri("/kbs/x")
+            .body(Body::empty())
+            .unwrap();
+        let html =
+            body_of(kb_detail_page(State(state.clone()), Path(kb.id.clone()), req).await).await;
+        // 配置 tab embedding 行：必填星标 + 上游 tip + 共享树选择器 markup
+        // （上游 common-item.tsx EmbeddingSelect，testId ds-settings-basic-embedding-model-select）
+        assert!(
+            html.contains("data-testid='default-model-embd_id'"),
+            "tree trigger testid missing"
+        );
+        assert!(
+            html.contains("data-model-types='embedding'"),
+            "accepted model types missing"
+        );
+        assert!(
+            html.contains("aria-required='true'"),
+            "required marker missing"
+        );
+        assert!(
+            html.contains("The default embedding model used by the dataset.")
+                || html.contains("知识库采用的默认嵌入模型。"),
+            "upstream tooltip missing"
+        );
+        assert!(
+            !html.contains("<select id='embdSel'"),
+            "legacy select remains"
+        );
+        // 共享脚本：MODEL_FIELDS 载荷 + HEAD/BODY + 表单持久化钩子 + catalog 加载
+        assert!(html.contains("\"embdSel\""), "MODEL_FIELDS payload missing");
+        assert!(
+            html.contains("function modelField(type){return MODEL_FIELDS.find"),
+            "shared head missing"
+        );
+        assert!(
+            html.contains("function filterDefaultModelTree(nodes,term)"),
+            "shared body missing"
+        );
+        assert!(
+            html.contains("(type,nextValue){var field=modelField(type)"),
+            "form persist hook missing"
+        );
+        assert!(
+            html.contains("loadKbModelCatalog"),
+            "catalog loader missing"
+        );
+        assert!(
+            html.contains("normalizeDefaultModelStoredValues"),
+            "stored-value normalizer missing"
+        );
+        assert!(
+            html.contains("Please select a embedding model.") || html.contains("请选择嵌入模型"),
+            "upstream placeholder missing"
+        );
+        assert!(
+            html.contains("document.addEventListener('pointerdown'"),
+            "outside-close listener missing"
+        );
+        assert!(
+            html.contains("tree.onkeydown=function(event)"),
+            "tree keyboard navigation missing"
+        );
+        assert!(
+            html.contains("scrollIntoView({block:'nearest'})"),
+            "row scroll-into-view missing"
+        );
+        // saveConfig 读 dataset.value；loadConfig 写 dataset.value
+        assert!(
+            html.contains("(document.getElementById('embdSel').dataset.value||'default')"),
+            "saveConfig reads tree value"
+        );
+        assert!(
+            html.contains("em.dataset.value=kb.embd_id"),
+            "loadConfig writes tree value"
+        );
+        // dataset 页同构接线
+        let req2 = Request::builder()
+            .uri("/datasets/x")
+            .body(Body::empty())
+            .unwrap();
+        let html2 =
+            body_of(dataset_page(State(state.clone()), Path(kb.id.clone()), req2).await).await;
+        assert!(
+            html2.contains("data-testid='default-model-embd_id'"),
+            "dataset page tree missing"
+        );
+        assert!(
+            html2.contains("loadKbModelCatalog"),
+            "dataset page script missing"
+        );
+        // Dataset configuration: Parse type toggles the built-in chunk method and the
+        // data-pipeline picker; the picker is populated from the dataflow canvases.
+        assert!(
+            html2.contains("cfgPipelineId"),
+            "data pipeline select missing"
+        );
+        assert!(
+            html2.contains("cfgDataPipelineRow"),
+            "data pipeline row missing"
+        );
+        assert!(
+            html2.contains("data-pipeline-select"),
+            "data pipeline testid missing"
+        );
+        assert!(
+            html2.contains("loadConfigPipelines"),
+            "data pipeline options loader missing"
+        );
+        assert!(html2.contains("cfgParseType"), "parse type radios missing");
+        assert!(
+            html2.contains(
+                "if(mode==='2'&&typeof loadConfigPipelines==='function')loadConfigPipelines()"
+            ),
+            "pipeline picker should refresh when Pipeline mode is selected"
+        );
+    }
+
+    #[tokio::test]
+    async fn kb_detail_page_renders_document_batch_config_and_testing_buttons() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Detail KB", "d").unwrap();
+        let req = Request::builder()
+            .uri("/kbs/x")
+            .body(Body::empty())
+            .unwrap();
+        let html =
+            body_of(kb_detail_page(State(state.clone()), Path(kb.id.clone()), req).await).await;
+        // 文档列表页：上传 / 批量操作（解析/禁用/启用/删除）/ 状态列进度条 / 块数
+        assert!(html.contains("uploadDoc"), "upload button missing");
+        assert!(html.contains("batchParse"), "batch parse missing");
+        assert!(html.contains("batchDisable"), "batch disable missing");
+        assert!(html.contains("batchDelete"), "batch delete missing");
+        assert!(html.contains("statusCell"), "status column missing");
+        assert!(html.contains("progress-bar"), "progress bar missing");
+        assert!(html.contains("chunk_count"), "chunk count missing");
+        assert!(html.contains("docFilter"), "doc filter missing");
+        // 配置页 tab：名称 / 权限 / 解析配置 / embedding / 检索参数 / 保存
+        assert!(html.contains("cfgName"), "config name field missing");
+        assert!(html.contains("cfgPerm"), "permission select missing");
+        assert!(html.contains("cfgMethod"), "chunk method select missing");
+        assert!(html.contains("embdSel"), "embedding select missing");
+        assert!(html.contains("cfgTopK"), "retrieval top k missing");
+        assert!(html.contains("cfgLangs"), "cross-language selector missing");
+        assert!(
+            html.contains("cross_languages"),
+            "prompt_config save wiring missing"
+        );
+        assert!(html.contains("cfgThreshold"), "similarity slider missing");
+        assert!(html.contains("cfgVector"), "vector weight slider missing");
+        assert!(html.contains("saveConfig"), "save button missing");
+        // 检索测试 tab：输入框 / 检索按钮 / 相似度滑块 / 结果卡片
+        assert!(html.contains("id='tq'"), "test query input missing");
+        assert!(html.contains("runTest"), "test button missing");
+        // Reranking tree selector (upstream testing-form.tsx RerankFormFields)
+        assert!(
+            html.contains("data-testid='default-model-reranking_id'"),
+            "test reranking tree trigger missing"
+        );
+        assert!(
+            html.contains("data-model-types='rerank'"),
+            "reranking accepted types missing"
+        );
+        assert!(
+            !html.contains("<input type='checkbox' id='tr'>"),
+            "legacy reranking checkbox remains"
+        );
+        assert!(
+            html.contains("body.rerank_id="),
+            "runTest must send rerank_id"
+        );
+        assert!(html.contains("id='tt'"), "similarity slider missing");
+        assert!(html.contains("testRes"), "results area missing");
+        assert!(html.contains("/api/v1/retrieval"), "retrieval API missing");
+    }
+
+    /// Upstream `chat_api.py::recommendation` resolves the search app's own
+    /// `chat_id` instance and `llm_setting`; invalid settings fail loudly and
+    /// the app config fields survive a create/update round trip.
+    #[tokio::test]
+    async fn related_questions_uses_search_app_config() {
+        use crate::api::system::{RelatedQuestionsRequest, related_questions};
+        let (_root, mut state) = test_state();
+        let dir = std::env::temp_dir().join(format!("rayrag-sapp-relq-{}", uuid::Uuid::new_v4()));
+        let store = std::sync::Arc::new(
+            crate::api::searchapp_mgr::SearchAppStore::new(dir.to_str().unwrap()).unwrap(),
+        );
+        let mut app = store
+            .create(
+                "u1",
+                crate::api::searchapp_mgr::SearchAppCreate {
+                    name: "相关搜索".into(),
+                    chat_id: "prov/inst/chat".into(),
+                    llm_setting: serde_json::json!({ "temperature": 5.0 }),
+                    related_search: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        std::sync::Arc::get_mut(&mut state).unwrap().search_apps = Some(store.clone());
+        let auth = crate::server::AuthContext {
+            user_id: "u1".into(),
+            is_admin: false,
+            token: String::new(),
+        };
+        let ask =
+            |state: Arc<AppState>, auth: crate::server::AuthContext, search_id: Option<String>| {
+                related_questions(
+                    axum::extract::State(state),
+                    axum::extract::Extension(auth),
+                    axum::Json(RelatedQuestionsRequest {
+                        question: "how does rag work".into(),
+                        search_id,
+                        tenant_id: None,
+                    }),
+                )
+            };
+        // Out-of-range llm_setting is rejected before any model call.
+        let invalid = ask(state.clone(), auth.clone(), Some(app.id.clone())).await;
+        assert_eq!(invalid.status(), axum::http::StatusCode::BAD_REQUEST);
+        let body = body_of(invalid).await;
+        assert!(body.contains("invalid llm_setting"), "{body}");
+
+        // A valid setting reaches model resolution: with no provider instance
+        // registered the handler reports the missing chat model (proving the
+        // app's chat_id was used as the selector).
+        app.llm_setting = serde_json::json!({ "temperature": 0.5, "parameter": { "n": 1 } });
+        store.upsert(app.clone()).unwrap();
+        let no_model = ask(state.clone(), auth.clone(), Some(app.id.clone())).await;
+        assert_eq!(no_model.status(), axum::http::StatusCode::BAD_REQUEST);
+        let body = body_of(no_model).await;
+        assert!(
+            body.contains("prov/inst/chat") || body.contains("not found"),
+            "chat_id selector not applied: {body}"
+        );
+
+        // Without a search app the tenant default path still applies.
+        let tenant_only = ask(state, auth, None).await;
+        assert!(tenant_only.status().is_success() || tenant_only.status().is_server_error());
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// The search app edit page persists the upstream related-search switch.
+    /// Upstream `pages/next-search/search-view.tsx` + `mindmap-sheet.tsx`
+    /// residuals closed in v0.3.6c: the greeting input row (clear X, separator,
+    /// round submit/stop), the AI-summary block with its skeleton and divider,
+    /// the `Total: N` bar with the mind-map button and the sheet itself.
+    /// Upstream `next-search/search-setting.tsx`: the search page's settings are a
+    /// 440px slide-out drawer (title row + `X`, scrollable body, pinned
+    /// Cancel/Save footer with `data-testid="search-settings-save"`) holding the
+    /// avatar/name/description block, the dataset list, the metadata filter, the
+    /// reference-metadata switch and field list, the similarity slider pair, the
+    /// rerank switch with its required model tree and Top K slider, the AI-summary
+    /// switch with the LLM rows, and the related-search / query-mindmap switches.
+    #[tokio::test]
+    async fn search_page_renders_the_upstream_settings_drawer() {
+        let (_root, state) = test_state();
+        let body = body_of(search_page(State(state), english_request("/search")).await).await;
+        assert_inline_scripts_balance(&body, "/search");
+        // A failed retrieval (for example no embedding model configured) must be
+        // rendered instead of being turned into the "no results" empty state.
+        assert!(body.contains("SEARCH_LABELS.failed"));
+        assert!(body.contains("d.code!==0"));
+        // The documents picker must show a failure instead of an empty list.
+        assert!(body.contains("SEARCH_DOCS.error"));
+        assert!(body.contains("search-docs-error"));
+        assert!(body.contains("SEARCH_LABELS.loadDocsFailed"));
+        assert!(body.contains("result.ok"));
+        assert!(body.contains("color:var(--d);padding:24px"));
+        for marker in [
+            // Trigger + drawer shell.
+            "data-testid='search-settings-trigger'",
+            "id='ssDrawer' data-open='false' data-testid='search-settings-drawer'",
+            "class='ss-head'",
+            "class='ss-close' id='ssClose'",
+            "class='ss-body'",
+            "class='ss-footer'",
+            "data-testid='search-settings-save'",
+            // Fields, in the upstream order.
+            "id='ssAvatarBtn' data-testid='search-settings-avatar'",
+            "id='ssName' class='ss-input'",
+            "id='ssDesc' class='ss-input'",
+            "id='kbChips' class='ss-kbs'",
+            "id='ssMetaMethod' data-testid='search-settings-metadata-method'",
+            "id='ssMetaManualRows'",
+            "id='ssMetaSemiRows'",
+            "id='ssRefMeta' data-testid='search-settings-reference-metadata'",
+            "id='ssMetaFields' role='group'",
+            "id='ssThreshRange'",
+            "id='thresh'",
+            "id='ssWeightRange'",
+            "id='vWeight'",
+            "id='rerank' data-testid='search-settings-rerank'",
+            "id='searchRerankRow' class='ss-field' hidden",
+            "id='ssTopKRange'",
+            "<p class='ss-hint'>* ",
+            "id='topK'",
+            "id='ssSummary' data-testid='search-settings-summary'",
+            "id='ssLlmFields' hidden",
+            "id='ssFreedom'",
+            "id='ssTemperatureOn'",
+            "id='relatedSearch' data-testid='search-settings-related'",
+            "id='ssMindmap' data-testid='search-settings-mindmap'",
+            // The drawer owns the config it edits.
+            "function ssToggle(open){",
+            "function ssSync(id,value){",
+            "function ssMetaAddRow(){",
+            "function ssMetaAddSemiRow(){",
+            "function ssMetaKeysLoad(){",
+            "function ssMetaFilterPayload(){",
+            "function ssPayload(){",
+            "function ssLlmPayload(){",
+            "function ssSave(){",
+            "var alias={thresh:'threshold',vWeight:'weight'}",
+            "if(typeof searchRerankToggle==='function')searchRerankToggle()",
+            "function ssCancel(){",
+            "var SEARCH_META_OPS=",
+            "ssLoad(s)};",
+            // The retrieval request carries the drawer's filter, reference
+            // metadata, summary and mind-map switches.
+            "var ssFilter=ssMetaFilterPayload();if(ssFilter)body.meta_data_filter=ssFilter;",
+            "body.reference_metadata={include:true,fields:ssMetaFieldsPayload()}",
+            "if(ssChecked('ssSummary')){body.summary=true}",
+            "if(ssChecked('ssMindmap')){body.query_mindmap=true}",
+            "if(mindButton)mindButton.hidden=!ssChecked('ssMindmap');",
+            // Shared `components/avatar-upload.tsx` crop dialog: the drawer's
+            // avatar opens the same modal the user-setting shell mounts.
+            "id='avatarCropModal'",
+            "data-testid='search-settings-avatar-clear'",
+            "function ssAvatarClear(){",
+            "openAvatarCropModal(file,'','ssAvatarImg')",
+            "avatarTypeError",
+            "avatarSizeError",
+        ] {
+            assert!(
+                body.contains(marker),
+                "search settings marker missing: {marker}"
+            );
+        }
+        assert_eq!(
+            body.matches("id='avatarCropModal'").count(),
+            1,
+            "the shared crop dialog must be mounted exactly once"
+        );
+        // The old fixed sidebar card is gone.
+        assert!(
+            !body.contains("Settings sidebar") && !body.contains(">Quick Questions<"),
+            "the fixed sidebar and its quick questions must be replaced by the drawer"
+        );
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".ss-drawer{position:fixed;top:64px;right:0;z-index:70;display:flex;width:440px;max-width:100vw;height:calc(100dvh - 64px);flex-direction:column;border-left:1px solid var(--bd);background:var(--bgm);color:var(--t);transform:translateX(100%);transition:transform .2s ease;visibility:hidden}",
+            ".ss-drawer[data-open='true']{transform:translateX(0);visibility:visible}",
+            ".ss-footer{position:absolute;bottom:0;right:0;display:flex;width:100%;justify-content:flex-end;gap:8px;padding:10px 12px;background:var(--bgm);border-top:1px solid var(--bd)}",
+        ] {
+            assert!(css.contains(rule), "search drawer css missing: {rule}");
+        }
+    }
+
+    /// Upstream `next-search/retrieval-documents/index.tsx`: the sidebar's file
+    /// control is the `Files` trigger (counter + X + separator + ChevronDown)
+    /// over a command popover with per-document checkbox rows and a Clear/Close
+    /// footer, and the selection travels to `/api/v1/retrieval` as `doc_ids`.
+    /// Upstream has no document-type filter, so RayRAG's old select is gone.
+    #[tokio::test]
+    async fn search_page_renders_the_upstream_documents_popover_and_empty_state() {
+        let (_root, state) = test_state();
+        let html = body_of(
+            search_page(
+                State(state),
+                Request::builder()
+                    .uri("/search")
+                    .header("Cookie", "lang=en")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        for marker in [
+            "data-testid='search-documents-trigger'",
+            "id='searchDocsField'",
+            "id='searchDocsCount'",
+            "id='searchDocsClear'",
+            "id='searchDocsPop'",
+            "id='searchDocsQuery'",
+            "id='searchDocsList'",
+            "id='searchDocsEmpty'",
+            "id='searchDocsClearAll'",
+            "searchDocsToggle(event)",
+            "searchDocsClear(event)",
+            "function searchDocsLoad(",
+            "function searchDocsRender(",
+            "data-testid','search-documents-option'",
+            "SEARCH_DOCS.selected.length",
+            "body.doc_ids=SEARCH_DOCS.selected.slice()",
+            "SEARCH_EMPTY_MARKUP",
+            "data-testid='search-empty'",
+            "search-empty-art search-empty-dark",
+            "search-empty-art search-empty-bri",
+            "No results found",
+            "0 0 84 104",
+            "No results found",
+            ">Clear<",
+            ">Close<",
+            ">Files<",
+        ] {
+            assert!(
+                html.contains(marker),
+                "documents popover marker missing: {marker}"
+            );
+        }
+        assert!(
+            !html.contains("id='docType'") && !html.contains("docTypeOk"),
+            "upstream has no document-type filter"
+        );
+        // zh copy for the trigger and the popover chrome.
+        let zh = body_of(
+            search_page(
+                State(test_state().1),
+                Request::builder()
+                    .uri("/search")
+                    .header("Cookie", "lang=zh-CN")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        for marker in ["文件列表", "未查到结果", ">清空<", ">关闭<"] {
+            assert!(
+                zh.contains(marker),
+                "zh documents popover copy missing: {marker}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn search_view_hosts_ai_summary_and_mindmap() {
+        let (_root, state) = test_state();
+        let req = || {
+            axum::http::Request::builder()
+                .uri("/search")
+                .header("cookie", "lang=en")
+                .body(axum::body::Body::empty())
+                .unwrap()
+        };
+        let body = body_of(search_page(State(state.clone()), req()).await).await;
+        for marker in [
+            "class='search-ask'",
+            "id='searchAskClear'",
+            "class='search-ask-sep'",
+            "id='searchAskSubmit'",
+            "data-testid='search-ask-submit'",
+            "data-testid='search-ai-summary'",
+            "class='search-ai-title'",
+            "id='aiSummaryBody'",
+            "class='search-ai-divider'",
+            "data-testid='search-mindmap'",
+            "data-testid='mindmap-sheet'",
+            "data-testid='mindmap-close'",
+            "id='mindProgress'",
+            "id='mindTree'",
+            "id='searchTotal'",
+            "/completions'",
+            "/api/v1/chat/mindmap",
+            "searchSummaryStart(q)",
+            "searchSummaryOn()",
+            "searchRenderMind(data.data)",
+            "searchMarkdown(answer)",
+            "function searchStopOutput()",
+            "SEARCH_SEARCH_ICON",
+            // The mind-map button only appears when the app enables
+            // `search_config.query_mindmap` (upstream `search-view.tsx`).
+            "mindBtn.hidden=!(app&&app.query_mindmap)",
+            // The retrieval request falls back to the app's seeded kb_ids while
+            // the chip list is still loading (upstream uses search_config).
+            "var seeded=(app&&app.kb_ids)||[];",
+            "if(app&&app.id)body.search_id=app.id;",
+            "searchMarkTouched(pair[1])",
+            "answerFailed",
+        ] {
+            assert!(
+                body.contains(marker),
+                "search view marker missing: {marker}"
+            );
+        }
+        // Greeting / AI summary / mind-map labels come from the injected labels.
+        for label in [
+            "\"greeting\":\"How can I help you today ？\"",
+            "\"aiSummary\":\"AI summary\"",
+            "\"mind\":\"Mind map\"",
+            "\"total\":\"Total\"",
+        ] {
+            assert!(
+                body.contains(label),
+                "search label payload missing: {label}"
+            );
+        }
+        let zh = axum::http::Request::builder()
+            .uri("/search")
+            .header("cookie", "lang=zh-CN")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let zh_body = body_of(search_page(State(state), zh).await).await;
+        for label in [
+            "\"greeting\":\"今天我能为你做些什么？\"",
+            "\"aiSummary\":\"AI 总结\"",
+            "\"mind\":\"思维导图\"",
+            "\"total\":\"总共\"",
+        ] {
+            assert!(zh_body.contains(label), "zh search label missing: {label}");
+        }
+    }
+
+    #[tokio::test]
+    async fn search_app_page_persists_related_search_switch() {
+        let (_root, mut state) = test_state();
+        let dir = std::env::temp_dir().join(format!("rayrag-sapp-edit-{}", uuid::Uuid::new_v4()));
+        let store = std::sync::Arc::new(
+            crate::api::searchapp_mgr::SearchAppStore::new(dir.to_str().unwrap()).unwrap(),
+        );
+        let app = store
+            .create(
+                "u1",
+                crate::api::searchapp_mgr::SearchAppCreate {
+                    name: "编辑应用".into(),
+                    rerank_id: "prov/inst/bge-reranker-v2-m3".into(),
+                    related_search: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        std::sync::Arc::get_mut(&mut state).unwrap().search_apps = Some(store.clone());
+        let req = Request::builder()
+            .uri(format!("/searches/{}", app.id).as_str())
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(
+            search_app_detail_page(
+                State(state.clone()),
+                axum::extract::Path(app.id.clone()),
+                req,
+            )
+            .await,
+        )
+        .await;
+        for marker in [
+            "id='sa_related'",
+            "Enable related search",
+            "related_search:document.getElementById('sa_related').checked",
+        ] {
+            assert!(
+                html.contains(marker),
+                "search app page marker missing: {marker}"
+            );
+        }
+        // The switch renders checked for an app that already enables it.
+        assert!(
+            html.contains("id='sa_related' checked"),
+            "related-search switch must reflect the saved config"
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn search_page_seeds_search_app_runtime_config() {
+        let (_root, mut state) = test_state();
+        let dir =
+            std::env::temp_dir().join(format!("rayrag-sapp-runtime-{}", uuid::Uuid::new_v4()));
+        let store = std::sync::Arc::new(
+            crate::api::searchapp_mgr::SearchAppStore::new(dir.to_str().unwrap()).unwrap(),
+        );
+        let app = store
+            .create(
+                "u1",
+                crate::api::searchapp_mgr::SearchAppCreate {
+                    name: "运行时检索".into(),
+                    kb_ids: vec!["kb-seeded".into()],
+                    hybrid: true,
+                    rerank: true,
+                    rerank_id: "mxbai-rerank-large-v2@GPU mxbai-rerank@mxbai-rerank-large-v2"
+                        .into(),
+                    top_k: 8,
+                    similarity_threshold: 0.6,
+                    vector_similarity_weight: 0.4,
+                    chat_id: "prov/inst/chat".into(),
+                    related_search: true,
+                    query_mindmap: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        std::sync::Arc::get_mut(&mut state).unwrap().search_apps = Some(store);
+        let req = Request::builder()
+            .uri(format!("/search?sapp={}", app.id).as_str())
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(search_page(State(state.clone()), req).await).await;
+        // Upstream next-search hooks.ts: the search app runtime consumes the
+        // app's config (kb_ids/rerank/rerank_id/top_k) for the retrieval call.
+        assert!(html.contains("window.__SAPP__="), "sapp seed missing");
+        assert!(
+            html.contains("mxbai-rerank-large-v2@GPU mxbai-rerank@mxbai-rerank-large-v2"),
+            "app rerank_id seed missing"
+        );
+        assert!(html.contains("applySapp"), "sapp apply wiring missing");
+        assert!(
+            html.contains("\"similarity_threshold\":0.6"),
+            "app threshold seed missing"
+        );
+        assert!(
+            html.contains("\"vector_similarity_weight\":0.4"),
+            "app weight seed missing"
+        );
+        // Upstream posts `search_id` (+ `kb_id`) and lets the server read the
+        // app's `search_config`; the sidebar only overrides what the user edits.
+        assert!(
+            html.contains("if(app&&app.id)body.search_id=app.id;"),
+            "runSearch must send search_id"
+        );
+        assert!(
+            html.contains("body.kb_id=kbs"),
+            "runSearch must send the singular kb_id"
+        );
+        assert!(
+            html.contains("if(!app&&!window.__SEARCH_TOUCHED){body.similarity_threshold="),
+            "sidebar overrides must be app-aware"
+        );
+        assert!(
+            html.contains("window.__SEARCH_TOUCHED[pair[1]]=true")
+                || html.contains("searchMarkTouched(pair[1])"),
+            "sidebar controls must record user edits"
+        );
+        assert!(
+            html.contains("body.rerank_id="),
+            "runSearch must send rerank_id"
+        );
+        // The hybrid switch no longer forces a keyword-only weight: the weight
+        // comes from the app config (or from the sidebar once the user edits it),
+        // which is how upstream `SimilaritySliderFormField` behaves.
+        assert!(
+            !html.contains("if(!h){body.vector_similarity_weight=0}"),
+            "the hybrid switch must not zero the vector weight"
+        );
+        // Upstream next-search `search-view.tsx` + `search-setting.tsx`: the
+        // related-search switch gates a `chat/recommendation` call whose answers
+        // render as clickable chips below the chunks.
+        for marker in [
+            "id='relatedSearch'",
+            "searchRelatedToggle()",
+            "function searchRelatedOn()",
+            "function loadRelatedQuestions(q)",
+            "function searchRelatedClick(text)",
+            "/api/v1/chat/recommendation",
+            "search-related-chips",
+            "SEARCH_LABELS",
+            "related_search:document.getElementById('relatedSearch').checked",
+            "var rel=document.getElementById('relatedSearch');if(rel)rel.checked=!!s.related_search",
+            ";loadRelatedQuestions(q)",
+            "\"related_search\":true",
+            "\"query_mindmap\":true",
+            "\"chat_id\":\"prov/inst/chat\"",
+        ] {
+            assert!(
+                html.contains(marker),
+                "search related marker missing: {marker}"
+            );
+        }
+        // Clicking a chip must re-run the search with the chip text.
+        assert!(
+            html.contains("chip.onclick=function(){searchRelatedClick(text)}"),
+            "chip click wiring missing"
+        );
+        assert!(
+            html.contains("data-testid='default-model-rerank_id'"),
+            "search page rerank tree trigger missing"
+        );
+        assert!(
+            html.contains("id='searchRerankRow'"),
+            "search page rerank row missing"
+        );
+        assert!(
+            html.contains("searchRerankToggle"),
+            "search page rerank toggle missing"
+        );
+        assert!(
+            html.contains("searchRerankSel"),
+            "runSearch must read searchRerankSel"
+        );
+        // Upstream `/search` keeps the drawer in react-hook-form state: picking a
+        // rerank model must not PATCH the tenant default (that belongs to the
+        // search-app detail page, which persists `search_config.rerank_id`).
+        assert!(
+            html.contains(FORM_LOCAL_SAVE_MODEL_DEFAULT),
+            "search page rerank picker must override the tenant-default persist hook"
+        );
+        let plain = Request::builder()
+            .uri("/search")
+            .body(Body::empty())
+            .unwrap();
+        let plain_html = body_of(search_page(State(state.clone()), plain).await).await;
+        assert!(
+            !plain_html.contains("window.__SAPP__="),
+            "sapp seed leaked without query param"
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// Upstream `routes.tsx` serves the search experience at `/search/:id`
+    /// and `next-searches/search-card.tsx` navigates there; RayRAG used to send
+    /// the card to a settings form and nested the settings drawer inside the
+    /// hidden results container, so the gear could not be opened before a query.
+    #[tokio::test]
+    async fn search_detail_route_renders_the_search_experience() {
+        let (_root, mut state) = test_state();
+        let dir =
+            std::env::temp_dir().join(format!("rayrag-search-route-{}", uuid::Uuid::new_v4()));
+        let store = std::sync::Arc::new(
+            crate::api::searchapp_mgr::SearchAppStore::new(dir.to_str().unwrap()).unwrap(),
+        );
+        let app = store
+            .create(
+                "u1",
+                crate::api::searchapp_mgr::SearchAppCreate {
+                    name: "路由检索".into(),
+                    kb_ids: vec!["kb-route".into()],
+                    similarity_threshold: 0.6,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        std::sync::Arc::get_mut(&mut state).unwrap().search_apps = Some(store);
+        let html = body_of(
+            search_page_with_id(
+                State(state.clone()),
+                Path(app.id.clone()),
+                english_request("/search/x"),
+            )
+            .await,
+        )
+        .await;
+        assert!(
+            html.contains("window.__SAPP__="),
+            "path id must seed the app"
+        );
+        assert!(
+            html.contains("\"similarity_threshold\":0.6"),
+            "path id must load the app config"
+        );
+        for marker in [
+            "id='searchHome'",
+            "class='search-logo'",
+            "class='search-home-box'",
+            "id='query'",
+            "class='search-home-submit'",
+            "aria-label='Search settings'",
+            "id='ssOpen'",
+        ] {
+            assert!(
+                html.contains(marker),
+                "search home marker missing: {marker}"
+            );
+        }
+        // The emoji and the chunk counter belonged to the old home; the slim
+        // image has no colour-emoji font, so they rendered as tofu boxes.
+        assert!(!html.contains("🐠"), "old fish emoji title must be gone");
+        assert!(!html.contains("👋"), "old emoji greeting must be gone");
+        assert!(!html.contains("Index: "), "old chunk counter must be gone");
+        let gear = html
+            .find("<button type='button' class='ss-open' id='ssOpen'")
+            .expect("settings gear missing");
+        assert!(
+            html[..gear].ends_with("</div></div>"),
+            "settings gear must sit outside the hidden #searchView container"
+        );
+        // Upstream card click target.
+        let list =
+            body_of(search_apps_page(State(state), english_request("/searches")).await).await;
+        assert!(
+            list.contains("\"detailPrefix\":\"/search/\""),
+            "search cards must navigate to /search/:id"
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn search_app_detail_page_renders_rerank_tree_selector() {
+        let (_root, mut state) = test_state();
+        let dir = std::env::temp_dir().join(format!("rayrag-sapp-test-{}", uuid::Uuid::new_v4()));
+        let store = std::sync::Arc::new(
+            crate::api::searchapp_mgr::SearchAppStore::new(dir.to_str().unwrap()).unwrap(),
+        );
+        let app = store
+            .create(
+                "u1",
+                crate::api::searchapp_mgr::SearchAppCreate {
+                    name: "检索应用".into(),
+                    kb_ids: vec![],
+                    hybrid: false,
+                    rerank: false,
+                    rerank_id: "prov/inst/bge-reranker-v2-m3".into(),
+                    top_k: 8,
+                    similarity_threshold: 0.6,
+                    vector_similarity_weight: 0.4,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        std::sync::Arc::get_mut(&mut state).unwrap().search_apps = Some(store);
+        let req = Request::builder()
+            .uri("/searches/x")
+            .body(Body::empty())
+            .unwrap();
+        let html =
+            body_of(search_app_detail_page(State(state.clone()), Path(app.id.clone()), req).await)
+                .await;
+        // Upstream next-search/search-setting.tsx: rerank switch + rerank_id
+        // ModelTreeSelect (rerank), revealed only when use_rerank is on.
+        assert!(
+            html.contains("data-testid='default-model-rerank_id'"),
+            "rerank tree trigger missing"
+        );
+        assert!(
+            html.contains("data-model-types='rerank'"),
+            "rerank accepted types missing"
+        );
+        assert!(html.contains("id='saRerankRow'"), "conditional row missing");
+        assert!(html.contains("saRerankToggle"), "row toggle missing");
+        assert!(html.contains("rerank_id:"), "saveSApp must send rerank_id");
+        assert!(html.contains("seedModelTrigger"), "seed wiring missing");
+        assert!(html.contains("id='sa_thresh'"), "threshold input missing");
+        assert!(html.contains("id='sa_vsw'"), "vector weight input missing");
+        assert!(
+            !html.contains("🔍"),
+            "search-settings button must not use an emoji glyph"
+        );
+        assert!(
+            html.contains("Test search") || html.contains("测试检索"),
+            "test-search label missing"
+        );
+        assert!(
+            html.contains("Rerank Model") || html.contains("重排模型"),
+            "rerank model switch label missing"
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// Div balance of a page fragment with `<script>` bodies removed, used to
+    /// prove that a panel is a sibling of the overview panel rather than nested
+    /// inside it (a single missing `</div>` hides every later tab).
+    fn panel_div_balance(html: &str, start_marker: &str, end_marker: &str) -> i32 {
+        let start = html.find(start_marker).expect("start marker");
+        let end = html[start..].find(end_marker).expect("end marker") + start;
+        let mut fragment = html[start..end].to_string();
+        while let Some(open) = fragment.find("<script") {
+            let Some(close) = fragment[open..].find("</script>") else {
+                break;
+            };
+            fragment.replace_range(open..open + close + "</script>".len(), "");
+        }
+        let opens = fragment.matches("<div").count() as i32;
+        let closes = fragment.matches("</div>").count() as i32;
+        opens - closes
+    }
+
+    /// Quote-aware div-depth scanner used to prove that every dataset panel is
+    /// a sibling inside `.ds-content`. Attribute values are honoured and
+    /// `<script>` bodies skipped, so a malformed attribute (which makes a
+    /// browser parser swallow the tag that follows it) shows up as a depth
+    /// mismatch instead of being hidden by naive `<div>`/`</div>` counting.
+    fn div_depth_at(html: &str, index: usize) -> i32 {
+        let bytes = html.as_bytes();
+        let mut depth = 0i32;
+        let mut i = 0usize;
+        while i < index {
+            if bytes[i] != b'<' {
+                i += 1;
+                continue;
+            }
+            let rest = &html[i..];
+            let lower = rest.get(..7).map(|s| s.to_ascii_lowercase());
+            if lower.as_deref() == Some("<script") {
+                match rest.find("</script>") {
+                    Some(off) => {
+                        i += off + "</script>".len();
+                        continue;
+                    }
+                    None => break,
+                }
+            }
+            if lower.as_deref().is_some_and(|s| s.starts_with("</div>")) {
+                depth -= 1;
+                i += 6;
+                continue;
+            }
+            if rest.get(..4).map(|s| s.to_ascii_lowercase()) == Some("<div".to_string())
+                && !rest[4..]
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphanumeric())
+            {
+                depth += 1;
+            }
+            // Skip the whole tag, honouring quoted attribute values so a `>`
+            // inside an attribute does not terminate it early.
+            let mut quote: Option<char> = None;
+            let mut j = i + 1;
+            while j < index {
+                let c = rest[j - i..].chars().next().unwrap();
+                match quote {
+                    Some(q) => {
+                        if c == q {
+                            quote = None;
+                        }
+                    }
+                    None => {
+                        if c == '\'' || c == '"' {
+                            quote = Some(c);
+                        } else if c == '>' {
+                            break;
+                        }
+                    }
+                }
+                j += c.len_utf8();
+            }
+            i = j + 1;
+        }
+        depth
+    }
+
+    #[tokio::test]
+    async fn dataset_panels_stay_siblings_of_the_overview_tab() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Nesting KB", "d").unwrap();
+        let request = Request::builder()
+            .uri("/dataset/files/x")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(dataset_page(State(state), Path(kb.id.clone()), request).await).await;
+        // tab1 must close before tab2: the merged Logs section cannot swallow
+        // the retrieval/configuration/knowledge-graph panels.
+        assert_eq!(
+            panel_div_balance(&html, "id='tab1'", "id='tab2'"),
+            0,
+            "overview panel must be balanced before the testing panel"
+        );
+        for (start, end) in [
+            ("id='tab2'", "id='tab3'"),
+            ("id='tab3'", "id='tab4'"),
+            ("id='tab4'", "id='tab5'"),
+        ] {
+            assert_eq!(
+                panel_div_balance(&html, start, end),
+                0,
+                "panel between {start} and {end} must be balanced"
+            );
+        }
+        // Every panel must sit at the same div depth: a stray `</div>` (or a
+        // malformed attribute swallowing the next `<div ...>`) closes
+        // `.ds-content` early and drops Configuration/Knowledge graph into the
+        // sidebar column.
+        let base = div_depth_at(&html, html.find("id='tab0'").expect("tab0"));
+        for tab in ["tab1", "tab2", "tab3", "tab4", "tab5"] {
+            let marker = format!("id='{tab}'");
+            let at = html.find(&marker).expect("panel marker");
+            assert_eq!(
+                div_depth_at(&html, at),
+                base,
+                "{tab} must be a sibling of tab0 inside .ds-content"
+            );
+        }
+        assert!(
+            div_depth_at(&html, html.find("id='tab4'").expect("tab4")) >= base,
+            "content wrapper must stay open for the last panel"
+        );
+    }
+
+    /// The configuration tab used to (a) keep a legacy `<option>` loader that
+    /// appended every provider model into the popover-trigger element, blowing
+    /// the row up to ~139000px wide, and (b) emit the avatar picker without a
+    /// `<tr><td>Avatar</td>` header, landing it in the Language row.
+    #[tokio::test]
+    async fn dataset_configuration_rows_and_switch_style_match_upstream() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Config KB", "d").unwrap();
+        let request = Request::builder()
+            .uri("/dataset/configuration/x")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(dataset_page(State(state), Path(kb.id.clone()), request).await).await;
+        let lang = html
+            .find("data-testid='ds-settings-basic-language-select'")
+            .expect("language select");
+        let avatar = html.find("id='cfgAvatar'").expect("avatar picker");
+        let avatar_row = html[..avatar].rfind("<tr>").expect("avatar row start");
+        assert!(
+            html[avatar_row..avatar].contains("Avatar"),
+            "avatar picker must sit in its own labelled table row"
+        );
+        assert!(
+            html[lang..avatar].contains("</tr><tr>"),
+            "avatar picker must start a new row after the language select"
+        );
+        assert_eq!(
+            html.matches(">Avatar</td>").count(),
+            1,
+            "the configuration table must expose exactly one Avatar row"
+        );
+        assert!(
+            html.contains("data-testid='ds-settings-basic-avatar-upload'"),
+            "avatar field keeps the upstream AvatarUpload upload input"
+        );
+        assert!(
+            html.contains("id='cfgAvatarAdd'") && html.contains("id='cfgAvatarRemove'"),
+            "avatar field renders the AvatarUpload empty/preview states"
+        );
+        assert!(
+            !html.contains("sel.appendChild(o)"),
+            "the popover trigger must not receive legacy <option> children"
+        );
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".set-switch input[type=checkbox],",
+            ".set-switch input[type=checkbox]:checked,",
+            ".provider-instance-switch input[type=checkbox][role=switch]",
+            "input[type=checkbox][role=switch]:checked,",
+            ".set-switch input[type=checkbox]:disabled,",
+        ] {
+            assert!(css.contains(rule), "switch styling missing: {rule}");
+        }
+    }
+
+    #[tokio::test]
+    async fn dataset_testing_tab_matches_upstream_testing_form() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Testing KB", "d").unwrap();
+        let request = Request::builder()
+            .uri("/dataset/retrieval/x")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(dataset_page(State(state), Path(kb.id.clone()), request).await).await;
+        // upstream testing/index.tsx + testing-form.tsx
+        assert!(html.contains(">Retrieval testing</h2>"), "page title");
+        assert!(
+            html.contains("Conduct a retrieval test to check if RayRAG can recover"),
+            "testing description"
+        );
+        assert!(html.contains(">Setting</h3>"), "left column header");
+        assert!(
+            html.contains("Input your question here!"),
+            "question placeholder"
+        );
+        assert!(
+            html.contains("id='testRun'")
+                && html.contains(">Run<span aria-hidden='true'> ➤</span>"),
+            "testingLabel with the upstream send glyph"
+        );
+        // upstream testing/index.tsx two-column card + testing-result.tsx
+        assert!(html.contains(">Results</h3>"), "right column header");
+        assert!(html.contains("id='testTotal'"), "results total");
+        assert!(
+            html.contains("data-testid='testing-filter'")
+                && html.contains("id='testFilterPopover'")
+                && html.contains("id='testFilterList'"),
+            "file filter popover"
+        );
+        assert!(
+            html.contains("id='testQError'"),
+            "empty question uses inline validation instead of an alert"
+        );
+        assert!(
+            html.contains("data-testid='testing-results'"),
+            "results container"
+        );
+        assert!(
+            html.contains("var TEST_LABELS=")
+                && html.contains("\"similarity\":\"Hybrid similarity\"")
+                && html.contains("\"termSimilarity\":\"Term similarity\"")
+                && html.contains("\"vectorSimilarity\":\"Vector similarity\""),
+            "similarity labels"
+        );
+        assert!(
+            html.contains("function testRenderResults()")
+                && html.contains("function testBuildDocFilter(chunks)")
+                && html.contains("function testFilterApply()"),
+            "result rendering and filter plumbing"
+        );
+        assert!(
+            html.contains("No test has been run yet. Results will appear here."),
+            "initial empty state"
+        );
+        assert!(html.contains("id='testUseKg'") && html.contains("Use knowledge graph"));
+        assert!(html.contains("id='testCrossLangs'") && html.contains("Cross-language search"));
+        assert!(html.contains("data-testid='default-model-reranking_id'"));
+        // A stray `<` after the label opener used to produce a bogus
+        // `<reranking model="" ...>` element that swallowed the field label and
+        // the Use-knowledge-graph checkbox that follow it.
+        assert!(
+            html.contains("display:block'>Reranking model <span class='tip'"),
+            "reranking label must render as text, not as part of a bogus tag"
+        );
+        assert!(
+            !html.contains("display:block'><"),
+            "no dangling tag opener may precede the reranking label"
+        );
+        assert!(html.contains("id='testUseKg'"), "switch stays an input");
+        // payload carries the upstream query params
+        assert!(html.contains("page:1,highlight:true"));
+        assert!(html.contains("body.use_kg=true"));
+        assert!(html.contains("body.cross_languages=picked"));
+    }
+
+    #[tokio::test]
+    async fn dataset_configuration_basic_fields_match_upstream_general_form() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Config KB", "d").unwrap();
+        let request = Request::builder()
+            .uri("/dataset/configuration/x")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(dataset_page(State(state), Path(kb.id.clone()), request).await).await;
+        // upstream general-form.tsx order: name → language → avatar → description
+        let name_at = html.find("id='cfgName'").expect("name field");
+        let lang_at = html
+            .find("data-testid='ds-settings-basic-language-select'")
+            .expect("language select");
+        let avatar_at = html.find("id='cfgAvatar'").expect("avatar field");
+        let desc_at = html.find("id='cfgDescription'").expect("description field");
+        let perm_at = html.find("id='cfgPerm'").expect("permission field");
+        assert!(
+            name_at < lang_at && lang_at < avatar_at && avatar_at < desc_at && desc_at < perm_at,
+            "basic fields must follow the upstream order name → language → avatar → description → permission"
+        );
+        for language in [
+            "English",
+            "Chinese",
+            "Traditional Chinese",
+            "Japanese",
+            "Korean",
+            "Dutch",
+            "pt-BR",
+        ] {
+            assert!(
+                html.contains(language),
+                "language option {language} missing"
+            );
+        }
+        assert!(html.contains("data-testid='ds-settings-basic-save-btn'"));
+        // Upstream PageRankFormField: a horizontal slider paired with a number
+        // input, both carrying the ds-settings-parser-page-rank test ids.
+        assert!(
+            html.contains("data-testid='ds-settings-parser-page-rank-slider'")
+                && html.contains("data-testid='ds-settings-parser-page-rank-input'")
+                && html.contains("id='cfgPageRankSlider'")
+                && html.contains("id='cfgPageRank'"),
+            "page rank slider and number input"
+        );
+        assert!(
+            html.contains("pagerank:parseInt") || html.contains("page_rank:parseInt"),
+            "page rank is part of the save body"
+        );
+        // The configuration form posts the protocol-correct body: parser fields
+        // live under parser_config and identity fields are read through the
+        // null-safe cfgVal helper.
+        assert!(html.contains("description:cfgVal('cfgDescription')"));
+        assert!(html.contains("parser_config:pc"));
+        // the parsing section no longer duplicates the dataset language select
+        assert_eq!(
+            html.matches("id='cfgLang'").count(),
+            1,
+            "dataset language select must exist exactly once"
+        );
+    }
+
+    #[tokio::test]
+    async fn dataset_detail_paths_follow_upstream_sidebar_routes() {
+        // Upstream `Routes.Dataset = /dataset/files`: the bare detail path
+        // redirects into the Files tab and every sidebar entry is a real route
+        // link that selects its panel on load.
+        let response = dataset_files_redirect(Path("kb-1".to_string()))
+            .await
+            .into_response();
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::TEMPORARY_REDIRECT
+        );
+        let location = response
+            .headers()
+            .get(axum::http::header::LOCATION)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        assert_eq!(location, "/dataset/files/kb-1");
+
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Route KB", "d").unwrap();
+        let request = Request::builder()
+            .uri("/dataset/retrieval/x")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(dataset_page(State(state), Path(kb.id.clone()), request).await).await;
+        // The panel is chosen from the URL path client-side.
+        assert!(html.contains("var seg=(location.pathname.split('/')[2]||'')"));
+        assert!(html.contains(
+            "{files:0,retrieval:2,logs:1,configuration:3,'knowledge-graph':4,'compilation':5}"
+        ));
+        // The knowledge-graph route also paints the stored graph on load, so the
+        // boot call is `showTab(0)` optionally followed by `loadGraph()`.
+        assert!(
+            html.contains("showTab(0);</script>")
+                || html.contains("showTab(0);navLoadTree();if(location.pathname.indexOf('/dataset/knowledge-graph/')>=0)loadGraph();")
+                || html.contains("showTab(0);if(location.pathname.indexOf('/dataset/knowledge-graph/')>=0)loadGraph();</script>"),
+            "dataset boot script missing"
+        );
+        // `kbId` must be declared before the panel scripts that use it.
+        let kb_id_at = html.find("var kbId=").expect("kbId declaration");
+        let load_logs_at = html.find("function loadLogs()").expect("logs loader");
+        assert!(
+            kb_id_at < load_logs_at,
+            "kbId must be declared before the merged Logs panel script"
+        );
+    }
+
+    /// Renders the main pages and asserts that every bare `PREFIX_name` identifier used in their inline
+    /// JavaScript is declared in the same page.
+    ///
+    /// This is the shape of a real bug: the pager once called `FILE_totalLabel`, an identifier no page
+    /// defines, so it threw `ReferenceError` at runtime and rendered nothing — a silent failure that a
+    /// substring assertion had waved through. **Scope:** bare identifiers only. A property access such as
+    /// `window.RAYRAG_ASK_KB_IDS` cannot throw when the global is absent and is deliberately excluded; an
+    /// earlier version of this audit matched it and reported a false positive.
+    #[tokio::test]
+    async fn pages_do_not_reference_undeclared_prefixed_javascript_identifiers() {
+        let (_root, state) = test_state();
+        // `regex` has no look-around, so the guard consumes the preceding character instead: a bare
+        // identifier starts the JavaScript or follows something that is neither a dot nor a word character.
+        let used =
+            regex::Regex::new(r"(?:^|[^.\w])([A-Z][A-Z0-9]*_[a-zA-Z][a-zA-Z0-9_]*)\b").unwrap();
+        let declared = regex::Regex::new(
+            r"(?:var|let|const)\s+([A-Z][A-Z0-9]*_[a-zA-Z]\w*)|function\s+([A-Z][A-Z0-9]*_[a-zA-Z]\w*)",
+        )
+        .unwrap();
+        let req = |uri: &'static str, lang: &'static str| {
+            Request::builder()
+                .uri(uri)
+                .header("Cookie", format!("lang={lang}"))
+                .body(Body::empty())
+                .unwrap()
+        };
+        let pages: Vec<(&str, String, String)> = vec![
+            (
+                "datasets_page",
+                body_of(datasets_page(State(state.clone()), req("/datasets", "zh-CN")).await).await,
+                body_of(datasets_page(State(state.clone()), req("/datasets", "en-US")).await).await,
+            ),
+            (
+                "files_page",
+                body_of(files_page(State(state.clone()), req("/files", "zh-CN")).await).await,
+                body_of(files_page(State(state.clone()), req("/files", "en-US")).await).await,
+            ),
+            (
+                "chat_page",
+                body_of(chat_page(State(state.clone()), req("/chat", "zh-CN")).await).await,
+                body_of(chat_page(State(state.clone()), req("/chat", "en-US")).await).await,
+            ),
+            (
+                "search_page",
+                body_of(search_page(State(state.clone()), req("/search", "zh-CN")).await).await,
+                body_of(search_page(State(state.clone()), req("/search", "en-US")).await).await,
+            ),
+            (
+                "admin_page",
+                body_of(admin_page(State(state.clone()), req("/admin", "zh-CN")).await).await,
+                body_of(admin_page(State(state.clone()), req("/admin", "en-US")).await).await,
+            ),
+        ];
+        let mut problems: Vec<String> = Vec::new();
+        for (name, zh, en) in pages {
+            for (lang, html) in [("zh", zh), ("en", en)] {
+                let mut js = String::new();
+                let mut rest = html.as_str();
+                while let Some(open) = rest.find("<script") {
+                    let after = &rest[open..];
+                    let Some(gt) = after.find('>') else { break };
+                    let body = &after[gt + 1..];
+                    let Some(end) = body.find("</script>") else {
+                        break;
+                    };
+                    js.push_str(&body[..end]);
+                    js.push('\n');
+                    rest = &body[end..];
+                }
+                let defined: std::collections::HashSet<&str> = declared
+                    .captures_iter(&js)
+                    .map(|c| c.get(1).or_else(|| c.get(2)).unwrap().as_str())
+                    .collect();
+                let mut missing: Vec<&str> = used
+                    .captures_iter(&js)
+                    .map(|c| c.get(1).unwrap().as_str())
+                    .filter(|id| !defined.contains(id))
+                    .collect();
+                missing.sort_unstable();
+                missing.dedup();
+                if !missing.is_empty() {
+                    problems.push(format!("{name} ({lang}): {missing:?}"));
+                }
+            }
+        }
+        assert!(
+            problems.is_empty(),
+            "these pages use a prefixed JavaScript identifier that nothing on the page defines, so the code \
+             that touches it throws at runtime and fails silently:\n{}",
+            problems.join("\n")
+        );
+    }
+
+    /// A blind substring replacement over generated JavaScript once turned `FILE_LABELS.total` into the
+    /// identifier `FILE_totalLabel`, which no page defines: the pager threw `ReferenceError` on every load
+    /// and silently rendered nothing, and a test that only looked for a substring still passed. This guard
+    /// reads the lines that emit markup or JavaScript and forbids a prefixed variant of a shared helper.
+    #[test]
+    fn shared_javascript_helpers_are_never_called_with_a_prefix() {
+        let offending: Vec<String> = include_str!("web.rs")
+            .lines()
+            .filter(|line| line.contains("push_str") || line.contains("format!("))
+            .filter(|line| line.contains("_totalLabel") || line.contains("_psLabel"))
+            .map(|line| line.trim().chars().take(80).collect())
+            .collect();
+        assert!(
+            offending.is_empty(),
+            "a shared pagination helper is called with a prefix in emitted JavaScript, which yields a name \
+             no page defines (this is how `FILE_totalLabel` broke the pager):\n{}",
+            offending.join("\n")
+        );
+    }
+
+    /// Upstream's shared pagination component labels every page-size option
+    /// `{{page}} / Page` (en) and `{{page}}条/页` (zh), from `pagination.page` in
+    /// `locales/en.ts:3716` / `zh.ts:3242`. RayRAG renders those options in JavaScript, so the markup
+    /// carries the helper and the language suffix; the rendered text is checked in the browser.
+    #[tokio::test]
+    async fn page_size_options_use_upstreams_page_label() {
+        let (_root, state) = test_state();
+        let req = |lang: &'static str| {
+            Request::builder()
+                .uri("/datasets")
+                .header("Cookie", format!("lang={lang}"))
+                .body(Body::empty())
+                .unwrap()
+        };
+        let en = body_of(datasets_page(State(state.clone()), req("en")).await).await;
+        assert!(
+            en.contains("PAGE_SIZE_SUFFIX=' / Page'"),
+            "the English suffix must be ` / Page`"
+        );
+        assert!(
+            en.contains("psLabel(50)") || en.contains("psLabel(12)"),
+            "page-size options must go through the shared helper"
+        );
+        let zh = body_of(datasets_page(State(state.clone()), req("zh-CN")).await).await;
+        assert!(
+            zh.contains("PAGE_SIZE_SUFFIX='条/页'"),
+            "the Chinese suffix must be 条/页"
+        );
+        // The total is the same shared component: `Total {{total}}` / `总共 {{total}} 条`.
+        assert!(
+            en.contains("function totalLabel(n){return 'Total '+n}"),
+            "the English total must read `Total N`"
+        );
+        assert!(
+            zh.contains("function totalLabel(n){return '总共 '+n+' 条'}"),
+            "the Chinese total must read `总共 N 条`"
+        );
+        assert!(
+            en.contains("totalLabel(total)") && zh.contains("totalLabel(total)"),
+            "the pager must render its total through the shared helper"
+        );
+        // A substring test is not enough: `FILE_totalLabel(total)` contains `totalLabel(total)` and still
+        // throws `ReferenceError` in the browser, which is how a broken pager once passed this test. The
+        // helper must be called with a clean identifier and must actually be defined on the page.
+        for (lang_name, html) in [("en", &en), ("zh", &zh)] {
+            assert!(
+                !html.contains("_totalLabel(total)") && !html.contains("_psLabel("),
+                "the {lang_name} page calls a prefixed helper that no page defines"
+            );
+            assert!(
+                html.contains("function totalLabel(n)") && html.contains("function psLabel(n)"),
+                "the {lang_name} page must define the pagination helpers it calls"
+            );
+        }
+        assert!(
+            !zh.contains("LABELS.total+' '+total"),
+            "the Chinese pager must not fall back to `总共 N`"
+        );
+    }
+
+    /// Upstream's Files panel primary action is Add file, and Configuration carries a Data source
+    /// section with a Link data source entry point. Both are user-visible labels, so they are
+    /// checked in both languages rather than only in the markup.
+    #[tokio::test]
+    async fn dataset_files_and_configuration_expose_upstream_actions() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Actions KB", "d").unwrap();
+        let render = |lang: &'static str| {
+            let state = state.clone();
+            let id = kb.id.clone();
+            async move {
+                body_of(
+                    dataset_page(
+                        State(state),
+                        Path(id),
+                        Request::builder()
+                            .uri("/dataset/files/x")
+                            .header("Cookie", format!("lang={lang}"))
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await,
+                )
+                .await
+            }
+        };
+        let en = render("en").await;
+        assert!(en.contains(">Add file</button>"), "Add file action missing");
+        // Upstream link-data-source.tsx: a titled section with linkSourceSetTip and the entry button.
+        assert!(
+            en.contains("data-testid='dataset-data-source-section'")
+                && en.contains("class='cfg-data-source-title'>Data source</div>"),
+            "the Configuration panel must carry the upstream Data source section"
+        );
+        assert!(
+            en.contains("Manage data source linkage with this dataset"),
+            "the section must carry upstream's linkSourceSetTip"
+        );
+        assert!(
+            en.contains("data-testid='dataset-link-data-source'")
+                && en.contains("onclick='cfgLinkDataSourceOpen()'"),
+            "Link data source control missing or not opening the in-place modal"
+        );
+        assert!(
+            en.contains("id='linkDataSourceModal'")
+                && en.contains("data-testid='dataset-link-data-source-cancel'")
+                && en.contains("data-testid='dataset-link-data-source-confirm'"),
+            "the modal and its upstream Cancel / OK controls must be rendered"
+        );
+        assert!(
+            en.contains(">Cancel</button>") && en.contains(">OK</button>"),
+            "the modal must carry upstream's Cancel and OK controls"
+        );
+        assert!(
+            en.contains("\"autoParse\":\"Auto parse\"") && en.contains(">Unlink data source</h2>"),
+            "linked rows keep upstream's Auto parse switch and the unlink confirmation"
+        );
+        assert!(
+            en.contains("fetch('/api/v1/data_sources')")
+                && en.contains("item.dataset.testid='dataset-link-data-source-item'")
+                && en.contains("data-testid='dataset-link-data-source-search'"),
+            "the modal must list the real data sources the data-source page manages"
+        );
+        assert!(
+            !en.contains("linkDataSourceKind"),
+            "the old connector-kind picker must be gone"
+        );
+
+        let zh = render("zh-CN").await;
+        assert!(
+            zh.contains(">添加文件</button>"),
+            "Chinese Add file label missing"
+        );
+        assert!(
+            zh.contains(">数据源</div>") && zh.contains("管理与此知识库的数据源链接"),
+            "the Chinese Data source section must be translated"
+        );
+        assert!(
+            zh.contains("链接数据源</button>"),
+            "Chinese Link data source label missing"
+        );
+        assert!(
+            zh.contains(">取消</button>") && zh.contains(">确定</button>"),
+            "the Chinese modal must use upstream's 取消 / 确定 controls"
+        );
+        assert!(
+            zh.contains("\"autoParse\":\"自动解析\"") && zh.contains(">取消链接数据源</h2>"),
+            "the Chinese linked-row labels must be translated"
+        );
+        assert!(
+            !zh.contains(">Add file</button>")
+                && !zh.contains(">Link data source</button>")
+                && !zh.contains("Manage data source linkage"),
+            "the Chinese page must not fall back to the English labels"
+        );
+        assert!(
+            !zh.contains(">关联数据源</button>"),
+            "the Chinese label must match upstream's 链接数据源"
+        );
+    }
+
+    /// The Configuration data-source linkage is wired end to end in the browser half: the modal
+    /// loads the data-source page's own collection (not a type list), OK moves the selection into the
+    /// form state, the linked rows expose auto-parse / rebuild / settings / unlink, and the dataset
+    /// Save carries the selection as connectors so PUT /api/v1/datasets/{id} persists it.
+    #[tokio::test]
+    async fn dataset_configuration_links_real_data_sources_and_saves_connectors() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Link KB", "d").unwrap();
+        let request = Request::builder()
+            .uri("/dataset/configuration/x")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(dataset_page(State(state), Path(kb.id.clone()), request).await).await;
+        for needed in [
+            "function cfgLinkDataSourceOpen(){",
+            "function cfgLinkDataSourceConfirm(){",
+            "function cfgConnectorPayload(){",
+            "function cfgConnectorsFromKb(kb){",
+            "function cfgRenderLinkedSources(){",
+            "function cfgRequestUnlink(id){",
+            "function cfgRebuildLinkedSource(id){",
+            "sync?async=1&kb_id=",
+        ] {
+            assert!(html.contains(needed), "the page must define {needed}");
+        }
+        // The modal fills itself from the same collection the data-source page lists.
+        assert!(
+            html.contains("fetch('/api/v1/data_sources')"),
+            "the modal must load /api/v1/data_sources"
+        );
+        // OK copies the working selection into the form state; Cancel restores without touching it.
+        assert!(
+            html.contains("CFG_CONNECTORS=LINK_MODAL_SELECTED.map(function(selected)"),
+            "OK must copy the modal selection into the form state"
+        );
+        assert!(
+            html.contains(
+                "function cfgLinkDataSourceCancel(){LINK_MODAL_SELECTED=CFG_CONNECTORS.map"
+            ),
+            "Cancel must restore the working copy from the form state"
+        );
+        // The linked row keeps upstream's controls.
+        for hook in [
+            "row.dataset.testid='dataset-linked-source'",
+            "dataset-linked-source-auto-parse",
+            "setAttribute('data-action',action)",
+            "cfgIconButton('rebuild','cfg-icon-btn'",
+            "cfgIconButton('settings','cfg-icon-btn'",
+            "cfgIconButton('unlink','cfg-icon-btn cfg-icon-danger'",
+            "data-testid='dataset-unlink-data-source-confirm'",
+        ] {
+            assert!(html.contains(hook), "linked-row hook missing: {hook}");
+        }
+        // Save posts the selection and load paints it back.
+        assert!(
+            html.contains("body.connectors=cfgConnectorPayload();"),
+            "saveConfig must send the linked connectors in the dataset PUT body"
+        );
+        assert!(
+            html.contains("var kb=d.data||{};cfgConnectorsFromKb(kb);"),
+            "loadConfig must read the persisted connectors"
+        );
+        // Linking happens in place: Confirm never navigates away.
+        assert!(
+            !html.contains("location.href='/user-setting/data-source?dataset='")
+                && !html.contains("openLinkDataSource"),
+            "Link data source must stay on the dataset configuration page"
+        );
+    }
+
+    #[tokio::test]
+    async fn dataset_artifacts_tab_renders_upstream_compilation_shell() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Artifacts KB", "d").unwrap();
+        let html = body_of(
+            dataset_page(
+                State(state.clone()),
+                Path(kb.id.clone()),
+                Request::builder()
+                    .uri("/dataset/compilation/x")
+                    .header("Cookie", "lang=en")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        for marker in [
+            "data-testid='dataset-compilation-panel'",
+            "data-testid='dataset-compilation-back'",
+            "data-testid='dataset-compilation-mode'",
+            "data-testid='dataset-compilation-empty'",
+            "data-testid='dataset-compilation-generate'",
+            "data-testid='dataset-compilation-work'",
+            "data-testid='dataset-compilation-update'",
+            "data-testid='dataset-compilation-clear'",
+            "data-testid='dataset-compilation-search'",
+            "data-testid='dataset-compilation-list'",
+            "data-testid='dataset-compilation-detail'",
+            "data-testid='cwp-tab-contents'",
+            "data-testid='cwp-tab-graph'",
+            "id='cwpList'",
+            "id='cwpDetailBody'",
+            "No wiki yet",
+            "Tree/PageIndex",
+            "cwpLoadWiki",
+            "cwpLoadStructure",
+            "cwpLoadTree",
+            "cwpMarkdown",
+            "cwpOpenWikiLink",
+            "cwpGenerate",
+            "cwpClear",
+            "/artifacts/compile",
+            "/artifacts/topics",
+            "/navigation?page_size=1000",
+            "const CWP={labels:",
+        ] {
+            assert!(
+                html.contains(marker),
+                "missing dataset artifacts marker {marker}"
+            );
+        }
+        let mut rest = CWP_MARKUP;
+        while let Some(start) = rest.find("{{") {
+            let tail = &rest[start + 2..];
+            let end = tail.find("}}").expect("unterminated artifacts token");
+            let token = &tail[..end];
+            assert!(
+                !html.contains(&format!("{{{{{token}}}}}")),
+                "unresolved artifacts label token {{{{{token}}}}} left in the page"
+            );
+            rest = &tail[end + 2..];
+        }
+        let zh = body_of(
+            dataset_page(
+                State(state.clone()),
+                Path(kb.id),
+                Request::builder()
+                    .uri("/dataset/compilation/x")
+                    .header("Cookie", "lang=zh-CN")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        for marker in [
+            "暂无 Wiki",
+            "生成",
+            "更新",
+            "清空 Wiki",
+            "的数据集",
+            "暂无导航节点",
+            "编译中…",
+        ] {
+            assert!(zh.contains(marker), "missing zh artifacts label {marker}");
+        }
+    }
+
+    #[test]
+    fn dataset_artifacts_labels_cover_markup_and_locales() {
+        let en = cwp_labels(false);
+        let zh = cwp_labels(true);
+        assert_eq!(en["llmWiki"], "Wiki");
+        assert_eq!(en["navTree"], "Tree/PageIndex");
+        assert_eq!(en["generate"], "Generate");
+        assert_eq!(en["clearWikiTitle"], "Clear wiki");
+        assert_eq!(zh["noWikiPages"], "暂无 Wiki");
+        assert_eq!(zh["topics"], "Topic");
+        assert_eq!(zh["generate"], "生成");
+        let mut rest = CWP_MARKUP;
+        while let Some(start) = rest.find("{{") {
+            let tail = &rest[start + 2..];
+            let end = tail.find("}}").expect("unterminated markup token");
+            let key = &tail[..end];
+            assert!(
+                en.get(key).is_some() || matches!(key, "kbId" | "name" | "initial"),
+                "missing label for artifacts token {key}"
+            );
+            assert!(
+                zh.get(key).is_some() || matches!(key, "kbId" | "name" | "initial"),
+                "missing zh label for artifacts token {key}"
+            );
+            rest = &tail[end + 2..];
+        }
+    }
+
+    #[tokio::test]
+    async fn dataset_page_renders_five_tabs_with_all_required_buttons() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Five Tab KB", "d").unwrap();
+        let req = Request::builder()
+            .uri("/dataset/files/x")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html =
+            body_of(dataset_page(State(state.clone()), Path(kb.id.clone()), req).await).await;
+        // v0.27.2 sidebar order: Files / Retrieval testing / Logs /
+        // Configuration / Artifacts. The knowledge-graph panel keeps its deep
+        // link (tab4) but is no longer a sidebar entry.
+        for nav in ["nav0", "nav1", "nav2", "nav3", "nav5"] {
+            assert!(html.contains(nav), "nav {} missing", nav);
+        }
+        assert!(
+            !html.contains("id='nav4'"),
+            "knowledge-graph must leave the sidebar"
+        );
+        // The label is upstream's translation *value*, not its key name: en.ts:488
+        // `knowledgeDetails.overview: 'Logs'` and zh.ts:435 `'日志'`.
+        let zh_html = body_of(
+            dataset_page(
+                State(state.clone()),
+                Path(kb.id.clone()),
+                Request::builder()
+                    .uri("/dataset/logs/x")
+                    .header("Cookie", "lang=zh-CN")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        assert!(
+            zh_html.contains("<span>日志</span></a>"),
+            "the Chinese sidebar must use upstream's value 日志"
+        );
+        assert!(
+            !zh_html.contains("<span>概览</span>"),
+            "the key name Overview must not reach the sidebar"
+        );
+        // Upstream renders exactly one section per deep link. The Files route
+        // paints tab0 and the sidebar marks Files active; the other panels stay
+        // hidden until their own /dataset/<section>/:id URL is opened.
+        assert!(
+            html.contains("id='tab0'><h2 class='ds-section-title'>"),
+            "files section must render visible on the files route"
+        );
+        for hidden_tab in ["tab1", "tab2", "tab3", "tab4", "tab5"] {
+            assert!(
+                html.contains(&format!("id='{hidden_tab}' style='display:none'")),
+                "{hidden_tab} must stay hidden on the files route"
+            );
+        }
+        assert!(
+            html.contains("class='ds-nav-link active'"),
+            "the active sidebar item must carry the active class"
+        );
+        assert!(
+            html.contains("class='ds-nav-icon'"),
+            "sidebar items must render the upstream lucide icon"
+        );
+        for (route, label) in [
+            ("files", "Files"),
+            ("retrieval", "Retrieval testing"),
+            ("logs", "Logs"),
+            ("configuration", "Configuration"),
+            ("compilation", "Artifacts"),
+        ] {
+            assert!(
+                html.contains(&format!("href='/dataset/{route}/")),
+                "dataset nav link {route} missing"
+            );
+            assert!(html.contains(label), "dataset nav label {label} missing");
+        }
+        // 解析日志面板并入 Logs 面板（上游 overview = /dataset/logs）
+        assert!(
+            html.contains("id='datasetLogs'"),
+            "logs panel merged missing"
+        );
+        assert!(html.contains("id='tab5'"), "artifacts panel missing");
+        for tab in ["tab0", "tab1", "tab2", "tab3", "tab4", "tab5"] {
+            assert!(html.contains(&format!("id='{}'", tab)), "{} missing", tab);
+        }
+        // 文档 tab：上传 / 批量操作 / 状态进度 / 块数
+        assert!(html.contains("uploadDoc"), "upload missing");
+        assert!(html.contains("batchParse"), "batch parse missing");
+        assert!(html.contains("batchDisable"), "batch disable missing");
+        assert!(html.contains("batchDelete"), "batch delete missing");
+        assert!(html.contains("statusCell"), "status cell missing");
+        assert!(html.contains("progress-bar"), "progress bar missing");
+        // 概览 tab
+        assert!(html.contains("ovDone"), "overview stats missing");
+        assert!(html.contains("actList"), "recent activity missing");
+        // 测试 tab：输入 / 检索按钮 / 相似度滑块 / 结果
+        assert!(html.contains("id='testQ'"), "test query missing");
+        // Reranking tree selector (upstream testing-form.tsx RerankFormFields)
+        assert!(
+            html.contains("data-testid='default-model-reranking_id'"),
+            "test reranking tree trigger missing"
+        );
+        assert!(
+            html.contains("data-model-types='rerank'"),
+            "reranking accepted types missing"
+        );
+        assert!(
+            !html.contains("<input type='checkbox' id='testRerank'>"),
+            "legacy reranking checkbox remains"
+        );
+        assert!(
+            html.contains("body.rerank_id="),
+            "testSearch must send rerank_id"
+        );
+        assert!(html.contains("testSearch"), "test button missing");
+        assert!(html.contains("id='testT'"), "threshold slider missing");
+        assert!(html.contains("id='testW'"), "vector slider missing");
+        assert!(html.contains("testResults"), "results missing");
+        // 配置 tab：名称 / 权限 / 解析 / embedding / 检索参数 / 保存
+        assert!(html.contains("cfgName"), "config name missing");
+        assert!(html.contains("cfgPerm"), "config permission missing");
+        assert!(html.contains("chunkMethod"), "chunk method missing");
+        assert!(html.contains("embdSel"), "embedding missing");
+        assert!(html.contains("cfgTopK"), "top k missing");
+        assert!(html.contains("cfgThreshold"), "threshold missing");
+        assert!(html.contains("cfgVector"), "vector weight missing");
+        assert!(html.contains("saveConfig"), "save missing");
+        // 知识图谱 tab
+        assert!(html.contains("buildGraph"), "graph build missing");
+        assert!(html.contains("graphResult"), "graph result missing");
+        // API 调用
+        assert!(html.contains("/api/v1/retrieval"), "retrieval API missing");
+        // The embedding-model field is a default-model popover trigger driven by
+        // the shared `/api/v1/models` catalog; the legacy `<option>` loader that
+        // injected every provider model into the trigger was removed.
+        assert!(
+            html.contains("loadKbModelCatalog()") && html.contains("'/api/v1/models'"),
+            "dataset configuration must load the model catalog for the embedding field"
+        );
+        // The compiled-skill card, and the shapes that would make its script a syntax error while
+        // still looking like valid HTML.
+        assert_inline_scripts_balance(&html, "/dataset/{tab}/{id}");
+        for marker in [
+            "data-testid='dataset-skill-card'",
+            "data-testid='dataset-skill-compile'",
+            "data-testid='dataset-skill-reload'",
+            "data-testid='dataset-skill-delete-all'",
+            "data-testid='dataset-skill-status'",
+            "data-testid='dataset-skill-tree'",
+            // The URLs are built from one base, so that is what the page must contain.
+            "'/api/v1/datasets/'+encodeURIComponent(KB)+'/skills'",
+            "base+'/compile'",
+            "encodeURIComponent(node.skill_kwd)",
+        ] {
+            assert!(html.contains(marker), "missing {marker}");
+        }
+        for shape in [
+            "say(Could not",
+            "say(Nothing compiled",
+            "say(Compiled:",
+            "say(Compiling",
+        ] {
+            assert!(
+                !html.contains(shape),
+                "a script placeholder was substituted unquoted: {shape}"
+            );
+        }
+        // The card is markup. If it ever lands inside an open `<script>`, the browser parses HTML where
+        // it expects JS and the page dies with "Unexpected token '<'" — which is exactly what happened
+        // once, and what the brace-balance check above cannot see.
+        let script_bodies: Vec<&str> = html
+            .split("<script")
+            .skip(1)
+            .filter_map(|part| part.split_once("</script>").map(|(body, _)| body))
+            .collect();
+        assert!(
+            script_bodies.len() >= 5,
+            "the page's scripts should be found"
+        );
+        for body in &script_bodies {
+            assert!(
+                !body.contains("data-testid='dataset-skill-card'"),
+                "the skill card landed inside a script block"
+            );
+            assert!(
+                !body.contains("<section class='card' id='dsSkillCard'"),
+                "the skill card markup landed inside a script block"
+            );
+        }
+        // A bare CSS declaration in the script (`align-items:center`) is a JS syntax error, and it is
+        // easy to drop a `head.style.` prefix when editing the card. Catch the shape here.
+        for body in &script_bodies {
+            for line in body.lines() {
+                let trimmed = line.trim();
+                let bare_css = [
+                    "align-items:",
+                    "justify-content:",
+                    "flex-wrap:",
+                    "gap:",
+                    "padding:",
+                    "margin:",
+                ]
+                .iter()
+                .any(|property| trimmed.starts_with(property));
+                assert!(
+                    !bare_css,
+                    "a CSS declaration is sitting in the script: {trimmed}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn files_page_renders_link_bulk_and_selection_buttons() {
+        let (_root, state) = test_state();
+        let req = Request::builder()
+            .uri("/files")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(files_page(State(state), req).await).await;
+        // 批量操作栏 + 勾选 + 关联知识库（RAGFlow: 上传/新建文件夹/批量移动/批量关联）
+        assert!(html.contains("fileBatchBar"), "bulk bar missing");
+        assert!(html.contains("batchDelete"), "bulk delete missing");
+        assert!(html.contains("batchLink"), "bulk link missing");
+        assert!(html.contains("batchMove"), "bulk move missing");
+        assert!(html.contains("fileSelAll"), "select-all missing");
+        assert!(html.contains("linkFile"), "link-to-KB handler missing");
+        assert!(
+            html.contains("/api/v1/file2document"),
+            "file2document API missing"
+        );
+        // Rename uses an in-page dialog instead of window.prompt.
+        assert!(html.contains("fileRenameModal"));
+        assert!(html.contains("submitFileRename"));
+        assert!(!html.contains("prompt(FILE_LABELS.rename"));
+    }
+
+    /// Upstream `pages/dataset/dataset/index.tsx` + `components/bulk-operate-bar.tsx`:
+    /// selecting rows in a dataset reveals one bar with the selected count and the item
+    /// set enable / disable / parse / cancel / metadata / delete, the parse item opening
+    /// `reparse-dialog.tsx` and the delete item `confirm-delete-dialog.tsx`. RayRAG adds
+    /// a rename item because batch renaming a selection was asked for explicitly; it
+    /// reuses the same PATCH contract as the per-row rename.
+    #[tokio::test]
+    async fn dataset_files_bulk_bar_matches_upstream_operate_bar() {
+        let (_root, state) = test_state();
+        let request = Request::builder()
+            .uri("/dataset/files/kb-bulk")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(
+            dataset_tab_page(
+                State(state.clone()),
+                axum::extract::Path(("files".to_string(), "kb-bulk".to_string())),
+                request,
+            )
+            .await,
+        )
+        .await;
+        assert_inline_scripts_balance(&html, "/dataset/files");
+        for marker in [
+            // The bar itself: upstream renders `role="menu"` labelled `common.bulkOperate`.
+            "data-testid='bulk-operate-bar'",
+            "role='menu'",
+            "aria-label='Bulk operate'",
+            "id='selCount'",
+            "data-testid='bulk-operate-count'",
+            "bulk-operate-clear",
+            "M5 14h14l1.973 6.767A1 1 0 0 1 20 22H4a1 1 0 0 1-.973-1.233z",
+            // One item per upstream entry, in upstream order.
+            "data-testid='bulk-enabled'",
+            "data-testid='bulk-disabled'",
+            "data-testid='bulk-run'",
+            "data-testid='bulk-cancel'",
+            "data-testid='bulk-metadata'",
+            "data-testid='bulk-delete'",
+            "data-testid='bulk-rename'",
+            "role='menuitem'",
+            "onclick='bulkSetStatus(1)'",
+            "onclick='bulkSetStatus(0)'",
+            "onclick='showBulkParse()'",
+            "onclick='bulkCancel()'",
+            "onclick='showBulkDelete()'",
+            // The parse dialog carries upstream's `redo` checkbox and the metadata switch.
+            "data-testid='bulk-parse-dialog'",
+            "data-testid='bulk-parse-redo'",
+            "id='bulkParseRedoText'",
+            "data-testid='bulk-parse-ok'",
+            "data-testid='bulk-parse-meta'",
+            // The delete dialog names the selection.
+            "data-testid='bulk-delete-dialog'",
+            "data-testid='bulk-delete-count'",
+            "data-testid='bulk-delete-ok'",
+            // The rename dialog previews every name it would write.
+            "data-testid='bulk-rename-dialog'",
+            "data-testid='bulk-rename-find'",
+            "data-testid='bulk-rename-replace'",
+            "data-testid='bulk-rename-prefix'",
+            "data-testid='bulk-rename-preview'",
+            "data-testid='bulk-rename-ok'",
+            // The three upstream endpoints the bar calls.
+            "'/documents/batch-update-status'",
+            "'/api/v1/documents/ingest'",
+            "run:2",
+            "run:1,delete:document.getElementById('bulkParseRedo').checked",
+            "method:'DELETE'",
+            "body:JSON.stringify({ids:",
+            // Selection plumbing on the table.
+            "selAll.id='docSelAllBtn'",
+            "selAll.setAttribute('aria-label',L.selectAll)",
+            "hidden.setAttribute('data-testid','doc-select-row')",
+            "all.setAttribute('aria-checked',n===0?'false':(n===total?'true':'mixed'))",
+            "BULK_TEXT.selected+': '+checked.length+' '+BULK_TEXT.files",
+            "function bulkSelectedLabel(count)",
+            "BULK_TEXT.selectedFiles.replace('{{count}}',String(count))",
+            // The row state comes from the server, not the browser.
+            "var dis=dd.status==='0'",
+            "tr.setAttribute('data-status',dd.status||'')",
+            "tr.setAttribute('data-chunks',String(dd.chunk_count||0))",
+            "tr.setAttribute('data-run',dd.run||'')",
+            "if(f==='enabled')return x.status!=='0'",
+            "if(f==='disabled')return x.status==='0'",
+            "'/documents/batch-update-status'",
+        ] {
+            assert!(html.contains(marker), "bulk bar marker missing: {marker}");
+        }
+        // Upstream copy from the shared label table.
+        for marker in [
+            "\"selected\":\"Selected\"",
+            "\"files\":\"Files\"",
+            "\"deleteFiles\":\"Delete files\"",
+            "\"deleteThem\":\"Are you sure to delete them?\"",
+            "\"parseFile\":\"Parse file\"",
+            "\"parseFileTip\":\"Are you sure to parse?\"",
+            "\"redoAll\":\"Clear existing chunks\"",
+            "\"applyKb\":\"Apply global auto-metadata settings\"",
+            "\"runningCannotBeDeleted\":\"The document being parsed cannot be deleted\"",
+        ] {
+            assert!(html.contains(marker), "bulk label missing: {marker}");
+        }
+        // The switch is no longer browser-local storage.
+        assert!(
+            !html.contains("setDocDisabled(id,!isDocDisabled(id))"),
+            "the enable/disable switch must reach the server"
+        );
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".bulk-operate-bar{",
+            ".bulk-operate-items{",
+            ".bulk-operate-check{",
+            ".bulk-rename-preview{",
+        ] {
+            assert!(css.contains(rule), "bulk bar css missing: {rule}");
+        }
+
+        // The Chinese page uses the same table.
+        let (_zh_root, zh_state) = test_state();
+        let zh_request = Request::builder()
+            .uri("/dataset/files/kb-bulk")
+            .header("Cookie", "lang=zh-CN")
+            .body(Body::empty())
+            .unwrap();
+        let zh_html = body_of(
+            dataset_tab_page(
+                State(zh_state),
+                axum::extract::Path(("files".to_string(), "kb-bulk".to_string())),
+                zh_request,
+            )
+            .await,
+        )
+        .await;
+        for marker in [
+            "\"selected\":\"已选择\"",
+            "\"deleteFiles\":\"删除文件\"",
+            "\"parseFileTip\":\"您确定要解析吗？\"",
+            "\"redo\":\"是否清空已有 {{chunkNum}}个 chunk？\"",
+        ] {
+            assert!(zh_html.contains(marker), "zh bulk label missing: {marker}");
+        }
+    }
+
+    #[tokio::test]
+    async fn agents_page_renders_import_json_button() {
+        let (_root, state) = test_state();
+        let req = Request::builder()
+            .uri("/agents")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(agents_page(State(state), req).await).await;
+        // 上游 pages/agents/index.tsx: Create agent 下拉(从空白/从模板/导入 JSON)
+        // + 创建弹层的 FlowType 卡片
+        assert!(
+            html.contains("data-testid='agent-create-menu'"),
+            "create-agent dropdown missing"
+        );
+        assert!(
+            html.contains("data-testid='agent-create-blank'")
+                && html.contains("data-testid='agent-create-template'"),
+            "create menu entries missing"
+        );
+        assert!(
+            html.contains("data-testid='agent-import-json'") && html.contains("lpImportFile"),
+            "import JSON file input missing"
+        );
+        assert!(
+            html.contains("lpImportSubmit"),
+            "import JSON handler missing"
+        );
+        assert!(
+            html.contains("Agent flow") && html.contains("Ingestion pipeline"),
+            "agent type cards missing"
+        );
+        assert!(
+            html.contains("data-flow='agent'") && html.contains("data-flow='flow'"),
+            "agent wire categories missing"
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_detail_page_renders_versions_and_export_json_buttons() {
+        let (_root, state) = test_state();
+        let req = Request::builder()
+            .uri("/agents/a1")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(agent_detail_page(Path("a1".to_string()), req).await).await;
+        // RAGFlow: 运行 / 探索 / 版本管理(发布生产+下载) / 导出 JSON
+        assert!(html.contains("openVersions"), "versions button missing");
+        assert!(html.contains("verModal"), "versions modal missing");
+        assert!(
+            html.contains("downloadVersion"),
+            "version download handler missing"
+        );
+        assert!(
+            html.contains("exportAgentJson"),
+            "export JSON handler missing"
+        );
+        assert!(
+            html.contains("/api/v1/agents/'+aid+'/versions"),
+            "versions API missing"
+        );
+        // RAGFlow canvas toolbar parity (agent/editor.tsx click-record)
+        assert!(html.contains("agent-launch"), "Launch button missing");
+        assert!(
+            html.contains("agent-management"),
+            "Management button missing"
+        );
+        assert!(html.contains("autosaveSt"), "Autosaved status missing");
+        assert!(html.contains("zoomCanvas"), "zoom controls missing");
+        assert!(html.contains("toggleInter"), "toggle interactivity missing");
+        assert!(html.contains("pubModal"), "confirm publish modal missing");
+        assert!(html.contains("chatTestModal"), "chat test modal missing");
+        assert!(
+            html.contains("confirmPublish"),
+            "confirm publish handler missing"
+        );
+    }
+
+    /// Upstream `Routes.ChatWidget` (`/chats/widget`): the floating widget page
+    /// ships the three modes, the widget settings and the shared chat backends.
+    #[tokio::test]
+    async fn chat_widget_page_matches_upstream_floating_widget() {
+        let request = Request::builder()
+            .uri("/chats/widget?shared_id=agent-1&from=agent&auth=beta-1&mode=master&streaming=true&muted=true&widget_title=Support&widget_accent_color=%232563eb")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(chat_widget_page(request).await).await;
+        let html = html.as_str();
+        for marker in [
+            "data-testid='fcw-root'",
+            "data-testid='fcw-button-wrap'",
+            "data-testid='fcw-button'",
+            "data-testid='fcw-badge'",
+            "data-testid='fcw-window'",
+            "data-testid='fcw-avatar'",
+            "data-testid='fcw-title'",
+            "data-testid='fcw-subtitle'",
+            "data-testid='fcw-minimize'",
+            "data-testid='fcw-close'",
+            "data-testid='fcw-messages'",
+            "data-testid='fcw-typing'",
+            "data-testid='fcw-input'",
+            "data-testid='fcw-send'",
+            "data-testid='fcw-footer'",
+        ] {
+            assert!(html.contains(marker), "widget marker {marker} missing");
+        }
+        // Transparent shell (upstream `pages/next-chats/widget/index.tsx`).
+        assert!(html.contains("html,body{background:transparent!important"));
+        // The three modes and the postMessage handshake.
+        for hook in [
+            "function fcwApplyMode()",
+            "FCW.mode=params.get('mode')||'full'",
+            "fcwPost({type:'CREATE_CHAT_WINDOW',src:src})",
+            "fcwPost({type:'TOGGLE_CHAT',isOpen:FCW.open})",
+            "event.data.type==='TOGGLE_CHAT'",
+            "mode=master",
+            "mode=window",
+        ] {
+            assert!(html.contains(hook), "widget hook {hook} missing");
+        }
+        // Widget settings travel in the URL, colours through custom properties.
+        for param in [
+            "widget_title",
+            "widget_subtitle",
+            "widget_footer",
+            "widget_footer_link",
+            "widget_accent_color",
+            "widget_background_color",
+            "widget_text_color",
+            "widget_header_text_color",
+            "widget_footer_text_color",
+            "'--fcw-accent'",
+            "'--fcw-accent-strong'",
+        ] {
+            assert!(html.contains(param), "widget param {param} missing");
+        }
+        assert!(html.contains("params.get('streaming')==='true'"));
+        assert!(html.contains("params.get('muted')==='true'"));
+        // Both chat backends, like upstream's `isFromAgent` switch.
+        assert!(html.contains("'/api/v1/agentbots/'+encodeURIComponent(FCW.sharedId)+'/inputs'"));
+        assert!(html.contains("'/api/v1/chatbots/'+encodeURIComponent(FCW.sharedId)+'/info'"));
+        assert!(
+            html.contains("'/api/v1/chatbots/'+encodeURIComponent(FCW.sharedId)+'/completions'")
+        );
+        // The `?auth=` bootstrap matches the share page.
+        let zh_request = Request::builder()
+            .uri("/chats/widget")
+            .header("Cookie", "lang=zh-CN")
+            .body(Body::empty())
+            .unwrap();
+        let zh_html = body_of(chat_widget_page(zh_request).await).await;
+        for label in ["聊天支持", "我们通常会即时回复", "请输入消息..."] {
+            assert!(zh_html.contains(label), "zh widget label {label} missing");
+        }
+
+        let css = include_str!("web_css.txt");
+        for selector in [
+            ".fcw-button{",
+            ".fcw-window{",
+            ".fcw-message.user .fcw-message-body{",
+            ".fcw-footer{",
+            "@keyframes fcwBounce{",
+        ] {
+            assert!(css.contains(selector), "widget css {selector} missing");
+        }
+    }
+
+    /// Upstream `Routes.DataflowResult`: the ingestion-log viewer ships the back
+    /// header, the timeline strip, the document preview column, the step result
+    /// panel with its format selector and rerun flow, and it reads the ingestion
+    /// endpoints.
+    #[tokio::test]
+    async fn dataflow_result_page_matches_upstream_ingestion_viewer() {
+        let request = Request::builder()
+            .uri("/dataflow-result?doc_id=doc-1&knowledgeId=kb-1&type=dataflow&id=log-1")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(dataflow_result_page(request).await).await;
+        let html = html.as_str();
+        for marker in [
+            "data-testid='dataflow-result'",
+            "data-testid='dataflow-back'",
+            "data-testid='dataflow-timeline'",
+            "data-testid='dataflow-document-head'",
+            "data-testid='dataflow-document-preview'",
+            "data-testid='dataflow-step-title'",
+            "data-testid='dataflow-format'",
+            "data-testid='dataflow-rerun'",
+            "data-testid='dataflow-rerun-tip'",
+            "data-testid='dataflow-chunk-bar'",
+            "data-testid='dataflow-text-full'",
+            "data-testid='dataflow-text-ellipse'",
+            "data-testid='dataflow-create-chunk'",
+            "data-testid='dataflow-chunk-sets'",
+            "data-testid='dataflow-select-all'",
+            "data-testid='dataflow-selected'",
+            "data-testid='dataflow-delete-chunks'",
+            "data-testid='dataflow-output'",
+            "data-testid='dataflow-raw'",
+            "data-testid='dataflow-rerun-dialog'",
+            "data-testid='dataflow-switch-dialog'",
+        ] {
+            assert!(html.contains(marker), "dataflow marker {marker} missing");
+        }
+        for label in [
+            "Result",
+            "Output format",
+            "Rerun from current step",
+            "Changes detected. Click to re-run.",
+            "Confirm rerun process",
+            "Step switch warning",
+            "Switch Anyway",
+            "Full text",
+            "Ellipse",
+            "Select all",
+        ] {
+            assert!(html.contains(label), "dataflow label {label} missing");
+        }
+        // The ingestion endpoints and the rerun call of `useRerunDataflow`.
+        assert!(html.contains("'/ingestions/'+encodeURIComponent(logId)"));
+        assert!(html.contains("'/ingestions?page=0&page_size=0&log_type=file'"));
+        assert!(html.contains("fetch('/api/v1/agents/rerun',{method:'POST'"));
+        assert!(html.contains("component_id:node.id"));
+        // Chunk deletion goes through the upstream chunk endpoint.
+        assert!(
+            html.contains("'/documents/'+encodeURIComponent(docId)+'/chunks',{method:'DELETE'")
+        );
+        // The back button returns to the dataset's file list (or the agent page).
+        assert!(html.contains("location.href='/dataset/files/'+encodeURIComponent(DATAFLOW.kb)"));
+        assert!(html.contains("location.href='/agent/'+encodeURIComponent(DATAFLOW.agent)"));
+        // `useTimelineDataFlow`'s node model.
+        assert!(html.contains("function dataflowBuildNodes(dsl)"));
+        // Upstream `parse-editer`: click-to-edit blocks that mark the step dirty
+        // (`isChange`) and feed the rerun payload.
+        assert!(html.contains("data-testid','dataflow-edit-text'"));
+        assert!(html.contains("data-testid','dataflow-edit-chunk'"));
+        assert!(html.contains("function dataflowSaveObjectEdit(element)"));
+        assert!(html.contains("function dataflowSaveChunkEdit(index,element)"));
+        assert!(html.contains("function dataflowTextMode(mode)"));
+        assert!(html.contains("function dataflowCreateChunk()"));
+        assert!(html.contains("outputs._elapsed_time&&outputs._elapsed_time.value||0"));
+
+        let zh_request = Request::builder()
+            .uri("/dataflow-result")
+            .header("Cookie", "lang=zh-CN")
+            .body(Body::empty())
+            .unwrap();
+        let zh_html = body_of(dataflow_result_page(zh_request).await).await;
+        for label in [
+            "结果",
+            "输出格式",
+            "从当前步骤重新运行",
+            "已修改，点击重新运行。",
+            "确认重新运行流程",
+            "切换步骤警告",
+            "继续切换",
+            "全文",
+            "省略",
+            "选择所有",
+        ] {
+            assert!(zh_html.contains(label), "zh dataflow label {label} missing");
+        }
+
+        let css = include_str!("web_css.txt");
+        for selector in [
+            ".dataflow-page{",
+            ".dataflow-timeline{",
+            ".dataflow-body{",
+            ".dataflow-chunk{",
+            ".dataflow-dialog{",
+            ".dataflow-segmented{",
+            ".dataflow-chunk-sets{",
+            ".dataflow-chunk-body.ellipse{",
+        ] {
+            assert!(css.contains(selector), "dataflow css {selector} missing");
+        }
+    }
+
+    /// Upstream `dataset-overview/overview-table.tsx`: a parsed file row carries
+    /// the `View result` action that opens `/dataflow-result` for that ingestion
+    /// log (`navigateToDataflowResult`).
+    /// Dataset Files row editors: the Metadata cell opens the document metadata editor
+    /// (upstream showManageMetadataModal writing meta_fields) and the Parse cell opens the
+    /// parser change dialog (upstream ParseDropdownButton + change-parser-dialog), while the
+    /// status column keeps the reparse control. The empty header is upstream's run-status
+    /// column, which is why the table has nine columns.
+    #[tokio::test]
+    async fn document_chunk_view_pairs_original_preview_with_chunks_panel() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Docs KB", "d").unwrap();
+        state
+            .docs
+            .insert(crate::api::document::DocRecord {
+                id: "doc-view".into(),
+                name: "sample.pdf".into(),
+                kb_id: kb.id.clone(),
+                size: 10,
+                storage_name: "sample.pdf".into(),
+                content_hash: String::new(),
+                indexed_content_hash: String::new(),
+                run: "DONE".into(),
+                progress: 1.0,
+                progress_msg: "Indexed".into(),
+                chunk_count: 2,
+                created_at: 1,
+                updated_at: 1,
+                status: crate::api::document::enabled_status(),
+                ..Default::default()
+            })
+            .unwrap();
+        let request = Request::builder()
+            .uri(format!("/dataset/{}/document/doc-view", kb.id))
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(
+            document_chunks_page(
+                State(state),
+                Path((kb.id.clone(), "doc-view".to_string())),
+                request,
+            )
+            .await,
+        )
+        .await;
+        for marker in [
+            "data-testid='document-chunk-view'",
+            "class='doc-original-frame'",
+            "id='docChunkList'",
+            "/documents/doc-view/preview",
+            "document-chunk-card",
+            "/chunk/chunk/doc-view?knowledgeId=",
+            "Edit chunks",
+            "drChunksWatch",
+            "refreshes the chunks automatically",
+        ] {
+            assert!(
+                html.contains(marker),
+                "document chunk view marker {marker} missing"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn document_chunk_view_renders_office_preview_instead_of_iframe() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Office KB", "d").unwrap();
+        state
+            .docs
+            .insert(crate::api::document::DocRecord {
+                id: "doc-office".into(),
+                name: "report.docx".into(),
+                kb_id: kb.id.clone(),
+                size: 10,
+                storage_name: "report.docx".into(),
+                content_hash: String::new(),
+                indexed_content_hash: String::new(),
+                run: "DONE".into(),
+                progress: 1.0,
+                progress_msg: "Indexed".into(),
+                chunk_count: 1,
+                created_at: 1,
+                updated_at: 1,
+                status: crate::api::document::enabled_status(),
+                ..Default::default()
+            })
+            .unwrap();
+        let request = Request::builder()
+            .uri(format!("/dataset/{}/document/doc-office", kb.id))
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(
+            document_chunks_page(
+                State(state),
+                Path((kb.id.clone(), "doc-office".to_string())),
+                request,
+            )
+            .await,
+        )
+        .await;
+        for marker in [
+            "data-testid='document-structured-preview'",
+            "docStructuredPreview",
+            "ext:",
+            "\"docx\"",
+            "/preview/'+endpoint",
+            "doc-structured-table",
+        ] {
+            assert!(
+                html.contains(marker),
+                "office document chunk view marker {marker} missing"
+            );
+        }
+        assert!(
+            !html.contains("class='doc-original-frame'"),
+            "office documents should use the structured preview, not the raw iframe"
+        );
+    }
+
+    #[tokio::test]
+    async fn document_chunk_view_keeps_raw_iframe_for_legacy_office_files() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Legacy Office KB", "d").unwrap();
+        state
+            .docs
+            .insert(crate::api::document::DocRecord {
+                id: "doc-legacy".into(),
+                name: "legacy.doc".into(),
+                kb_id: kb.id.clone(),
+                size: 10,
+                storage_name: "legacy.doc".into(),
+                content_hash: String::new(),
+                indexed_content_hash: String::new(),
+                run: "DONE".into(),
+                progress: 1.0,
+                progress_msg: "Indexed".into(),
+                chunk_count: 1,
+                created_at: 1,
+                updated_at: 1,
+                status: crate::api::document::enabled_status(),
+                ..Default::default()
+            })
+            .unwrap();
+        let request = Request::builder()
+            .uri(format!("/dataset/{}/document/doc-legacy", kb.id))
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(
+            document_chunks_page(
+                State(state),
+                Path((kb.id.clone(), "doc-legacy".to_string())),
+                request,
+            )
+            .await,
+        )
+        .await;
+        assert!(html.contains("class='doc-original-frame'"));
+        assert!(!html.contains("document-structured-preview"));
+        assert!(!html.contains("/preview/docx"));
+    }
+
+    #[tokio::test]
+    async fn dataset_files_table_metadata_and_parser_editors_match_upstream() {
+        let (_root, state) = test_state();
+        let request = Request::builder()
+            .uri("/dataset/files/kb-editors")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(
+            dataset_tab_page(
+                State(state),
+                axum::extract::Path(("files".to_string(), "kb-editors".to_string())),
+                request,
+            )
+            .await,
+        )
+        .await;
+        assert_inline_scripts_balance(&html, "/dataset/files");
+        for marker in [
+            // Metadata editor: the cell button, the dialog and its PUT contract.
+            "document-metadata-open",
+            "document-metadata-dialog",
+            "docMetaRows",
+            "docMetaSave",
+            "function openDocMetadata(btn)",
+            "function saveDocMeta()",
+            "function closeDocMeta()",
+            "/metadata',{method:'PUT'",
+            "meta_fields:fields",
+            // Parser change dialog: the ParseDropdownButton stand-in and PATCH contract.
+            "document-parse-method",
+            "document-parser-dialog",
+            "docParserSelect",
+            "function openDocParser(btn)",
+            "function saveDocParser()",
+            "chunk_method:value",
+            // The upstream nine-column layout: select, Name, Upload date, Enable, Chunks,
+            // Metadata, Parse, run-status (empty header), Action.
+            "plainTh(L.parse);plainTh('');plainTh(L.action)",
+            "emptyCell.colSpan=9",
+        ] {
+            assert!(html.contains(marker), "editor marker missing: {marker}");
+        }
+    }
+
+    #[tokio::test]
+    async fn dataset_file_rows_open_the_dataflow_result_page() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Result KB", "").unwrap();
+        let request = Request::builder()
+            .uri(format!("/dataset/files/{}", kb.id))
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(
+            dataset_tab_page(
+                State(state),
+                Path(("files".to_string(), kb.id.clone())),
+                request,
+            )
+            .await,
+        )
+        .await;
+        let html = html.as_str();
+        assert!(html.contains("dataset-file-result"));
+        assert!(html.contains(
+            "'/dataset/'+encodeURIComponent(kbId)+'/document/'+encodeURIComponent(dd.id)"
+        ));
+        assert!(html.contains("function openDataflowResult(btn)"));
+        assert!(html.contains("log_type=file"));
+        assert!(html.contains("/dataflow-result?id="));
+        assert!(html.contains("&type=dataflow"));
+    }
+
+    /// Upstream `Routes.AgentShare` (`/agent/share`) with
+    /// `components/embed-container.tsx` and `hooks/use-send-shared-message.ts`:
+    /// the embeddable agent chat ships the brand block, the avatar+title header
+    /// with `Reset`, the message list, the input row and the `Parameter` dialog,
+    /// and it drives the beta-authenticated `agentbots` endpoints.
+    #[tokio::test]
+    async fn agent_share_page_matches_upstream_embed_container() {
+        let request = Request::builder()
+            .uri("/agent/share?shared_id=agent-1&from=agent&auth=beta-1&locale=zh-Hans&visible_avatar=1")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(agent_share_page(request).await).await;
+        let html = html.as_str();
+        for marker in [
+            "data-testid='agent-share-page'",
+            "data-testid='share-avatar'",
+            "data-testid='share-title'",
+            "data-testid='share-reset'",
+            "data-testid='share-messages'",
+            "data-testid='share-input'",
+            "data-testid='share-send'",
+            "data-testid='share-stop'",
+            "data-testid='share-parameter-dialog'",
+            "data-testid='share-parameter-submit'",
+        ] {
+            assert!(html.contains(marker), "share marker {marker} missing");
+        }
+        // Upstream's `EmbedContainer`: the brand block and the hard-coded
+        // `Reset` label (it is not translated in the React source either).
+        assert!(html.contains("<div class='agent-share-brand'"));
+        assert!(html.contains("<span>Reset</span>"));
+        // First paint: the send button starts disabled (`useSendButtonDisabled`).
+        assert!(
+            html.contains(
+                "data-testid='share-send' aria-label='Type your message here...' disabled"
+            )
+        );
+        // The beta credential bootstrap and the two agentbot endpoints.
+        assert!(html.contains("document.cookie='rayrag_token='+auth"));
+        assert!(html.contains("url.searchParams.delete('auth')"));
+        assert!(
+            html.contains("/api/v1/agentbots/'+encodeURIComponent(SHARE_STATE.sharedId)+'/inputs'")
+        );
+        assert!(html.contains(
+            "/api/v1/agentbots/'+encodeURIComponent(SHARE_STATE.sharedId)+'/completions'"
+        ));
+        assert!(html.contains("SHARE_STATE.release?'?release=true'"));
+        // `visible_avatar=1` hides the avatar (`chat.avatarHidden` semantics).
+        assert!(html.contains("SHARE_STATE.visibleAvatar=visible?visible!=='1':true"));
+        assert!(html.contains("function shareReset()"));
+        // `bot_api.agent_bot_logs`: the embed's Thinking expander polls the beta
+        // trace endpoint (`fetchSharedTrace`).
+        assert!(html.contains("data-testid','share-thinking'"));
+        assert!(html.contains("data-testid','share-thinking-body'"));
+        assert!(html.contains("function shareLoadTrace(messageId,panel)"));
+        assert!(html.contains("'/logs/'+encodeURIComponent(messageId)"));
+        assert!(html.contains("SHARE_STATE.traceTimer=setInterval("));
+        assert!(html.contains("data-testid','share-thinking-tool'"));
+        assert!(html.contains("dataflowToolBlacklisted(sample.tool_name)"));
+
+        let zh_request = Request::builder()
+            .uri("/agent/share")
+            .header("Cookie", "lang=zh-CN")
+            .body(Body::empty())
+            .unwrap();
+        let zh_html = body_of(agent_share_page(zh_request).await).await;
+        // Upstream `chat.messagePlaceholder` on the box.
+        assert!(
+            zh_html.contains("placeholder='请输入消息...'"),
+            "{zh_html:.0}"
+        );
+
+        let css = include_str!("web_css.txt");
+        for selector in [
+            ".agent-share-page{",
+            ".agent-share-frame{",
+            ".agent-share-head{",
+            ".agent-share-msg{",
+            ".agent-share-send[hidden],.agent-share-stop[hidden]{display:none!important}",
+            ".agent-share-thinking-toggle{",
+            ".agent-explore-log-sheet{",
+            ".agent-explore-tool-value{",
+        ] {
+            assert!(css.contains(selector), "share css {selector} missing");
+        }
+    }
+
+    /// Upstream `components/embed-dialog/index.tsx` on the agent editor: the
+    /// `Embed into webpage` entry opens the dialog that lists the tenant API
+    /// keys, carries the embed switches and prints the fullscreen iframe snippet.
+    #[tokio::test]
+    async fn agent_embed_modal_matches_upstream_embed_dialog() {
+        let (_root, state) = test_state();
+        let request = Request::builder()
+            .uri("/agents/agent-1")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(agent_detail_page(Path("agent-1".to_string()), request).await).await;
+        let html = html.as_str();
+        for marker in [
+            "data-testid='agent-embed'",
+            "data-testid='agent-embed-modal'",
+            "data-testid='embed-token-table'",
+            "data-testid='embed-token-error'",
+            "data-testid='embed-create-token'",
+            "data-testid='embed-type'",
+            "data-testid='embed-widget-fields'",
+            "data-testid='embed-widget-title'",
+            "data-testid='embed-widget-subtitle'",
+            "data-testid='embed-widget-footer'",
+            "data-testid='embed-widget-footer-link'",
+            "data-testid='embed-widget-accent'",
+            "data-testid='embed-widget-background'",
+            "data-testid='embed-widget-text'",
+            "data-testid='embed-widget-header-text'",
+            "data-testid='embed-widget-footer-text'",
+            "data-testid='embed-widget-streaming'",
+            "data-testid='embed-widget-muted'",
+            "data-testid='embed-theme-light'",
+            "data-testid='embed-theme-dark'",
+            "data-testid='embed-hide-avatar'",
+            "data-testid='embed-published'",
+            "data-testid='embed-locale'",
+            "data-testid='embed-snippet'",
+            "data-testid='embed-copy'",
+            "data-testid='embed-preview'",
+        ] {
+            assert!(html.contains(marker), "embed marker {marker} missing");
+        }
+        for label in [
+            "Embed into webpage",
+            "API KEY",
+            "Create new key",
+            "Created",
+            "Action",
+            "Embed type",
+            "Fullscreen chat (traditional iframe)",
+            "Floating widget (Intercom-style)",
+            "These settings apply to the floating widget embed.",
+            "Widget title",
+            "Subtitle",
+            "Footer text",
+            "Footer redirect link",
+            "Enable streaming responses",
+            "Mute widget sounds",
+            "Theme",
+            "Light",
+            "Dark",
+            "Hide avatar",
+            "Published",
+            "Please create API key first.",
+            "Full embed",
+            "Embed the following iframe into your website at the desired location",
+        ] {
+            assert!(html.contains(label), "embed label {label} missing");
+        }
+        // The URL builder mirrors `generateIframeSrc` and the snippet mirrors
+        // the fullscreen branch of `embedCode`.
+        assert!(html.contains("url.searchParams.set('shared_id',aid)"));
+        assert!(html.contains("url.searchParams.set('from','agent')"));
+        assert!(html.contains("url.searchParams.set('auth',token?token.beta:'')"));
+        assert!(html.contains("url.searchParams.set('release','true')"));
+        assert!(html.contains("url.searchParams.set('visible_avatar','1')"));
+        assert!(html.contains("'<iframe\\n  src=\"'"));
+        assert!(html.contains("min-height: 600px"));
+        // Upstream's widget branch: `/chats/widget?mode=master&…` plus the
+        // postMessage bootstrap that manages the `chat-win` iframe.
+        assert!(html.contains("'/chats/widget'"));
+        assert!(html.contains("url.searchParams.set('mode','master')"));
+        assert!(html.contains("function embedWidgetSnippet(source)"));
+        assert!(html.contains("CREATE_CHAT_WINDOW"));
+        assert!(html.contains("TOGGLE_CHAT"));
+        assert!(html.contains("position:fixed;bottom:0;right:0;width:100px;height:100px"));
+        assert!(html.contains("function embedColorSync(pickerId)"));
+        // Token CRUD rides the upstream endpoints.
+        assert!(html.contains("fetch('/api/v1/system/tokens'"));
+        assert!(html.contains("fetch('/api/v1/system/tokens',{method:'POST'})"));
+        assert!(html.contains("method:'DELETE'"));
+
+        let css = include_str!("web_css.txt");
+        for selector in [
+            ".agent-embed-modal{",
+            ".agent-embed-table{",
+            ".agent-embed-code{",
+            ".agent-embed-error[hidden]{display:none!important}",
+            ".agent-embed-widget{",
+            ".agent-embed-color input[type='color']{",
+        ] {
+            assert!(css.contains(selector), "embed css {selector} missing");
+        }
+    }
+
+    /// Upstream `Routes.AgentExplore` (`/agent/:id/explore`): the Launch surface
+    /// The guided setup page offers exactly the settings the API knows about, marks
+    /// the ones that apply without a restart, and writes them to the environment file
+    /// the process loaded. A wrong badge here is a broken promise, so the field table
+    /// and the live list are asserted to agree.
+    #[tokio::test]
+    async fn setup_page_lists_configurable_settings_and_their_scope() {
+        let (_root, state) = test_state();
+        let request = Request::builder()
+            .uri("/setup")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(setup_page(State(state.clone()), request).await).await;
+        for marker in [
+            "data-testid='setup-host'",
+            "data-testid='setup-groups'",
+            "data-testid='setup-save'",
+            "data-testid='setup-status'",
+            "data-testid='setup-env-file'",
+            // The page loads the catalogue and posts the changed values.
+            // The script must be inside a script element: without it the browser
+            // renders the code as text and the page stays empty.
+            // The constant begins with a newline (house style), so the emitted markup
+            // is `<script>` immediately followed by that newline.
+            // The script is emitted inside a `<script>` element (the probe once caught
+            // the bare constant being rendered as text), and the label tables the page
+            // needs come first.
+            "<script>const SETUP_GROUP_LABELS=",
+            ";const SETUP_TEXT=",
+            ";\nvar SETUP_STATE=",
+            "\"models\":\"Models\"",
+            "\"access\":\"Access control\"",
+            "fetch('/api/v1/setup/options')",
+            "fetch('/api/v1/setup/complete'",
+            "mark_completed:true",
+            // Secrets round-trip as the placeholder, which the server reads as
+            // "keep the stored value".
+            "field.kind==='secret'",
+            // A variable set outside the page wins over the file: the badge says so.
+            "setup-from-env",
+            "takes precedence over the file written here",
+            // A container-level setting is shown with the exact line to copy instead of
+            // an input that would write a file nothing reads.
+            "field.kind==='readonly'",
+            "dataset.testid='setup-readonly-'+field.key",
+            "dataset.testid='setup-copy-'+field.key",
+            "field.key+'='+(field.value||field.recommended||'')",
+            "function setupCopyText(text,button)",
+            "if(field.kind==='readonly')return;SETUP_STATE.values[field.key]=field.value||''",
+            // Prefilled values carry a badge saying they are the built-in default, and the
+            // page polls the file so an edit made outside shows up.
+            "defaultBadge.dataset.testid='setup-default-'+field.key",
+            "field.is_default",
+            "data-testid='setup-sync'",
+            "data-testid='setup-sync-reload'",
+            "function setupSyncTick()",
+            "fetch('/api/v1/setup/watch?fingerprint='+encodeURIComponent(SETUP_STATE.fingerprint))",
+            "setInterval(setupSyncTick,5000)",
+            "function setupHasDirtyEdits()",
+            "function setupReloadFromFile()",
+            "SETUP_STATE.fingerprint=(payload.data.file&&payload.data.file.digest)||''",
+            "if(data.file&&data.file.digest)SETUP_STATE.fingerprint=data.file.digest",
+            "navigator.clipboard.writeText(text)",
+            "document.execCommand('copy')",
+            ".setup-readonly-value",
+            // Saving endpoints hands off to the page that adds the models themselves.
+            "id='setupNext'",
+            "dataset.testid='setup-next-hint'",
+            "function setupNextStep(next)",
+            "setupNextStep(data.next)",
+            "\"search\":\"Search\"",
+            "\"access\":\"Access control\"",
+        ] {
+            assert!(html.contains(marker), "setup page marker {marker} missing");
+        }
+        // Every offered setting is addressable from the page.
+        let fields = crate::api::setup::setup_fields(&state, false);
+        assert!(
+            fields.len() >= 15,
+            "the page should cover the documented knobs"
+        );
+        for field in &fields {
+            assert!(
+                html.contains(&format!("setup-{}", field.key))
+                    || html.contains("setup-'+field.key"),
+                "the page must render a control for {}",
+                field.key
+            );
+        }
+        let zh_request = Request::builder()
+            .uri("/setup")
+            .header("Cookie", "lang=zh-CN")
+            .body(Body::empty())
+            .unwrap();
+        let zh_html = body_of(setup_page(State(state), zh_request).await).await;
+        for label in [
+            "部署引导",
+            "保存设置",
+            "暂时跳过",
+            "这些设置会写入环境文件",
+            "建议并发文档数",
+            "实时生效",
+        ] {
+            assert!(zh_html.contains(label), "zh setup label {label} missing");
+        }
+        assert!(zh_html.contains("\"models\":\"模型\""));
+        let css = include_str!("web_css.txt");
+        for selector in [
+            ".setup-field{",
+            ".setup-banner{",
+            ".setup-live{",
+            ".setup-readonly-value{",
+            ".setup-next{",
+            ".setup-sync{",
+            ".setup-sync.warn{",
+        ] {
+            assert!(css.contains(selector), "setup css {selector} missing");
+        }
+    }
+
+    /// Upstream `Routes.DocumentViewer` (`pages/document-viewer/index.tsx`) with
+    /// `components/document-preview/pdf-preview.tsx` + `components/pdf-drawer`:
+    /// the document page renders the stored PDF through pdf.js and overlays the
+    /// selected chunk's boxes, and the chunk list drives that overlay.
+    #[tokio::test]
+    async fn document_viewer_renders_pdf_with_chunk_highlight_overlay() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("test-user", "Viewer KB", "").unwrap();
+        state
+            .docs
+            .insert(crate::api::document::DocRecord {
+                id: "doc-1".into(),
+                name: "positions.pdf".into(),
+                kb_id: kb.id.clone(),
+                size: 1076,
+                storage_name: "doc-1.pdf".into(),
+                content_hash: String::new(),
+                indexed_content_hash: String::new(),
+                run: "DONE".into(),
+                progress: 1.0,
+                progress_msg: "Indexed 1 chunks".into(),
+                chunk_count: 1,
+                created_at: 1,
+                updated_at: 1,
+                status: crate::api::document::enabled_status(),
+                ..Default::default()
+            })
+            .unwrap();
+        let request = Request::builder()
+            .uri("/document/doc-1?ext=pdf")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(
+            document_viewer_page(
+                State(state.clone()),
+                Path("doc-1".to_string()),
+                axum::extract::Query(std::collections::HashMap::from([(
+                    "ext".to_string(),
+                    "pdf".to_string(),
+                )])),
+                request,
+            )
+            .await,
+        )
+        .await;
+        let html = html.as_str();
+        for marker in [
+            "data-testid='docview-toolbar'",
+            "data-testid='docview-prev'",
+            "data-testid='docview-next'",
+            "data-testid='docview-page-label'",
+            "data-testid='docview-zoom-out'",
+            "data-testid='docview-zoom-in'",
+            "data-testid='docview-zoom'",
+            "data-testid='docview-fit'",
+            "data-testid='docview-download'",
+            "data-testid='docview-scroll'",
+            "data-testid='docview-pages'",
+            "data-testid='docview-status'",
+            // The viewer script is its own block, and the chunk script follows it.
+            "await import('/pdfjs-dist/pdf.min.mjs')",
+            "</script><script>var kbId=",
+            ";var docId=",
+            "var DOC_CHUNKS=[]",
+        ] {
+            assert!(html.contains(marker), "viewer marker {marker} missing");
+        }
+        // Upstream `useGetDocumentUrl`: the preview endpoint addressed by id.
+        assert!(html.contains("href='/api/v1/documents/doc-1/preview'"));
+        for hook in [
+            // pdf.js is loaded as a module and its worker must be the matching build.
+            "await import('/pdfjs-dist/pdf.min.mjs')",
+            "pdfjs.GlobalWorkerOptions.workerSrc='/pdfjs-dist/pdf.worker.min.mjs'",
+            "pdfjs.getDocument({data:bytes})",
+            "page.render({canvasContext:context,viewport:viewport}).promise",
+            // `buildChunkHighlights`: positions are scale-1 viewport points.
+            "chunk.positions.forEach(function(position)",
+            "var scale=dv.scale*dv.fit",
+            "box.style.left=(position[1]*scale)+'px'",
+            "box.style.top=(position[3]*scale)+'px'",
+            "box.style.width=Math.max(2,(position[2]-position[1])*scale)+'px'",
+            "box.style.height=Math.max(2,(position[4]-position[3])*scale)+'px'",
+            "function docviewSelect(chunkId)", // chunk rows drive the overlay
+            // Rows are re-rendered on every page change, so one delegated
+            // listener on the document drives the overlay and the editor.
+            "document.addEventListener('click',function(event){",
+            "if(node.dataset&&node.dataset.editChunk){editChunkRow(node.dataset.editChunk);return}",
+            "function editChunkRow(id){",
+            // Upstream `HighlightPopup`: hovering a box shows the chunk text.
+            "box.className='docview-highlight'",
+            "popup.className='docview-popup'",
+        ] {
+            assert!(html.contains(hook), "viewer hook {hook} missing");
+        }
+        // `ZOOM_STEPS` from `document-preview/hooks.ts`.
+        assert!(html.contains("var steps=[25,50,75,100,125,150,175,200]"));
+        // Fit-to-width clamps at 100% like `useDocxPreviewZoom`.
+        assert!(html.contains("dv.fit=Math.min(1,width/first.width)"));
+
+        let css = include_str!("web_css.txt");
+        for selector in [
+            ".docview-split{",
+            ".docview-scroll{",
+            ".docview-page{",
+            ".docview-highlight{",
+            ".docview-popup{",
+        ] {
+            assert!(css.contains(selector), "viewer css {selector} missing");
+        }
+    }
+
+    /// Upstream `pages/document-viewer/index.tsx` + `components/document-preview/*`:
+    /// the file type selects the previewer, and the two dispatch tables upstream
+    /// ships are not the same one.
+    #[test]
+    fn document_viewer_dispatches_upstream_previewer_tables() {
+        for ext in [
+            "jpg", "jpeg", "png", "gif", "bmp", "tif", "tiff", "webp", "ico",
+        ] {
+            assert_eq!(
+                preview_kind(ext, PreviewSurface::Standalone),
+                PreviewKind::Image,
+                "{ext} must preview as an image"
+            );
+        }
+        for ext in [
+            "mp4", "avi", "mov", "mkv", "wmv", "flv", "mpeg", "mpg", "asf", "rm", "rmvb",
+        ] {
+            assert_eq!(
+                preview_kind(ext, PreviewSurface::Dispatcher),
+                PreviewKind::Video
+            );
+        }
+        // The standalone page knows pdf/md/mdx/txt/xlsx+xls/docx/ppt+pptx/html; the
+        // shared dispatcher swaps xls away and adds csv, video and the `doc` alias.
+        for (ext, kind) in [
+            ("pdf", PreviewKind::Pdf),
+            ("md", PreviewKind::Markdown),
+            ("mdx", PreviewKind::Markdown),
+            ("txt", PreviewKind::Txt),
+            ("xlsx", PreviewKind::Spreadsheet),
+            ("xls", PreviewKind::Spreadsheet),
+            ("docx", PreviewKind::Docx),
+            ("ppt", PreviewKind::Slides),
+            ("pptx", PreviewKind::Slides),
+            ("html", PreviewKind::Html),
+        ] {
+            assert_eq!(
+                preview_kind(ext, PreviewSurface::Standalone),
+                kind,
+                "standalone {ext}"
+            );
+        }
+        assert_eq!(
+            preview_kind("xls", PreviewSurface::Dispatcher),
+            PreviewKind::None
+        );
+        assert_eq!(
+            preview_kind("doc", PreviewSurface::Dispatcher),
+            PreviewKind::Docx
+        );
+        assert_eq!(
+            preview_kind("csv", PreviewSurface::Dispatcher),
+            PreviewKind::Csv
+        );
+        assert_eq!(
+            preview_kind("csv", PreviewSurface::Standalone),
+            PreviewKind::None
+        );
+        assert_eq!(
+            preview_kind("mp4", PreviewSurface::Standalone),
+            PreviewKind::None
+        );
+        assert_eq!(
+            preview_kind("html", PreviewSurface::Dispatcher),
+            PreviewKind::None
+        );
+        // Case and a leading dot never change the branch.
+        assert_eq!(
+            preview_kind(".PDF", PreviewSurface::Standalone),
+            PreviewKind::Pdf
+        );
+        assert_eq!(
+            preview_kind("PNG", PreviewSurface::Dispatcher),
+            PreviewKind::Image
+        );
+        // Anything else must stay loud rather than render an empty section.
+        assert_eq!(
+            preview_kind("exe", PreviewSurface::Standalone),
+            PreviewKind::None
+        );
+    }
+
+    /// `document-header.tsx` renders `formatBytes` + `formatDate` over the record.
+    #[test]
+    fn document_header_formats_size_and_uploaded_time_like_upstream() {
+        assert_eq!(format_bytes(0), "0 bytes");
+        assert_eq!(format_bytes(512), "512 bytes");
+        assert_eq!(format_bytes(1024), "1.0 KB");
+        assert_eq!(format_bytes(1536), "1.5 KB");
+        assert_eq!(format_bytes(10 * 1024), "10 KB");
+        assert_eq!(format_bytes(1024 * 1024), "1.0 MB");
+        assert_eq!(format_bytes(5 * 1024 * 1024 + 512 * 1024), "5.5 MB");
+        // dayjs `DD/MM/YYYY HH:mm:ss`.
+        assert_eq!(format_date_ms(0), "");
+        assert_eq!(format_date_ms(1_700_000_000_000), "14/11/2023 22:13:20");
+        let header = document_header_markup("report.pdf", 2048, 1_700_000_000_000, false);
+        for marker in [
+            "data-testid='document-header'",
+            "data-testid='document-header-name'",
+            ">report.pdf<",
+            "data-testid='document-header-size'",
+            ">2.0 KB<",
+            "data-testid='document-header-uploaded'",
+            ">14/11/2023 22:13:20<",
+            ">Size<",
+            ">Uploaded time<",
+        ] {
+            assert!(
+                header.contains(marker),
+                "document header marker {marker} missing"
+            );
+        }
+        let zh_header = document_header_markup("报告.pdf", 2048, 1_700_000_000_000, true);
+        assert!(
+            zh_header.contains(">上传时间<"),
+            "zh uploaded-time label missing"
+        );
+    }
+
+    /// The previewer section carries the upstream marker classes and the element
+    /// each fetch fills in; the script holds the fetch/render flow and the literal
+    /// error strings upstream passes to `message.error`.
+    #[test]
+    fn document_preview_sections_and_script_match_upstream() {
+        let image = preview_section_markup(PreviewKind::Image, false);
+        assert!(image.contains("docpreview-panel image-previewer"));
+        assert!(image.contains("id='dpImage'"));
+        assert!(image.contains("alt='image'"));
+        let video = preview_section_markup(PreviewKind::Video, false);
+        assert!(video.contains("docpreview-panel video-previewer"));
+        assert!(video.contains("<video"));
+        assert!(video.contains("controls"));
+        let csv = preview_section_markup(PreviewKind::Csv, false);
+        assert!(csv.contains("id='dpCsv'"));
+        assert!(preview_section_markup(PreviewKind::Txt, false).contains("id='dpText'"));
+        assert!(preview_section_markup(PreviewKind::Markdown, false).contains("docpreview-md"));
+        assert!(preview_section_markup(PreviewKind::Spreadsheet, false).contains("id='dpGrid'"));
+        assert!(preview_section_markup(PreviewKind::Slides, false).contains("id='dpSlides'"));
+        // The docx branch renders the structural HTML returned by the Rust
+        // docx walker; it no longer shows the old "no previewer" notice.
+        let docx = preview_section_markup(PreviewKind::Docx, false);
+        assert!(docx.contains("data-testid='preview-docx'"));
+        assert!(docx.contains("id='dpDocx'"));
+        assert!(docx.contains("data-testid='dp-docx'"));
+        assert!(!docx.contains("data-testid='dp-pending'"));
+        // An unknown extension renders the `fileError` notice, never a blank page.
+        let none = preview_section_markup(PreviewKind::None, false);
+        assert!(none.contains("data-testid='file-error'"));
+        assert!(none.contains(">File error<"));
+        for hook in [
+            // The page assigns the state object before this script runs; a plain
+            // re-declaration would wipe it and silently disable every previewer.
+            "var DP_STATE=window.DP_STATE||",
+            "function dpMarkdown(text)",
+            "function dpParseCsv(text)",
+            "function dpRenderSheets(payload)",
+            "function dpRenderSlides(payload)",
+            "function dpPreviewHtml(url)",
+            "function dpBoot()",
+            "document.addEventListener('DOMContentLoaded',dpBoot)",
+            // remark-breaks: a single newline inside a paragraph is a hard break.
+            "paragraph.map(dpInline).join('<br>')",
+            // GFM table detection uses the delimiter row.
+            "function dpTableAt(lines,index)",
+            // The three upstream toast literals.
+            "txt:'Failed to load file'",
+            "image:'Failed to load image'",
+            "video:'Failed to load video'",
+            "csv:'file load failed'",
+            // fetchPreviewBlob's two sources.
+            "'/api/v1/documents/'+encodeURIComponent(DP_STATE.docId)+'/preview/sheets'",
+            "'/api/v1/documents/'+encodeURIComponent(DP_STATE.docId)+'/preview/slides'",
+        ] {
+            assert!(
+                DOCUMENT_PREVIEW_SCRIPT.contains(hook),
+                "preview script hook {hook} missing"
+            );
+        }
+        let css = include_str!("web_css.txt");
+        for selector in [
+            ".docpreview-panel{",
+            ".docpreview-spin{",
+            ".docpreview-table thead{",
+            ".docpreview-error{",
+            ".docpreview-md blockquote{",
+            ".docpreview-docx .docx-header",
+        ] {
+            assert!(css.contains(selector), "preview css {selector} missing");
+        }
+    }
+
+    /// `resources=files` reads the file route and the document branch reads the
+    /// preview route; `ext=html` downloads instead of rendering.
+    #[tokio::test]
+    async fn document_viewer_page_uses_resource_and_ext_query() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("test-user", "Preview KB", "").unwrap();
+        state
+            .docs
+            .insert(crate::api::document::DocRecord {
+                id: "doc-md".into(),
+                name: "notes.md".into(),
+                kb_id: kb.id.clone(),
+                size: 2048,
+                storage_name: "doc-md.md".into(),
+                content_hash: String::new(),
+                indexed_content_hash: String::new(),
+                run: "DONE".into(),
+                progress: 1.0,
+                progress_msg: String::new(),
+                chunk_count: 0,
+                created_at: 1_700_000_000_000,
+                updated_at: 1_700_000_000_000,
+                status: crate::api::document::enabled_status(),
+                ..Default::default()
+            })
+            .unwrap();
+        let query = |pairs: &[(&str, &str)]| {
+            axum::extract::Query(
+                pairs
+                    .iter()
+                    .map(|(key, value)| (key.to_string(), value.to_string()))
+                    .collect::<std::collections::HashMap<String, String>>(),
+            )
+        };
+        let request = || {
+            Request::builder()
+                .uri("/document/doc-md?ext=md")
+                .header("Cookie", "lang=en")
+                .body(Body::empty())
+                .unwrap()
+        };
+        let html = body_of(
+            document_viewer_page(
+                State(state.clone()),
+                Path("doc-md".to_string()),
+                query(&[("ext", "md")]),
+                request(),
+            )
+            .await,
+        )
+        .await;
+        assert!(html.contains("data-testid='docpreview-section'"));
+        assert!(html.contains("data-kind='md'"));
+        assert!(html.contains("DP_STATE={\"kind\":\"md\""));
+        assert!(html.contains("\"url\":\"/api/v1/documents/doc-md/preview\""));
+        // Upstream's standalone page renders the previewer alone; the
+        // `DocumentHeader` belongs to the chunk workbench face.
+        assert!(!html.contains("data-testid='document-header'"));
+        assert!(html.contains("window.DP_STATE="));
+        // The PDF chrome must not leak into a markdown preview.
+        assert!(!html.contains("data-testid='docview-toolbar'"));
+
+        // `resource=files` switches the byte source to the file route.
+        let files_html = body_of(
+            document_viewer_page(
+                State(state.clone()),
+                Path("doc-md".to_string()),
+                query(&[("ext", "md"), ("resource", "files")]),
+                request(),
+            )
+            .await,
+        )
+        .await;
+        assert!(files_html.contains("\"url\":\"/api/v1/files/doc-md\""));
+
+        // A missing `ext` falls back to the stored name instead of a blank page.
+        let fallback = body_of(
+            document_viewer_page(
+                State(state.clone()),
+                Path("doc-md".to_string()),
+                query(&[]),
+                request(),
+            )
+            .await,
+        )
+        .await;
+        assert!(
+            fallback.contains("data-kind='md'"),
+            "stored extension fallback missing"
+        );
+
+        // `ext=html` renders the download branch (upstream `previewHtmlFile`).
+        let html_ext = body_of(
+            document_viewer_page(
+                State(state.clone()),
+                Path("doc-md".to_string()),
+                query(&[("ext", "html")]),
+                request(),
+            )
+            .await,
+        )
+        .await;
+        assert!(html_ext.contains("data-kind='html'"));
+        assert!(html_ext.contains("function dpPreviewHtml(url)"));
+
+        // An unsupported extension renders the notice, not an empty section.
+        let unknown = body_of(
+            document_viewer_page(
+                State(state.clone()),
+                Path("doc-md".to_string()),
+                query(&[("ext", "exe")]),
+                request(),
+            )
+            .await,
+        )
+        .await;
+        assert!(unknown.contains("data-testid='file-error'"));
+    }
+
+    /// The chunk workbench previews non-PDF documents through the shared
+    /// dispatcher (`knowledge-chunk/index.tsx`), while the PDF face keeps the
+    /// two-pane viewer.
+    #[tokio::test]
+    async fn document_page_selects_previewer_by_stored_type() {
+        let (_root, state) = test_state();
+        let kb = state
+            .kbs
+            .create_for("test-user", "Workbench KB", "")
+            .unwrap();
+        for (id, name) in [("doc-pdf", "paper.pdf"), ("doc-txt", "notes.txt")] {
+            state
+                .docs
+                .insert(crate::api::document::DocRecord {
+                    id: id.into(),
+                    name: name.into(),
+                    kb_id: kb.id.clone(),
+                    size: 1024,
+                    storage_name: format!("{id}.{}", name.rsplit('.').next().unwrap()),
+                    content_hash: String::new(),
+                    indexed_content_hash: String::new(),
+                    run: "DONE".into(),
+                    progress: 1.0,
+                    progress_msg: String::new(),
+                    chunk_count: 0,
+                    created_at: 1_700_000_000_000,
+                    updated_at: 1_700_000_000_000,
+                    status: crate::api::document::enabled_status(),
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+        let request = || {
+            Request::builder()
+                .uri("/documents/kb/doc")
+                .header("Cookie", "lang=en")
+                .body(Body::empty())
+                .unwrap()
+        };
+        let pdf_html = body_of(
+            document_page(
+                State(state.clone()),
+                Path((kb.id.clone(), "doc-pdf".to_string())),
+                request(),
+            )
+            .await,
+        )
+        .await;
+        assert!(pdf_html.contains("data-testid='docview-toolbar'"));
+        assert!(!pdf_html.contains("data-testid='docpreview-section'"));
+
+        let txt_html = body_of(
+            document_page(
+                State(state.clone()),
+                Path((kb.id.clone(), "doc-txt".to_string())),
+                request(),
+            )
+            .await,
+        )
+        .await;
+        assert!(txt_html.contains("data-testid='docpreview-section'"));
+        assert!(txt_html.contains("data-kind='txt'"));
+        assert!(txt_html.contains("data-testid='document-header'"));
+        assert!(txt_html.contains("data-testid='dp-text'"));
+        // The chunk column and its scripts stay on the page.
+        assert!(txt_html.contains("data-testid='docview'") == false);
+        assert!(txt_html.contains("id='cl'"));
+        assert!(txt_html.contains("var DOC_CHUNKS=[]"));
+    }
+
+    /// landed with the session column, the session chat and the confirm-delete
+    /// shell, and the canvas toolbar's Launch button navigates there instead of
+    /// opening the legacy chat modal.
+    #[tokio::test]
+    async fn agent_explore_page_matches_upstream_launch_surface() {
+        let (_root, state) = test_state();
+        let request = Request::builder()
+            .uri("/agent/agent-1/explore")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(
+            agent_explore_page(State(state.clone()), Path("agent-1".to_string()), request).await,
+        )
+        .await;
+        let html = html.as_str();
+        for marker in [
+            "data-testid='explore-breadcrumb-agent'",
+            "data-testid='explore-breadcrumb-title'",
+            "data-testid='explore-new-session'",
+            "data-testid='explore-session-search'",
+            "data-testid='explore-session-list'",
+            "data-testid='explore-messages'",
+            "data-testid='explore-no-session'",
+            "data-testid='explore-input'",
+            "data-testid='explore-send'",
+            "data-testid='explore-stop'",
+            "data-testid='confirm-delete-dialog'",
+            "data-testid='confirm-delete-dialog-confirm-btn'",
+            "data-testid='explore-log-sheet'",
+            "data-testid='explore-log-body'",
+            "data-testid='explore-log-close'",
+        ] {
+            assert!(html.contains(marker), "explore marker {marker} missing");
+        }
+        // `header.flow` breadcrumb target, the session APIs the page drives and
+        // the confirm-delete flow of `SessionDropdown`.
+        assert!(html.contains("href='/agent/agent-1'"));
+        assert!(html.contains("/api/v1/agents/'+encodeURIComponent(EXPLORE_AGENT)+'/sessions'"));
+        assert!(html.contains("/api/v1/agents/chat/completions"));
+        assert!(html.contains("exploreDeleteConfirm"));
+        assert!(html.contains("exploreNewSession"));
+        // Upstream `log-sheet`: the assistant action opens the run log, polled
+        // every 3 s while the run streams (`refetchInterval: 3000`).
+        assert!(html.contains("data-testid','explore-message-log'"));
+        assert!(html.contains("function exploreOpenLog(messageId)"));
+        assert!(html.contains("'/logs/'+encodeURIComponent(messageId)"));
+        assert!(html.contains("setInterval(function(){if(!EXPLORE_STREAM)"));
+        // `tool-timeline-item.tsx`: tool records render as their own rows with a
+        // prettified name, elapsed time and expandable arguments/result.
+        assert!(html.contains("data-testid','explore-tool-row'"));
+        assert!(html.contains("function dataflowIsToolSample(sample)"));
+        assert!(html.contains("function dataflowToolName(name)"));
+        assert!(html.contains("['add_memory','gen_citations']"));
+        assert!(html.contains("function dataflowToolFields(sample,labels)"));
+        // The helper takes the page's own label table: the explore page has
+        // EXPLORE_LABELS, the share page SHARE_LABELS, and only
+        // /dataflow-result injects DATAFLOW_LABELS.
+        assert!(html.contains("dataflowToolFields(sample,EXPLORE_LABELS)"));
+        // Upstream's first paint: the no-session placeholder plus the disabled
+        // send button (`useSendButtonDisabled`).
+        assert!(html.contains(
+            "data-testid='explore-no-session'>Please select a session or create a new one</div>"
+        ));
+        assert!(html.contains("data-testid='explore-send' disabled"));
+        // Upstream labels (English face).
+        for label in [
+            "Sessions",
+            "New Session",
+            "Search sessions...",
+            "Please select a session or create a new one",
+            "No sessions found",
+            "Are you sure to delete it ?",
+        ] {
+            assert!(html.contains(label), "explore label {label} missing");
+        }
+
+        let zh_request = Request::builder()
+            .uri("/agent/agent-1/explore")
+            .header("Cookie", "lang=zh-CN")
+            .body(Body::empty())
+            .unwrap();
+        let zh_html = body_of(
+            agent_explore_page(
+                State(state.clone()),
+                Path("agent-1".to_string()),
+                zh_request,
+            )
+            .await,
+        )
+        .await;
+        for label in [
+            "会话列表",
+            "新建会话",
+            "搜索会话...",
+            "请选择一个会话或创建新会话",
+            "未找到会话",
+            "确定删除吗?",
+        ] {
+            assert!(zh_html.contains(label), "zh explore label {label} missing");
+        }
+
+        // The canvas toolbar's Launch button is upstream's `explore.title`
+        // navigation (`navigateToAgentExplore`), not the legacy chat modal.
+        let detail_request = Request::builder()
+            .uri("/agents/agent-1")
+            .body(Body::empty())
+            .unwrap();
+        let detail =
+            body_of(agent_detail_page(Path("agent-1".to_string()), detail_request).await).await;
+        assert!(detail.contains("onclick='launchAgent()'"));
+        assert!(detail.contains("function launchAgent(){location.href='/agent/'"));
+        assert!(!detail.contains("data-testid='agent-launch' onclick='openChatTest()'"));
+
+        let css = include_str!("web_css.txt");
+        for selector in [
+            ".agent-explore-page{",
+            ".agent-explore-sessions{width:296px",
+            ".agent-explore-card{",
+            ".agent-explore-menu{",
+            ".agent-explore-input-row{",
+        ] {
+            assert!(css.contains(selector), "explore css {selector} missing");
+        }
+    }
+
+    #[tokio::test]
+    async fn kb_detail_page_renders_empty_all_button() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "E KB", "d").unwrap();
+        let req = Request::builder()
+            .uri("/kbs/x")
+            .body(Body::empty())
+            .unwrap();
+        let html =
+            body_of(kb_detail_page(State(state.clone()), Path(kb.id.clone()), req).await).await;
+        // RAGFlow 添加文件下拉：上传文件 / 清空
+        assert!(html.contains("emptyAllDocs"), "empty-all button missing");
+    }
+
+    #[tokio::test]
+    async fn chat_page_uses_in_page_share_rename_delete_dialogs() {
+        let (_root, state) = test_state();
+        let req = Request::builder().uri("/chat").body(Body::empty()).unwrap();
+        let html = body_of(chat_page(State(state), req).await).await;
+        for marker in [
+            "id='listRenameModal'",
+            "id='listShareModal'",
+            "id='listDeleteModal'",
+            "submitListRename",
+            "copyListShare",
+            "submitListDelete",
+        ] {
+            assert!(
+                html.contains(marker),
+                "missing chat list dialog marker {marker}"
+            );
+        }
+        assert!(!html.contains("prompt('Rename conversation:')"));
+        assert!(!html.contains("prompt('Share link:')"));
+        assert!(!html.contains("confirm('Delete this conversation?')"));
+    }
+
+    #[tokio::test]
+    async fn chat_detail_page_renders_temporary_conversation() {
+        let (_root, state) = test_state();
+        let req = Request::builder()
+            .uri("/chat/c1")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(chat_detail_page(State(state), Path("c1".to_string()), req).await).await;
+        // RAGFlow: 临时对话（不落库）+ 嵌入 / 分享
+        assert!(
+            html.contains("tempConv"),
+            "temp conversation button missing"
+        );
+        assert!(html.contains("tempModal"), "temp modal missing");
+        assert!(html.contains("sendTemp"), "temp send handler missing");
+        // Share and rename use in-page dialogs, not window.prompt/alert.
+        assert!(html.contains("id='shareChatModal'"));
+        assert!(html.contains("id='renameChatModal'"));
+        assert!(html.contains("id='clearChatModal'"));
+        assert!(html.contains("confirmClearChat"));
+        assert!(!html.contains("confirm('Clear all messages?')"));
+        assert!(html.contains("shareChatCopy"));
+        assert!(html.contains("renameChatSave"));
+        assert!(!html.contains("prompt('Rename conversation:"));
+        assert!(!html.contains("prompt('Share link:"));
+        assert!(
+            html.contains("/api/v1/completions"),
+            "stateless completion API missing"
+        );
+        // RAGFlow message-input testids
+        assert!(
+            html.contains("chat-textarea") && html.contains("chat-detail-send"),
+            "message input testids missing"
+        );
+        assert!(
+            html.contains("chat-stream-status") && html.contains("chat-detail-stop"),
+            "stream status / stop testids missing"
+        );
+        // Stored and streaming message actions carry a data-chat-action name;
+        // the decorator fills the inline SVG in the browser. No emoji is emitted.
+        assert!(html.contains("CHAT_ACTION_ICONS"));
+        assert!(html.contains("chatDecorateActions"));
+        assert!(html.contains("data-chat-action="));
+        assert!(html.contains("data-chat-action=copy"));
+        assert!(html.contains("CHAT_ACTION_ICONS={'copy':"));
+        assert!(html.contains("getAttribute('data-chat-action')"));
+        for emoji in ["📋", "🔄", "👍", "👎", "⏹"] {
+            assert!(
+                !html.contains(emoji),
+                "chat message action emoji still emitted: {emoji}"
+            );
+        }
+        assert!(html.contains("if(!r.ok)"));
+        assert!(html.contains("el.appendChild(er)"));
+        // The pending assistant bubble must exist before the request starts: a
+        // rejected fetch used to reach the catch handler with `el` undefined.
+        let el_pos = html
+            .find("var el=document.createElement('div');el.className='cma'")
+            .expect("pending assistant bubble creation missing");
+        let fetch_pos = html
+            .find("fetch('/api/v1/conversations/'+sid+'/completions'")
+            .expect("chat completion fetch missing");
+        assert!(
+            el_pos < fetch_pos,
+            "assistant bubble must be created before the stream request"
+        );
+        assert_eq!(
+            html.matches("var el=document.createElement('div');el.className='cma'")
+                .count(),
+            1,
+            "assistant bubble must be created once"
+        );
+        assert!(html.contains("var ss3=document.getElementById('streamStatus')"));
+        assert_eq!(
+            html.matches("id='chatModel'").count(),
+            1,
+            "chatModel must be unique (composer select)"
+        );
+        assert!(html.contains("id='chatSettingsModel'"));
+        assert!(html.contains("class='chat-detail-layout'"));
+        assert!(html.contains("chat-detail-sidebar"));
+        let css = include_str!("web_css.txt");
+        assert!(css.contains(".chat-detail-layout{display:flex"));
+        assert!(css.contains(".chat-detail-sidebar{width:240px"));
+        assert!(css.contains(".chat-detail-layout{flex-direction:column}"));
+        assert!(
+            !html.contains("title='Thinking'>🤔"),
+            "thinking toggle must use an SVG, not emoji"
+        );
+    }
+
+    #[tokio::test]
+    async fn chat_app_detail_page_renders_full_settings_drawer_with_meta_filter() {
+        let (_root, state) = test_state();
+        let app_id = "a1".to_string();
+        // seed a chat app via the store (insert a minimal ChatApp)
+        if let Some(store) = &state.chat_apps {
+            let app: crate::api::chatapp_mgr::ChatApp = serde_json::from_value(serde_json::json!({
+                "id": "a1",
+                "name": "设置抽屉",
+                "owner_id": "t1",
+                "kb_ids": [],
+                "created_at": 1,
+            }))
+            .unwrap();
+            let _ = store.insert(app);
+        }
+        let req = Request::builder()
+            .uri("/chats/a1")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(chat_app_detail_page(State(state), Path(app_id), req).await).await;
+        // settings drawer shell + prompt engine fields incl. meta_data_filter
+        assert!(html.contains("settingsDrawer"), "drawer missing");
+        assert!(html.contains("f_rerank"), "rerank field missing");
+        assert!(
+            html.contains("sw_refmeta"),
+            "reference metadata switch missing"
+        );
+        assert!(
+            html.contains("f_mfmethod"),
+            "meta filter method select missing"
+        );
+        assert!(
+            html.contains("f_mfmanual"),
+            "meta filter manual fields missing"
+        );
+        assert!(
+            html.contains("sw_refine_multiturn"),
+            "refine multiturn missing"
+        );
+        assert!(html.contains("sw_reasoning"), "reasoning switch missing");
+        assert!(html.contains("f_vsw"), "vector weight missing");
+        assert!(
+            html.contains("default-model-llm_id"),
+            "shared llm selector missing"
+        );
+        assert!(
+            html.contains("loadKbModelCatalog"),
+            "selector catalog loader missing"
+        );
+        assert!(
+            html.contains("normalizeDefaultModelStoredValues"),
+            "selector normalizer missing"
+        );
+        assert!(
+            html.contains("getElementById('dmLlm').dataset.value"),
+            "llm save reads selector value missing"
+        );
+    }
+
+    #[tokio::test]
+    async fn document_page_renders_export_chunks_button() {
+        let (_root, state) = test_state();
+        let req = Request::builder()
+            .uri("/documents/k1/d1")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(
+            document_page(
+                State(state),
+                Path(("k1".to_string(), "d1".to_string())),
+                req,
+            )
+            .await,
+        )
+        .await;
+        // RAGFlow chunk 页：保存 / 导出
+        assert!(
+            html.contains("exportChunks"),
+            "export chunks handler missing"
+        );
+    }
+
+    /// An audit of the page markup itself: every user-visible label must go through the translation
+    /// helper, so the English pages and the Chinese pages cannot drift apart.
+    ///
+    /// It reads this very file with `include_str!` and looks for text sitting between `>` and `<` on a
+    /// line that renders markup and never calls `t(..)`. The ceiling is **zero**: a new label written
+    /// straight into a literal fails the suite. Nothing here inspects JavaScript-only strings, and the
+    /// audit's scope is stated so it is not mistaken for full coverage.
+    #[test]
+    /// An audit of the page markup itself: every user-visible label must go through the translation helper,
+    /// so the English pages and the Chinese pages cannot drift apart.
+    ///
+    /// It reads this very file with `include_str!` and looks for text sitting between `>` and `<` on a line
+    /// that renders markup. A label counts as translated only when **that label** sits inside a `t("..")`
+    /// call — the earlier rule skipped the whole line as soon as any label on it was translated, which hid
+    /// labels injected through JavaScript strings (`<option>All files</option>` stayed English on the
+    /// Chinese pages for exactly that reason).
+    ///
+    /// The ceiling is a measured backlog, not zero: it may only go down. Nothing here inspects strings that
+    /// never reach markup, and the scope is stated so it is not mistaken for full coverage.
+    #[test]
+    fn every_page_label_goes_through_the_translation_helper() {
+        // Zero: every label in the rendered markup now passes through the translator. This ceiling may
+        // not grow — a new label written straight into a literal fails the suite.
+        const BACKLOG: usize = 0;
+        let source = include_str!("web.rs");
+        let mut found: Vec<String> = Vec::new();
+        for (index, line) in source.lines().enumerate() {
+            if !line.contains("push_str") && !line.contains("format!(") {
+                continue;
+            }
+            let bytes = line.as_bytes();
+            let mut translated: Vec<(usize, usize)> = Vec::new();
+            let mut cursor = 0;
+            while let Some(found_at) = line[cursor..].find("t(\"") {
+                let literal_start = cursor + found_at + 2;
+                let mut literal_end = literal_start + 1;
+                while literal_end < bytes.len() {
+                    if bytes[literal_end] == b'\\' {
+                        literal_end += 2;
+                        continue;
+                    }
+                    if bytes[literal_end] == b'"' {
+                        break;
+                    }
+                    literal_end += 1;
+                }
+                translated.push((literal_start, literal_end));
+                cursor = literal_end.max(literal_start + 1);
+            }
+            let mut search_from = 0;
+            while let Some(open) = line[search_from..].find('>') {
+                let open = search_from + open;
+                let Some(close_offset) = line[open + 1..].find('<') else {
+                    break;
+                };
+                let close = open + 1 + close_offset;
+                let text = line[open + 1..close].trim();
+                search_from = close.max(open + 1);
+                let words = text
+                    .split_whitespace()
+                    .filter(|word| {
+                        word.len() >= 2
+                            && word
+                                .chars()
+                                .all(|character| character.is_ascii_alphabetic())
+                    })
+                    .count();
+                if words < 2 || text.len() < 6 || text.contains('{') || text.contains('\'') {
+                    continue;
+                }
+                if translated.iter().any(|(literal_start, literal_end)| {
+                    open + 1 >= *literal_start && open + 1 < *literal_end
+                }) {
+                    continue;
+                }
+                found.push(format!("line {}: {}", index + 1, text));
+            }
+        }
+        assert!(
+            found.len() <= BACKLOG,
+            "untranslated page labels grew past the recorded backlog of {BACKLOG} to {}; route each new \
+             label through t(..) or lower the backlog with the rest of the translation:\n{}",
+            found.len(),
+            found.join("\n")
+        );
+    }
+
+    /// The voice controls: a microphone that posts to the transcription endpoint and a read-aloud
+    /// control that posts to the speech endpoint. Both endpoints existed with no button at all, which
+    /// is exactly the gap this checks for.
+    #[tokio::test]
+    async fn the_chat_composer_offers_dictation_and_read_aloud() {
+        let (_root, state) = test_state();
+        let conv = state
+            .conversations
+            .create_for("test-user", "Voice chat")
+            .unwrap();
+        let req = Request::builder()
+            .uri(format!("/chat/{}", conv.id))
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(chat_detail_page(State(state), Path(conv.id.clone()), req).await).await;
+        assert_inline_scripts_balance(&html, "/chat/{id}");
+        for marker in [
+            "data-testid='chat-audio-card'",
+            "data-testid='chat-mic'",
+            "data-testid='chat-speak-last'",
+            "data-testid='chat-audio-status'",
+            // Both endpoints, called with the shapes the API guide documents.
+            "'/api/v1/chat/audio/transcription'",
+            "'/api/v1/chat/audio/speech'",
+            "new FormData()",
+            "form.append('file',blob",
+            "new MediaRecorder(",
+            "URL.createObjectURL(blob)",
+            "data-testid','chat-message-speak'",
+        ] {
+            assert!(html.contains(marker), "missing {marker}");
+        }
+        // The labels are injected into JS assignments, so they must be quoted
+        // string literals; unquoted English labels ("Stop dictation") used to
+        // throw a SyntaxError and disable the whole voice block.
+        assert!(
+            html.contains("textContent=\"Dictate\";"),
+            "dictate label must be a JS string"
+        );
+        assert!(
+            html.contains("textContent=\"Stop dictation\";"),
+            "stop-dictation label must be a JS string"
+        );
+        // Every refusal is surfaced in the status line rather than swallowed.
+        for message in [
+            "Transcription failed.",
+            "Speech synthesis failed.",
+            "This browser refused microphone access.",
+            "Nothing was recorded or transcribed.",
+        ] {
+            assert!(
+                html.contains(message),
+                "missing the honest failure message: {message}"
+            );
+        }
+        // The card is markup: it must not have landed inside a script block, and no bare CSS
+        // declaration may sit in the script (both mistakes shipped once already).
+        let script_bodies: Vec<&str> = html
+            .split("<script")
+            .skip(1)
+            .filter_map(|part| part.split_once("</script>").map(|(body, _)| body))
+            .collect();
+        for body in &script_bodies {
+            assert!(
+                !body.contains("data-testid='chat-audio-card'"),
+                "the audio card landed inside a script block"
+            );
+            for line in body.lines() {
+                let trimmed = line.trim();
+                let bare_css = [
+                    "align-items:",
+                    "justify-content:",
+                    "flex-wrap:",
+                    "gap:",
+                    "padding:",
+                    "margin:",
+                ]
+                .iter()
+                .any(|property| trimmed.starts_with(property));
+                assert!(
+                    !bare_css,
+                    "a CSS declaration is sitting in the script: {trimmed}"
+                );
+            }
+        }
+        for shape in ["say(Could ", "say(Transcription failed", "say(Recording"] {
+            assert!(
+                !html.contains(shape),
+                "a placeholder was substituted unquoted: {shape}"
+            );
+        }
+    }
+
+    /// The artifact card lists what the sandbox left behind and downloads it with the token the page's
+    /// fetch wrapper adds — a plain link would be refused.
+    #[tokio::test]
+    async fn the_sandbox_page_lists_and_downloads_artifacts() {
+        let (_root, state) = test_state();
+        // The page redirects anyone who is not an administrator, so the test signs in as one.
+        let admin = state
+            .users
+            .create_user("artifacts@example.com", "secret-passphrase", "admin")
+            .unwrap();
+        let token = state.users.issue_token_for(&admin.id).unwrap();
+        let req = axum::http::Request::builder()
+            .uri("/admin/sandbox")
+            .header("Cookie", "lang=en")
+            .header("Authorization", format!("Bearer {token}"))
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let html = body_of(admin_sandbox_settings_page(State(state), req).await).await;
+        assert_inline_scripts_balance(&html, "/admin/sandbox");
+        for marker in [
+            "data-testid='sandbox-artifact-card'",
+            "data-testid='sandbox-artifact-refresh'",
+            "data-testid='sandbox-artifact-status'",
+            // Set from the script, so they appear as attribute values rather than as markup.
+            "'data-testid','sandbox-artifact-download'",
+            "'data-testid','sandbox-artifact-delete'",
+            // The list and the per-file fetch both go through the authenticated wrapper.
+            "'/api/v1/documents/artifacts'",
+            "'/api/v1/documents/artifact/'+encodeURIComponent(name)",
+            "URL.createObjectURL(blob)",
+        ] {
+            assert!(html.contains(marker), "missing {marker}");
+        }
+        let leftover: Vec<&str> = html
+            .match_indices('@')
+            .map(|(index, _)| &html[index..(index + 24).min(html.len())])
+            .filter(|slice| slice.chars().nth(1).is_some_and(|c| c.is_ascii_uppercase()))
+            .collect();
+        assert!(
+            leftover.is_empty(),
+            "unsubstituted placeholders {leftover:?}"
+        );
+        // A placeholder substituted as bare text inside the script is valid HTML with balanced braces,
+        // and it is exactly what shipped once: the CDP parser caught `sbArtifactSay(Could not load …)`.
+        for shape in [
+            "say(Could ",
+            "say(No artifacts",
+            "say(Downloaded",
+            "say(Deleted",
+        ] {
+            assert!(
+                !html.contains(shape),
+                "a script placeholder was substituted unquoted: {shape}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn admin_sandbox_settings_hosts_the_upstream_provider_surface() {
+        let (_root, state) = test_state();
+        let req = || {
+            Request::builder()
+                .uri("/admin")
+                .body(Body::empty())
+                .unwrap()
+        };
+        let admin = state
+            .users
+            .create_user("boss@example.com", "secret-passphrase", "admin")
+            .unwrap();
+        let token = state.users.issue_token_for(&admin.id).unwrap();
+        let auth = || {
+            Request::builder()
+                .uri("/admin/sandbox-settings")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap()
+        };
+        let html = body_of(admin_sandbox_settings_page(State(state.clone()), auth()).await).await;
+        // Upstream `sandbox-settings.tsx`: the provider grid, the schema-driven
+        // configuration card with its Test/Save pair, the read-only Deployment
+        // Defaults disclosure and the connection-test modal.
+        for marker in [
+            "data-testid='admin-sandbox-page'",
+            "data-testid='admin-sandbox-providers'",
+            "data-testid='admin-sandbox-test'",
+            "data-testid='admin-sandbox-save'",
+            "data-testid='admin-sandbox-test-modal'",
+            "Provider selection",
+            "Choose a sandbox provider for code execution",
+            "Test connection",
+            "Connection test result",
+            "Runtime Settings",
+            "Deployment Defaults",
+            "Only required when the private key itself is encrypted.",
+            "/api/v1/admin/sandbox/providers/",
+            "/api/v1/admin/sandbox/config",
+            "/api/v1/admin/sandbox/test",
+            "sbTestConnection()",
+            "sbSaveConfig()",
+            "admin-sandbox-provider-",
+        ] {
+            assert!(
+                html.contains(marker),
+                "sandbox page marker missing: {marker}"
+            );
+        }
+        // Every provider id ships an icon (upstream PROVIDER_ICONS).
+        for icon in [
+            "local:",
+            "self_managed:",
+            "ssh:",
+            "aliyun_codeinterpreter:",
+            "e2b:",
+            "default:",
+        ] {
+            assert!(html.contains(icon), "provider icon table missing {icon}");
+        }
+        // The variables editor stays, but the provider values are fetched at
+        // runtime rather than baked into the page.
+        assert!(html.contains("/api/v1/system/variables"));
+        assert!(html.contains("data-testid='admin-sandbox-table'"));
+        assert!(!html.contains("sandbox.self_managed"));
+        assert!(!html.contains("http://sandbox-executor-manager:9385"));
+        // Unauthenticated visitors are bounced back to the console login.
+        let denied = admin_services_page(State(state), req()).await;
+        assert_eq!(denied.status(), axum::http::StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(denied.headers().get("location").unwrap(), "/admin");
+    }
+
+    /// Upstream `pages/admin/**` at the v0.26.4 routes: `/admin` is the console
+    /// **login** (`admin/login.tsx`), `/admin/services` hosts the component
+    /// table of `admin/service-status.tsx` behind the navigation layout of
+    /// `admin/layouts/navigation-layout.tsx`, `/admin/users` the user table and
+    /// `/admin/users/:id` the account detail. `admin.*` labels stay English
+    /// because `locales/zh.ts` has no `admin:` block, while the shared
+    /// `login.*` / `header.logout` keys are translated.
+    #[tokio::test]
+    async fn admin_console_subtree_matches_upstream_layout() {
+        let (_root, state) = test_state();
+        let admin = state
+            .users
+            .create_user("boss@example.com", "secret-passphrase", "admin")
+            .unwrap();
+        let token = state.users.issue_token_for(&admin.id).unwrap();
+        let page_req = |path: &str, lang: &str| {
+            Request::builder()
+                .uri(path)
+                .header("cookie", format!("lang={lang}"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap()
+        };
+
+        // `/admin` is the console login for anonymous visitors.
+        let login = body_of(
+            admin_page(
+                State(state.clone()),
+                Request::builder()
+                    .uri("/admin")
+                    .header("cookie", "lang=en")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        assert_inline_scripts_balance(&login, "/admin");
+        assert!(login.contains("<h1 class='admin-login-title'>Admin console</h1>"));
+        assert!(login.contains("data-testid='admin-login-submit'"));
+        assert!(login.contains("src='/logo.svg'"));
+        assert!(login.contains("/api/v1/admin/login"));
+        assert!(login.contains("Please input email"));
+        assert!(!login.contains("data-testid='admin-console'"));
+        // A signed-in administrator skips the login card.
+        let signed_in = admin_page(State(state.clone()), page_req("/admin", "en")).await;
+        assert_eq!(
+            signed_in.status(),
+            axum::http::StatusCode::TEMPORARY_REDIRECT
+        );
+        assert_eq!(
+            signed_in.headers().get("location").unwrap(),
+            "/admin/services"
+        );
+
+        // The three community sections share the upstream navigation layout.
+        for (path, section) in [
+            ("/admin/services", "/services"),
+            ("/admin/users", "/users"),
+            ("/admin/sandbox-settings", "/sandbox-settings"),
+        ] {
+            let body = match section {
+                "/services" => {
+                    body_of(admin_services_page(State(state.clone()), page_req(path, "en")).await)
+                        .await
+                }
+                "/users" => {
+                    body_of(admin_users_page(State(state.clone()), page_req(path, "en")).await)
+                        .await
+                }
+                _ => {
+                    body_of(
+                        admin_sandbox_settings_page(State(state.clone()), page_req(path, "en"))
+                            .await,
+                    )
+                    .await
+                }
+            };
+            assert!(
+                body.contains("data-testid='admin-console'"),
+                "{path}: shell"
+            );
+            assert!(
+                body.contains("class='admin-console-aside'"),
+                "{path}: aside"
+            );
+            assert!(body.contains("src='/logo.svg'"), "{path}: brand logo");
+            assert!(body.contains(">RayRAG</span>"), "{path}: admin.title");
+            assert!(body.contains("adminConsoleLogout()"), "{path}: logout");
+            assert!(
+                body.contains(&format!("data-section='{section}'")),
+                "{path}: active section"
+            );
+            assert!(
+                body.contains(&format!(
+                    "class='admin-console-nav-link active' href='/admin{section}'"
+                )),
+                "{path}: active nav link"
+            );
+            // All three upstream links render in every console page.
+            for link in ["/admin/services", "/admin/users", "/admin/sandbox-settings"] {
+                assert!(
+                    body.contains(&format!("href='{link}'")),
+                    "{path}: nav {link}"
+                );
+            }
+        }
+
+        // Upstream labels are English in both languages; the login template
+        // comes from the translated `login` namespace.
+        let zh_login = body_of(
+            admin_page(
+                State(state.clone()),
+                Request::builder()
+                    .uri("/admin")
+                    .header("cookie", "lang=zh-CN")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        assert!(zh_login.contains(">Admin console</h1>"));
+        // `FormLabel required` renders a `<label>` (labelled for its input) with the
+        // required marker from the shared `.required::after` rule.
+        assert!(
+            zh_login.contains(
+                "<label class='admin-login-label required' for='adminEmail'>邮箱</label>"
+            )
+        );
+        assert!(zh_login.contains(
+            "<label class='admin-login-label required' for='adminPassword'>密码</label>"
+        ));
+        assert!(zh_login.contains("placeholder='请输入邮箱地址'"));
+        assert!(zh_login.contains(">记住我</span>"));
+        assert!(zh_login.contains(">登录</button>"));
+        let zh_services = body_of(
+            admin_services_page(State(state.clone()), page_req("/admin/services", "zh-CN")).await,
+        )
+        .await;
+        // These two headings used to be asserted in English on the Chinese page, which froze the
+        // leak this release fixes; they now have to be translated like every other label.
+        assert!(zh_services.contains(">服务状态</h2>"));
+        assert!(zh_services.contains(">用户管理</span>"));
+        assert!(
+            zh_services.contains("<title>服务状态 · RayRAG</title>"),
+            "the browser tab must follow the page language"
+        );
+        assert!(zh_services.contains(">登出</button>"));
+
+        // User detail keeps the upstream account summary, the two asset tabs and
+        // their pagers.
+        let detail = body_of(
+            admin_user_detail_page(
+                State(state.clone()),
+                Path("boss@example.com".to_string()),
+                page_req("/admin/users/boss@example.com", "en"),
+            )
+            .await,
+        )
+        .await;
+        assert!(detail.contains("data-testid='admin-user-detail-panel'"));
+        assert!(detail.contains("data-testid='admin-user-datasets'"));
+        assert!(detail.contains("data-testid='admin-user-agents'"));
+        assert!(detail.contains("data-testid='admin-user-datasets-pager'"));
+        assert!(detail.contains("data-testid='admin-user-agents-pager'"));
+        assert!(detail.contains(">Dataset</button>"));
+        assert!(detail.contains(">Agent</button>"));
+        assert!(detail.contains("/api/v1/admin/users/"));
+        // Upstream fetches the three admin endpoints in parallel and reads the
+        // detail payload's first row.
+        for marker in [
+            "base+'/datasets'",
+            "base+'/agents'",
+            "var rows=data.data||[];var user=rows[0]||{}",
+            "adminRenderAssetTable('dataset')",
+            "adminRenderAssetTable('flow')",
+            "'Last login time'",
+            "'Is superuser'",
+            "Total '+total",
+            "Previous",
+            "Next",
+        ] {
+            assert!(
+                detail.contains(marker),
+                "user detail marker missing: {marker}"
+            );
+        }
+        let missing = body_of(
+            admin_user_detail_page(
+                State(state),
+                Path("nobody@example.com".to_string()),
+                page_req("/admin/users/nobody@example.com", "en"),
+            )
+            .await,
+        )
+        .await;
+        assert!(missing.contains("User not found"));
+    }
+
+    #[tokio::test]
+    async fn temp_dump_rendered_html() {
+        let (_root, state) = test_state();
+        let kb = state.kbs.create_for("u1", "Dump KB", "d").unwrap();
+        let req = || Request::builder().uri("/x").body(Body::empty()).unwrap();
+        let files = body_of(files_page(State(state.clone()), req()).await).await;
+        let agents = body_of(agents_page(State(state.clone()), req()).await).await;
+        let ad = body_of(agent_detail_page(Path("a1".to_string()), req()).await).await;
+        let kbd =
+            body_of(kb_detail_page(State(state.clone()), Path(kb.id.clone()), req()).await).await;
+        let cd =
+            body_of(chat_detail_page(State(state.clone()), Path("c1".to_string()), req()).await)
+                .await;
+        let doc = body_of(
+            document_page(
+                State(state.clone()),
+                Path(("k1".to_string(), "d1".to_string())),
+                req(),
+            )
+            .await,
+        )
+        .await;
+        let set = body_of(settings_page(State(test_state().1), req()).await).await;
+        std::fs::write("/tmp/dump_files.html", &files).unwrap();
+        std::fs::write("/tmp/dump_agents.html", &agents).unwrap();
+        std::fs::write("/tmp/dump_agent_detail.html", &ad).unwrap();
+        std::fs::write("/tmp/dump_kb_detail.html", &kbd).unwrap();
+        std::fs::write("/tmp/dump_chat_detail.html", &cd).unwrap();
+        std::fs::write("/tmp/dump_doc.html", &doc).unwrap();
+        std::fs::write("/tmp/dump_settings.html", &set).unwrap();
+        let dash = body_of(crate::web::dashboard(State(state.clone()), req()).await).await;
+        std::fs::write("/tmp/dump_dashboard.html", &dash).unwrap();
+    }
+
+    #[tokio::test]
+    async fn settings_page_renders_invite_button() {
+        let req = Request::builder()
+            .uri("/settings")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(settings_page(State(test_state().1), req).await).await;
+        // RAGFlow user-setting 团队页：邀请
+        assert!(html.contains("inviteUser"), "invite button missing");
+        assert!(html.contains("/api/v1/users/invite"), "invite API missing");
+    }
+
+    #[tokio::test]
+    async fn memories_page_matches_upstream_filter_bar_cards_and_create_fields() {
+        let request = Request::builder()
+            .uri("/memories")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(memories_page_v2(request).await).await;
+        let html = html.as_str();
+        assert!(
+            !html.contains("🧠"),
+            "memory heading must not use an emoji glyph"
+        );
+        // Shared list loader: a failed /api/v1/memories becomes a visible card,
+        // not the "no memories" empty state.
+        assert!(html.contains("lpError"));
+        assert!(html.contains("lp-load-error"));
+        assert!(html.contains("LP_SPEC.labels.loadFailed"));
+        assert!(html.contains("data-testid='memory-list'"));
+        assert!(html.contains("data-testid='create-memory'"));
+        assert!(html.contains(">Create memory</button>"));
+        assert!(html.contains("data-testid='memory-list-form-dialog'"));
+        assert!(html.contains("data-testid='memory-list-delete-dialog'"));
+        assert!(html.contains(">Delete memory</h2>"));
+        assert!(html.contains("No memory created yet"));
+        // add-or-edit-modal createMemoryFields: name + memory_type + embd_id + llm_id
+        for label in [
+            "Memory type",
+            "Embedding model",
+            "LLM",
+            "Raw",
+            "Semantic",
+            "Episodic",
+            "Procedural",
+        ] {
+            assert!(html.contains(label), "memory create field {label} missing");
+        }
+        assert!(html.contains("class='lp-memory-type' value='raw' checked disabled"));
+        assert!(html.contains("data-testid='default-model-embd_id'"));
+        assert!(html.contains("data-testid='default-model-llm_id'"));
+        // The default-model selector renders its own required label; an outer
+        // ds-field-label used to duplicate "Embedding model" and "LLM".
+        assert!(!html.contains("ds-field-label required'>Embedding model"));
+        assert!(!html.contains("ds-field-label required'>LLM"));
+        assert!(html.contains("'/api/v1/models/default'"));
+        assert!(html.contains("lpExtraPayload"));
+        assert!(html.contains("/api/v1/memories"));
+        assert!(html.contains("memory_list"));
+        let zh_request = Request::builder()
+            .uri("/memories")
+            .header("Cookie", "lang=zh-CN")
+            .body(Body::empty())
+            .unwrap();
+        let zh_html = body_of(memories_page_v2(zh_request).await).await;
+        for label in [
+            "记忆",
+            "创建记忆",
+            "记忆类型",
+            "嵌入模型",
+            "大语言模型",
+            "尚未创建记忆",
+        ] {
+            assert!(zh_html.contains(label), "zh memories label {label} missing");
+        }
+    }
+
+    #[tokio::test]
+    async fn login_page_matches_upstream_flip_card_and_remember_me() {
+        let request = Request::builder()
+            .uri("/login")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(login_page(request).await).await;
+        let html = html.as_str();
+        // Upstream login-next/card.tsx FlipCard3D: both faces + active marker.
+        assert!(html.contains("class='auth-scene'") && html.contains("class='auth-stage'"));
+        assert!(html.contains("id='authLoginFace'") && html.contains("id='authRegisterFace'"));
+        assert!(html.contains("data-testid='auth-card-active'"));
+        assert!(html.contains("data-testid='auth-form'"));
+        assert!(html.contains("data-testid='auth-email'"));
+        assert!(html.contains("data-testid='auth-password'"));
+        assert!(html.contains("data-testid='auth-nickname'"));
+        assert!(html.contains("data-testid='auth-submit'"));
+        assert!(html.contains("data-testid='auth-toggle-register'"));
+        assert!(html.contains("data-testid='auth-toggle-login'"));
+        // The reset-password flow is a collapsed panel behind a forgot-password
+        // link, not a second card that bloats the login page.
+        assert!(html.contains("data-testid='auth-forgot'"));
+        assert!(html.contains("style='display:none;margin-top:18px'"));
+        assert!(html.contains("function toggleResetCard(button)"));
+        assert!(
+            html.find("auth-forgot").unwrap() < html.find("authRegisterFace").unwrap(),
+            "forgot-password link must live inside the login face"
+        );
+        // Remember me + channel buttons + post-login redirect to `/`.
+        assert!(html.contains("id='remember'") && html.contains("Remember me"));
+        assert!(html.contains("/api/v1/auth/login/channels"));
+        assert!(html.contains("rayrag_email"));
+        assert!(html.contains("/api/v1/setup/status"));
+        assert!(html.contains("status.data.needs_setup)?'/setup':'/'"));
+        assert!(html.contains("setActiveFace"));
+        // The standalone shell must not carry the global header (loop guard).
+        assert!(!html.contains("class='gnav'"));
+        let zh_request = Request::builder()
+            .uri("/login")
+            .header("Cookie", "lang=zh-CN")
+            .body(Body::empty())
+            .unwrap();
+        let zh_html = body_of(login_page(zh_request).await).await;
+        for label in [
+            "记住我",
+            "邮箱",
+            "密码",
+            "昵称",
+            "注册",
+            "登录",
+            "忘记密码？",
+            "重置密码",
+            "刷新验证码",
+            "发送重置验证码",
+        ] {
+            assert!(zh_html.contains(label), "zh login label {label} missing");
+        }
+    }
+
+    #[tokio::test]
+    async fn agent_templates_page_matches_upstream_sidebar_cards_and_use_dialog() {
+        let (_root, state) = test_state();
+        let request = Request::builder()
+            .uri("/agent-templates")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(agent_templates_page(State(state.clone()), request).await).await;
+        let html = html.as_str();
+        assert!(html.contains("data-testid='agent-templates-page'"));
+        assert!(html.contains("class='template-sidebar'"));
+        for key in [
+            "recommended",
+            "agent",
+            "customer-support",
+            "marketing",
+            "consumer-app",
+            "ingestion-pipeline",
+            "other",
+        ] {
+            assert!(
+                html.contains(&format!("data-testid='template-category-{key}'")),
+                "template category {key} missing"
+            );
+        }
+        assert!(html.contains("data-testid='agent-templates-grid'"));
+        assert!(html.contains("data-testid='agent-template-card'"));
+        assert!(html.contains("data-testid='template-use'"));
+        // The hover overlay button is rendered client-side from TPL_LABELS.use.
+        assert!(html.contains("TPL_LABELS.use"));
+        assert!(
+            html.contains("use:\"Use\"")
+                || html.contains("use: \"Use\"")
+                || html.contains("\"use\":\"Use\"")
+        );
+        assert!(html.contains("data-testid='agent-template-dialog'"));
+        assert!(html.contains("data-testid='template-use-save'"));
+        assert!(html.contains("placeholder='Please input name'"));
+        assert!(html.contains("'/api/v1/agents/templates'"));
+        assert!(html.contains("canvas_category"));
+        assert!(html.contains("tplLocale"));
+        let zh_request = Request::builder()
+            .uri("/agent-templates")
+            .header("Cookie", "lang=zh-CN")
+            .body(Body::empty())
+            .unwrap();
+        let zh_html = body_of(agent_templates_page(State(state), zh_request).await).await;
+        for label in [
+            "推荐",
+            "智能体",
+            "客户支持",
+            "营销",
+            "消费者应用",
+            "数据摄入流程",
+            "其他",
+            "使用",
+        ] {
+            assert!(zh_html.contains(label), "zh template label {label} missing");
+        }
+    }
+
+    #[tokio::test]
+    async fn agents_page_matches_upstream_create_menu_and_flow_type_dialog() {
+        let (_root, state) = test_state();
+        let request = Request::builder()
+            .uri("/agents")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(agents_page(State(state.clone()), request).await).await;
+        let html = html.as_str();
+        assert!(html.contains("data-testid='agents-list'"));
+        assert!(html.contains("data-testid='create-agent'"));
+        assert!(html.contains("data-testid='agent-create-menu'"));
+        assert!(html.contains("data-testid='agent-create-blank'"));
+        assert!(html.contains("data-testid='agent-create-template'"));
+        assert!(html.contains("data-testid='agent-import-json'"));
+        for label in [
+            "Create from blank",
+            "Create from template",
+            "Import JSON file",
+            "Agent flow",
+            "Ingestion pipeline",
+        ] {
+            assert!(html.contains(label), "agents page label {label} missing");
+        }
+        assert!(html.contains("href='/agent-templates'") || html.contains("'/agent-templates'"));
+        assert!(html.contains("data-testid='agent-type-agent'"));
+        assert!(html.contains("data-testid='agent-type-flow'"));
+        assert!(html.contains("lpImportSubmit"));
+        assert!(html.contains("/api/v1/agents"));
+        assert!(html.contains("data-testid='agents-list-form-dialog'"));
+        assert!(html.contains("Edit tags"));
+        let zh_request = Request::builder()
+            .uri("/agents")
+            .header("Cookie", "lang=zh-CN")
+            .body(Body::empty())
+            .unwrap();
+        let zh_html = body_of(agents_page(State(state), zh_request).await).await;
+        for label in [
+            "智能体",
+            "创建智能体",
+            "从空白创建",
+            "从模板创建",
+            "导入 JSON 文件",
+            "智能体流程",
+            "数据摄入流程",
+        ] {
+            assert!(zh_html.contains(label), "zh agents label {label} missing");
+        }
+    }
+
+    #[tokio::test]
+    async fn app_list_pages_match_upstream_filter_bar_cards_and_dialogs() {
+        let (_root, state) = test_state();
+        for (uri, testid, create_testid, button_label, empty_label) in [
+            (
+                "/chats",
+                "chats-list",
+                "create-chat",
+                "Create chat",
+                "No chat app created yet",
+            ),
+            (
+                "/searches",
+                "search-list",
+                "create-search",
+                "Create search",
+                "No search app created yet",
+            ),
+        ] {
+            let request = Request::builder()
+                .uri(uri)
+                .header("Cookie", "lang=en")
+                .body(Body::empty())
+                .unwrap();
+            let html = if uri == "/chats" {
+                body_of(chat_apps_page(State(state.clone()), request).await).await
+            } else {
+                body_of(search_apps_page(State(state.clone()), request).await).await
+            };
+            let html = html.as_str();
+            assert!(
+                html.contains(&format!("data-testid='{testid}'")),
+                "{uri} shell"
+            );
+            assert!(html.contains("class='list-filter-bar'"));
+            assert!(html.contains(&format!("data-testid='{create_testid}'")));
+            assert!(html.contains(&format!(">{button_label}</button>")));
+            assert!(html.contains(&format!("data-testid='{testid}-cards'")));
+            assert!(html.contains(&format!("data-testid='{testid}-form-dialog'")));
+            assert!(html.contains(&format!("data-testid='{testid}-delete-dialog'")));
+            assert!(html.contains(empty_label));
+            assert!(html.contains("lpSubmitForm") && html.contains("lpRenderPagination"));
+            assert!(html.contains("'/api/v1/models/default'") == false);
+            if uri == "/chats" {
+                // The chat list API returns {data:{chats:[...]}}; without the collection
+                // name a freshly created chat never appears in the list.
+                assert!(
+                    html.contains("\"collection\":\"chats\""),
+                    "chat list collection name missing"
+                );
+            }
+        }
+        let zh_request = Request::builder()
+            .uri("/chats")
+            .header("Cookie", "lang=zh-CN")
+            .body(Body::empty())
+            .unwrap();
+        let zh_html = body_of(chat_apps_page(State(state), zh_request).await).await;
+        for label in ["聊天", "创建聊天", "尚未创建聊天应用", "重命名", "删除聊天"]
+        {
+            assert!(zh_html.contains(label), "zh chats label {label} missing");
+        }
+    }
+
+    #[tokio::test]
+    async fn files_page_matches_upstream_filter_bar_table_and_bulk_bar() {
+        let (_root, state) = test_state();
+        let request = Request::builder()
+            .uri("/files")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(files_page(State(state.clone()), request).await).await;
+        let html = html.as_str();
+        assert!(html.contains("data-testid='files-list'"));
+        assert!(html.contains("data-testid='files-add'"));
+        assert!(html.contains("data-testid='files-upload'"));
+        assert!(html.contains("data-testid='files-new-folder'"));
+        assert!(html.contains(">Add file</button>"));
+        assert!(html.contains(">Upload file</button>"));
+        assert!(html.contains(">New folder</button>"));
+        assert!(html.contains("data-testid='files-table'"));
+        for header in ["Name", "Upload date", "Size", "Dataset", "Action"] {
+            assert!(
+                html.contains(&format!(">{header}</th>")),
+                "missing column {header}"
+            );
+        }
+        assert!(html.contains("data-testid='files-bulk-bar'"));
+        // Dataset folders and file rows use inline SVG icons, not the folder
+        // emoji that renders as a tofu box on the slim image.
+        assert!(html.contains("function rrFileIcon"));
+        assert!(html.contains("icon.innerHTML=rrFileIcon('',true)"));
+        // A failed listing becomes a visible error row, not the empty state.
+        assert!(html.contains("fileError"));
+        assert!(html.contains("FILE_LABELS.loadFailed"));
+        assert!(html.contains("data.code!==0"));
+        assert!(!html.contains("📁"));
+        // The top level lists one folder per dataset; opening one lists that dataset's files.
+        assert!(
+            html.contains("data-testid='files-dataset-folders'"),
+            "the Files page must group by dataset"
+        );
+        assert!(html.contains("function dsFoldersLoad()"));
+        assert!(html.contains("function dsOpen("));
+        assert!(html.contains("function dsBack()"));
+        assert!(
+            html.contains("if(fileDsMode){fetch('/api/v1/datasets/'"),
+            "dataset mode must read the dataset's documents"
+        );
+        assert!(
+            html.contains("grid-template-columns:repeat(auto-fill,minmax(190px,1fr))"),
+            "the folder grid must reflow with the screen"
+        );
+        assert!(html.contains(">Move</button>"));
+        assert!(html.contains(">Link to dataset</button>"));
+        assert!(html.contains("data-testid='files-new-folder-dialog'"));
+        assert!(html.contains("data-testid='files-move-dialog'"));
+        assert!(html.contains("data-testid='files-link-dialog'"));
+        // The old dangling listener that threw before loadF() must be gone.
+        assert!(
+            !html.contains("getElementById('addFileBtn').addEventListener"),
+            "dangling addFileBtn listener would abort the page script"
+        );
+        assert!(html.contains("loadF()"));
+        let zh_request = Request::builder()
+            .uri("/files")
+            .header("Cookie", "lang=zh-CN")
+            .body(Body::empty())
+            .unwrap();
+        let zh_html = body_of(files_page(State(state), zh_request).await).await;
+        for label in [
+            "新增文件",
+            "上传文件",
+            "新建文件夹",
+            "上传日期",
+            "大小",
+            "知识库",
+            "链接知识库",
+        ] {
+            assert!(zh_html.contains(label), "zh files label {label} missing");
+        }
+    }
+
+    /// Upstream `pages/files/index.tsx` navigates into a folder by putting its id in
+    /// `?folderId=` and asking the list endpoint for that `parent_id`; the header shows
+    /// the ancestors as a clickable breadcrumb. The page previously only listed the
+    /// root folder and paginated the 15 rows the API happened to return.
+    #[tokio::test]
+    async fn files_page_navigates_folders_with_breadcrumb_and_server_paging() {
+        let (_root, state) = test_state();
+        let request = Request::builder()
+            .uri("/files")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(files_page(State(state), request).await).await;
+        let html = html.as_str();
+        for marker in [
+            "function openFolder(",
+            "function renderFileCrumbs(",
+            "function fileListQuery(",
+            "new URLSearchParams(location.search).get('folderId')",
+            "history.pushState(null,'',fileParentId?'/files?folderId='",
+            "window.addEventListener('popstate'",
+            "data-folder-id=",
+            "fileTable.addEventListener('click'",
+            "/ancestors",
+            "'&page='+filePage+'&page_size='+filePageSize",
+            "'&keywords='+encodeURIComponent(fileKeyword)",
+            "parent_id:fileParentId||'root'",
+            "fileTotal=Number(payload&&payload.total||0)",
+            "renderFilePagination(fileDsMode?list.length:fileTotal)",
+        ] {
+            assert!(html.contains(marker), "files page missing {marker}");
+        }
+        assert_inline_scripts_balance(html, "/files");
+    }
+
+    #[tokio::test]
+    async fn files_new_folder_dialog_supports_escape_and_focus_restore() {
+        let (_root, state) = test_state();
+        let request = Request::builder()
+            .uri("/files")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(files_page(State(state), request).await).await;
+        assert!(html.contains(FILES_NEW_FOLDER_KEYBOARD_JS));
+        for marker in [
+            "event.key !== 'Escape' || event.defaultPrevented",
+            "dialog.classList.contains('show')",
+            "closeNewFolder();",
+            "document.getElementById('addFileBtn')",
+            "if (trigger) trigger.focus();",
+        ] {
+            assert!(FILES_NEW_FOLDER_KEYBOARD_JS.contains(marker), "{marker}");
+        }
+        assert_inline_scripts_balance(&html, "/files");
+    }
+
+    /// Upstream `pages/files/move-dialog.tsx` uses an async tree that lazily loads
+    /// folder children; the bulk bar and every row expose the same move action.
+    #[tokio::test]
+    async fn files_page_move_dialog_collects_the_folder_tree_and_uses_move_api() {
+        let (_root, state) = test_state();
+        let request = Request::builder()
+            .uri("/files")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(files_page(State(state), request).await).await;
+        let html = html.as_str();
+        for marker in [
+            "<select id='moveTarget'><option value='root'>/</option></select>",
+            "function folderChildren(",
+            "function allFolders(",
+            "function loadMoveFolders(",
+            "'&page='+page+'&page_size=100'",
+            "function moveAction(",
+            "function moveFile(",
+            "window.__moveIds=[id]",
+            "src_file_ids:ids,dest_file_id:target",
+            "'/api/v1/files/move'",
+            "Loading…",
+        ] {
+            assert!(html.contains(marker), "move dialog missing {marker}");
+        }
+        assert_inline_scripts_balance(html, "/files");
+    }
+
+    /// Upstream `pages/files/action-cell.tsx` wraps an Eye button in
+    /// `NewDocumentLink` for every `SupportedPreviewDocumentType`, pointing at
+    /// `/document/{id}?ext={extension}&resource=files`. txt/csv/ppt preview fine but
+    /// are **not** in that list, so they get no Eye button.
+    #[tokio::test]
+    async fn files_page_preview_button_follows_supported_preview_types() {
+        let (_root, state) = test_state();
+        let request = Request::builder()
+            .uri("/files")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(files_page(State(state), request).await).await;
+        for marker in [
+            "'file-action-'+key",
+            "addIcon('preview',FILE_ICONS.preview,FILE_LABELS.preview",
+            "'/document/'+encodeURIComponent(id)+'?ext='+encodeURIComponent(ext)+'&resource=files'",
+            "function fileExt(name){",
+            "FILE_PREVIEW_EXTS.indexOf(ext)>=0",
+        ] {
+            assert!(
+                html.contains(marker),
+                "files preview marker {marker} missing"
+            );
+        }
+        let payload = html
+            .split("var FILE_PREVIEW_EXTS=")
+            .nth(1)
+            .and_then(|rest| rest.split(';').next())
+            .expect("FILE_PREVIEW_EXTS payload");
+        let exts: Vec<String> = serde_json::from_str(payload).unwrap();
+        for ext in [
+            "xlsx", "xls", "pdf", "docx", "md", "mdx", "jpg", "png", "webp", "ico",
+        ] {
+            assert!(
+                exts.iter().any(|value| value == ext),
+                "{ext} must be previewable"
+            );
+        }
+        for ext in ["txt", "csv", "ppt", "pptx", "mp4"] {
+            assert!(
+                !exts.iter().any(|value| value == ext),
+                "{ext} has no Eye button upstream"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn datasets_page_matches_upstream_list_filter_bar_cards_and_dialogs() {
+        let (_root, state) = test_state();
+        let request = Request::builder()
+            .uri("/datasets")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(datasets_page(State(state.clone()), request).await).await;
+        let html = html.as_str();
+        assert!(
+            html.contains("data-testid='datasets-list'"),
+            "list shell missing"
+        );
+        assert!(html.contains("class='list-filter-bar'"));
+        assert!(html.contains("data-testid='datasets-create'"));
+        assert!(
+            html.contains(">Create dataset</button>"),
+            "upstream button label"
+        );
+        assert!(html.contains("placeholder='Search'"));
+        assert!(html.contains("data-testid='datasets-cards'"));
+        assert!(html.contains("data-testid='dataset-create-dialog'"));
+        assert!(html.contains("placeholder='Please input name.'"));
+        assert!(html.contains("data-testid='default-model-embedding_model'"));
+        assert!(html.contains("name='dsParseType' value='built_in' checked"));
+        assert!(html.contains("name='dsParseType' value='pipeline'"));
+        assert!(html.contains("data-testid='dataset-rename-dialog'"));
+        assert!(html.contains("data-testid='dataset-delete-dialog'"));
+        assert!(html.contains(">Delete dataset</h2>"));
+        assert!(html.contains("Chunk method is required"));
+        assert!(html.contains("No dataset created yet"));
+        assert!(html.contains(FORM_LOCAL_SAVE_MODEL_DEFAULT));
+        assert!(
+            html.contains("'/api/v1/models/default'"),
+            "tenant default seeding"
+        );
+        assert!(html.contains("dsRenderPagination") && html.contains("dsDeleteSubmit"));
+        assert!(
+            html.contains("dsItems=dsItems.filter(function(entry){return entry.id!==id})"),
+            "deleting a dataset must remove it from the list before the request finishes"
+        );
+        let zh_request = Request::builder()
+            .uri("/datasets")
+            .header("Cookie", "lang=zh-CN")
+            .body(Body::empty())
+            .unwrap();
+        let zh_html = body_of(datasets_page(State(state), zh_request).await).await;
+        for label in [
+            "创建知识库",
+            "名称",
+            "嵌入模型",
+            "解析方法",
+            "内置",
+            "切片方法",
+            "尚未创建知识库",
+        ] {
+            assert!(zh_html.contains(label), "zh datasets label {label} missing");
+        }
+    }
+
+    #[tokio::test]
+    async fn home_page_renders_welcome_dataset_and_application_sections() {
+        // Upstream pages/home/index.tsx: banner + Datasets + Applications with
+        // the Chat/Search/Agent/Memory Segmented control and per-type empty
+        // cards.
+        let request = Request::builder()
+            .uri("/")
+            .header("Cookie", "lang=en")
+            .body(Body::empty())
+            .unwrap();
+        let html = body_of(index(request).await).await;
+        let html = html.as_str();
+        assert!(
+            html.contains("data-testid='home-page'"),
+            "home shell missing"
+        );
+        assert!(html.contains("class='home-banner'"));
+        assert!(
+            html.contains("Welcome to") && html.contains("class='home-brand'>RayRAG"),
+            "welcome banner must lead with the upstream welcome label"
+        );
+        assert!(html.contains("data-testid='home-datasets'"));
+        assert!(html.contains("data-testid='home-apps'"));
+        // Dataset card rename/delete use in-page dialogs, not prompt/confirm.
+        assert!(html.contains("homeRenameModal"));
+        assert!(html.contains("homeDeleteModal"));
+        assert!(html.contains("homeSubmitRename"));
+        assert!(html.contains("homeSubmitDelete"));
+        assert!(
+            html.contains("data-id='\"+item.id+\"'") && html.contains("card.remove()"),
+            "home dataset delete must optimistically remove the card"
+        );
+        assert!(!html.contains("prompt(HOME_LABELS.rename"));
+        assert!(!html.contains("confirm(HOME_LABELS.removeConfirm"));
+        for (key, label) in [
+            ("chats", ">Chat</button>"),
+            ("searches", ">Search</button>"),
+            ("agents", ">Agent</button>"),
+            ("memories", ">Memory</button>"),
+        ] {
+            assert!(
+                html.contains(&format!("data-testid='home-tab-{key}'")),
+                "segmented option {key} missing"
+            );
+            assert!(html.contains(label), "segmented label {label} missing");
+        }
+        assert!(html.contains("role='tablist'") && html.contains("aria-selected='true'"));
+        assert!(html.contains("No dataset created yet"));
+        assert!(html.contains("No chat app created yet"));
+        assert!(html.contains("No search app created yet"));
+        assert!(html.contains("No agent app created yet"));
+        assert!(html.contains("No memory created yet"));
+        assert!(html.contains("homeSelectApp") && html.contains("loadHomeDatasets"));
+        assert!(html.contains("/api/v1/searchapps") && html.contains("/api/v1/memories"));
+        assert!(html.contains("See all"));
+        let zh_request = Request::builder()
+            .uri("/")
+            .header("Cookie", "lang=zh-CN")
+            .body(Body::empty())
+            .unwrap();
+        let zh_html = body_of(index(zh_request).await).await;
+        for label in [
+            "欢迎来到",
+            "知识库",
+            "聊天",
+            "搜索",
+            "智能体",
+            "记忆",
+            "查看全部",
+        ] {
+            assert!(zh_html.contains(label), "zh home label {label} missing");
+        }
+    }
+
+    #[test]
+    fn global_header_matches_upstream_navbar_and_right_cluster() {
+        // Upstream layouts/components/header.tsx + global-navbar.tsx: the pill
+        // carries Home/Dataset/Chat/Search/Agent/Memory/File in that order, and
+        // the right cluster is Discord, GitHub, the language menu, help, theme
+        // and the avatar link into `/user-setting`.
+        let html = layout("Home", "<p>body</p>", false);
+        let nav_start = html.find("<nav class='gnav'").expect("global navbar");
+        let nav_end = html.find("</nav>").expect("navbar close");
+        let nav = &html[nav_start..nav_end];
+        let mut cursor = 0;
+        for (href, marker) in [
+            ("/", "aria-label='Home'"),
+            ("/datasets", "data-nav='/datasets'"),
+            ("/chats", "data-testid='nav-chat'"),
+            ("/searches", "data-testid='nav-search'"),
+            ("/agents", "data-testid='nav-agent'"),
+            ("/memories", "data-nav='/memories'"),
+            ("/files", "data-nav='/files'"),
+        ] {
+            let needle = format!("href='{href}'");
+            let offset = nav[cursor..]
+                .find(&needle)
+                .unwrap_or_else(|| panic!("navbar entry {href} missing"));
+            cursor += offset + 1;
+            let entry_start = nav[..cursor].rfind("<a ").expect("entry start");
+            let entry_end = nav[cursor..]
+                .find("</a>")
+                .map(|end| cursor + end)
+                .expect("entry end");
+            let entry = &nav[entry_start..entry_end];
+            assert!(
+                entry.contains(marker),
+                "navbar entry {href} lost its upstream marker {marker}: {entry}"
+            );
+        }
+        // The seven upstream entries only: dashboard/data-source/skills/model
+        // provider shortcuts moved behind the avatar.
+        for legacy in [
+            "href='/dashboard'",
+            "href='/kbs'",
+            "href='/datasources'",
+            "href='/skills'",
+            "href='/user-setting/model'",
+        ] {
+            assert!(
+                !nav.contains(legacy),
+                "navbar still carries the non-upstream entry {legacy}"
+            );
+        }
+        let right = &html[nav_end..html.find("</header>").expect("header close")];
+        assert!(right.contains("href='https://discord.com/invite/NjYzJD3GM3'"));
+        assert!(right.contains("href='https://github.com/Junesgone/RayRAG'"));
+        assert!(right.contains("href='https://ragflow.io/docs/dev/category/user-guides'"));
+        assert_eq!(
+            right
+                .matches("target='_blank' rel='noreferrer noopener'")
+                .count(),
+            3,
+            "Discord/GitHub/help must each open in a new tab"
+        );
+        assert!(right.contains("id='hdrLangMenu'"), "language menu missing");
+        assert!(right.contains("aria-haspopup='menu'"));
+        assert!(right.contains("onclick='toggleHeaderMenu(\"hdrLangMenu\",event)'"));
+        assert!(right.contains("role='menuitemradio'"));
+        assert!(right.contains("aria-checked='true'") && right.contains("aria-checked='false'"));
+        assert!(right.contains("onclick='toggleTheme()'"));
+        assert!(
+            right.contains("class='av' id='hdrAvatar' href='/user-setting'")
+                && right.contains("data-testid='settings-entrypoint'"),
+            "avatar must link into /user-setting"
+        );
+        // Active pill marking follows upstream's PathMap on the client.
+        assert!(html.contains("link.setAttribute('aria-current','page')"));
+        assert!(html.contains("'/memories':['/memories','/memory']"));
+    }
+
+    #[test]
+    fn global_header_localizes_navbar_labels_like_upstream() {
+        let zh = layout("首页", "<p>body</p>", true);
+        for label in [
+            "首页",
+            "知识库",
+            "聊天",
+            "搜索",
+            "智能体",
+            "记忆",
+            "文件管理",
+        ] {
+            assert!(zh.contains(label), "zh navbar label {label} missing");
+        }
+        assert!(zh.contains("简体中文") && zh.contains("English"));
+        assert!(zh.contains("aria-checked='true'"));
+        let en = layout("Home", "<p>body</p>", false);
+        for label in [
+            "Home", "Dataset", "Chat", "Search", "Agent", "Memory", "File",
+        ] {
+            assert!(en.contains(label), "en navbar label {label} missing");
+        }
+    }
+
+    #[test]
+    fn global_header_external_links_follow_environment_overrides() {
+        // The resolver is injected, so this never mutates process-wide env and
+        // cannot race with the other layout tests running in parallel.
+        let overridden = |key: &str| match key {
+            "RAYRAG_HELP_URL" => Some("https://docs.example.cn/user-guides".to_string()),
+            "RAYRAG_GITHUB_URL" => Some("https://git.example.cn/rayrag".to_string()),
+            _ => None,
+        };
+        assert_eq!(
+            header_link_with("help", overridden),
+            "https://docs.example.cn/user-guides"
+        );
+        assert_eq!(
+            header_link_with("github", overridden),
+            "https://git.example.cn/rayrag"
+        );
+        assert_eq!(
+            header_link_with("discord", overridden),
+            "https://discord.com/invite/NjYzJD3GM3"
+        );
+        let blank = |_key: &str| Some("   ".to_string());
+        assert_eq!(
+            header_link_with("help", blank),
+            "https://ragflow.io/docs/dev/category/user-guides"
+        );
+    }
+
+    #[test]
+    fn user_setting_shell_has_fixed_menu_order_active_state_and_footer_actions() {
+        let html = user_setting_layout(
+            "Model providers",
+            "<p>body</p>",
+            UserSettingSection::Model,
+            false,
+        );
+        assert!(html.contains("class='hdr'"), "global header must remain");
+        assert!(html.contains("data-testid='settings-entrypoint'"));
+        assert!(html.contains("data-testid='user-setting-layout'"));
+        let mut cursor = 0;
+        // The order the user asked for: Model providers leads, then data sources, chat
+        // channels, MCP, team, profile and API. The assertion follows the rendered order, so a
+        // future reshuffle has to be deliberate.
+        for key in [
+            "/model",
+            "/data-source",
+            "/chat-channel",
+            "/mcp",
+            "/team",
+            "/profile",
+            "/api",
+        ] {
+            let offset = html[cursor..]
+                .find(&format!("data-setting-key='{key}'"))
+                .unwrap_or_else(|| panic!("missing settings item {key}"));
+            cursor += offset + 1;
+        }
+        assert!(html.contains(
+            "class='user-setting-nav-item active' href='/user-setting/model' data-setting-key='/model'"
+        ));
+        assert_eq!(html.matches(" aria-current='page'").count(), 1);
+        assert!(html.contains(&format!(
+            "class='user-setting-version'>{}",
+            crate::build_info::version_line()
+        )));
+        assert!(html.contains("onclick='toggleTheme()'"));
+        assert!(html.contains("onclick='logoutUser()'"));
+        assert!(html.contains("result.code===401"));
+    }
+
+    #[test]
+    fn provider_icons_resolve_svg_font_and_fallback() {
+        // Every upstream `svgIcons` factory resolves to its fixed image asset,
+        // and the asset is actually shipped in the static tree.
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        for (name, file) in [
+            ("Gemini", "gemini.svg"),
+            ("StepFun", "stepfun.svg"),
+            ("MinerU", "mineru-bright.svg"),
+            ("PaddleOCR", "paddleocr.svg"),
+            ("n1n", "n1n.svg"),
+            ("Avian", "avian.svg"),
+            ("RAGcon", "ragcon.svg"),
+            ("SoMark", "somark.svg"),
+            ("New API", "new-api.svg"),
+            ("aimlapi.com", "aimlapi.svg"),
+            ("Astraflow", "astraflow.svg"),
+            ("Astraflow-CN", "astraflow.svg"),
+            ("FastEmbed", "fastembed.svg"),
+            ("FunASR", "funasr.svg"),
+            ("FuturMix", "futurmix.svg"),
+            ("GreenPT", "greenpt.svg"),
+            ("MWS", "mws.svg"),
+            ("Synthorai", "synthorai.svg"),
+            ("Xiaomi", "xiaomi.svg"),
+        ] {
+            assert_eq!(provider_icon(name), ProviderIcon::Svg(file), "{name}");
+            assert!(
+                manifest
+                    .join("web/static/assets/svg/llm")
+                    .join(file)
+                    .is_file(),
+                "missing provider image asset {file}"
+            );
+        }
+        assert_eq!(provider_icon("OpenAI"), ProviderIcon::Font("openai"));
+        assert_eq!(provider_icon("MiniMax"), ProviderIcon::Font("MiniMax"));
+        assert_eq!(
+            provider_icon("Tencent Cloud"),
+            ProviderIcon::Font("tencent-cloud")
+        );
+        assert_eq!(provider_icon("Gemini"), ProviderIcon::Svg("gemini.svg"));
+        assert_eq!(
+            provider_icon("MinerU"),
+            ProviderIcon::Svg("mineru-bright.svg")
+        );
+        assert_eq!(
+            provider_icon("PaddleOCR"),
+            ProviderIcon::Svg("paddleocr.svg")
+        );
+        assert_eq!(
+            provider_icon("Unknown Factory"),
+            ProviderIcon::Font("moxing-default")
+        );
+    }
+
+    #[tokio::test]
+    async fn user_setting_api_page_wires_langfuse_card_dialog_and_persistence() {
+        let html = body_of(user_setting_api_page(english_request("/user-setting/api")).await).await;
+        for marker in [
+            "data-testid='langfuse-card'",
+            "data-testid='langfuse-config-dialog'",
+            "data-testid='langfuse-delete-dialog'",
+            "Configuration Langfuse",
+            "Secret key",
+            "Public key",
+            "Please enter the secret key",
+            "Please enter the public key",
+            "https://cloud.langfuse.com",
+            "View Langfuse&#39;s documentation",
+            "/api/v1/langfuse/api-key",
+            "method:'POST'",
+            "method:'DELETE'",
+            "langfuseViewUrl",
+            "cloud.langfuse.com/project/",
+            "loadLangfuse()",
+            "Traces, evals, prompt management",
+        ] {
+            assert!(
+                html.contains(marker),
+                "missing Langfuse API-page marker {marker}"
+            );
+        }
+        assert!(
+            html.contains("Generate") && html.contains("/api/v1/system/api_keys"),
+            "the personal API KEY card remains beside the Langfuse card"
+        );
+        // Personal key deletion uses an in-page dialog, not window.confirm.
+        assert!(html.contains("settingKeyDeleteDialog"));
+        assert!(html.contains("deleteSettingKeyConfirm"));
+        assert!(html.contains("settingKeyStatus"));
+        assert!(!html.contains("confirm('Delete this API key?')"));
+    }
+
+    #[tokio::test]
+    async fn user_setting_mcp_page_wires_server_crud_bulk_import_and_tools() {
+        let html = body_of(user_setting_mcp_page(english_request("/user-setting/mcp")).await).await;
+        for marker in [
+            "data-testid='mcp-servers-card'",
+            "MCP servers",
+            "Customize the list of MCP servers",
+            "Bulk manage",
+            "Import",
+            "+ Add MCP",
+            "data-testid='mcp-edit-dialog'",
+            "data-testid='mcp-import-dialog'",
+            "data-testid='mcp-delete-dialog'",
+            "Server type",
+            "streamable-http",
+            "Authorization Token",
+            "tools available",
+            "testMcpServer",
+            "saveMcpServer",
+            "importMcpServers",
+            "exportMcpServer",
+            "deleteMcpServer",
+            "toggleMcpBulk",
+            "/api/v1/mcp/servers",
+            "/api/v1/mcp/servers/import",
+            "mode=download",
+            "No MCP servers available",
+            "+ Add Now",
+            "It must be 1-64 characters long",
+        ] {
+            assert!(html.contains(marker), "missing MCP page marker {marker}");
+        }
+    }
+
+    #[tokio::test]
+    async fn user_setting_team_page_wires_members_teams_invite_and_confirm_flows() {
+        let html =
+            body_of(user_setting_team_page(english_request("/user-setting/team")).await).await;
+        for marker in [
+            "data-testid='team-members-card'",
+            "data-testid='joined-teams-card'",
+            "data-testid='team-invite-dialog'",
+            "data-testid='team-confirm-dialog'",
+            "Team members",
+            "Joined teams",
+            "Invite member",
+            "Only registered users can be invited",
+            // Upstream `tenant-table.tsx` labels the invitation actions
+            // `Agree` / `Refuse` and renders quit as an icon-only button.
+            "accept.textContent='Agree'",
+            "refuse.textContent='Refuse'",
+            "team-quit",
+            "/api/v1/tenants/'+encodeURIComponent(me)+'/users'",
+            "user_id:teamState.selfId",
+            "Are you sure to remove this member?",
+            "Are you sure you want to quit the team you joined?",
+            "toggleMemberSort",
+            "team-role-owner",
+        ] {
+            assert!(html.contains(marker), "missing Team page marker {marker}");
+        }
+    }
+
+    /// A narrow viewport used to squeeze the top navigation to 39px and let the
+    /// 190px profile label column push values past the right edge. The shell now
+    /// wraps the nav to its own row, stacks profile rows, and hides the duplicate
+    /// sidebar theme toggle instead of letting it bleed past the icon rail.
+    #[tokio::test]
+    async fn responsive_shell_keeps_navigation_profile_and_status_icons_readable() {
+        let (_root, state) = test_state();
+        let dash = body_of(dashboard(State(state.clone()), english_request("/home")).await).await;
+        assert!(
+            dash.contains("class='stat-icon warn'"),
+            "dashboard service markers must be theme-aware SVG icons, not emoji"
+        );
+        assert!(
+            !dash.contains("✅") && !dash.contains("⚠"),
+            "the colour-emoji markers render as tofu in the slim image"
+        );
+
+        let profile =
+            body_of(user_setting_profile_page(english_request("/user-setting/profile")).await)
+                .await;
+        assert!(
+            profile.contains("<svg width='12' height='12'"),
+            "profile edit buttons must use the shared pencil SVG"
+        );
+        assert!(
+            !profile.contains("✎"),
+            "the unsupported pencil glyph must be gone"
+        );
+
+        let css = include_str!("web_css.txt");
+        for rule in [
+            "@media (max-width:860px){",
+            ".hdr{height:auto;min-height:64px;flex-wrap:wrap",
+            ".gnav{order:3;flex:1 0 100%",
+            ".user-setting-footer-row{display:none}",
+            ".profile-row{flex-direction:column;align-items:stretch;gap:6px}",
+            ".profile-row>label,.profile-row label{width:auto;flex:0 0 auto;padding-top:0;font-size:13px}",
+            ".stat-icon{display:inline-block;width:22px;height:22px",
+            ".provider-catalog-wrap{max-width:100%;overflow-x:auto}",
+            ".prov-status{display:inline-block;width:8px;height:8px",
+            ".ss-drawer{top:103px;height:calc(100dvh - 103px)}",
+            ".ss-open{top:112px;right:12px}",
+            ".ct{width:100%;max-width:none;margin:0;padding:24px clamp(16px,2.5vw,40px)}",
+        ] {
+            assert!(css.contains(rule), "responsive CSS rule missing: {rule}");
+        }
+    }
+
+    #[tokio::test]
+    async fn user_setting_profile_page_wires_edit_dialogs_and_avatar_upload() {
+        let html =
+            body_of(user_setting_profile_page(english_request("/user-setting/profile")).await)
+                .await;
+        for marker in [
+            "data-testid='profile-card'",
+            "data-testid='profile-edit-dialog'",
+            "Username",
+            "Avatar",
+            "Time Zone",
+            "Edit Name",
+            "Edit Time Zone",
+            "Edit Password",
+            "Current Password",
+            "Confirm Password",
+            "Intl.supportedValuesOf('timeZone')",
+            "Select a timeZone",
+            "profileAvatarFile",
+            "uploadAvatar",
+            "saveProfileEdit",
+            "/api/v1/users/me",
+            "new_password",
+            "PROFILE_LABELS.confirmPasswordMessage",
+            "reader.readAsDataURL",
+        ] {
+            assert!(
+                html.contains(marker),
+                "missing Profile page marker {marker}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn user_setting_chat_channel_page_wires_add_edit_delete_flows() {
+        let (_root, state) = test_state();
+        let html = body_of(
+            user_setting_chat_channel_page(
+                State(state.clone()),
+                english_request("/user-setting/chat-channel"),
+            )
+            .await,
+        )
+        .await;
+        for marker in [
+            "data-testid='added-channels-section'",
+            "data-testid='available-channels-section'",
+            "data-testid='chat-channel-dialog'",
+            "data-testid='chat-channel-delete-dialog'",
+            "Manage your chat channel bots and credentials",
+            "Select a chat channel to add",
+            "CHAT_CHANNEL_INFO",
+            "Feishu / Lark",
+            "QQ Bot",
+            "WhatsApp",
+            "ClickClack",
+            "Google Chat",
+            "Microsoft Teams",
+            "Nextcloud Talk",
+            "Slack",
+            "LINE",
+            "Zalo (Personal)",
+            "Bot Token",
+            "Client Secret",
+            "AES Key",
+            "/api/v1/chat-channels",
+            "method:chatChannelState.editingId?'PATCH':'POST'",
+            "defaultValue:'webhook',options:[{label:'Webhook'",
+            "showIf:'connection_type==websocket'",
+            "Are you sure you want to delete this chat channel bot?",
+            "function setPath(obj,path,value)",
+            "cc-tag-chips",
+            "key:'nickserv.account'",
+            "placeholder:'dingxxxxxxxxxxxx'",
+            "placeholder:'irc.libera.chat'",
+        ] {
+            assert!(
+                html.contains(marker),
+                "missing Chat channel page marker {marker}"
+            );
+        }
+        // `locales/en.ts::setting.chatChannelDesc` copy must stay verbatim
+        // upstream; these five entries had drifted to invented "… bot" wording.
+        for expected in [
+            "irc:{name:'IRC',desc:'Connect to an IRC server'",
+            "line:{name:'LINE',desc:'Connect a LINE messaging bot'",
+            "twitch:{name:'Twitch',desc:'Connect a Twitch chat bot'",
+            "yuanbao:{name:'Yuanbao',desc:'Connect a Tencent Yuanbao bot'",
+            "zalouser:{name:'Zalo (Personal)',desc:'Connect a personal Zalo account'",
+        ] {
+            assert!(
+                html.contains(expected),
+                "chat channel description drifted from upstream: {expected}"
+            );
+        }
+        for stale in [
+            "Connect an IRC bot",
+            "Connect a LINE bot",
+            "Connect a Twitch bot",
+            "Connect a Yuanbao bot",
+            "Connect a Zalo (Personal) bot",
+        ] {
+            assert!(
+                !html.contains(stale),
+                "stale chat channel description still present: {stale}"
+            );
+        }
+        // Upstream `locales/zh.ts::setting.chatChannelDesc` copy must stay
+        // verbatim upstream on the zh page; the zh-only CC_DESC_ZH map is
+        // injected exactly when lang=zh-CN is requested and never on en.
+        let zh_html = body_of(
+            user_setting_chat_channel_page(
+                State(state.clone()),
+                Request::builder()
+                    .uri("/user-setting/chat-channel")
+                    .header("cookie", "lang=zh-CN")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        assert!(
+            zh_html.contains("var CC_DESC_ZH={"),
+            "zh page must inject the CC_DESC_ZH map"
+        );
+        assert!(
+            !html.contains("var CC_DESC_ZH={"),
+            "en page must not inject the CC_DESC_ZH map"
+        );
+        assert!(
+            zh_html.contains("desc.textContent=ccDesc(id)"),
+            "available card desc must render through ccDesc"
+        );
+        for (key, expected) in [
+            ("clickclack", "连接 ClickClack 机器人"),
+            ("discord", "连接 Discord 机器人"),
+            ("dingtalk", "连接钉钉机器人"),
+            ("feishu", "连接飞书 / Lark 机器人"),
+            ("googlechat", "连接 Google Chat 机器人"),
+            ("irc", "连接 IRC 服务器"),
+            ("line", "连接 LINE 消息机器人"),
+            ("matrix", "连接 Matrix 机器人"),
+            ("mattermost", "连接 Mattermost 机器人"),
+            ("msteams", "连接 Microsoft Teams 机器人"),
+            ("nextcloud_talk", "连接 Nextcloud Talk 机器人"),
+            ("nostr", "连接 Nostr 机器人"),
+            ("qqbot", "连接 QQ 机器人"),
+            ("slack", "连接 Slack 机器人"),
+            ("synology_chat", "连接群晖 Chat 机器人"),
+            ("telegram", "连接 Telegram 机器人"),
+            ("tlon", "连接 Tlon (Urbit) 机器人"),
+            ("twitch", "连接 Twitch 聊天机器人"),
+            ("wecom", "连接企业微信机器人"),
+            ("whatsapp", "连接 WhatsApp 机器人（扫码配对）"),
+            ("yuanbao", "连接腾讯元宝机器人"),
+            ("zalo", "连接 Zalo 机器人"),
+            ("zalouser", "连接个人 Zalo 账号"),
+        ] {
+            assert!(
+                zh_html.contains(&format!("{}:'{}'", key, expected)),
+                "zh chat channel description drifted from upstream: {key}={expected}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn top_k_labels_split_follow_upstream_sites() {
+        let (_root, state) = test_state();
+        let zh_request = |uri: &str| {
+            Request::builder()
+                .uri(uri)
+                .header("cookie", "lang=zh-CN")
+                .body(Body::empty())
+                .unwrap()
+        };
+        let kb = state.kbs.create_for("u1", "TopK KB", "d").unwrap();
+        let path = kb.id.clone();
+        let kb_en = body_of(
+            kb_detail_page(
+                State(state.clone()),
+                Path(path.clone()),
+                english_request("/kbs/x"),
+            )
+            .await,
+        )
+        .await;
+        let kb_zh = body_of(
+            kb_detail_page(
+                State(state.clone()),
+                Path(path.clone()),
+                zh_request("/kbs/x"),
+            )
+            .await,
+        )
+        .await;
+        let ds_en = body_of(
+            dataset_page(
+                State(state.clone()),
+                Path(path.clone()),
+                english_request("/dataset/x"),
+            )
+            .await,
+        )
+        .await;
+        let ds_zh = body_of(
+            dataset_page(
+                State(state.clone()),
+                Path(path.clone()),
+                zh_request("/dataset/x"),
+            )
+            .await,
+        )
+        .await;
+        let sp_en =
+            body_of(search_page(State(state.clone()), english_request("/search")).await).await;
+        let sp_zh = body_of(search_page(State(state.clone()), zh_request("/search")).await).await;
+        let sk_en =
+            body_of(skills_page(State(state.clone()), english_request("/skills")).await).await;
+        let sk_zh = body_of(skills_page(State(state.clone()), zh_request("/skills")).await).await;
+
+        // `knowledgeDetails.topK` = `Top-K` (zh `Top-K`) — the KB/dataset
+        // retrieval config + testing panels render components/rerank.tsx's
+        // label, not the old merged `Top K`.
+        for html in [&kb_en, &kb_zh, &ds_en, &ds_zh] {
+            assert!(html.contains(">Top-K<"), "upstream `Top-K` label missing");
+        }
+        // `next-search/search-setting.tsx:467` hard-codes `Top K`, so the
+        // search settings sidebar stays untranslated in both languages.
+        assert!(
+            sp_en.contains(">Top K<"),
+            "search sidebar literal Top K missing"
+        );
+        assert!(
+            sp_zh.contains(">Top K<"),
+            "zh search sidebar must stay literal Top K"
+        );
+        assert!(
+            !sp_zh.contains("召回条数"),
+            "stale Top K translation still present"
+        );
+        // `skillSearch.topK` = `Top K Results` (zh `返回结果数量`).
+        assert!(
+            sk_en.contains(">Top K Results<"),
+            "skill modal en label missing"
+        );
+        assert!(
+            sk_zh.contains(">返回结果数量<"),
+            "skill modal zh label missing"
+        );
+        assert!(
+            !sk_en.contains(">Top K<"),
+            "skill modal must not use the merged label"
+        );
+    }
+
+    #[tokio::test]
+    async fn profile_timezone_list_follows_upstream_runtime() {
+        let (_root, state) = test_state();
+        let html =
+            body_of(user_setting_profile_page(english_request("/user-setting/profile")).await)
+                .await;
+        // Upstream builds the list at runtime from `Intl.supportedValuesOf`
+        // with `longOffset` GMT names (`name: offsetString + ' ' + tz`),
+        // sorted by offset — replicate the algorithm exactly.
+        for marker in [
+            "Intl.supportedValuesOf('timeZone')",
+            "timeZoneName:'longOffset'",
+            "offsetString+' '+tz",
+            "a.offset-b.offset",
+            "placeholder='Select a timeZone'",
+            "tz.name===storedTz",
+            "PROFILE_LABELS.timezoneRequired",
+            "provider-tz-list",
+            "tzRenderList",
+        ] {
+            assert!(html.contains(marker), "profile tz marker missing: {marker}");
+        }
+        // The old hand-picked static list and its display fallback are gone.
+        assert!(
+            !html.contains("['Asia/Shanghai','Asia/Hong_Kong'"),
+            "stale static timezone list still present"
+        );
+        assert!(
+            !html.contains("||'Asia/Shanghai'"),
+            "stale display fallback still present"
+        );
+    }
+
+    #[test]
+    fn profile_timezone_list_css_present() {
+        let css = include_str!("web_css.txt");
+        assert!(css.contains(".provider-tz-list"));
+        assert!(css.contains(".provider-tz-list div:hover"));
+    }
+
+    /// Dialogs and floating panels sit above page content, so their surface must
+    /// be opaque; `--bgc` (5% white) let the cards behind a modal bleed through.
+    #[test]
+    fn modal_and_popover_surfaces_are_opaque() {
+        let css = include_str!("web_css.txt");
+        assert!(
+            css.contains(":root{--bgm:"),
+            "dark theme needs an opaque modal surface"
+        );
+        assert!(
+            css.contains(".light{--bgm:"),
+            "light theme needs an opaque modal surface"
+        );
+        assert!(
+            css.contains(".modal{background:var(--bgm)"),
+            "modal must be opaque"
+        );
+        for selector in [
+            ".menu-panel{",
+            ".home-card-menu{",
+            ".memory-menu{",
+            ".memory-filter-panel{",
+            ".default-model-popover{",
+            ".input-select-popover{",
+        ] {
+            let start = css.find(selector).expect("selector");
+            let end = css[start..].find('}').expect("rule end") + start;
+            let rule = &css[start..end];
+            assert!(
+                rule.contains("background:var(--bgm)"),
+                "{selector} must paint an opaque surface"
+            );
+        }
+    }
+
+    /// A truncated rule (`.cc-runtime-qr{width:224px;max-width:100.` followed by
+    /// another selector) used to break the CSS parser mid-sheet: every rule
+    /// after it - `.provider-tz-list`, `.set-switch`, the switch toggles - was
+    /// silently dropped by the browser.
+    #[test]
+    /// Rust statements have twice been injected into a page's inline JavaScript, where they are
+    /// literal text rather than code. Rendered pages assert that they carry no Rust source; this
+    /// asserts the other half: both tag-tab pages emit the same shared script.
+    #[test]
+    fn pages_share_one_tag_script() {
+        let source = include_str!("web.rs");
+        for marker in ["pub async fn dataset_page(", "pub async fn kb_detail_page("] {
+            let start = source.find(marker).expect("page function");
+            let rest = &source[start + marker.len()..];
+            let end = rest
+                .find("\npub ")
+                .map(|offset| start + marker.len() + offset)
+                .unwrap_or(source.len());
+            assert!(
+                source[start..end].contains("b.push_str(DS_TAG_SCRIPT);"),
+                "{marker} must push the shared tag script"
+            );
+        }
+        assert_eq!(
+            source.matches("const DS_TAG_SCRIPT: &str = \"").count(),
+            1,
+            "the tag script must be defined exactly once"
+        );
+    }
+
+    #[test]
+    fn stylesheet_has_no_truncated_rules() {
+        fn check(css: &str) -> Result<(), String> {
+            let bytes = css.as_bytes();
+            // `true` marks an at-rule block (`@media`, `@keyframes`, ...), which
+            // may legitimately contain nested rule blocks.
+            let mut stack: Vec<bool> = Vec::new();
+            let mut in_comment = false;
+            let mut prelude_start = 0usize;
+            let mut i = 0usize;
+            while i < bytes.len() {
+                if in_comment {
+                    if bytes[i] == b'*' && bytes.get(i + 1) == Some(&b'/') {
+                        in_comment = false;
+                        i += 2;
+                        continue;
+                    }
+                    i += 1;
+                    continue;
+                }
+                if bytes[i] == b'/' && bytes.get(i + 1) == Some(&b'*') {
+                    in_comment = true;
+                    i += 2;
+                    continue;
+                }
+                match bytes[i] {
+                    b'{' => {
+                        let prelude = css[prelude_start..i].trim();
+                        let is_at = prelude.starts_with('@');
+                        if !is_at && stack.iter().any(|outer_is_at| !*outer_is_at) {
+                            return Err(format!(
+                                "rule block nested inside a declaration block near `{}`",
+                                &prelude[..prelude.len().min(80)]
+                            ));
+                        }
+                        stack.push(is_at);
+                        prelude_start = i + 1;
+                    }
+                    b'}' => {
+                        if stack.pop().is_none() {
+                            return Err("unbalanced `}`".to_string());
+                        }
+                        prelude_start = i + 1;
+                    }
+                    b';' if stack.last() != Some(&false) => prelude_start = i + 1,
+                    _ => {}
+                }
+                i += 1;
+            }
+            if !stack.is_empty() {
+                return Err(format!("{} unclosed block(s)", stack.len()));
+            }
+            Ok(())
+        }
+        let css = include_str!("web_css.txt");
+        if let Err(problem) = check(css) {
+            panic!("stylesheet is not structurally valid: {problem}");
+        }
+    }
+
+    /// The detail view's action labels are set in JS, so the Chinese page must relabel them there.
+    #[test]
+    fn data_source_detail_localises_the_action_labels_in_javascript() {
+        let schema = serde_json::to_string(&crate::data_source::form_fields::schema_for_ui())
+            .expect("schema serializes");
+        let zh = data_source_detail_body("gitlab-main", "s1", "gitlab", &schema, true);
+        for marker in ["立即同步", "断开连接", "'测试'"] {
+            assert!(zh.contains(marker), "missing zh detail label {marker}");
+        }
+        let en = data_source_detail_body("gitlab-main", "s1", "gitlab", &schema, false);
+        assert!(
+            en.contains("window.DS_ZH=false"),
+            "the english page must not localise"
+        );
+    }
+
+    #[tokio::test]
+    async fn data_source_detail_page_missing_source_renders_404() {
+        let (_root, state) = test_state();
+        let html = body_of(
+            data_source_detail_page(
+                State(state),
+                Path("missing-source".to_string()),
+                english_request("/user-setting/data-source/missing-source"),
+            )
+            .await,
+        )
+        .await;
+        assert!(
+            html.contains("Data source not found"),
+            "missing source must render the 404 body"
+        );
+    }
+
+    #[test]
+    fn data_source_detail_body_embeds_schema_and_state_machine() {
+        let schema = serde_json::to_string(&crate::data_source::form_fields::schema_for_ui())
+            .expect("schema serializes");
+        let body = data_source_detail_body("gitlab-main", "s1", "gitlab", &schema, false);
+        assert!(
+            !body.contains("onclick='dsDetailTest()' hidden"),
+            "the Test control must be reachable for every kind, not only rest_api/bigquery"
+        );
+        for marker in [
+            "DS_SCHEMA=",
+            "config.gitlab_url",
+            "GitLab Personal Access Token",
+            "id='dsDetailName' autocomplete='off' disabled",
+            "dsDetailPrimary",
+            "dsPruneField",
+            // The Test control used to be hidden unless the kind was rest_api or bigquery, although the
+            // endpoint verifies every kind (it builds the connector, loads credentials, and records a FAIL log
+            // plus a 502 with the reason). 39 of 41 kinds therefore had no way to verify a connection.
+            "onclick='dsDetailTest()'>",
+            "document.getElementById('dsDetailTest').hidden=false",
+            // The sync and disconnect endpoints had no control at all.
+            "onclick='dsDetailSync()'",
+            "id='dsRefreshHint'",
+            "function dsUpdateRefreshHint(){",
+            "dsUpdateRefreshHint()",
+            "onclick='dsDetailDisconnect()'",
+            "function dsDetailSync(){",
+            "/sync?async=1&kb_id=",
+            "log.trigger==='schedule'",
+            "Sync started in the background; watch the logs below",
+            "function dsDetailDisconnect(){",
+            "dsLocaliseDetailActions()",
+            // Removing a stored credential needs a control of its own (see the payload test below).
+            "id='dsDetailClearToken'",
+            "id='dsClearTokenLabel'",
+            "清除已保存的凭证",
+            "method:'PATCH'",
+            "reschedule=true",
+            "status:'cancel'",
+        ] {
+            assert!(
+                body.contains(marker),
+                "missing data-source detail marker {marker}"
+            );
+        }
+    }
+
+    /// The create path refuses a configuration the connector cannot use (an `s3` source without a bucket, say),
+    /// because such a record is stored happily and only fails at sync time. An update could still produce one by
+    /// clearing the field, so the same rule now runs on the resulting record.
+    #[tokio::test]
+    async fn data_source_patch_cannot_clear_a_field_the_kind_requires() {
+        use crate::api::data_source_mgr::{
+            DataSourceRecord, DataSourceStore, UpdateDataSourceRequest,
+        };
+        let (root, mut state) = test_state();
+        let store = std::sync::Arc::new(
+            DataSourceStore::new(root.path().join("ds-patch").to_str().unwrap()).unwrap(),
+        );
+        std::sync::Arc::get_mut(&mut state).unwrap().data_sources = Some(store.clone());
+        let id = "ds-s3".to_string();
+        let record = DataSourceRecord {
+            id: id.clone(),
+            name: "s3-main".into(),
+            kind: "s3".into(),
+            url: "https://s3.example.com".into(),
+            token: "key:secret".into(),
+            target: "bucket/prefix".into(),
+            include_issues: false,
+            include_merge_requests: false,
+            max_items: 5,
+            created_at: "2026-01-01T00:00:00Z".into(),
+            connected: false,
+            sync_deleted_files: false,
+            prune_freq: None,
+            refresh_freq: None,
+            timeout_secs: None,
+            status: "unstart".into(),
+            extra: std::collections::HashMap::new(),
+            sync_logs: Vec::new(),
+        };
+        store.insert(record).unwrap();
+        let auth = crate::server::AuthContext {
+            user_id: "u1".into(),
+            is_admin: true,
+            token: String::new(),
+        };
+
+        // Clearing the bucket is refused, and the message names the field.
+        let body: UpdateDataSourceRequest =
+            serde_json::from_value(serde_json::json!({ "target": "" })).unwrap();
+        let error = crate::api::data_source_mgr::update_data_source(
+            axum::extract::State(state.clone()),
+            axum::Extension(auth.clone()),
+            axum::extract::Path(id.clone()),
+            axum::Json(body),
+        )
+        .await
+        .expect_err("clearing the bucket must be refused");
+        let message = error.1.0["message"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            message.contains("target is required for s3"),
+            "the message must name the field and the kind, got: {message}"
+        );
+        assert_eq!(
+            store.get(&id).unwrap().target,
+            "bucket/prefix",
+            "a refused update must not change the stored record"
+        );
+
+        // A rename does not touch a credential field, so a legacy record keeps working.
+        let body: UpdateDataSourceRequest =
+            serde_json::from_value(serde_json::json!({ "name": "s3-renamed" })).unwrap();
+        let response = crate::api::data_source_mgr::update_data_source(
+            axum::extract::State(state.clone()),
+            axum::Extension(auth.clone()),
+            axum::extract::Path(id.clone()),
+            axum::Json(body),
+        )
+        .await
+        .expect("a rename must still succeed");
+        assert_eq!(response["data"]["name"], "s3-renamed");
+
+        // Completing the configuration is allowed.
+        let body: UpdateDataSourceRequest =
+            serde_json::from_value(serde_json::json!({ "target": "other-bucket" })).unwrap();
+        let response = crate::api::data_source_mgr::update_data_source(
+            axum::extract::State(state),
+            axum::Extension(auth),
+            axum::extract::Path(id.clone()),
+            axum::Json(body),
+        )
+        .await
+        .expect("a complete configuration must be accepted");
+        assert_eq!(response["data"]["target"], "other-bucket");
+    }
+
+    #[tokio::test]
+    async fn data_source_patch_cancel_persists_status_without_syncing() {
+        use crate::api::data_source_mgr::{
+            DataSourceRecord, DataSourceStore, UpdateDataSourceRequest,
+        };
+        let (root, mut state) = test_state();
+        let store = std::sync::Arc::new(
+            DataSourceStore::new(root.path().join("ds-data").to_str().unwrap()).unwrap(),
+        );
+        std::sync::Arc::get_mut(&mut state).unwrap().data_sources = Some(store.clone());
+        let id = "ds-cancel".to_string();
+        store
+            .insert(DataSourceRecord {
+                id: id.clone(),
+                name: "webdav-main".into(),
+                kind: "webdav".into(),
+                url: "https://dav.example.com".into(),
+                token: String::new(),
+                target: "/docs".into(),
+                include_issues: false,
+                include_merge_requests: false,
+                max_items: 5,
+                created_at: "2026-01-01T00:00:00Z".into(),
+                connected: false,
+                sync_deleted_files: false,
+                prune_freq: None,
+                refresh_freq: None,
+                timeout_secs: None,
+                status: "schedule".into(),
+                extra: std::collections::HashMap::new(),
+                sync_logs: Vec::new(),
+            })
+            .unwrap();
+        let auth = crate::server::AuthContext {
+            user_id: "u1".into(),
+            is_admin: true,
+            token: String::new(),
+        };
+        let body: UpdateDataSourceRequest =
+            serde_json::from_value(serde_json::json!({ "status": "cancel" })).unwrap();
+        let response = crate::api::data_source_mgr::update_data_source(
+            axum::extract::State(state),
+            axum::Extension(auth),
+            axum::extract::Path(id.clone()),
+            axum::Json(body),
+        )
+        .await
+        .expect("cancel patch succeeds");
+        assert_eq!(response["code"], 0);
+        assert_eq!(response["data"]["status"], "cancel");
+        assert_eq!(store.get(&id).unwrap().status, "cancel");
+    }
+
+    #[tokio::test]
+    async fn data_source_logs_endpoint_paginates_ragflow_shaped_rows() {
+        use crate::api::data_source_mgr::{DataSourceRecord, DataSourceStore};
+        let (root, mut state) = test_state();
+        let store = std::sync::Arc::new(
+            DataSourceStore::new(root.path().join("ds-logs").to_str().unwrap()).unwrap(),
+        );
+        std::sync::Arc::get_mut(&mut state).unwrap().data_sources = Some(store.clone());
+        let id = "ds-logs-1".to_string();
+        let record = DataSourceRecord {
+            id: id.clone(),
+            name: "logs".into(),
+            kind: "webdav".into(),
+            url: "https://dav.example.com".into(),
+            token: String::new(),
+            target: "/docs".into(),
+            include_issues: false,
+            include_merge_requests: false,
+            max_items: 5,
+            created_at: "2026-01-01T00:00:00Z".into(),
+            connected: true,
+            sync_deleted_files: false,
+            prune_freq: Some(60),
+            refresh_freq: Some(30),
+            timeout_secs: None,
+            status: "done".into(),
+            extra: std::collections::HashMap::new(),
+            sync_logs: Vec::new(),
+        };
+        store.insert(record.clone()).unwrap();
+        for i in 0..12 {
+            store
+                .append_sync_log(
+                    &id,
+                    &record,
+                    if i % 3 == 0 { "FAIL" } else { "DONE" },
+                    "sync",
+                    &format!("run {i}"),
+                    Some(i as u64 + 1),
+                    Some(i as u64 + 2),
+                    None,
+                    None,
+                    None,
+                    Some("kb1"),
+                    Some("Finance"),
+                    None,
+                )
+                .unwrap();
+        }
+        let query: std::collections::HashMap<String, String> =
+            serde_json::from_str(r#"{"page":"1","page_size":"5"}"#).unwrap();
+        let response = crate::api::data_source_mgr::get_data_source_logs(
+            axum::extract::State(state.clone()),
+            axum::extract::Path(id.clone()),
+            axum::extract::Query(query),
+        )
+        .await
+        .expect("logs page 1 succeeds");
+        assert_eq!(response["code"], 0);
+        assert_eq!(response["data"]["total"], 12);
+        assert_eq!(response["data"]["logs"].as_array().unwrap().len(), 5);
+        let first = &response["data"]["logs"][0];
+        assert_eq!(first["kb_name"], "Finance");
+        assert_eq!(first["task_type"], "sync");
+        assert!(first["time_started"].is_string());
+        // 上游分页约束：page_size 上限 100，超过返回 400。
+        let query: std::collections::HashMap<String, String> =
+            serde_json::from_str(r#"{"page":"1","page_size":"101"}"#).unwrap();
+        let error = crate::api::data_source_mgr::get_data_source_logs(
+            axum::extract::State(state),
+            axum::extract::Path(id),
+            axum::extract::Query(query),
+        )
+        .await
+        .expect_err("page_size above 100 is rejected");
+        assert_eq!(error.0, axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn data_source_patch_nested_config_persists_and_rebuilds_detail() {
+        use crate::api::data_source_mgr::{
+            DataSourceRecord, DataSourceStore, UpdateDataSourceRequest,
+        };
+        let (root, mut state) = test_state();
+        let store = std::sync::Arc::new(
+            DataSourceStore::new(root.path().join("ds-config").to_str().unwrap()).unwrap(),
+        );
+        std::sync::Arc::get_mut(&mut state).unwrap().data_sources = Some(store.clone());
+        let id = "ds-config".to_string();
+        store
+            .insert(DataSourceRecord {
+                id: id.clone(),
+                name: "webdav-main".into(),
+                kind: "webdav".into(),
+                url: "https://dav.example.com".into(),
+                token: String::new(),
+                target: "/docs".into(),
+                include_issues: false,
+                include_merge_requests: false,
+                max_items: 5,
+                created_at: "2026-01-01T00:00:00Z".into(),
+                connected: false,
+                sync_deleted_files: false,
+                prune_freq: None,
+                refresh_freq: None,
+                timeout_secs: None,
+                status: "unstart".into(),
+                extra: std::collections::HashMap::new(),
+                sync_logs: Vec::new(),
+            })
+            .unwrap();
+        let auth = crate::server::AuthContext {
+            user_id: "u1".into(),
+            is_admin: true,
+            token: String::new(),
+        };
+        let body: UpdateDataSourceRequest = serde_json::from_value(serde_json::json!({
+            "config": {
+                "base_url": "https://dav2.example.com",
+                "credentials": {"username": "alice", "password": "secret"},
+                "sync_deleted_files": true,
+            },
+            "prune_freq": 7,
+        }))
+        .unwrap();
+        let response = crate::api::data_source_mgr::update_data_source(
+            axum::extract::State(state),
+            axum::Extension(auth),
+            axum::extract::Path(id.clone()),
+            axum::Json(body),
+        )
+        .await
+        .expect("config patch succeeds");
+        let record = store.get(&id).unwrap();
+        assert_eq!(record.url, "https://dav2.example.com");
+        assert_eq!(record.prune_freq, Some(7));
+        assert!(record.sync_deleted_files);
+        assert_eq!(record.extra["config.credentials.username"], "alice");
+        // The credential the WebDAV connector actually authenticates with. The two form fields used to be kept
+        // in `extra` only, so the record was saved with an empty token and could never connect; nothing said so.
+        assert_eq!(
+            record.token, "alice:secret",
+            "the username/password pair must be folded into the connector's user:secret token"
+        );
+        assert_eq!(
+            response["data"]["config"]["credentials"]["username"],
+            "alice"
+        );
+        assert_eq!(response["data"]["config"]["sync_deleted_files"], true);
+    }
+
+    #[tokio::test]
+    async fn data_source_create_accepts_nested_config_and_folds_flat_fields() {
+        use crate::api::data_source_mgr::{CreateDataSourceRequest, DataSourceStore};
+        let (root, mut state) = test_state();
+        let store = std::sync::Arc::new(
+            DataSourceStore::new(root.path().join("ds-create").to_str().unwrap()).unwrap(),
+        );
+        std::sync::Arc::get_mut(&mut state).unwrap().data_sources = Some(store.clone());
+        let body: CreateDataSourceRequest = serde_json::from_value(serde_json::json!({
+            "name": "gitlab-create",
+            "type": "gitlab",
+            "config": {
+                "project_owner": "o",
+                "project_name": "p",
+                "gitlab_url": "https://g.example.com",
+                "batch_size": "7",
+                "credentials": {"gitlab_access_token": "t"},
+            },
+        }))
+        .unwrap();
+        let response = crate::api::data_source_mgr::create_data_source(
+            axum::extract::State(state),
+            axum::Json(body),
+        )
+        .await
+        .expect("schema-driven create succeeds");
+        let id = response["data"]["id"].as_str().unwrap().to_string();
+        let record = store.get(&id).unwrap();
+        assert_eq!(record.url, "https://g.example.com");
+        assert_eq!(record.target, "o/p");
+        assert_eq!(record.token, "t");
+        assert_eq!(record.max_items, 7);
+        assert_eq!(record.prune_freq, Some(5));
+        assert_eq!(record.timeout_secs, Some(1740));
+        assert_eq!(record.extra["config.project_owner"], "o");
+    }
+
+    /// Upstream's connector constants carry `customValidate` rules and `Custom` info
+    /// panels. The dialog must draw the panels (they change with the segmented scope),
+    /// show tooltips on hover instead of as permanent paragraphs, and refuse to submit a
+    /// configuration the rules reject — while the API refuses it too, so a client that
+    /// skips the JavaScript cannot store an unusable configuration.
+    #[tokio::test]
+    async fn data_source_dialog_renders_panels_tooltips_and_cross_field_rules() {
+        use crate::api::data_source_mgr::{CreateDataSourceRequest, DataSourceStore};
+        let (root, mut state) = test_state();
+        let store = std::sync::Arc::new(
+            DataSourceStore::new(root.path().join("ds-rules").to_str().unwrap()).unwrap(),
+        );
+        std::sync::Arc::get_mut(&mut state).unwrap().data_sources = Some(store.clone());
+        let html = body_of(
+            datasources_page(english_request("/user-setting/data-source"))
+                .await
+                .expect("data-source page renders"),
+        )
+        .await;
+        for marker in [
+            // The panel renderer and the hover tooltip trigger.
+            "function dscBuildPanel(field)",
+            "var lines=((window.DS_ZH&&field.panel_zh)?field.panel_zh:field.panel_en||'').split('\\n')",
+            "node.className=index===0?'ds-panel-heading':'ds-panel-line'",
+            "function dsTooltip(host,text)",
+            "trigger.className='ds-tip-trigger'",
+            "popup.setAttribute('role','tooltip')",
+            "trigger.addEventListener('mouseenter'",
+            // Rules run before the request is sent, and the message is the upstream one.
+            "function dscValidate()",
+            // `allowCustomValue` selects are comboboxes: a datalist of suggestions plus a
+            // text field, so a value outside the list can still be entered.
+            "function dsCustomSelect(field,onChange)",
+            "input.setAttribute('role','combobox')",
+            "list.id=listId",
+            "field.allow_custom",
+            "if(rule.require==='any_of')",
+            "dscConditionMatches",
+            "condition.any_filled",
+            "condition.default!==undefined",
+            "node.dataset.field=failures.length?failures[0].field:''",
+            // Panels never travel in the payload.
+            "if(field.type==='Custom')return;dscSet(config,dscPath(field.name),dscValue(field.name))",
+        ] {
+            assert!(
+                html.contains(marker),
+                "data-source dialog marker missing: {marker}"
+            );
+        }
+        let css = include_str!("web_css.txt");
+        for rule in [
+            ".ds-tip-trigger{display:inline-flex",
+            ".ds-panel-heading{",
+            ".ds-custom-select-host{",
+            ".ds-tip-popup.show{",
+            ".ds-panel-heading{",
+            ".ds-panel-line{",
+        ] {
+            assert!(css.contains(rule), "tooltip/panel css missing: {rule}");
+        }
+
+        // The API refuses the same configuration the dialog refuses.
+        let body: CreateDataSourceRequest = serde_json::from_value(serde_json::json!({
+            "name": "seafile-account-without-token",
+            "type": "seafile",
+            "config": {"seafile_url": "https://sf.example.com", "sync_scope": "account"},
+        }))
+        .unwrap();
+        let error = crate::api::data_source_mgr::create_data_source(
+            axum::extract::State(state.clone()),
+            axum::Json(body),
+        )
+        .await
+        .expect_err("the account scope needs its token");
+        assert_eq!(error.0, axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(
+            error.1.0["message"], "Account API Token is required for Entire Account scope",
+            "the refusal must carry the upstream sentence in the RAGFlow body shape"
+        );
+        assert_eq!(error.1.0["code"], 400);
+        assert!(store.list().is_empty(), "nothing was stored");
+
+        // A configuration that satisfies the rules is accepted.
+        let body: CreateDataSourceRequest = serde_json::from_value(serde_json::json!({
+            "name": "seafile-library",
+            "type": "seafile",
+            "config": {
+                "seafile_url": "https://sf.example.com",
+                "sync_scope": "library",
+                "repo_id": "7a9e1b3c",
+                "credentials": {"repo_token": "r"},
+            },
+        }))
+        .unwrap();
+        let created = crate::api::data_source_mgr::create_data_source(
+            axum::extract::State(state),
+            axum::Json(body),
+        )
+        .await
+        .expect("a valid library configuration is stored");
+        assert_eq!(created["data"]["name"], "seafile-library");
+    }
+
+    #[tokio::test]
+    async fn data_source_create_without_config_reports_the_field_that_is_missing() {
+        use crate::api::data_source_mgr::{CreateDataSourceRequest, DataSourceStore};
+        let (root, mut state) = test_state();
+        let store = std::sync::Arc::new(
+            DataSourceStore::new(root.path().join("ds-flat").to_str().unwrap()).unwrap(),
+        );
+        std::sync::Arc::get_mut(&mut state).unwrap().data_sources = Some(store.clone());
+        // `webdav` is one of the eight kinds that do not validate in their constructor, so the API checks it.
+        // The message used to be the fixed string "name/url/target are required" for every omission, which
+        // named fields the caller had supplied; it now names the empty one.
+        let body: CreateDataSourceRequest =
+            serde_json::from_value(serde_json::json!({ "name": "n", "type": "webdav" })).unwrap();
+        let error = crate::api::data_source_mgr::create_data_source(
+            axum::extract::State(state.clone()),
+            axum::Json(body),
+        )
+        .await
+        .expect_err("flat create without url/token fails closed");
+        let message = error.1.0["message"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            message.contains("url and token are required for webdav"),
+            "the message must name the missing fields, got: {message}"
+        );
+        assert!(
+            !message.contains("name/"),
+            "the message must not list fields the caller supplied, got: {message}"
+        );
+
+        // A kind that validates in its constructor reports its own reason instead of the table's.
+        let body: CreateDataSourceRequest =
+            serde_json::from_value(serde_json::json!({ "name": "n", "type": "rss" })).unwrap();
+        let error = crate::api::data_source_mgr::create_data_source(
+            axum::extract::State(state),
+            axum::Json(body),
+        )
+        .await
+        .expect_err("a feed without a URL is refused");
+        let message = error.1.0["message"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            message.to_lowercase().contains("url"),
+            "the connector's own message must name the URL, got: {message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn datasources_page_wires_schema_driven_add_modal() {
+        let (_root, _state) = test_state();
+        let html = body_of(
+            datasources_page(english_request("/user-setting/data-source"))
+                .await
+                .expect("data-source page renders"),
+        )
+        .await;
+        for marker in [
+            "data-testid='data-source-add-modal'",
+            "openDsAdd(",
+            "dscRenderFields",
+            "dscCreate",
+            "DS_SCHEMA=",
+            "window.DS_ZH=false;",
+            ".ds-tip-trigger{display:inline-flex",
+            ".ds-panel-heading{",
+            ".ds-custom-select-host{",
+            "tooltip_en",
+            "config.bucket_name",
+            "Create your ",
+            "method:'POST'",
+        ] {
+            assert!(
+                html.contains(marker),
+                "missing data-source add-modal marker {marker}"
+            );
+        }
+        for emoji in ["🔗", "🐙", "📧", "📰"] {
+            assert!(
+                !html.contains(emoji),
+                "data-source page still emits emoji icon {emoji}"
+            );
+        }
+        assert!(html.contains("assets/svg/data-source/github.svg"));
+        assert!(html.contains("assets/svg/data-source/rss.svg"));
+    }
+
+    #[tokio::test]
+    async fn datasources_page_renders_available_cards_and_grouped_delete_modal() {
+        let (_root, _state) = test_state();
+        let html = body_of(
+            datasources_page(english_request("/user-setting/data-source"))
+                .await
+                .expect("data-source page renders"),
+        )
+        .await;
+        for marker in [
+            "data-testid='available-sources-section'",
+            "data-testid='data-source-delete-modal'",
+            "dsRenderCards",
+            "dsGroupedRows",
+            "openDsDelete",
+            "DS_SOURCE_INFO=",
+            "assets/svg/data-source/s3.svg",
+            "Delete data source",
+            "Are you sure you want to delete this data source link?",
+            "dsDeleteStatus",
+            "dsLocalType",
+            "data-testid='box-oauth-dialog'",
+            "Configure Box OAuth credentials",
+            "Submit &amp; Authorize",
+            "/api/v1/connectors/box/oauth/web/start",
+            "/api/v1/connectors/box/oauth/web/result",
+            "data-testid='google-oauth-dialog'",
+            "Complete Google verification",
+            "Authorize with Google",
+            "/api/v1/connectors/google/oauth/web/start?type=",
+            "/api/v1/connectors/google/oauth/web/result?type=",
+            "ds-avail-container{container-type:normal}",
+            "@media (min-width:1024px){.ds-available-grid",
+            "@media (min-width:1536px){.ds-available-grid",
+            ".ds-available-grid .cc-available-card{padding:10px",
+            ".ds-available-grid .cc-available-icon{width:24px",
+            ".ds-available-grid .cc-available-card h3{font-size:1rem}",
+            "sync?async=1",
+            "Sync started in the background",
+            "open Details for logs",
+        ] {
+            assert!(
+                html.contains(marker),
+                "missing data-source list marker {marker}"
+            );
+        }
+        assert!(!html.contains("confirm('Delete this data source?')"));
+        assert!(!html.contains("alert(data.message||'delete failed')"));
+        assert_inline_scripts_balance(&html, "/user-setting/data-source");
+    }
+}
+
+#[cfg(test)]
+mod detail_inline_script_tests {
+    /// Parse every inline `<script>` the detail page emits, with node.
+    ///
+    /// A missing separator between two statements, or an `await` in a function that is not `async`, produces no
+    /// Rust error at all — the page just dies with a `SyntaxError` that takes the whole script block down, and
+    /// the only other check that notices runs against the deployed container, after a full rebuild. Both
+    /// mistakes were made and caught here first.
+    ///
+    /// Skipped when node is unavailable so the suite still runs on a bare host.
+    /// Whether node can run, so the checks below can skip on a bare host instead of failing.
+    fn node_available() -> bool {
+        match std::process::Command::new("node").arg("--version").output() {
+            Ok(output) if output.status.success() => true,
+            _ => {
+                eprintln!("node not available; skipping the rendered-JavaScript checks");
+                false
+            }
+        }
+    }
+
+    /// The helper's source as the browser receives it, so the test exercises the real code.
+    fn detail_api_helper() -> String {
+        let schema = serde_json::to_string(&crate::data_source::form_fields::schema_for_ui())
+            .expect("schema serializes");
+        let body = super::data_source_detail_body_for_probe("probe", "s1", "local", &schema, false);
+        let start = body
+            .find("function dsDetailApi(")
+            .expect("the detail page emits the helper");
+        let tail = &body[start..];
+        let end = tail
+            .find("function dsGet")
+            .expect("the helper is followed by its neighbours");
+        tail[..end].to_string()
+    }
+
+    /// The token is never rendered into the page and the payload used to keep the field only when non-empty, so
+    /// there was no way to remove a stored credential: clearing the box sent nothing, the server kept the old
+    /// value and answered 200. The same mistake was nearly made in reverse — always sending the field would wipe
+    /// every credential on every save — so the intent is now an explicit tick, and this runs the real payload
+    /// builder to check all four combinations.
+    #[test]
+    fn the_payload_removes_a_credential_only_when_that_is_asked_for() {
+        if !node_available() {
+            return;
+        }
+        let schema = serde_json::to_string(&crate::data_source::form_fields::schema_for_ui())
+            .expect("schema serializes");
+        let body =
+            super::data_source_detail_body_for_probe("probe", "s1", "webdav", &schema, false);
+        let start = body
+            .find("function dsBuildPayload(){")
+            .expect("the detail page emits the payload builder");
+        let tail = &body[start..];
+        let end = tail.find("}function").expect("builder boundary") + 1;
+        let builder = tail[..end].to_string();
+
+        let dir = std::env::temp_dir();
+        let script = dir.join("rayrag-detail-payload-check.mjs");
+        let driver = format!(
+            r#"
+const builder = {builder};
+const values = {{ dsDetailName: 'n', dsDetailUrl: 'https://x', dsDetailTarget: 't', dsDetailToken: 'sekret', dsDetailPrune: '5', dsDetailRefresh: '5', dsDetailTimeout: '60' }};
+const makeDocument = (token, clear) => ({{
+  getElementById: (id) => {{
+    if (id === 'dsDetailToken') return {{ value: token }};
+    if (id === 'dsDetailClearToken') return {{ checked: clear }};
+    if (id === 'dsDetailSyncDeleted') return {{ checked: false }};
+    return {{ value: values[id] === undefined ? '' : values[id] }};
+  }},
+}});
+const run = (token, clear) => {{
+  const build = new Function('document', 'DS_SCHEMA_FIELDS', 'return ' + builder)(makeDocument(token, clear), []);
+  const payload = build();
+  return Object.prototype.hasOwnProperty.call(payload, 'token') ? payload.token : '<absent>';
+}};
+console.log(JSON.stringify([
+  {{ label: 'typed, not asked to clear', got: run('sekret', false) }},
+  {{ label: 'blank, not asked to clear', got: run('', false) }},
+  {{ label: 'blank, asked to clear', got: run('', true) }},
+  {{ label: 'typed, asked to clear', got: run('sekret', true) }},
+]));
+"#,
+            builder = serde_json::to_string(&builder).expect("builder escapes")
+        );
+        std::fs::write(&script, driver).expect("write driver");
+        let run = std::process::Command::new("node")
+            .arg(&script)
+            .output()
+            .expect("run the driver");
+        std::fs::remove_file(&script).ok();
+        let stdout = String::from_utf8_lossy(&run.stdout);
+        assert!(
+            run.status.success(),
+            "the driver failed: {}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        // Typing a token sends it; a blank box without the tick keeps the stored one; the tick removes it.
+        assert!(
+            stdout.contains(r#"{"label":"typed, not asked to clear","got":"sekret"}"#),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains(r#"{"label":"blank, not asked to clear","got":"<absent>"}"#),
+            "a blank box must leave the stored credential alone, got {stdout}"
+        );
+        assert!(
+            stdout.contains(r#"{"label":"blank, asked to clear","got":""}"#),
+            "the tick must be able to remove a credential, got {stdout}"
+        );
+        assert!(
+            stdout.contains(r#"{"label":"typed, asked to clear","got":""}"#),
+            "the explicit request wins over whatever is typed, got {stdout}"
+        );
+    }
+
+    /// A failing request answered with a plain-text body used to reject the promise, so the caller's failure
+    /// branch never ran and the page kept showing "Testing…". The reason was on the wire the whole time.
+    #[test]
+    fn the_detail_api_helper_reports_a_plain_text_failure_instead_of_rejecting() {
+        if !node_available() {
+            return;
+        }
+        let helper = detail_api_helper();
+        let dir = std::env::temp_dir();
+        let script = dir.join("rayrag-detail-api-check.mjs");
+        let driver = format!(
+            r#"
+const helper = {helper};
+const cases = [
+  {{ label: 'json ok', status: 200, body: '{{"code":0,"data":{{"count":3}}}}' }},
+  {{ label: 'json error', status: 400, body: '{{"code":102,"message":"nope"}}' }},
+  {{ label: 'plain text 502', status: 502, body: 'connect failed: boom' }},
+  {{ label: 'empty 500', status: 500, body: '' }},
+];
+const results = [];
+for (const c of cases) {{
+  globalThis.fetch = async () => ({{ status: c.status, text: async () => c.body }});
+  const dsDetailApi = new Function('return ' + helper)();
+  try {{
+    const data = await dsDetailApi('/x', {{}});
+    results.push({{ label: c.label, code: data.code, message: data.message === undefined ? null : data.message }});
+  }} catch (error) {{
+    results.push({{ label: c.label, threw: String(error).slice(0, 60) }});
+  }}
+}}
+console.log(JSON.stringify(results));
+"#,
+            helper = serde_json::to_string(&helper).expect("helper escapes")
+        );
+        std::fs::write(&script, driver).expect("write driver");
+        let run = std::process::Command::new("node")
+            .arg(&script)
+            .output()
+            .expect("run the driver");
+        std::fs::remove_file(&script).ok();
+        let stdout = String::from_utf8_lossy(&run.stdout);
+        assert!(
+            run.status.success(),
+            "the driver failed: {}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        assert!(
+            !stdout.contains("threw"),
+            "no case may reject any more, got {stdout}"
+        );
+        // A JSON body keeps its own code; a plain-text body becomes one, with the reason as its message.
+        assert!(
+            stdout.contains(r#"{"label":"json ok","code":0,"message":null}"#),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains(r#"{"label":"json error","code":102,"message":"nope"}"#),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains(
+                r#"{"label":"plain text 502","code":502,"message":"connect failed: boom"}"#
+            ),
+            "the reason must survive as the message, got {stdout}"
+        );
+        assert!(
+            stdout.contains(r#"{"label":"empty 500","code":500,"message":"HTTP 500"}"#),
+            "an empty body must still report its status, got {stdout}"
+        );
+    }
+
+    #[test]
+    fn every_inline_script_of_the_detail_page_parses() {
+        if !node_available() {
+            return;
+        }
+        let schema = serde_json::to_string(&crate::data_source::form_fields::schema_for_ui())
+            .expect("schema serializes");
+        let dir = std::env::temp_dir();
+        for (lang, zh) in [("en", false), ("zh", true)] {
+            let body =
+                super::data_source_detail_body_for_probe("probe", "s1", "local", &schema, zh);
+            let mut rest = body.as_str();
+            let mut index = 0;
+            while let Some(open) = rest.find("<script>") {
+                let after = &rest[open + "<script>".len()..];
+                let Some(close) = after.find("</script>") else {
+                    break;
+                };
+                let script = &after[..close];
+                let path = dir.join(format!("rayrag-inline-{lang}-{index}.js"));
+                std::fs::write(&path, script).expect("write script");
+                let check = std::process::Command::new("node")
+                    .arg("--check")
+                    .arg(&path)
+                    .output()
+                    .expect("run node --check");
+                assert!(
+                    check.status.success(),
+                    "the {lang} detail page's inline script #{index} does not parse: {}",
+                    String::from_utf8_lossy(&check.stderr)
+                );
+                std::fs::remove_file(&path).ok();
+                rest = &after[close..];
+                index += 1;
+            }
+            assert!(
+                index > 0,
+                "the {lang} detail page must emit at least one script"
+            );
+        }
+    }
+}

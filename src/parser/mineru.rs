@@ -746,4 +746,472 @@ fn detect_structure(text: &str) -> String {
     result
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        Json, Router,
+        extract::{Multipart, State},
+        http::{HeaderMap, HeaderValue, StatusCode, header},
+        response::{IntoResponse, Response},
+        routing::{get, head, post},
+    };
+    use serde_json::json;
+    use std::collections::HashMap;
+    use std::io::{Cursor, Write};
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
 
+    #[test]
+    fn mineru_config_accepts_nested_flat_aliases_and_redacts_secrets() {
+        let nested = MinerUConfig::from_ragflow_key(
+            r#"{
+                "api_key": {
+                    "mineru_apiserver": " http://mineru.example/ ",
+                    "MINERU_API_KEY": " nested-secret ",
+                    "mineru_backend": "vlm-http-client",
+                    "mineru_server_url": " http://vlm.example/ ",
+                    "mineru_delete_output": "0",
+                    "mineru_timeout_seconds": "12"
+                }
+            }"#,
+            None,
+        )
+        .unwrap();
+        assert_eq!(nested.api_url(), "http://mineru.example");
+        assert_eq!(nested.api_key(), Some("nested-secret"));
+        assert_eq!(nested.backend(), "vlm-http-client");
+        assert_eq!(nested.server_url(), Some("http://vlm.example"));
+        assert!(!nested.delete_output());
+        assert_eq!(nested.poll_timeout().as_secs(), 12);
+        assert!(!format!("{nested:?}").contains("nested-secret"));
+        assert!(format!("{nested:?}").contains("[REDACTED]"));
+
+        let flat = MinerUConfig::from_ragflow_key(
+            r#"{
+                "MINERU_APISERVER": "http://flat.example/",
+                "MINERU_BACKEND": "pipeline",
+                "MINERU_DELETE_OUTPUT": 1
+            }"#,
+            Some("http://ignored.example"),
+        )
+        .unwrap();
+        assert_eq!(flat.api_url(), "http://flat.example");
+        assert!(flat.delete_output());
+
+        let explicit_empty = MinerUConfig::from_ragflow_key(
+            r#"{
+                "mineru_apiserver": "",
+                "MINERU_APISERVER": "http://must-not-win.example"
+            }"#,
+            Some("http://fallback-must-not-win.example"),
+        )
+        .unwrap();
+        assert_eq!(explicit_empty.api_url(), "");
+
+        let error = MinerUConfig::from_ragflow_key(
+            r#"{"mineru_apiserver":"http://mineru","mineru_backend":"unknown"}"#,
+            None,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("Invalid MinerU backend"));
+    }
+
+    #[test]
+    fn mineru_config_accepts_current_and_legacy_backend_names() {
+        for backend in MINERU_BACKENDS {
+            let config = MinerUConfig::from_ragflow_key(
+                &json!({
+                    "mineru_apiserver": "http://mineru.example",
+                    "mineru_backend": backend,
+                })
+                .to_string(),
+                None,
+            )
+            .unwrap();
+            assert_eq!(config.backend(), backend);
+        }
+    }
+
+    #[tokio::test]
+    async fn mineru_http_backends_require_model_url_and_forward_selected_backend() {
+        let state = Arc::new(MinerUSyncState::default());
+        let app = Router::new()
+            .route("/openapi.json", head(mineru_head))
+            .route("/file_parse", post(mineru_zip_parse))
+            .with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        for backend in ["vlm-http-client", "hybrid-http-client"] {
+            let config = MinerUConfig::from_ragflow_key(
+                &json!({
+                    "mineru_apiserver": format!("http://{address}"),
+                    "mineru_backend": backend,
+                    "mineru_server_url": "",
+                })
+                .to_string(),
+                None,
+            )
+            .unwrap();
+            let error = MinerUClient::new(config.clone())
+                .unwrap()
+                .check_installation()
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("MINERU_SERVER_URL"), "{error}");
+            assert!(error.contains(backend), "{error}");
+
+            let mut configured = config;
+            // A failed informational model probe preserves upstream behavior.
+            configured.server_url = Some(format!("http://{address}/unavailable-model"));
+            let client = MinerUClient::new(configured).unwrap();
+            client.check_installation().await.unwrap();
+            client
+                .parse_pdf(
+                    "fixture.pdf",
+                    b"%PDF-1.4\nfixture",
+                    &MinerURequestOptions::default(),
+                )
+                .await
+                .unwrap();
+            let received = state.received.lock().unwrap();
+            assert_eq!(received.get("backend").map(String::as_str), Some(backend));
+        }
+        server.abort();
+    }
+
+    #[test]
+    fn mineru_content_list_filters_chrome_and_converts_supported_blocks() {
+        let outputs = json!([
+            {"type":"header","text":"duplicate title","page_idx":0,"bbox":[0,0,1,1]},
+            {"type":"text","text":"&lt;p&gt;Body&lt;/p&gt;","page_idx":0,"bbox":[0,0,1,1]},
+            {
+                "type":"table",
+                "table_body":"&lt;table&gt;&lt;tr&gt;&lt;td&gt;A&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;",
+                "table_caption":["Caption"],
+                "page_idx":0,
+                "bbox":[0,0,1,1]
+            },
+            {
+                "type":"image",
+                "image_caption":["Figure"],
+                "image_footnote":["Footnote"],
+                "page_idx":0,
+                "bbox":[0,0,1,1]
+            },
+            {"type":"equation","text":"E = mc^2","page_idx":0,"bbox":[0,0,1,1]},
+            {"type":"code","code_body":"fn main() {}","code_caption":["Rust"],"page_idx":0,"bbox":[0,0,1,1]},
+            {"type":"list","list_items":["one","two"],"page_idx":0,"bbox":[0,0,1,1]},
+            {"type":"sidebar","text":"must be skipped","page_idx":0,"bbox":[0,0,1,1]},
+            {"type":"page_number","text":"77","page_idx":0,"bbox":[0,0,1,1]}
+        ]);
+        let output = convert_content_list(outputs.as_array().unwrap(), false).unwrap();
+        assert_eq!(output.block_count, 6);
+        assert!(output.content.contains("Body"));
+        assert!(!output.content.contains("&lt;p&gt;"));
+        assert!(output.content.contains("<!--TABLE_START-->"));
+        assert!(output.content.contains("A\n\nCaption"));
+        assert!(output.content.contains("<!--IMAGE_START-->"));
+        assert!(output.content.contains("Figure\nFootnote"));
+        assert!(output.content.contains("E = mc^2"));
+        assert!(output.content.contains("fn main() {}"));
+        assert!(output.content.contains("one\ntwo"));
+        assert!(!output.content.contains("duplicate title"));
+        assert!(!output.content.contains("must be skipped"));
+        assert!(!output.content.contains("77"));
+
+        assert_eq!(
+            sanitize_section_text(
+                "&lt;table&gt;&lt;tr&gt;&lt;td&gt;Alpha&lt;/td&gt;&lt;td&gt;Beta&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;"
+            )
+            .unwrap(),
+            "AlphaBeta"
+        );
+    }
+
+    #[derive(Default)]
+    struct MinerUSyncState {
+        received: Mutex<HashMap<String, String>>,
+    }
+
+    async fn mineru_head(
+        State(state): State<Arc<MinerUSyncState>>,
+        headers: HeaderMap,
+    ) -> StatusCode {
+        state.received.lock().unwrap().insert(
+            "head_authorization".into(),
+            headers
+                .get(header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_owned(),
+        );
+        StatusCode::OK
+    }
+
+    async fn mineru_zip_parse(
+        State(state): State<Arc<MinerUSyncState>>,
+        headers: HeaderMap,
+        mut multipart: Multipart,
+    ) -> Response {
+        state.received.lock().unwrap().insert(
+            "parse_authorization".into(),
+            headers
+                .get(header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_owned(),
+        );
+        while let Some(field) = multipart.next_field().await.unwrap() {
+            let field_name = field.name().unwrap_or_default().to_owned();
+            let file_name = field.file_name().map(str::to_owned);
+            let content_type = field.content_type().map(str::to_owned);
+            let body = field.bytes().await.unwrap();
+            let mut received = state.received.lock().unwrap();
+            received.insert(
+                field_name.clone(),
+                String::from_utf8_lossy(&body).into_owned(),
+            );
+            if field_name == "files" {
+                received.insert("file_name".into(), file_name.unwrap_or_default());
+                received.insert("file_content_type".into(), content_type.unwrap_or_default());
+            }
+        }
+
+        let cursor = Cursor::new(Vec::new());
+        let mut archive = zip::ZipWriter::new(cursor);
+        archive
+            .start_file(
+                "mydocument_content_list.json",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+        archive
+            .write_all(
+                br#"[
+                    {"type":"text","text":"ZIP title","page_idx":0,"bbox":[0,0,1,1]},
+                    {"type":"table","table_body":"<table><tr><td>x</td></tr></table>","page_idx":0,"bbox":[0,0,1,1]}
+                ]"#,
+            )
+            .unwrap();
+        let body = archive.finish().unwrap().into_inner();
+        let mut response = body.into_response();
+        response.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/zip"),
+        );
+        response
+    }
+
+    #[tokio::test]
+    async fn mineru_python_zip_contract_sends_full_form_and_reads_content_list() {
+        let state = Arc::new(MinerUSyncState::default());
+        let app = Router::new()
+            .route("/openapi.json", head(mineru_head))
+            .route("/file_parse", post(mineru_zip_parse))
+            .with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let config = MinerUConfig::from_ragflow_key(
+            &format!(
+                r#"{{
+                    "mineru_apiserver":"http://{address}/",
+                    "mineru_api_key":"mineru-secret",
+                    "mineru_backend":"pipeline"
+                }}"#
+            ),
+            None,
+        )
+        .unwrap();
+        let client = MinerUClient::new(config).unwrap();
+        client.check_installation().await.unwrap();
+        let output = client
+            .parse_pdf(
+                "my document.pdf",
+                b"%PDF-1.4\nmock",
+                &MinerURequestOptions {
+                    language: "English".into(),
+                    method: "ocr".into(),
+                    formula_enable: false,
+                    table_enable: true,
+                },
+            )
+            .await
+            .unwrap();
+        server.abort();
+
+        assert!(output.structured);
+        assert_eq!(output.block_count, 2);
+        assert!(output.content.contains("ZIP title"));
+        assert!(output.content.contains("<!--TABLE_START-->"));
+        let received = state.received.lock().unwrap();
+        assert_eq!(
+            received.get("head_authorization").map(String::as_str),
+            Some("Bearer mineru-secret")
+        );
+        assert_eq!(
+            received.get("parse_authorization").map(String::as_str),
+            Some("Bearer mineru-secret")
+        );
+        assert_eq!(
+            received.get("file_name").map(String::as_str),
+            Some("mydocument.pdf")
+        );
+        assert_eq!(
+            received.get("file_content_type").map(String::as_str),
+            Some("application/pdf")
+        );
+        assert_eq!(
+            received.get("files").map(String::as_bytes),
+            Some(b"%PDF-1.4\nmock".as_slice())
+        );
+        assert_eq!(
+            received.get("backend").map(String::as_str),
+            Some("pipeline")
+        );
+        assert_eq!(received.get("lang_list").map(String::as_str), Some("en"));
+        assert_eq!(
+            received.get("parse_method").map(String::as_str),
+            Some("ocr")
+        );
+        assert_eq!(
+            received.get("formula_enable").map(String::as_str),
+            Some("False")
+        );
+        assert_eq!(
+            received.get("table_enable").map(String::as_str),
+            Some("True")
+        );
+        assert_eq!(
+            received.get("response_format_zip").map(String::as_str),
+            Some("True")
+        );
+        assert_eq!(
+            received.get("return_content_list").map(String::as_str),
+            Some("True")
+        );
+        assert_eq!(received.get("start_page_id").map(String::as_str), Some("0"));
+        assert_eq!(
+            received.get("end_page_id").map(String::as_str),
+            Some("99999")
+        );
+    }
+
+    #[derive(Default)]
+    struct MinerUAsyncState {
+        polls: AtomicUsize,
+        authorization: Mutex<Vec<String>>,
+    }
+
+    async fn mineru_async_head() -> StatusCode {
+        StatusCode::OK
+    }
+
+    async fn mineru_async_submit(
+        State(state): State<Arc<MinerUAsyncState>>,
+        headers: HeaderMap,
+        mut multipart: Multipart,
+    ) -> Response {
+        state.authorization.lock().unwrap().push(
+            headers
+                .get(header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_owned(),
+        );
+        let mut fields = HashMap::new();
+        while let Some(field) = multipart.next_field().await.unwrap() {
+            let name = field.name().unwrap_or_default().to_owned();
+            fields.insert(
+                name,
+                String::from_utf8_lossy(&field.bytes().await.unwrap()).into_owned(),
+            );
+        }
+        assert_eq!(fields.get("backend").map(String::as_str), Some("pipeline"));
+        assert!(
+            fields
+                .get("files")
+                .is_some_and(|body| body.starts_with("%PDF"))
+        );
+        (
+            StatusCode::ACCEPTED,
+            Json(json!({"data":{"task_id":"task-1"}})),
+        )
+            .into_response()
+    }
+
+    async fn mineru_async_poll(
+        State(state): State<Arc<MinerUAsyncState>>,
+        headers: HeaderMap,
+    ) -> Response {
+        state.authorization.lock().unwrap().push(
+            headers
+                .get(header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_owned(),
+        );
+        if state.polls.fetch_add(1, Ordering::SeqCst) == 0 {
+            return Json(json!({"results":{}})).into_response();
+        }
+        Json(json!({
+            "results": {
+                "doc": {"md_content":"# Async title\n\nBody paragraph.\n"}
+            }
+        }))
+        .into_response()
+    }
+
+    #[tokio::test]
+    async fn mineru_go_async_contract_polls_until_markdown_is_available() {
+        let state = Arc::new(MinerUAsyncState::default());
+        let app = Router::new()
+            .route("/openapi.json", head(mineru_async_head))
+            .route("/file_parse", post(mineru_async_submit))
+            .route("/tasks/task-1/result", get(mineru_async_poll))
+            .with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let config = MinerUConfig::from_ragflow_key(
+            &format!(
+                r#"{{
+                    "mineru_apiserver":"http://{address}",
+                    "mineru_api_key":"mineru-secret",
+                    "mineru_timeout_seconds":"2"
+                }}"#
+            ),
+            None,
+        )
+        .unwrap();
+        let client = MinerUClient::new(config).unwrap();
+        client.check_installation().await.unwrap();
+        let output = client
+            .parse_pdf(
+                "sample.pdf",
+                b"%PDF-1.4\nmock",
+                &MinerURequestOptions::default(),
+            )
+            .await
+            .unwrap();
+        server.abort();
+
+        assert!(!output.structured);
+        assert_eq!(output.content, "# Async title\n\nBody paragraph.\n");
+        assert_eq!(state.polls.load(Ordering::SeqCst), 2);
+        assert!(
+            state
+                .authorization
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|value| value == "Bearer mineru-secret")
+        );
+    }
+}

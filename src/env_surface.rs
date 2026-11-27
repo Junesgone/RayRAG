@@ -334,4 +334,115 @@ fn names(list: &[(&str, &str)]) -> BTreeSet<String> {
     list.iter().map(|(name, _)| (*name).to_string()).collect()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    /// Keys read by the crate but absent from `.env.example` and from the exemption
+    /// lists. Any name here is an operator-facing setting nobody can discover.
+    fn undocumented_reads() -> Vec<String> {
+        let documented = documented_keys();
+        let internal = names(INTERNAL_ENV);
+        read_keys()
+            .into_iter()
+            .filter(|key| !documented.contains(key) && !internal.contains(key))
+            .collect()
+    }
+
+    /// Template keys that no source file mentions and no container tool reads.
+    fn fictitious_documents() -> Vec<String> {
+        let blob: String = scanned_sources()
+            .into_iter()
+            .map(|(_, text)| text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let tooling = names(TOOLING_ONLY_ENV);
+        documented_keys()
+            .into_iter()
+            .filter(|key| !tooling.contains(key) && !blob.contains(&format!("\"{key}\"")))
+            .collect()
+    }
+
+    #[test]
+    fn every_env_key_the_crate_reads_is_documented() {
+        let missing = undocumented_reads();
+        assert!(
+            missing.is_empty(),
+            "environment keys read by src/ but missing from .env.example \
+             (document them there, or add a reasoned entry to env_surface::INTERNAL_ENV): {missing:?}"
+        );
+    }
+
+    #[test]
+    fn every_documented_key_is_read_by_the_crate_or_a_container_tool() {
+        let bogus = fictitious_documents();
+        assert!(
+            bogus.is_empty(),
+            ".env.example offers keys that no code and no container tool reads \
+             (fix the name, remove the line, or add a reasoned entry to \
+             env_surface::TOOLING_ONLY_ENV): {bogus:?}"
+        );
+    }
+
+    #[test]
+    fn env_template_declares_every_key_at_most_once() {
+        let mut seen = BTreeSet::new();
+        let mut duplicates = Vec::new();
+        for line in include_str!("../.env.example").lines() {
+            let Some(name) = assignment_name(line) else {
+                continue;
+            };
+            if !seen.insert(name.clone()) {
+                duplicates.push(name);
+            }
+        }
+        assert!(
+            duplicates.is_empty(),
+            ".env.example declares the same key twice; in a dotenv file the last one \
+             silently wins: {duplicates:?}"
+        );
+    }
+
+    #[test]
+    fn every_setup_field_is_documented_in_the_template() {
+        let documented = documented_keys();
+        let missing: Vec<&str> = crate::api::setup::field_keys()
+            .into_iter()
+            .filter(|key| !documented.contains(*key))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "the first-login wizard writes keys the template does not document: {missing:?}"
+        );
+    }
+
+    #[test]
+    fn internal_exemptions_carry_a_reason() {
+        for (name, reason) in INTERNAL_ENV.iter().chain(TOOLING_ONLY_ENV) {
+            assert!(!name.is_empty(), "exemption without a name");
+            assert!(
+                reason.len() >= 10,
+                "exemption {name} needs a real reason, got {reason:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn guard_scanner_finds_known_reads() {
+        // A sanity check on the scanner itself: these keys are read through literals and
+        // through constants, so both paths must be discovered.
+        let keys = read_keys();
+        for expected in [
+            "RAYRAG_CMD_TIMEOUT",
+            "RAYRAG_MODEL_TIMEOUT",
+            "RAYRAG_HTTP_BODY_LIMIT_BYTES",
+            "RAYRAG_VECTOR_BACKEND",
+            "RAYRAG_ZVEC_DIR",
+            "EMBED_API_BASE",
+            "LLM_API_KEY",
+        ] {
+            assert!(keys.contains(expected), "scanner missed {expected}");
+        }
+        assert!(!keys.contains("NOT_AN_ENV_KEY"));
+    }
+}

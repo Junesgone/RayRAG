@@ -546,7 +546,14 @@ impl DeepSeekSearchProvider {
         }
     }
 
-    
+    /// Test seam: point the provider at a local mock server.
+    #[cfg(test)]
+    fn with_base(api_key: &str, api_base: &str) -> Self {
+        Self {
+            api_key: api_key.to_string(),
+            api_base: api_base.to_string(),
+        }
+    }
 
     pub async fn search(&self, query: &str) -> Vec<WebSearchResult> {
         match crate::deepseek::search(
@@ -721,4 +728,298 @@ pub fn create_web_search_provider(
     Ok(Some(resolved))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        Json, Router,
+        extract::Query,
+        http::{HeaderMap, StatusCode},
+        routing::{get, post},
+    };
+    use serde_json::json;
+    use std::collections::HashMap;
 
+    async fn spawn_get(handler: Router) -> (String, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, handler).await.unwrap() });
+        (format!("http://{address}"), server)
+    }
+
+    #[test]
+    fn resolver_mirrors_upstream_rules() {
+        assert!(!has_web_search_provider(None));
+        assert!(!has_web_search_provider(Some(&json!({}))));
+        // Default provider is tavily and requires a key.
+        assert!(!has_web_search_provider(Some(
+            &json!({"tavily_api_key": "  "})
+        )));
+        assert!(has_web_search_provider(Some(
+            &json!({"tavily_api_key": "k"})
+        )));
+        assert!(has_web_search_provider(Some(
+            &json!({"web_search_provider": "querit", "querit_api_key": "k"})
+        )));
+        assert!(!has_web_search_provider(Some(
+            &json!({"web_search_provider": "serply"})
+        )));
+        // You.com is keyless.
+        assert!(has_web_search_provider(Some(
+            &json!({"web_search_provider": "youcom"})
+        )));
+        // DeepSeek Search uses the provider-level key, with a per-prompt override.
+        assert!(has_web_search_provider(Some(
+            &json!({"web_search_provider": "deepseek", "deepseek_api_key": "k"})
+        )));
+        // Unknown providers are never "configured".
+        assert!(!has_web_search_provider(Some(
+            &json!({"web_search_provider": "bing", "bing_api_key": "k"})
+        )));
+        assert!(!has_web_search_provider(Some(&json!("nope"))));
+    }
+
+    #[test]
+    fn resolver_creates_the_expected_provider_kind() {
+        let provider = create_web_search_provider(Some(&json!({"tavily_api_key": "k"})))
+            .unwrap()
+            .unwrap();
+        assert!(matches!(provider, WebSearchProvider::Tavily(_)));
+        let provider = create_web_search_provider(Some(
+            &json!({"web_search_provider": "querit", "querit_api_key": "k"}),
+        ))
+        .unwrap()
+        .unwrap();
+        assert!(matches!(provider, WebSearchProvider::Querit(_)));
+        let provider = create_web_search_provider(Some(&json!({"web_search_provider": "youcom"})))
+            .unwrap()
+            .unwrap();
+        assert!(matches!(provider, WebSearchProvider::YouCom(_)));
+        let provider = create_web_search_provider(Some(
+            &json!({"web_search_provider": "deepseek", "deepseek_api_key": "k"}),
+        ))
+        .unwrap()
+        .unwrap();
+        assert!(matches!(provider, WebSearchProvider::DeepSeek(_)));
+        assert!(create_web_search_provider(None).unwrap().is_none());
+        assert!(
+            create_web_search_provider(Some(&json!({"web_search_provider": "nope"})))
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn aggregate_shape_matches_upstream_connectors() {
+        let chunks = WebSearchChunks::from_results(&[WebSearchResult {
+            url: "https://example.com".to_owned(),
+            title: "Title".to_owned(),
+            content: "hello world".to_owned(),
+            score: 1.0,
+        }]);
+        assert_eq!(chunks.chunks.len(), 1);
+        let chunk = &chunks.chunks[0];
+        let chunk_id = chunk["chunk_id"].as_str().unwrap();
+        assert_eq!(chunk_id.len(), 32);
+        assert_eq!(chunk["content_ltks"], json!(["hello", "world"]));
+        assert_eq!(chunk["content_with_weight"], "hello world");
+        assert_eq!(chunk["doc_id"], chunk_id);
+        assert_eq!(chunk["docnm_kwd"], "Title");
+        assert_eq!(chunk["kb_id"], json!([]));
+        assert_eq!(chunk["important_kwd"], json!([]));
+        assert_eq!(chunk["image_id"], "");
+        assert_eq!(chunk["similarity"], 1.0);
+        assert_eq!(chunk["vector_similarity"], 1.0);
+        assert_eq!(chunk["term_similarity"], 0);
+        assert_eq!(chunk["vector"], json!([]));
+        assert_eq!(chunk["positions"], json!([]));
+        assert_eq!(chunk["url"], "https://example.com");
+        assert_eq!(
+            chunks.doc_aggs[0],
+            json!({"doc_name": "Title", "doc_id": chunk_id, "count": 1, "url": "https://example.com"})
+        );
+    }
+
+    #[tokio::test]
+    async fn querit_posts_expected_payload_and_normalizes_results() {
+        let app = Router::new().route(
+            "/v1/search",
+            post(|headers: HeaderMap, body: String| async move {
+                let payload: Value = serde_json::from_str(&body).unwrap();
+                assert_eq!(payload["count"], 6);
+                assert_eq!(payload["chunksPerDoc"], 1);
+                assert_eq!(headers["authorization"], "Bearer sk-q");
+                Json(json!({
+                    "results": {
+                        "result": [
+                            {"snippet": "alpha", "url": "u1", "title": "t1"},
+                            {"snippet": "  ", "url": "u2", "title": "t2"},
+                            {"url": "u3"}
+                        ]
+                    }
+                }))
+            }),
+        );
+        let (base, server) = spawn_get(app).await;
+        let provider = QueritProvider::with_endpoint("sk-q", &format!("{base}/v1/search")).unwrap();
+        let results = provider.search("hello").await;
+        server.abort();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].content, "alpha");
+        assert_eq!(results[0].url, "u1");
+        assert_eq!(results[0].score, 1.0);
+    }
+
+    #[tokio::test]
+    async fn querit_failures_return_empty_results() {
+        let app = Router::new().route(
+            "/v1/search",
+            post(|| async { (StatusCode::TOO_MANY_REQUESTS, "slow down") }),
+        );
+        let (base, server) = spawn_get(app).await;
+        let provider = QueritProvider::with_endpoint("sk", &format!("{base}/v1/search")).unwrap();
+        assert!(provider.search("q").await.is_empty());
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn serply_sends_key_and_user_agent_and_reads_description() {
+        let app = Router::new().route(
+            "/v1/search",
+            get(
+                |headers: HeaderMap, Query(params): Query<HashMap<String, String>>| async move {
+                    assert_eq!(headers["x-api-key"], "sk-s");
+                    assert_eq!(headers["user-agent"], "ragflow-web-search");
+                    assert_eq!(params.get("q").map(String::as_str), Some("hello"));
+                    assert_eq!(params.get("num").map(String::as_str), Some("6"));
+                    Json(json!({
+                        "results": [
+                            {"description": "desc", "link": "u1", "title": "t1"},
+                            {"description": "", "link": "u2", "title": "t2"}
+                        ]
+                    }))
+                },
+            ),
+        );
+        let (base, server) = spawn_get(app).await;
+        let provider = SerplyProvider::with_endpoint("sk-s", &format!("{base}/v1/search")).unwrap();
+        let results = provider.search("hello").await;
+        server.abort();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].content, "desc");
+        assert_eq!(results[0].url, "u1");
+    }
+
+    #[tokio::test]
+    async fn youcom_keyless_uses_agents_endpoint_without_api_key() {
+        let app = Router::new()
+            .route(
+                "/v1/search",
+                get(|| async { (StatusCode::UNAUTHORIZED, "keyed endpoint reached") }),
+            )
+            .route(
+                "/v1/agents/search",
+                get(
+                    |headers: HeaderMap, Query(params): Query<HashMap<String, String>>| async move {
+                        assert!(headers.get("x-api-key").is_none());
+                        assert_eq!(params.get("count").map(String::as_str), Some("6"));
+                        Json(json!({
+                            "results": {
+                                "web": [
+                                    {"url": "u1", "title": "t1", "snippets": ["s1", " ", "s2"]}
+                                ],
+                                "news": [
+                                    {"url": "u2", "title": "t2", "description": "news desc"}
+                                ]
+                            }
+                        }))
+                    },
+                ),
+            );
+        let (base, server) = spawn_get(app).await;
+        let provider = YouComProvider::with_endpoints(
+            "",
+            &format!("{base}/v1/search"),
+            &format!("{base}/v1/agents/search"),
+        )
+        .unwrap();
+        let results = provider.search("hello").await;
+        server.abort();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].content, "s1\ns2");
+        assert_eq!(results[1].content, "news desc");
+    }
+
+    #[tokio::test]
+    async fn youcom_keyed_uses_api_endpoint_and_trims_to_six() {
+        let app = Router::new()
+            .route(
+                "/v1/agents/search",
+                get(|| async { (StatusCode::UNAUTHORIZED, "keyless reached") }),
+            )
+            .route(
+                "/v1/search",
+                get(|headers: HeaderMap| async move {
+                    assert_eq!(headers["x-api-key"], "sk-y");
+                    let web: Vec<Value> = (0..5)
+                        .map(|index| json!({"url": format!("w{index}"), "title": "t", "description": "d"}))
+                        .collect();
+                    let news: Vec<Value> = (0..5)
+                        .map(|index| json!({"url": format!("n{index}"), "title": "t", "description": "d"}))
+                        .collect();
+                    Json(json!({"results": {"web": web, "news": news}}))
+                }),
+            );
+        let (base, server) = spawn_get(app).await;
+        let provider = YouComProvider::with_endpoints(
+            "sk-y",
+            &format!("{base}/v1/search"),
+            &format!("{base}/v1/agents/search"),
+        )
+        .unwrap();
+        let results = provider.search("hello").await;
+        server.abort();
+        assert_eq!(results.len(), 6);
+        // Web results lead; the merged list is trimmed back to six, so the
+        // fifth web hit is followed by the first news hit.
+        assert!(
+            results[..5]
+                .iter()
+                .all(|result| result.url.starts_with('w'))
+        );
+        assert_eq!(results[5].url, "n0");
+    }
+
+    #[tokio::test]
+    async fn tavily_adapter_maps_advanced_search_results() {
+        let app = Router::new().route(
+            "/search",
+            post(|headers: HeaderMap, body: String| async move {
+                assert_eq!(headers["authorization"], "Bearer sk-t");
+                let payload: Value = serde_json::from_str(&body).unwrap();
+                assert_eq!(payload["search_depth"], "advanced");
+                assert_eq!(payload["max_results"], 6);
+                Json(json!({
+                    "results": [
+                        {"url": "u1", "title": "t1", "content": "body", "score": 0.5}
+                    ]
+                }))
+            }),
+        );
+        let (base, server) = spawn_get(app).await;
+        let client = crate::tavily::TavilyClient::new_with_endpoints(
+            &format!("{base}/search"),
+            &format!("{base}/extract"),
+        )
+        .unwrap();
+        let provider = TavilySearchProvider {
+            api_key: "sk-t".to_owned(),
+            client,
+        };
+        let results = provider.search("hello").await;
+        server.abort();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].score, 0.5);
+        assert_eq!(results[0].content, "body");
+    }
+}

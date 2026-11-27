@@ -268,4 +268,134 @@ fn _doc_note() -> HashMap<&'static str, &'static str> {
     HashMap::new()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn maps_deepl_lang_codes_to_baidu() {
+        assert_eq!(map_lang("ZH"), "zh");
+        assert_eq!(map_lang("EN-GB"), "en");
+        assert_eq!(map_lang("ja"), "jp");
+        assert_eq!(map_lang("ko"), "kor");
+        assert_eq!(map_lang("XX"), "auto");
+    }
+
+    #[test]
+    fn validates_deepl_style_lang_codes() {
+        assert!(validate_lang_code("ZH", false).is_ok());
+        assert!(validate_lang_code("EN-GB", true).is_ok());
+        assert!(validate_lang_code("XX", false).is_err());
+    }
+
+    #[tokio::test]
+    async fn empty_text_returns_empty() {
+        let client = BaiduTranslateClient::default();
+        let request = TranslateRequest {
+            text: "   ".to_string(),
+            source_lang: "ZH".to_string(),
+            target_lang: "EN".to_string(),
+        };
+        assert_eq!(client.translate(&request).await.unwrap(), "");
+    }
+
+    #[tokio::test]
+    async fn sug_endpoint_parses_translations() {
+        use axum::extract::Form;
+        use axum::{Router, routing::post};
+        let app = Router::new().route(
+            "/sug",
+            post(|Form(form): Form<HashMap<String, String>>| async move {
+                assert_eq!(form.get("kw").map(String::as_str), Some("hello"));
+                r#"{"errno":0,"data":[{"k":"hello","v":"你好"},{"k":"hello world","v":"你好，世界"}]}"#
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = BaiduTranslateClient {
+            client: crate::common::cmd_timeout::model_client(),
+            appid: None,
+            secret_key: None,
+        };
+        let request = TranslateRequest {
+            text: "hello".to_string(),
+            source_lang: "EN".to_string(),
+            target_lang: "ZH".to_string(),
+        };
+        let translated = client
+            .translate_sug_at(&request, &format!("http://{addr}/sug"))
+            .await
+            .unwrap();
+        assert_eq!(translated, "你好\n你好，世界");
+    }
+
+    #[tokio::test]
+    async fn vip_endpoint_parses_trans_result_and_signs_form() {
+        use axum::extract::Form;
+        use axum::{Router, routing::post};
+        let app = Router::new().route(
+            "/vip",
+            post(|Form(form): Form<HashMap<String, String>>| async move {
+                assert_eq!(form.get("appid").map(String::as_str), Some("test_appid"));
+                assert_eq!(form.get("from").map(String::as_str), Some("zh"));
+                assert_eq!(form.get("to").map(String::as_str), Some("en"));
+                let sign = form.get("sign").map(String::as_str).unwrap_or_default();
+                assert_eq!(sign.len(), 32);
+                assert!(sign.chars().all(|ch| ch.is_ascii_hexdigit()));
+                r#"{"from":"zh","to":"en","trans_result":[{"src":"你好","dst":"Hello"}]}"#
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = BaiduTranslateClient {
+            client: crate::common::cmd_timeout::model_client(),
+            appid: Some("test_appid".to_string()),
+            secret_key: Some("test_secret".to_string()),
+        };
+        let request = TranslateRequest {
+            text: "你好".to_string(),
+            source_lang: "ZH".to_string(),
+            target_lang: "EN".to_string(),
+        };
+        let translated = client
+            .translate_vip_at(&request, &format!("http://{addr}/vip"))
+            .await
+            .unwrap();
+        assert_eq!(translated, "Hello");
+    }
+
+    #[tokio::test]
+    async fn vip_endpoint_surfaces_api_error_code() {
+        use axum::{Router, routing::post};
+        let app = Router::new().route(
+            "/vip",
+            post(|| async { r#"{"error_code":"54003","error_msg":"Invalid Access"}"# }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = BaiduTranslateClient {
+            client: crate::common::cmd_timeout::model_client(),
+            appid: Some("test_appid".to_string()),
+            secret_key: Some("test_secret".to_string()),
+        };
+        let request = TranslateRequest {
+            text: "你好".to_string(),
+            source_lang: "ZH".to_string(),
+            target_lang: "EN".to_string(),
+        };
+        let error = client
+            .translate_vip_at(&request, &format!("http://{addr}/vip"))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("54003"), "{error}");
+    }
+}

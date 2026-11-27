@@ -202,4 +202,68 @@ pub fn bing_results_to_tool_rows(results: &[BingSearchResult]) -> Vec<Value> {
         .collect()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn parses_bing_html_into_rows() {
+        let html = r#"
+<html><body>
+<li class="b_algo">
+  <h2><a href="https://example.com/page">Example Title</a></h2>
+  <div class="b_caption"><p>Some <b>snippet</b> text.</p></div>
+</li>
+<li class="b_algo">
+  <h2><a href="https://example.org/other">Other</a></h2>
+  <p>Second snippet</p>
+</li>
+</body></html>"#;
+        let results = parse_bing_results(html);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].title, "Example Title");
+        assert_eq!(results[0].link, "https://example.com/page");
+        assert!(results[0].snippet.contains("snippet"));
+        assert_eq!(results[1].title, "Other");
+    }
+
+    #[test]
+    fn rows_are_ragflow_shaped() {
+        let rows = bing_results_to_tool_rows(&[BingSearchResult {
+            title: "t".into(),
+            link: "https://l".into(),
+            snippet: "s".into(),
+        }]);
+        assert_eq!(rows[0]["title"], "t");
+        assert_eq!(rows[0]["link"], "https://l");
+        assert_eq!(rows[0]["snippet"], "s");
+    }
+
+    #[tokio::test]
+    async fn empty_query_is_rejected() {
+        let client = BingClient::default();
+        let error = client
+            .search(&BingSearchRequest {
+                query: "   ".into(),
+                channel: "general".into(),
+                top_n: 5,
+            })
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("query is required"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live access to cn.bing.com"]
+    async fn live_bing_search() {
+        let results = BingClient::default()
+            .search(&BingSearchRequest {
+                query: "RAGFlow".into(),
+                channel: "general".into(),
+                top_n: 5,
+            })
+            .await
+            .unwrap();
+        assert!(!results.is_empty());
+    }
+}

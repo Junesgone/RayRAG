@@ -193,4 +193,148 @@ impl VisionClient {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn normalize_image_encodes_data_url() {
+        let out = VisionClient::normalize_image(b"abc", "image/png");
+        assert!(out.starts_with("data:image/png;base64,"));
+        assert_eq!(out, "data:image/png;base64,YWJj");
+    }
+
+    #[test]
+    fn vision_messages_uses_default_prompt_when_unspecified() {
+        let client = VisionClient::new(VisionConfig::default());
+        let messages = client.vision_messages("data:image/png;base64,AA==", None);
+        let content = messages[0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[0]["text"], VISION_LLM_DESCRIBE_PROMPT);
+        assert_eq!(content[1]["type"], "image_url");
+        assert_eq!(content[1]["image_url"]["url"], "data:image/png;base64,AA==");
+    }
+
+    #[test]
+    fn vision_messages_uses_custom_prompt() {
+        let client = VisionClient::new(VisionConfig::default());
+        let messages = client.vision_messages("data:image/png;base64,AA==", Some("看图说话"));
+        assert_eq!(messages[0]["content"][0]["text"], "看图说话");
+    }
+
+    #[tokio::test]
+    async fn describe_reports_provider_and_proxy_failures_with_guidance() {
+        use axum::http::StatusCode;
+        for (status, body, expected) in [
+            (
+                StatusCode::UNAUTHORIZED,
+                r#"{"error":"invalid API key"}"#,
+                "invalid API key",
+            ),
+            (
+                StatusCode::FORBIDDEN,
+                r#"{"error":{"message":"model access denied"}}"#,
+                "model access denied",
+            ),
+            (
+                StatusCode::NOT_FOUND,
+                r#"{"message":"model not found"}"#,
+                "model not found",
+            ),
+            (
+                StatusCode::BAD_GATEWAY,
+                "<html>proxy unavailable</html>",
+                "not JSON",
+            ),
+            (StatusCode::OK, "invalid response", "not JSON"),
+            (StatusCode::OK, r#"{"choices":[]}"#, "no choices"),
+            (StatusCode::OK, r#"{}"#, "no choices"),
+            (
+                StatusCode::OK,
+                r#"{"choices":[{"message":{"content":null}}]}"#,
+                "without text content",
+            ),
+            (
+                StatusCode::OK,
+                r#"{"choices":[{"message":{"content":42}}]}"#,
+                "without text content",
+            ),
+        ] {
+            let app = axum::Router::new().route(
+                "/v1/chat/completions",
+                axum::routing::post(move || async move { (status, body) }),
+            );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            let client = VisionClient::new(VisionConfig {
+                api_base: format!("http://{address}/v1"),
+                ..VisionConfig::default()
+            });
+            let error = client
+                .describe("data:image/png;base64,AA==")
+                .await
+                .unwrap_err()
+                .to_string();
+            server.abort();
+            assert!(error.contains(status.as_str()), "{error}");
+            assert!(error.contains(expected), "{error}");
+            assert!(error.contains("API base URL"), "{error}");
+        }
+    }
+
+    #[tokio::test]
+    async fn describe_reports_unreachable_endpoint_without_leaking_url_credentials() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let client = VisionClient::new(VisionConfig {
+            api_base: format!("http://user:private-password@{address}/v1?secret=private-token"),
+            api_key: "private-api-key".into(),
+            ..VisionConfig::default()
+        });
+        let error = client
+            .describe("data:image/png;base64,AA==")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("Vision request failed"), "{error}");
+        assert!(error.contains("API base URL"), "{error}");
+        assert!(error.contains("API key"), "{error}");
+        for secret in ["private-password", "private-token", "private-api-key"] {
+            assert!(!error.contains(secret), "{error}");
+        }
+    }
+
+    #[tokio::test]
+    async fn describe_parses_content_and_usage() {
+        // Spin up a tiny axum server that echoes an OpenAI vision response.
+        let app = axum::Router::new().route(
+            "/v1/chat/completions",
+            axum::routing::post(|body: axum::Json<Value>| async move {
+                assert_eq!(body["model"], "vision-test");
+                assert_eq!(body["messages"][0]["role"], "user");
+                assert_eq!(body["messages"][0]["content"][1]["type"], "image_url");
+                axum::Json(json!({
+                    "choices": [{"message": {"content": "  转写结果  "}}],
+                    "usage": {"total_tokens": 42}
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = VisionClient::new(VisionConfig {
+            api_base: format!("http://{addr}/v1"),
+            model: "vision-test".into(),
+            ..VisionConfig::default()
+        });
+        let out = client.describe("data:image/png;base64,AA==").await.unwrap();
+        assert_eq!(out.content, "转写结果");
+        assert_eq!(out.total_tokens, 42);
+    }
+}

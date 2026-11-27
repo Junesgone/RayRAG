@@ -152,7 +152,10 @@ impl DeviceCodeStore {
         self.entries.lock().unwrap().remove(request_id);
     }
 
-    
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.entries.lock().unwrap().len()
+    }
 }
 
 /// Async AIMLAPI authorization client.
@@ -396,4 +399,204 @@ async fn read_bounded_body(response: reqwest::Response) -> Result<Vec<u8>> {
     Ok(body)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        Json, Router,
+        extract::State,
+        http::{HeaderMap, StatusCode},
+        routing::post,
+    };
+    use std::sync::{Arc, Mutex as StdMutex};
 
+    #[derive(Clone, Default)]
+    struct Seen {
+        start: Arc<StdMutex<Vec<Value>>>,
+        poll: Arc<StdMutex<Vec<Value>>>,
+    }
+
+    fn client(base: &str) -> AimlapiClient {
+        AimlapiClient::with_settings(
+            base.to_owned(),
+            "https://verify.example".to_owned(),
+            "part_test".to_owned(),
+            "RAGFlow".to_owned(),
+            "agent/ragflow".to_owned(),
+            1000,
+        )
+        .unwrap()
+    }
+
+    async fn spawn_app(
+        token_status: &'static str,
+        api_key_body: Value,
+    ) -> (String, Seen, tokio::task::JoinHandle<()>) {
+        let seen = Seen::default();
+        let start_seen = seen.start.clone();
+        let poll_seen = seen.poll.clone();
+        let app = Router::new()
+            .route(
+                "/v3/agent-auth/authorizations",
+                post(move |headers: HeaderMap, body: String| {
+                    let seen = start_seen.clone();
+                    async move {
+                        assert_eq!(headers["x-aimlapi-source"], "agent/ragflow");
+                        assert_eq!(headers["x-aimlapi-partner-id"], "part_test");
+                        seen.lock()
+                            .unwrap()
+                            .push(serde_json::from_str(&body).unwrap_or(Value::Null));
+                        Json(json!({
+                            "requestId": "req-1",
+                            "deviceCode": "dev-1",
+                            "interval": 5,
+                            "expiresIn": 900
+                        }))
+                    }
+                }),
+            )
+            .route(
+                "/v3/agent-auth/token",
+                post(move |body: String| {
+                    let seen = poll_seen.clone();
+                    async move {
+                        seen.lock()
+                            .unwrap()
+                            .push(serde_json::from_str(&body).unwrap_or(Value::Null));
+                        let status =
+                            StatusCode::from_u16(if token_status == "ok" { 200 } else { 400 })
+                                .unwrap();
+                        (status, Json(api_key_body.clone()))
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{address}"), seen, server)
+    }
+
+    #[test]
+    fn device_store_scopes_users_and_expires() {
+        let store = DeviceCodeStore::new();
+        store.set("r1", "dev", "user-a", Duration::from_secs(60));
+        assert_eq!(
+            store.get("r1"),
+            Some(("dev".to_owned(), "user-a".to_owned()))
+        );
+        store.set("r2", "dev2", "user-b", Duration::from_millis(1));
+        std::thread::sleep(Duration::from_millis(5));
+        assert!(store.get("r2").is_none());
+        store.delete("r1");
+        assert!(store.get("r1").is_none());
+        assert_eq!(store.len(), 0);
+    }
+
+    #[test]
+    fn attribution_defaults_come_from_constants() {
+        // Env overrides are process-global; only assert the default path.
+        if std::env::var("AIMLAPI_SOURCE").is_err() {
+            assert_eq!(source(), DEFAULT_SOURCE);
+            assert_eq!(partner_id(), DEFAULT_PARTNER_ID);
+        }
+        let headers = attribution_headers();
+        assert!(headers.iter().any(|(name, _)| *name == "X-AIMLAPI-Source"));
+    }
+
+    #[tokio::test]
+    async fn start_and_poll_return_the_issued_key() {
+        let (base, seen, server) =
+            spawn_app("ok", json!({"status": "ready", "apiKey": "sk-issued"})).await;
+        let client = client(&base);
+        let store = DeviceCodeStore::new();
+        let start = client.start(&store, "user-a").await.unwrap();
+        assert_eq!(start.request_id, "req-1");
+        assert!(
+            start
+                .verification_uri
+                .starts_with("https://verify.example/agent/authorize?")
+        );
+        assert!(start.verification_uri.contains("request=req-1"));
+        assert!(start.verification_uri.contains("source=agent%2Fragflow"));
+        assert_eq!(start.interval, 5);
+        assert_eq!(start.expires_in, 900);
+        assert_eq!(seen.start.lock().unwrap()[0]["agentName"], json!("RayRAG"));
+        assert_eq!(
+            seen.start.lock().unwrap()[0]["returnUrl"],
+            json!("https://verify.example")
+        );
+
+        let outcome = client.poll(&store, "user-a", "req-1").await.unwrap();
+        server.abort();
+        assert_eq!(
+            outcome,
+            PollOutcome::Ready {
+                api_key: "sk-issued".to_owned()
+            }
+        );
+        assert_eq!(seen.poll.lock().unwrap()[0]["deviceCode"], json!("dev-1"));
+        assert_eq!(
+            seen.poll.lock().unwrap()[0]["grant_type"],
+            json!(DEVICE_CODE_GRANT)
+        );
+    }
+
+    #[tokio::test]
+    async fn poll_reports_pending_expired_and_user_mismatch() {
+        let (base, _, server) = spawn_app("ok", json!({"status": "pending"})).await;
+        let client = client(&base);
+        let store = DeviceCodeStore::new();
+        assert_eq!(
+            client.poll(&store, "user-a", "missing").await.unwrap(),
+            PollOutcome::Expired
+        );
+        store.set("req-1", "dev-1", "user-b", Duration::from_secs(60));
+        let error = client
+            .poll(&store, "user-a", "req-1")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("not found for the current user"), "{error}");
+        store.set("req-2", "dev-2", "user-a", Duration::from_secs(60));
+        let outcome = client.poll(&store, "user-a", "req-2").await.unwrap();
+        server.abort();
+        assert_eq!(
+            outcome,
+            PollOutcome::Pending {
+                status: "pending".to_owned()
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn terminal_states_delete_the_cached_code() {
+        let (base, _, server) = spawn_app("ok", json!({"status": "denied"})).await;
+        let client = client(&base);
+        let store = DeviceCodeStore::new();
+        store.set("req-1", "dev-1", "user-a", Duration::from_secs(60));
+        let outcome = client.poll(&store, "user-a", "req-1").await.unwrap();
+        server.abort();
+        assert_eq!(
+            outcome,
+            PollOutcome::Pending {
+                status: "denied".to_owned()
+            }
+        );
+        assert!(store.get("req-1").is_none());
+    }
+
+    #[tokio::test]
+    async fn upstream_errors_surface_with_status() {
+        let (base, _, server) = spawn_app("fail", json!({"error": "nope"})).await;
+        let client = client(&base);
+        let store = DeviceCodeStore::new();
+        store.set("req-1", "dev-1", "user-a", Duration::from_secs(60));
+        let error = client
+            .poll(&store, "user-a", "req-1")
+            .await
+            .unwrap_err()
+            .to_string();
+        server.abort();
+        assert!(error.contains("HTTP 400"), "{error}");
+    }
+}

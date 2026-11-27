@@ -772,4 +772,276 @@ pub async fn run_tree_templates(
     results
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    struct FakeSummarizer;
+
+    #[async_trait]
+    impl ClusterSummarizer for FakeSummarizer {
+        async fn summarize(
+            &self,
+            texts: &[String],
+            prompt: &str,
+            max_token: usize,
+        ) -> Result<String> {
+            let rendered = prompt.replace("{cluster_content}", &texts.join("\n"));
+            Ok(format!(
+                "LLM-SUMMARY({})[{}][{}]",
+                texts.len(),
+                rendered.chars().count(),
+                max_token
+            ))
+        }
+    }
+
+    struct FailingSummarizer;
+
+    #[async_trait]
+    impl ClusterSummarizer for FailingSummarizer {
+        async fn summarize(
+            &self,
+            _texts: &[String],
+            _prompt: &str,
+            _max_token: usize,
+        ) -> Result<String> {
+            anyhow::bail!("llm unavailable")
+        }
+    }
+
+    #[tokio::test]
+    async fn test_raptor_build_with_llm_uses_summarizer() {
+        let chunks = vec![
+            ("Rust is fast".into(), vec![1.0, 0.0]),
+            ("Rust is safe".into(), vec![0.9, 0.1]),
+            ("Python is slow".into(), vec![0.0, 1.0]),
+        ];
+        let mut tree = RaptorTree::new(0.5);
+        tree.build_with_llm(&chunks, &FakeSummarizer).await.unwrap();
+        // At least one non-leaf node carries the LLM summary.
+        let has_llm_summary = tree
+            .search(&[1.0, 0.0], 10)
+            .iter()
+            .any(|n| n.level > 0 && n.content.starts_with("LLM-SUMMARY("));
+        assert!(has_llm_summary, "expected an LLM summary node");
+        assert!(tree.len() >= 3);
+    }
+
+    #[tokio::test]
+    async fn test_raptor_build_with_llm_falls_back_on_error() {
+        let chunks = vec![
+            ("Rust is fast".into(), vec![1.0, 0.0]),
+            ("Rust is safe".into(), vec![0.9, 0.1]),
+            ("Python is slow".into(), vec![0.0, 1.0]),
+        ];
+        let mut tree = RaptorTree::new(0.5);
+        tree.build_with_llm(&chunks, &FailingSummarizer)
+            .await
+            .unwrap();
+        // Tree still builds; root exists.
+        assert!(tree.root().is_some());
+        assert!(tree.len() >= 3);
+    }
+
+    #[tokio::test]
+    async fn test_run_tree_templates_builds_one_tree_per_template() {
+        let chunks = vec![
+            ("Rust is fast".into(), vec![1.0, 0.0]),
+            ("Rust is safe".into(), vec![0.9, 0.1]),
+            ("Python is slow".into(), vec![0.0, 1.0]),
+        ];
+        let templates = vec![
+            (
+                "tpl-a".to_string(),
+                serde_json::json!({"raptor": {"prompt": "Summarize:\n{cluster_content}", "max_token": 256, "threshold": 0.3, "max_cluster": 8}}),
+            ),
+            (
+                "tpl-b".to_string(),
+                serde_json::json!({"raptor": {"threshold": 0.9}}), // high threshold → few merges
+            ),
+        ];
+        let results = run_tree_templates(&chunks, &templates, &FakeSummarizer).await;
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].template_id, "tpl-a");
+        assert!(results[0].node_count >= 3, "tree should hold all leaves");
+        assert!(!results[0].root_id.is_empty(), "tree A should build");
+        assert_eq!(results[1].template_id, "tpl-b");
+        assert!(!results[1].root_id.is_empty(), "tree B should build");
+    }
+
+    #[tokio::test]
+    async fn test_run_tree_templates_skips_empty_inputs() {
+        let chunks: Vec<(String, Vec<f32>)> = vec![];
+        let templates = vec![("tpl".to_string(), serde_json::json!({}))];
+        let results = run_tree_templates(&chunks, &templates, &FakeSummarizer).await;
+        assert!(results.is_empty());
+
+        let chunks2 = vec![("x".into(), vec![1.0])];
+        let templates2: Vec<(String, serde_json::Value)> = vec![];
+        let results2 = run_tree_templates(&chunks2, &templates2, &FakeSummarizer).await;
+        assert!(results2.is_empty());
+    }
+
+    #[test]
+    fn tree_to_graph_projects_entities_and_child_relations() {
+        let mut tree = RaptorTree::new(0.7);
+        // Manual 3-node tree: root "r" with children "a", "b".
+        tree.nodes.insert(
+            "r".into(),
+            RaptorNode {
+                id: "r".into(),
+                content: "Root summary".into(),
+                embedding: vec![1.0],
+                children: vec!["a".into(), "b".into()],
+                level: 1,
+                chunk_count: 2,
+                metadata: Default::default(),
+            },
+        );
+        tree.nodes.insert(
+            "a".into(),
+            RaptorNode {
+                id: "a".into(),
+                content: "Chunk A".into(),
+                embedding: vec![1.0],
+                children: vec![],
+                level: 0,
+                chunk_count: 1,
+                metadata: Default::default(),
+            },
+        );
+        tree.nodes.insert(
+            "b".into(),
+            RaptorNode {
+                id: "b".into(),
+                content: "Chunk B".into(),
+                embedding: vec![1.0],
+                children: vec![],
+                level: 0,
+                chunk_count: 1,
+                metadata: Default::default(),
+            },
+        );
+        tree.root_id = Some("r".into());
+
+        let graph = tree.to_graph();
+        assert_eq!(graph.entities.len(), 3);
+        assert_eq!(graph.relations.len(), 2);
+        let root_ent = graph
+            .entities
+            .iter()
+            .find(|e| e.name == "Root summary")
+            .unwrap();
+        assert_eq!(root_ent.kind, "tree_node");
+        assert!(root_ent.source_chunk_ids.is_empty());
+        let leaf = graph.entities.iter().find(|e| e.name == "Chunk A").unwrap();
+        assert_eq!(leaf.source_chunk_ids, vec!["a".to_string()]);
+        let rels: Vec<_> = graph
+            .relations
+            .iter()
+            .map(|r| (r.from.as_str(), r.to.as_str(), r.kind.as_str()))
+            .collect();
+        assert!(rels.contains(&("Root summary", "Chunk A", "child")));
+        assert!(rels.contains(&("Root summary", "Chunk B", "child")));
+    }
+
+    // Real GPU RAPTOR LLM summary loop (ignored by default; requires
+    // RAYRAG_TEST_LLM_BASE/MODEL pointing at an OpenAI-compatible chat
+    // endpoint — the host 8088 Qwen3.5-9B).
+    #[tokio::test]
+    #[ignore]
+    async fn gpu_raptor_llm_summary_loop() {
+        let api_base = std::env::var("RAYRAG_TEST_LLM_BASE").expect("RAYRAG_TEST_LLM_BASE");
+        let model = std::env::var("RAYRAG_TEST_LLM_MODEL").expect("RAYRAG_TEST_LLM_MODEL");
+        let config = crate::llm::LlmConfig {
+            api_base,
+            api_key: std::env::var("RAYRAG_TEST_LLM_KEY").unwrap_or_default(),
+            model,
+            generation: crate::generation_params::GenerationParams::default(),
+            system_prompt: String::new(),
+            deepseek: Default::default(),
+        };
+        let summarizer = LlmClusterSummarizer::new(crate::llm::LlmClient::new(config), 8192);
+        // Probe the summarizer directly before building the tree.
+        let probe = summarizer
+            .summarize(
+                &["中山市百鲤居水产养殖场主营四大家鱼养殖。".to_string()],
+                "Please write a concise summary of the following texts:\n{cluster_content}",
+                512,
+            )
+            .await
+            .expect("summarizer probe");
+        assert!(!probe.trim().is_empty(), "probe summary empty");
+        tracing::info!("RAPTOR probe summary: {probe}");
+        // Three related Chinese chunks so clustering forms one cluster and
+        // the LLM must produce a same-language titled summary.
+        let chunks = vec![
+            (
+                "中山市百鲤居水产养殖场主营四大家鱼养殖。".into(),
+                vec![1.0, 0.0, 0.0],
+            ),
+            (
+                "水产养殖需要关注水质、溶氧和饲料管理。".into(),
+                vec![0.9, 0.1, 0.0],
+            ),
+            (
+                "科学养殖可以提高鱼类的成活率与产量。".into(),
+                vec![0.8, 0.2, 0.0],
+            ),
+        ];
+        let mut tree = RaptorTree::new(0.5);
+        let root = tree
+            .build_with_llm(&chunks, &summarizer)
+            .await
+            .expect("build");
+        assert!(!root.is_empty());
+        // Root (or a level-1 node) must carry a real LLM summary, not the
+        // extractive fallback prefix.
+        let root_node = tree.root().expect("root node");
+        assert!(root_node.level >= 1, "expected a summarized tree root");
+        assert!(
+            root_node.content.chars().count() > 10,
+            "LLM summary too short: {:?}",
+            root_node.content
+        );
+        // The extractive fallback would join the chunk first sentences
+        // verbatim ("中山市百鲤居水产养殖场主营四大家鱼养殖。水产养殖
+        // 需要关注水质、溶氧和饲料管理。"). The LLM rewrite adds connective
+        // structure ("通过...管理...提升..."), so require the root content
+        // to be a real paraphrase, not the verbatim extractive join.
+        let extractive_join =
+            "中山市百鲤居水产养殖场主营四大家鱼养殖。水产养殖需要关注水质、溶氧和饲料管理。";
+        assert!(
+            !root_node.content.starts_with(extractive_join),
+            "content looks extractive, LLM summary missing; root={:?} nodes={}",
+            root_node.content,
+            tree.len()
+        );
+        tracing::info!("RAPTOR LLM root summary: {}", root_node.content);
+    }
+
+    #[test]
+    fn test_raptor_tree_build() {
+        let chunks = vec![
+            ("Rust is fast".into(), vec![1.0, 0.0]),
+            ("Rust is safe".into(), vec![0.9, 0.1]),
+            ("Python is slow".into(), vec![0.0, 1.0]),
+        ];
+        let mut tree = RaptorTree::new(0.5);
+        let root = tree.build(&chunks).unwrap();
+        assert!(!root.is_empty());
+        assert!(tree.len() >= 3); // at least 3 leaf nodes
+    }
+
+    #[test]
+    fn test_graph_extraction() {
+        let chunks = vec![
+            ("c1".into(), "Alice works at Google".into()),
+            ("c2".into(), "Bob is a engineer".into()),
+        ];
+        let kg = KnowledgeGraph::extract(&chunks);
+        assert!(kg.entities.len() >= 2);
+        assert!(!kg.relations.is_empty());
+    }
+}

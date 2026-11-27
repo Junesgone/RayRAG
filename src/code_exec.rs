@@ -543,4 +543,256 @@ fn base64_decode(input: &str) -> Result<Vec<u8>> {
         .map_err(|error| anyhow::anyhow!("base64 decode: {error}"))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn infer_types_cover_all_variants() {
+        assert_eq!(infer_actual_type(&Value::Null), "Null");
+        assert_eq!(infer_actual_type(&json!(true)), "Boolean");
+        assert_eq!(infer_actual_type(&json!(42)), "Number");
+        assert_eq!(infer_actual_type(&json!("text")), "String");
+        assert_eq!(infer_actual_type(&json!({"a": 1})), "Object");
+        assert_eq!(infer_actual_type(&json!([])), "Array<Any>");
+        assert_eq!(infer_actual_type(&json!([1, 2])), "Array<Number>");
+        assert_eq!(infer_actual_type(&json!([1, "a"])), "Array<Any>");
+    }
+
+    #[test]
+    fn normalize_expected_type_handles_nested_arrays() {
+        assert_eq!(normalize_expected_type("string"), "String");
+        assert_eq!(
+            normalize_expected_type(" array< number > "),
+            "Array<Number>"
+        );
+        assert_eq!(
+            normalize_expected_type("Array<Array<String>>"),
+            "Array<Array<String>>"
+        );
+        assert_eq!(normalize_expected_type("any"), "Any");
+    }
+
+    #[test]
+    fn validate_expected_type_accepts_and_rejects() {
+        assert!(validate_expected_type("Array<Number>", &json!([1, 2, 3])).is_ok());
+        assert!(validate_expected_type("Array<String>", &json!([1, 2])).is_err());
+        assert!(validate_expected_type("String", &json!("x")).is_ok());
+        assert!(validate_expected_type("Number", &json!("x")).is_err());
+    }
+
+    #[test]
+    fn select_business_output_requires_exactly_one() {
+        let map = Map::from_iter([
+            ("content".into(), json!("sys")),
+            ("answer".into(), json!("business")),
+        ]);
+        let (name, value) = select_business_output(&map).unwrap();
+        assert_eq!(name, "answer");
+        assert_eq!(value, json!("business"));
+
+        // 两个业务输出 → 错误
+        let bad = Map::from_iter([("a".into(), json!(1)), ("b".into(), json!(2))]);
+        assert!(select_business_output(&bad).is_err());
+
+        // 保留键名 → 错误
+        let reserved = Map::from_iter([("content".into(), json!(1))]);
+        assert!(select_business_output(&reserved).is_err());
+    }
+
+    #[test]
+    fn canonical_content_sorts_object_keys() {
+        let value = json!({"b": 2, "a": {"d": 1, "c": 3}});
+        let rendered = render_canonical_content(&value);
+        assert!(rendered.contains("\"a\"") && rendered.contains("\"b\""));
+        let a_pos = rendered.find("\"a\"").unwrap();
+        let b_pos = rendered.find("\"b\"").unwrap();
+        assert!(a_pos < b_pos, "keys must be sorted: {rendered}");
+    }
+
+    #[test]
+    fn attachment_type_normalization() {
+        assert_eq!(normalize_attachment_type("x.png", "image/png"), "image");
+        assert_eq!(normalize_attachment_type("r.pdf", "application/pdf"), "pdf");
+        assert_eq!(normalize_attachment_type("d.csv", "text/csv"), "csv");
+        assert_eq!(normalize_attachment_type("f.json", ""), "json");
+        assert_eq!(normalize_attachment_type("noext", ""), "file");
+    }
+
+    #[test]
+    fn stderr_only_result_becomes_error() {
+        let result = SandboxResult {
+            stdout: String::new(),
+            stderr: Some("Traceback: boom".into()),
+            artifacts: vec![],
+            metadata: Map::new(),
+            ..Default::default()
+        };
+        let outputs = process_result(&result);
+        assert!(
+            outputs
+                .get("_ERROR")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .contains("boom")
+        );
+    }
+
+    #[test]
+    fn business_output_and_artifacts_render() {
+        let result = SandboxResult {
+            stdout: r#"{"answer": {"price": 1.5}}"#.into(),
+            stderr: None,
+            artifacts: vec![json!({
+                "name": "chart.csv",
+                "content_b64": "YTJiYwo=", // "a2b\n"
+                "mime_type": "text/csv",
+            })],
+            metadata: Map::new(),
+            ..Default::default()
+        };
+        let outputs = process_result(&result);
+        let content = outputs.get("content").unwrap().as_str().unwrap();
+        assert!(content.contains("\"price\": 1.5"));
+        assert!(content.contains("attachment_count: 1"));
+        assert!(content.contains("attachment_1 (csv): chart.csv"));
+        assert_eq!(
+            outputs.get("actual_type").unwrap().as_str().unwrap(),
+            "Object"
+        );
+    }
+
+    // ── executor_manager 远程客户端契约测试（mock，不发真实网络） ──────────
+
+    #[test]
+    fn sandbox_language_normalization_matches_executor_manager() {
+        assert_eq!(normalize_sandbox_language("python3"), "python");
+        assert_eq!(normalize_sandbox_language("python3.12"), "python");
+        assert_eq!(normalize_sandbox_language("javascript"), "nodejs");
+        assert_eq!(normalize_sandbox_language("node"), "nodejs");
+        assert_eq!(normalize_sandbox_language("bash"), "bash");
+    }
+
+    #[test]
+    fn run_response_parses_full_executor_manager_contract() {
+        let body = json!({
+            "status": "success",
+            "stdout": "hello\n",
+            "stderr": "",
+            "exit_code": 0,
+            "detail": null,
+            "time_used_ms": 123.4,
+            "memory_used_kb": 5120.0,
+            "artifacts": [ { "name": "a.png", "mime_type": "image/png", "size": 10, "content_b64": "eA==" } ],
+            "result": { "present": true, "value": { "answer": 42 }, "type": "json" }
+        });
+        let result = parse_run_response(&body);
+        assert_eq!(result.stdout, "hello\n");
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.status.as_deref(), Some("success"));
+        assert_eq!(result.time_used_ms, Some(123.4));
+        assert_eq!(result.memory_used_kb, Some(5120.0));
+        assert_eq!(result.artifacts.len(), 1);
+        assert_eq!(result.metadata["result_present"], json!(true));
+        assert_eq!(result.metadata["result_value"]["answer"], json!(42));
+        assert_eq!(result.metadata["result_type"], json!("json"));
+        // 结构化结果可直接驱动 process_result（select_business_output 挑出 answer）
+        let outputs = process_result(&result);
+        assert!(outputs["content"].as_str().unwrap().contains("42"));
+    }
+
+    #[test]
+    fn run_response_defaults_missing_fields() {
+        let body = json!({ "stdout": "x" });
+        let result = parse_run_response(&body);
+        assert_eq!(result.exit_code, 0);
+        assert!(result.status.is_none());
+        assert!(result.detail.is_none());
+        assert!(result.time_used_ms.is_none());
+        assert_eq!(
+            result
+                .metadata
+                .get("result_present")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(result.metadata.get("result_value"), Some(&Value::Null));
+    }
+
+    #[tokio::test]
+    async fn run_sends_code_b64_language_and_arguments() {
+        use axum::{Json, Router, routing::post};
+        let app = Router::new().route("/run", post(|body: Json<Value>| async move {
+            // 请求契约：code_b64 + language + arguments（对齐 CodeExecutionRequest）
+            assert!(body["code_b64"].as_str().unwrap().starts_with("ZGVmIG1haW4"));
+            assert_eq!(body["language"], "python");
+            assert_eq!(body["arguments"]["x"], 1);
+            Json(json!({
+                "status": "success",
+                "stdout": "\n__RAGFLOW_RESULT__:eyJwcmVzZW50Ijp0cnVlLCJ2YWx1ZSI6MTMsInR5cGUiOiJqc29uIn0=",
+                "stderr": "",
+                "exit_code": 0,
+                "result": { "present": true, "value": 13, "type": "json" }
+            }))
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = SandboxClient::new(&format!("http://{addr}"));
+        let result = client
+            .run(&CodeRequest {
+                language: "python3".into(),
+                code: "def main():\n    return 13\n".into(),
+                arguments: Map::from_iter([("x".into(), json!(1))]),
+            })
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.metadata["result_value"], json!(13));
+        assert_eq!(result.status.as_deref(), Some("success"));
+    }
+
+    #[tokio::test]
+    async fn run_surfaces_http_errors() {
+        use axum::{Router, routing::post};
+        let app = Router::new().route(
+            "/run",
+            post(|| async { axum::http::StatusCode::BAD_REQUEST }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = SandboxClient::new(&format!("http://{addr}"));
+        let error = client
+            .run(&CodeRequest {
+                language: "python".into(),
+                code: "x".into(),
+                arguments: Map::new(),
+            })
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("Sandbox HTTP 400"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn health_check_hits_healthz() {
+        use axum::{Router, routing::get};
+        let app = Router::new().route("/healthz", get(|| async { "{\"status\":\"ok\"}" }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = SandboxClient::new(&format!("http://{addr}"));
+        assert!(client.health_check().await);
+        // 未监听端口 → false
+        let dead = SandboxClient::new("http://127.0.0.1:1");
+        assert!(!dead.health_check().await);
+    }
+}

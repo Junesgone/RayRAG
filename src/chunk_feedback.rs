@@ -465,4 +465,78 @@ fn rollback_index(
     );
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::search::{IndexedChunk, SearchEngine};
+    use std::collections::HashMap;
 
+    fn chunk(id: &str, score: Option<f32>) -> FeedbackChunk {
+        FeedbackChunk {
+            id: id.into(),
+            kb_id: "kb-a".into(),
+            similarity: score,
+            vector_similarity: None,
+            term_similarity: None,
+        }
+    }
+
+    #[test]
+    fn relevance_mode_spends_one_unit_on_the_strongest_reference() {
+        let chunks = vec![chunk("strong", Some(0.9)), chunk("weak", Some(0.1))];
+        assert_eq!(
+            allocate_deltas(&chunks, 1, FeedbackWeighting::Relevance),
+            vec![1, 0]
+        );
+        assert_eq!(
+            allocate_deltas(&chunks, -1, FeedbackWeighting::Relevance),
+            vec![-1, 0]
+        );
+    }
+
+    #[test]
+    fn uniform_mode_updates_every_reference() {
+        let chunks = vec![chunk("a", None), chunk("b", None)];
+        assert_eq!(
+            allocate_deltas(&chunks, -1, FeedbackWeighting::Uniform),
+            vec![-1, -1]
+        );
+    }
+
+    #[test]
+    fn duplicate_chunk_references_are_applied_once() {
+        let chunks = deduplicate_chunks(vec![chunk("same", Some(0.8)), chunk("same", Some(0.2))]);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].similarity, Some(0.8));
+    }
+
+    #[test]
+    fn failed_index_persistence_rolls_back_feedback() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-feedback-rollback-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let invalid_index_path = root.join("index.json");
+        std::fs::create_dir(&invalid_index_path).unwrap();
+        let mut engine = SearchEngine::from_chunks(vec![IndexedChunk {
+            id: "chunk-a".into(),
+            doc_name: "document.txt".into(),
+            content: "content".into(),
+            embedding: vec![],
+            token_count: 1,
+            position: 0,
+            metadata: HashMap::from([("kb_id".into(), "kb-a".into())]),
+        }]);
+
+        let error = apply_deltas_and_save(
+            &mut engine,
+            invalid_index_path.to_str().unwrap(),
+            &crate::store::OnlineVectorMirror::disabled(),
+            &[chunk("chunk-a", Some(1.0))],
+            &[1],
+        )
+        .unwrap_err();
+
+        assert!(!error.to_string().is_empty());
+        assert_eq!(engine.to_vec()[0].metadata.get("pagerank_fea"), None);
+    }
+}

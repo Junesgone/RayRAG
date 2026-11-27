@@ -386,4 +386,233 @@ pub fn table_figure_sections(
     (tables, figures)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
 
+    fn block(page: u32, label: &str, content: &str, bbox: [f64; 4]) -> PaddleLayoutBlock {
+        PaddleLayoutBlock {
+            page,
+            label: label.to_owned(),
+            content: content.to_owned(),
+            left: bbox[0],
+            top: bbox[1],
+            right: bbox[2],
+            bottom: bbox[3],
+        }
+    }
+
+    #[test]
+    fn position_tag_divides_bbox_by_zoomin() {
+        let b = block(1, "text", "hello", [100.0, 200.0, 300.0, 400.0]);
+        assert_eq!(position_tag(&b), "@@1\t50\t150\t100\t200##");
+        // odd values floor-divide like Python `//`
+        let b = block(2, "text", "x", [101.0, 203.0, 305.0, 407.0]);
+        assert_eq!(position_tag(&b), "@@2\t50\t152\t101\t203##");
+    }
+
+    #[test]
+    fn render_sections_honors_parse_method() {
+        let blocks = vec![
+            block(1, "title", "Chapter 1", [0.0, 0.0, 100.0, 20.0]),
+            block(1, "table", "|a|b|", [10.0, 30.0, 90.0, 60.0]),
+        ];
+        let raw = render_sections(&blocks, ParseMethod::Raw);
+        assert_eq!(raw.len(), 2);
+        assert_eq!(raw[0].content, "Chapter 1");
+        assert_eq!(raw[0].label, "");
+        assert_eq!(raw[0].tag, "@@1\t0\t50\t0\t10##");
+
+        let paper = render_sections(&blocks, ParseMethod::Paper);
+        assert_eq!(paper[1].content, "|a|b|@@1\t5\t45\t15\t30##");
+        assert_eq!(paper[1].label, "table");
+
+        let manual = render_sections(&blocks, ParseMethod::Manual);
+        assert_eq!(manual[0].label, "title");
+        assert_eq!(manual[0].content, "Chapter 1");
+    }
+
+    #[test]
+    fn table_figure_sections_split_by_label_keep_position_tags() {
+        // pdf_parser.py `_extract_table_figure` — only table/figure labels.
+        let blocks = vec![
+            block(1, "title", "Big Title", [0.0, 0.0, 200.0, 40.0]),
+            block(1, "table", "|A|B|", [20.0, 60.0, 180.0, 120.0]),
+            block(2, "figure", "chart.png", [10.0, 20.0, 110.0, 120.0]),
+            block(2, "image", "photo", [5.0, 5.0, 55.0, 55.0]),
+            block(2, "text", "tail", [0.0, 0.0, 10.0, 10.0]),
+        ];
+        let (tables, figures) = table_figure_sections(&blocks);
+        assert_eq!(tables.len(), 1);
+        assert_eq!(tables[0].label, "table");
+        assert_eq!(tables[0].content, "|A|B|");
+        // ZOOMIN = 2, integer division: left 20/2=10, right 180/2=90,
+        // top 60/2=30, bottom 120/2=60.
+        assert_eq!(tables[0].tag, "@@1\t10\t90\t30\t60##");
+        assert_eq!(figures.len(), 2);
+        assert_eq!(figures[0].label, "figure");
+        assert_eq!(figures[1].label, "image");
+        assert!(figures[0].tag.starts_with("@@2\t"));
+        // Empty-content blocks are dropped.
+        let (t, f) = table_figure_sections(&[block(1, "table", "  ", [0.0, 0.0, 1.0, 1.0])]);
+        assert!(t.is_empty() && f.is_empty());
+    }
+
+    #[test]
+    fn extract_positions_round_trips_tags_and_uses_zero_based_pages() {
+        let text = "text @@2\t50\t150\t100\t200## tail @@1-3\t5\t9\t7\t8## end";
+        let poss = extract_positions(text);
+        assert_eq!(poss.len(), 2);
+        assert_eq!(poss[0].0, vec![1]); // page 2 → 0-based 1
+        assert_eq!(
+            (poss[0].1, poss[0].2, poss[0].3, poss[0].4),
+            (50.0, 150.0, 100.0, 200.0)
+        );
+        // upstream splits "1-3" on '-' without range expansion → [0, 2]
+        assert_eq!(poss[1].0, vec![0, 2]);
+        assert_eq!(
+            (poss[1].1, poss[1].2, poss[1].3, poss[1].4),
+            (5.0, 9.0, 7.0, 8.0)
+        );
+    }
+
+    #[test]
+    fn layout_summary_picks_dominant_label() {
+        let blocks = vec![
+            block(1, "text", "a", [0.0; 4]),
+            block(1, "table", "b", [0.0; 4]),
+            block(1, "table", "c", [0.0; 4]),
+            block(2, "table", "d", [0.0; 4]),
+            block(2, "", "e", [0.0; 4]), // empty label → text
+        ];
+        assert_eq!(layout_summary(&blocks), "table");
+        assert_eq!(layout_summary(&[]), "unknown");
+    }
+
+    #[test]
+    fn assemble_document_raw_serializes_content_and_tag_lines() {
+        let blocks = vec![block(1, "text", "hello", [0.0, 0.0, 40.0, 20.0])];
+        let doc = assemble_document(
+            "scan.png",
+            b"img",
+            &blocks,
+            ParseMethod::Raw,
+            LayoutKind::PaddleOcr,
+        );
+        let content = doc.content;
+        assert!(content.contains("<!--IMAGE_START-->"));
+        assert!(content.contains("[DOCUMENT_LAYOUT: paddleocr]"));
+        assert!(content.contains("[LAYOUT_SUMMARY: text]"));
+        assert!(content.contains("hello\n@@1\t0\t20\t0\t10##"));
+        assert!(content.contains("<!--IMAGE_END-->"));
+        assert_eq!(doc.mime_type, "image/png");
+    }
+
+    #[tokio::test]
+    async fn parse_with_config_runs_full_flow_against_mock_server() {
+        use axum::{
+            Json, Router,
+            body::Body,
+            extract::{Path, State},
+            http::{Response, StatusCode},
+            response::IntoResponse,
+            routing::{get, post},
+        };
+        use std::sync::{
+            Arc, Mutex,
+            atomic::{AtomicUsize, Ordering},
+        };
+        use std::time::Duration;
+
+        #[derive(Default)]
+        struct MockState {
+            polls: AtomicUsize,
+            submitted: Mutex<bool>,
+        }
+
+        async fn submit(State(state): State<Arc<MockState>>) -> impl IntoResponse {
+            *state.submitted.lock().unwrap() = true;
+            Json(json!({"data": {"jobId": "layout-1"}}))
+        }
+
+        let state = Arc::new(MockState::default());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let poll_state = state.clone();
+        let app = Router::new()
+            .route("/api/v2/ocr/jobs", post(submit))
+            .route(
+                "/api/v2/ocr/jobs/{job_id}",
+                get(move |Path(job): Path<String>, State(state): State<Arc<MockState>>| {
+                    let address = address;
+                    async move {
+                        assert_eq!(job, "layout-1");
+                        let poll = state.polls.fetch_add(1, Ordering::SeqCst);
+                        if poll == 0 {
+                            Json(json!({"data": {"state": "running"}}))
+                        } else {
+                            Json(json!({
+                                "data": {
+                                    "state": "done",
+                                    "resultUrl": {"jsonUrl": format!("http://{address}/result.jsonl")}
+                                }
+                            }))
+                        }
+                    }
+                }),
+            )
+            .route(
+                "/result.jsonl",
+                get(|| async {
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header(axum::http::header::CONTENT_TYPE, "application/jsonl")
+                        .body(Body::from(concat!(
+                            "{\"result\":{\"layoutParsingResults\":[{\"prunedResult\":{\"parsing_res_list\":[",
+                            "{\"block_content\":\"Title <img src=\\\"x\\\"/>\",\"block_label\":\"title\",\"block_bbox\":[0,0,200,40]},",
+                            "{\"block_content\":\"|A|B|\",\"block_label\":\"table\",\"block_bbox\":[20,60,180,120]},",
+                            "{\"block_content\":\"|C|D|\",\"block_label\":\"table\",\"block_bbox\":[20,140,180,200]}",
+                            "]}}]}}\n"
+                        )))
+                        .unwrap()
+                }),
+            )
+            .with_state(poll_state);
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let config = PaddleOcrConfig::from_ragflow_key(
+            r#"{"api_key":{"paddleocr_algorithm":"PaddleOCR-VL","paddleocr_access_token":"test-secret"}}"#,
+            Some(&format!("http://{address}")),
+        )
+        .unwrap()
+        .with_request_timing(
+            Duration::from_secs(5),
+            Duration::from_millis(1),
+            Duration::from_millis(2),
+        );
+
+        let parser = PaddleOcrLayoutParser::new();
+        let doc = parser
+            .parse_with_config("scan.png", b"fake-image-content", &config, ParseMethod::Raw)
+            .await
+            .unwrap();
+        server.abort();
+
+        assert!(*state.submitted.lock().unwrap());
+        assert_eq!(state.polls.load(Ordering::SeqCst), 2);
+        let content = doc.content;
+        assert!(content.contains("[DOCUMENT_LAYOUT: paddleocr]"));
+        assert!(content.contains("[LAYOUT_SUMMARY: table]"));
+        assert!(content.contains("Title\n@@1\t0\t100\t0\t20##"));
+        assert!(content.contains("|A|B|\n@@1\t10\t90\t30\t60##"));
+    }
+
+    #[test]
+    fn parse_method_from_str_defaults_to_raw() {
+        assert_eq!(ParseMethod::from_str("paper"), ParseMethod::Paper);
+        assert_eq!(ParseMethod::from_str("pipeline"), ParseMethod::Pipeline);
+        assert_eq!(ParseMethod::from_str("manual"), ParseMethod::Manual);
+        assert_eq!(ParseMethod::from_str("anything-else"), ParseMethod::Raw);
+    }
+}

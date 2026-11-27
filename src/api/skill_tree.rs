@@ -486,7 +486,190 @@ pub fn chunks_for_dataset(
         .collect()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    fn chunk(doc_id: &str, doc_name: &str, content: &str) -> SkillSourceChunk {
+        SkillSourceChunk {
+            doc_id: doc_id.to_string(),
+            doc_name: doc_name.to_string(),
+            content: content.to_string(),
+        }
+    }
+
+    #[test]
+    fn headings_become_a_nested_tree_with_the_text_under_them() {
+        let chunks = vec![
+            chunk("d1", "guide.md", "# Install\n\nRun the installer."),
+            chunk("d1", "guide.md", "## Linux\n\nUse the tarball."),
+            chunk("d1", "guide.md", "## Windows\n\nUse the msi."),
+            chunk("d2", "faq.md", "# Troubleshooting\n\nCheck the logs."),
+        ];
+        let tree = build_tree("kb-1", &chunks, 1);
+        let all = tree.all.as_ref().unwrap();
+        assert_eq!(all.compile_kwd, SKILL_ALL_COMPILE_KWD);
+        assert_eq!(tree.nodes.len(), 4);
+        assert_eq!(all.node_count, 4);
+        // The roots are the two top-level headings, in document order.
+        assert_eq!(all.children_kwd, vec!["install", "troubleshooting"]);
+        assert_eq!(all.source_doc_ids, vec!["d1", "d2"]);
+
+        let install = tree.node("install").unwrap();
+        assert_eq!(install.depth_int, 1);
+        assert_eq!(
+            install.children_kwd,
+            vec!["install/linux", "install/windows"]
+        );
+        assert!(install.md_with_weight.contains("Run the installer."));
+        assert_eq!(install.compile_kwd, SKILL_COMPILE_KWD);
+        assert_eq!(install.doc_id, "d1");
+
+        let linux = tree.node("install/linux").unwrap();
+        assert_eq!(linux.depth_int, 2);
+        assert!(linux.children_kwd.is_empty());
+        assert!(linux.md_with_weight.contains("tarball"));
+
+        // The aggregate body is the tree as one markdown document.
+        assert!(all.md_with_weight.contains("# install"));
+        assert!(
+            all.md_with_weight.contains("## install/linux")
+                || all.md_with_weight.contains("## linux")
+        );
+        assert!(all.md_with_weight.contains("Check the logs."));
+    }
+
+    #[test]
+    fn a_corpus_without_headings_falls_back_to_document_nodes() {
+        let chunks = vec![
+            chunk("d1", "notes.txt", "Just prose, no heading at all."),
+            chunk("d2", "other.txt", "More prose."),
+        ];
+        let tree = build_tree("kb-1", &chunks, 1);
+        assert_eq!(tree.nodes.len(), 2, "one node per document");
+        let keys: Vec<&str> = tree
+            .nodes
+            .iter()
+            .map(|node| node.skill_kwd.as_str())
+            .collect();
+        assert!(keys.contains(&"document/notes"), "{keys:?}");
+        assert!(keys.contains(&"document/other"), "{keys:?}");
+        // The fallback is honest: the text really is in the tree.
+        assert!(
+            tree.nodes
+                .iter()
+                .any(|node| node.md_with_weight.contains("Just prose"))
+        );
+    }
+
+    #[test]
+    fn repeated_headings_get_distinct_keys_instead_of_overwriting_each_other() {
+        let chunks = vec![
+            chunk("d1", "a.md", "# Overview\n\nFirst."),
+            chunk("d2", "b.md", "# Overview\n\nSecond."),
+        ];
+        let tree = build_tree("kb-1", &chunks, 1);
+        assert_eq!(tree.nodes.len(), 2);
+        let keys: Vec<&str> = tree.nodes.iter().map(|n| n.skill_kwd.as_str()).collect();
+        assert_eq!(keys, vec!["overview", "overview-2"], "{keys:?}");
+        assert!(
+            tree.node("overview")
+                .unwrap()
+                .md_with_weight
+                .contains("First.")
+        );
+        assert!(
+            tree.node("overview-2")
+                .unwrap()
+                .md_with_weight
+                .contains("Second.")
+        );
+    }
+
+    #[test]
+    fn deleting_a_branch_takes_its_descendants_and_reports_the_real_count() {
+        let store = SkillTreeStore::in_memory();
+        let chunks = vec![
+            chunk("d1", "guide.md", "# Install\n\nRun it."),
+            chunk("d1", "guide.md", "## Linux\n\nTarball."),
+            chunk("d1", "guide.md", "### Debian\n\napt install."),
+            chunk("d2", "faq.md", "# FAQ\n\nLogs."),
+        ];
+        store.put("kb-1", build_tree("kb-1", &chunks, 1));
+
+        assert_eq!(
+            store.delete_subtree("kb-1", "install"),
+            3,
+            "linux and debian go too"
+        );
+        let tree = store.get("kb-1").unwrap();
+        assert!(tree.node("install").is_none());
+        assert!(tree.node("install/linux").is_none());
+        // The parent forgot the branch, and the aggregate still describes what is left.
+        assert_eq!(tree.all.as_ref().unwrap().children_kwd, vec!["faq"]);
+        assert_eq!(tree.all.as_ref().unwrap().node_count, 1);
+
+        // An unknown key deletes nothing rather than reporting a phantom deletion.
+        assert_eq!(store.delete_subtree("kb-1", "nope"), 0);
+        // Deleting everything counts the aggregate row and removes the dataset.
+        assert_eq!(store.delete_all("kb-1"), 2);
+        assert!(store.get("kb-1").is_none());
+        assert_eq!(store.delete_all("kb-1"), 0);
+    }
+
+    #[test]
+    fn the_reader_takes_only_this_dataset_and_orders_by_document_then_position() {
+        use crate::search::IndexedChunk;
+        let chunk = |id: &str, doc: &str, name: &str, position: usize, kb: &str, content: &str| {
+            let mut metadata = std::collections::HashMap::new();
+            metadata.insert("kb_id".to_string(), kb.to_string());
+            metadata.insert("doc_id".to_string(), doc.to_string());
+            IndexedChunk {
+                id: id.to_string(),
+                doc_name: name.to_string(),
+                content: content.to_string(),
+                embedding: Vec::new(),
+                token_count: 1,
+                position,
+                metadata,
+            }
+        };
+        let engine = crate::search::SearchEngine::from_chunks(vec![
+            chunk("c2", "d1", "b.md", 1, "kb-1", "# Second\n\nBody."),
+            chunk("c1", "d1", "b.md", 0, "kb-1", "# First\n\nBody."),
+            chunk("c3", "d2", "a.md", 0, "kb-1", "# Other\n\nBody."),
+            chunk("c4", "d9", "z.md", 0, "kb-2", "# Not ours\n\nBody."),
+        ]);
+        let rows = chunks_for_dataset(&engine, "kb-1");
+        let names: Vec<&str> = rows.iter().map(|row| row.doc_name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["a.md", "b.md", "b.md"],
+            "other datasets are excluded"
+        );
+        // Within a document, position decides; across documents, the name decides.
+        assert_eq!(rows[1].content, "# First\n\nBody.");
+        assert_eq!(rows[2].content, "# Second\n\nBody.");
+        assert_eq!(rows[1].doc_id, "d1");
+
+        // An empty chunk must not become an empty skill body.
+        let engine = crate::search::SearchEngine::from_chunks(vec![chunk(
+            "c5", "d1", "x.md", 0, "kb-1", "   ",
+        )]);
+        assert!(chunks_for_dataset(&engine, "kb-1").is_empty());
+        assert!(chunks_for_dataset(&engine, "kb-none").is_empty());
+    }
+
+    #[test]
+    fn a_heading_slug_keeps_chinese_and_drops_punctuation() {
+        assert_eq!(slugify("Install Guide!"), "install-guide");
+        assert_eq!(slugify("  安装 指南  "), "安装-指南");
+        assert_eq!(slugify("--"), "");
+        assert_eq!(markdown_heading("## Title ##"), Some((2, "Title".into())));
+        assert_eq!(markdown_heading("####### too deep"), None);
+        assert_eq!(markdown_heading("plain text"), None);
+    }
+}
 
 // ---------------------------------------------------------------------------------------------
 // Routes

@@ -375,4 +375,71 @@ pub fn with_phase<T>(handle: &StatsHandle, name: &str, f: impl FnOnce() -> T) ->
     f()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
 
+    #[test]
+    fn counters_and_tokens_accumulate() {
+        let mut stats = LLMUsageStats::default();
+        stats.record_call("route");
+        stats.record_call("route");
+        stats.record_failed("route");
+        stats.record_usage(
+            "route",
+            Some(&json!({"prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14})),
+        );
+        stats.record_usage("route", None);
+        let rows = stats.snapshot();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, "route");
+        assert_eq!(rows[0].1["calls"], json!(2));
+        assert_eq!(rows[0].1["failed"], json!(1));
+        assert_eq!(rows[0].1["total_tokens"], json!(14));
+    }
+
+    #[test]
+    fn snapshot_uses_canonical_order_then_sorted_fallback() {
+        let mut stats = LLMUsageStats::default();
+        stats.record_call("finalize");
+        stats.record_call("custom_b");
+        stats.record_call("route");
+        stats.record_call("custom_a");
+        let phases: Vec<String> = stats
+            .snapshot()
+            .into_iter()
+            .map(|(phase, _)| phase)
+            .collect();
+        assert_eq!(phases, vec!["route", "finalize", "custom_a", "custom_b"]);
+        assert_eq!(stats.log_lines()[0], "[Agentic RAG] LLM usage by phase:");
+    }
+
+    #[test]
+    fn round_bookkeeping_and_phase_scopes() {
+        let handle = StatsHandle::new();
+        {
+            let _outer = handle.enter_phase("orchestrator");
+            {
+                let _inner = handle.enter_phase("orchestrator");
+            }
+        }
+        handle.record_round("orchestrator");
+        assert_eq!(handle.0.lock().unwrap().current_round(), 1);
+        handle.record_round_claims("orchestrator", 3);
+        handle.record_round("orchestrator");
+        assert_eq!(handle.0.lock().unwrap().current_round(), 2);
+        handle.record_round_claims("orchestrator", 2);
+        let rows = handle.snapshot();
+        let row = rows
+            .iter()
+            .find(|(phase, _)| phase == "orchestrator")
+            .unwrap();
+        assert_eq!(row.1["rounds"], json!(2));
+        assert_eq!(row.1["round_claim_counts"], json!([3, 2]));
+        assert!(row.1["phase_time_ms"].as_f64().unwrap() >= 0.0);
+        // with_phase returns the closure value.
+        let value = with_phase(&handle, "route", || 7);
+        assert_eq!(value, 7);
+    }
+}

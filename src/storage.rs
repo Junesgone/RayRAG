@@ -378,4 +378,118 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (if m <= 2 { y + 1 } else { y }, m as u32, d as u32)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    fn config_for(endpoint: &str) -> StorageConfig {
+        StorageConfig {
+            endpoint: endpoint.to_string(),
+            region: "us-east-1".into(),
+            access_key: "AKIAIOSFODNN7EXAMPLE".into(),
+            secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".into(),
+            path_style: true,
+            timeout: Duration::from_secs(10),
+        }
+    }
+
+    #[test]
+    fn civil_from_days_matches_epoch() {
+        assert_eq!(civil_from_days(0), (1970, 1, 1));
+        assert_eq!(civil_from_days(19_723), (2024, 1, 1));
+        assert_eq!(civil_from_days(20_668), (2026, 8, 3));
+    }
+
+    #[test]
+    fn amz_date_formats_utc() {
+        // 2024-01-01T00:00:00Z = 1704067200
+        assert_eq!(amz_date(1_704_067_200), "20240101T000000Z");
+        // 2026-08-03T00:00:00Z
+        assert_eq!(amz_date(1_785_715_200), "20260803T000000Z");
+    }
+
+    #[test]
+    fn hmac_sha256_matches_sigv4_test_vector() {
+        // AWS SigV4 signing-key derivation, cross-checked against an
+        // independent Python implementation: kDate=68a9e453..., kRegion,
+        // kService, kSigning=2c94c0cf... for 20150830/us-east-1/iam with the
+        // documented example secret.
+        let secret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+        let k_date = hmac_sha256(format!("AWS4{secret}"), "20150830").unwrap();
+        assert_eq!(
+            hex::encode(&k_date),
+            "68a9e4535ffbb09dcb6d25807a9ba5e3aef7cd00b3c57ed4b0c4a04988649f51"
+        );
+        let k_region = hmac_sha256(k_date, "us-east-1").unwrap();
+        let k_service = hmac_sha256(k_region, "iam").unwrap();
+        let k_signing = hmac_sha256(k_service, "aws4_request").unwrap();
+        let expected = "2c94c0cf5378ada6887f09bb697df8fc0affdb34ba1cdd5bda32b664bd55b73c";
+        assert_eq!(hex::encode(k_signing), expected);
+    }
+
+    #[tokio::test]
+    async fn presigned_url_is_well_formed() {
+        let client = StorageClient::new(config_for("http://127.0.0.1:9000"));
+        let url = client.presigned_get_url("docs", "a/b.txt", 3600).unwrap();
+        assert!(
+            url.starts_with("http://127.0.0.1:9000/docs/a/b.txt?X-Amz-Algorithm=AWS4-HMAC-SHA256")
+        );
+        assert!(url.contains("X-Amz-Expires=3600"));
+        assert!(url.contains("X-Amz-Signature="), "{url}");
+        // Signature is 64 lowercase hex chars.
+        let sig = url.split("X-Amz-Signature=").nth(1).unwrap();
+        assert_eq!(sig.len(), 64);
+        assert!(sig.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[tokio::test]
+    async fn object_url_path_style_and_key_normalization() {
+        let client = StorageClient::new(config_for("http://127.0.0.1:9000"));
+        assert_eq!(
+            client.object_url("docs", "/a//b.txt"),
+            "http://127.0.0.1:9000/docs/a//b.txt"
+        );
+        // path-style virtual host off
+        let mut cfg = config_for("http://127.0.0.1:9000");
+        cfg.path_style = false;
+        let client2 = StorageClient::new(cfg);
+        assert_eq!(
+            client2.object_url("docs", "a.txt"),
+            "http://docs.127.0.0.1:9000/a.txt"
+        );
+    }
+
+    #[tokio::test]
+    async fn enabled_requires_endpoint_and_credentials() {
+        let cfg = StorageConfig::default();
+        assert!(!cfg.enabled());
+        let cfg = config_for("http://127.0.0.1:9000");
+        assert!(cfg.enabled());
+    }
+
+    // Real MinIO round-trip (ignored by default; requires RAYRAG_STORAGE_*).
+    #[tokio::test]
+    #[ignore]
+    async fn minio_round_trip_live() {
+        let cfg = StorageConfig::from_env();
+        assert!(
+            cfg.enabled(),
+            "set RAYRAG_STORAGE_ENDPOINT/_ACCESS_KEY/_SECRET_KEY"
+        );
+        let client = StorageClient::new(cfg);
+        let bucket = "rayrag-test";
+        client.make_bucket(bucket).await.unwrap();
+        assert!(client.health(bucket).await.unwrap());
+        client
+            .put(bucket, "hello.txt", b"hello storage")
+            .await
+            .unwrap();
+        assert!(client.obj_exist(bucket, "hello.txt").await.unwrap());
+        let data = client.get(bucket, "hello.txt").await.unwrap();
+        assert_eq!(data, b"hello storage");
+        let url = client.presigned_get_url(bucket, "hello.txt", 60).unwrap();
+        assert!(!url.is_empty());
+        client.rm(bucket, "hello.txt").await.unwrap();
+        assert!(!client.obj_exist(bucket, "hello.txt").await.unwrap());
+    }
+}

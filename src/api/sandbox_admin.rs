@@ -1457,4 +1457,219 @@ pub async fn test_connection(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    /// A one-shot HTTP endpoint for the sandbox executor probe: answers the next
+    /// POST with body and yields the received request for form/JSON assertions.
+    fn mock_executor_endpoint(body: &'static str) -> (String, std::thread::JoinHandle<String>) {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock executor");
+        let address = listener.local_addr().expect("mock address");
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept executor request");
+            let mut buffer = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                match stream.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(count) => {
+                        buffer.extend_from_slice(&chunk[..count]);
+                        let text = String::from_utf8_lossy(&buffer).to_string();
+                        if let Some(split) = text.find("\r\n\r\n") {
+                            let expected = text[..split]
+                                .lines()
+                                .find_map(|line| {
+                                    let (name, value) = line.split_once(':')?;
+                                    if name.eq_ignore_ascii_case("content-length") {
+                                        value.trim().parse::<usize>().ok()
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap_or(0);
+                            if buffer.len() >= split + 4 + expected {
+                                break;
+                            }
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.flush();
+            String::from_utf8_lossy(&buffer).to_string()
+        });
+        (
+            format!("http://127.0.0.1:{}/execute", address.port()),
+            handle,
+        )
+    }
 
+    fn sidecar_config(provider_type: &str) -> Map<String, Value> {
+        let mut config = Map::new();
+        match provider_type {
+            "e2b" => {
+                config.insert("api_key".into(), Value::from("e2b_sk_test"));
+                config.insert("region".into(), Value::from("us"));
+            }
+            _ => {
+                config.insert("access_key_id".into(), Value::from("ak"));
+                config.insert("access_key_secret".into(), Value::from("sk"));
+                config.insert("account_id".into(), Value::from("123"));
+            }
+        }
+        config
+    }
+
+    #[tokio::test]
+    async fn sidecar_probe_posts_the_probe_and_reports_stdout() {
+        let (url, handle) = mock_executor_endpoint(
+            r#"{"success":true,"exit_code":0,"execution_time":0.01,"stdout":"2 + 2 = 4\nTEST_PASSED\n","stderr":""}"#,
+        );
+        let config = sidecar_config("e2b");
+        let payload = run_sidecar_probe("e2b", &config, Some(&url))
+            .await
+            .expect("sidecar probe");
+        assert_eq!(payload["success"], true);
+        assert_eq!(payload["details"]["exit_code"], 0);
+        assert!(
+            payload["details"]["stdout"]
+                .as_str()
+                .unwrap()
+                .contains("TEST_PASSED")
+        );
+        assert!(
+            payload["message"]
+                .as_str()
+                .unwrap()
+                .starts_with("Test PASSED | Exit code: 0")
+        );
+        let request = handle.join().expect("mock executor thread");
+        assert!(request.starts_with("POST /execute "), "{request}");
+        assert!(request.contains("\"provider_type\":\"e2b\""), "{request}");
+        assert!(request.contains("TEST_PASSED"), "{request}");
+        assert!(request.contains("\"api_key\":\"e2b_sk_test\""), "{request}");
+    }
+
+    #[tokio::test]
+    async fn sidecar_probe_requires_an_executor() {
+        let error = run_sidecar_probe("e2b", &sidecar_config("e2b"), None)
+            .await
+            .expect_err("missing executor");
+        assert!(error.contains("RAYRAG_SANDBOX_EXECUTOR_URL"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn sidecar_probe_validates_required_credentials() {
+        let mut config = Map::new();
+        config.insert("region".into(), Value::from("us"));
+        let error = run_sidecar_probe("e2b", &config, Some("http://127.0.0.1:1/execute"))
+            .await
+            .expect_err("missing api key");
+        assert!(error.contains("api_key is required"), "{error}");
+        let mut aliyun = Map::new();
+        aliyun.insert("access_key_id".into(), Value::from("ak"));
+        let error = run_sidecar_probe(
+            "aliyun_codeinterpreter",
+            &aliyun,
+            Some("http://127.0.0.1:1/execute"),
+        )
+        .await
+        .expect_err("missing secret");
+        assert!(error.contains("access_key_secret is required"), "{error}");
+    }
+
+    #[test]
+    fn provider_registry_matches_upstream() {
+        let ids: Vec<&str> = SANDBOX_PROVIDERS.iter().map(|entry| entry.0).collect();
+        assert_eq!(
+            ids,
+            vec![
+                "local",
+                "self_managed",
+                "ssh",
+                "aliyun_codeinterpreter",
+                "e2b",
+                "tenki",
+                "ucloud_agent_sandbox"
+            ]
+        );
+        assert_eq!(SANDBOX_PROVIDERS[1].1, "Self-Managed");
+        assert_eq!(
+            SANDBOX_PROVIDERS[1].3,
+            &["self-hosted", "low-latency", "secure"]
+        );
+        assert_eq!(SANDBOX_PROVIDERS[4].3, &["saas", "fast", "global"]);
+    }
+
+    #[test]
+    fn schemas_match_the_upstream_field_sets() {
+        let local = schema_json("local").unwrap();
+        assert_eq!(local.as_object().unwrap().len(), 8);
+        assert_eq!(local["python_bin"]["type"], "string");
+        assert_eq!(local["python_bin"]["default"], "python3");
+        assert_eq!(local["python_bin"]["required"], false);
+        assert_eq!(local["timeout"]["min"], 1);
+        assert_eq!(local["timeout"]["max"], 600);
+
+        let ssh = schema_json("ssh").unwrap();
+        assert_eq!(ssh.as_object().unwrap().len(), 14);
+        assert_eq!(ssh["host"]["required"], true);
+        assert_eq!(ssh["host"]["placeholder"], "192.168.1.10");
+        assert_eq!(ssh["password"]["secret"], true);
+        assert_eq!(ssh["private_key"]["multiline"], true);
+        assert_eq!(ssh["port"]["default"], 22);
+        assert!(ssh["host"].get("default").is_none());
+
+        let self_managed = schema_json("self_managed").unwrap();
+        assert_eq!(self_managed["endpoint"]["required"], true);
+        assert_eq!(self_managed["endpoint"]["scope"], "runtime");
+        assert_eq!(self_managed["executor_manager_image"]["readonly"], true);
+        assert_eq!(
+            self_managed["executor_manager_image"]["scope"],
+            "deployment"
+        );
+
+        let aliyun = schema_json("aliyun_codeinterpreter").unwrap();
+        assert_eq!(aliyun["access_key_secret"]["secret"], true);
+        assert_eq!(
+            aliyun["region"]["options"],
+            json!([
+                "cn-hangzhou",
+                "cn-beijing",
+                "cn-shanghai",
+                "cn-shenzhen",
+                "cn-guangzhou"
+            ])
+        );
+        assert_eq!(aliyun["timeout"]["max"], 30);
+
+        let e2b = schema_json("e2b").unwrap();
+        assert_eq!(e2b.as_object().unwrap().len(), 3);
+        assert_eq!(e2b["api_key"]["secret"], true);
+        assert_eq!(e2b["region"]["default"], "us");
+
+        assert!(schema_json("nope").is_none());
+    }
+
+    #[test]
+    fn test_message_follows_the_upstream_shape() {
+        let message = test_message(true, 0, 1.234, "TEST_PASSED\n", "");
+        assert_eq!(
+            message,
+            "Test PASSED | Exit code: 0 | Execution time: 1.23s | Output: TEST_PASSED..."
+        );
+        let failure = test_message(false, 1, 0.5, "", "boom");
+        assert_eq!(
+            failure,
+            "Test FAILED | Exit code: 1 | Execution time: 0.50s | Errors: boom..."
+        );
+    }
+}

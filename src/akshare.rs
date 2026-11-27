@@ -178,4 +178,72 @@ fn urlencoding(input: &str) -> String {
     out
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{Router, routing::get};
+    use serde_json::json;
 
+    const SAMPLE_RESPONSE: &str = r#"{"code":0,"msg":"OK","result":{"cmsArticleWebOld":[
+        {"date":"2026-08-03 18:43:00","title":"贵州茅台<em>600519</em>收盘上涨","content":"今日贵州茅台收报<em>1400</em>元","mediaName":"证券时报网","url":"http://finance.eastmoney.com/a/202608033829918487.html"},
+        {"date":"2026-08-03 09:00:00","title":"无链接新闻","content":"内容正文","mediaName":"财联社","url":""}
+    ]}}"#;
+
+    #[test]
+    fn strip_em_removes_highlight_tags() {
+        assert_eq!(strip_em("贵州<em>茅台</em>涨了"), "贵州茅台涨了");
+    }
+
+    #[test]
+    fn urlencoding_keeps_json_shape() {
+        let encoded = urlencoding(r#"{"a":"1 2"}"#);
+        assert!(encoded.contains("%7B") && encoded.contains("%22") && encoded.contains("%20"));
+    }
+
+    #[tokio::test]
+    async fn parses_eastmoney_search_response() {
+        let app = Router::new().route("/search/jsonp", get(|| async { SAMPLE_RESPONSE }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = AkShareClient {
+            http: reqwest::Client::builder()
+                .timeout(crate::common::cmd_timeout::duration())
+                .build()
+                .unwrap(),
+        };
+        let response = client
+            .stock_news_em_at(
+                &AkShareRequest {
+                    symbol: "600519".into(),
+                    top_n: 10,
+                },
+                &format!("http://{addr}/search/jsonp"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.len(), 2);
+        assert_eq!(response[0].title, "贵州茅台600519收盘上涨");
+        assert!(response[0].content.contains("1400"));
+        assert_eq!(response[0].media_name, "证券时报网");
+        assert_eq!(response[1].title, "无链接新闻");
+
+        let markdown = AkShareClient::render_markdown(&response);
+        assert!(markdown.contains("[贵州茅台600519收盘上涨]"));
+        assert!(markdown.contains("文章来源: 证券时报网"));
+    }
+
+    #[tokio::test]
+    async fn rejects_empty_symbol() {
+        let client = AkShareClient::default();
+        let result = client
+            .stock_news_em(&AkShareRequest {
+                symbol: "  ".into(),
+                top_n: 10,
+            })
+            .await;
+        assert!(result.is_err());
+    }
+}

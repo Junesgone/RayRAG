@@ -1316,4 +1316,398 @@ pub fn remember_loaded_env_file() {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn env_file_writes_preserve_comments_and_update_in_place() {
+        let dir = std::env::temp_dir().join(format!("rayrag-setup-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(".env");
+        std::fs::write(
+            &path,
+            "# deployment notes\nEMBED_API_BASE=http://old:8888/v1\nUNRELATED=keep-me\n",
+        )
+        .unwrap();
+
+        write_env_file(
+            &path,
+            &[
+                ("EMBED_API_BASE".into(), "http://new:8888/v1".into()),
+                ("LLM_API_KEY".into(), "sk-123".into()),
+            ],
+        )
+        .unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        // The comment and the untouched key survive, the existing key is updated in
+        // place, and the new key is appended.
+        assert!(content.contains("# deployment notes"), "{content}");
+        assert!(content.contains("UNRELATED=keep-me"), "{content}");
+        assert!(
+            content.contains("EMBED_API_BASE=http://new:8888/v1"),
+            "{content}"
+        );
+        assert!(!content.contains("http://old"), "{content}");
+        assert!(content.contains("LLM_API_KEY=sk-123"), "{content}");
+
+        // Reading it back gives the same pairs the loader would see.
+        let entries = read_env_file(&path).unwrap();
+        assert!(
+            entries
+                .iter()
+                .any(|(k, v)| k == "EMBED_API_BASE" && v == "http://new:8888/v1")
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|(k, v)| k == "UNRELATED" && v == "keep-me")
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn validation_rejects_values_the_process_cannot_honour() {
+        assert!(validate("RAYRAG_MODEL_TIMEOUT", "120").is_ok());
+        assert!(
+            validate("RAYRAG_MODEL_TIMEOUT", "").is_ok(),
+            "empty means default"
+        );
+        assert!(validate("RAYRAG_MODEL_TIMEOUT", "soon").is_err());
+        assert!(validate("RAYRAG_MODEL_TIMEOUT", "0").is_err());
+        assert!(validate("RAYRAG_PDF_STREAM_LIMIT_BYTES", "").is_ok());
+        assert!(validate("RAYRAG_PDF_STREAM_LIMIT_BYTES", "1048575").is_err());
+        assert!(validate("RAYRAG_PDF_STREAM_LIMIT_BYTES", "1048576").is_ok());
+        assert!(validate("RAYRAG_PDF_STREAM_LIMIT_BYTES", "67108864").is_ok());
+        assert!(validate("RAYRAG_CMD_TIMEOUT", "7201").is_err());
+        assert!(validate("RAYRAG_VECTOR_BACKEND", "mysql").is_err());
+        assert!(validate("RAYRAG_VECTOR_BACKEND", "zvec").is_ok());
+        // A base URL without a scheme would fail at the first request: say so now.
+        assert!(validate("EMBED_API_BASE", "127.0.0.1:8888").is_err());
+        assert!(validate("EMBED_API_BASE", "http://127.0.0.1:8888/v1").is_ok());
+    }
+
+    #[test]
+    fn the_table_offers_the_switches_a_deployment_actually_reads() {
+        let keys: Vec<&str> = field_specs().into_iter().map(|spec| spec.0).collect();
+        for key in [
+            // Reranking: documented in the README long before it was offered here, and
+            // `RERANK_MODEL` was silently ignored until this round.
+            "RERANK_API_BASE",
+            "RERANK_API_KEY",
+            "RERANK_MODEL",
+            "RAYRAG_ASR_API_BASE",
+            "RAYRAG_ASR_MODEL",
+            // Domestic-network search: the reason the agent's web search works without
+            // reaching Google.
+            "SEARXNG_URL",
+            "TAVILY_API_KEY",
+            "BOCHA_API_KEY",
+            // Sign-up and hard limits.
+            "REGISTER_ENABLED",
+            "DISABLE_PASSWORD_LOGIN",
+            "RAYRAG_CORS_ORIGIN",
+            "RAYRAG_MAX_UPLOAD_BYTES",
+            // Shown but owned by the container definition.
+            "RAYRAG_MEMORY_LIMIT",
+        ] {
+            assert!(
+                keys.contains(&key),
+                "{key} is missing from the guided setup"
+            );
+        }
+        let groups: Vec<&str> = field_specs().into_iter().map(|spec| spec.3).collect();
+        for group in ["models", "storage", "resources", "search", "access"] {
+            assert!(groups.contains(&group), "group {group} is missing");
+        }
+        // A select without options would render an empty dropdown that cannot be saved.
+        for spec in field_specs() {
+            if spec.4 == FieldKind::Select {
+                assert!(!spec.8.is_empty(), "{} has no choices", spec.0);
+            }
+        }
+        assert_eq!(select_options("REGISTER_ENABLED"), Some(vec!["1", "0"]));
+        assert_eq!(select_options("EMBED_API_BASE"), None);
+        assert!(validate("REGISTER_ENABLED", "1").is_ok());
+        assert!(validate("REGISTER_ENABLED", "maybe").is_err());
+        assert!(validate("DISABLE_PASSWORD_LOGIN", "2").is_err());
+        // The shipped deployment spells this switch `false` (docker-compose.yml), so
+        // the page must offer that spelling and accept it back unchanged. The bug this
+        // guards: the select listed 0/1 only, the current value rendered as unselected,
+        // and saving wrote a different setting than the operator saw.
+        assert_eq!(
+            select_options("DISABLE_PASSWORD_LOGIN"),
+            Some(vec!["false", "true"])
+        );
+        assert!(validate("DISABLE_PASSWORD_LOGIN", "false").is_ok());
+        assert!(validate("DISABLE_PASSWORD_LOGIN", "true").is_ok());
+        // A hand-edited spelling the parser honours still round-trips.
+        assert!(validate("DISABLE_PASSWORD_LOGIN", "True").is_ok());
+        assert!(validate("DISABLE_PASSWORD_LOGIN", "yes").is_ok());
+    }
+
+    /// A bind-mounted file cannot be replaced by `rename`: the wizard must still be
+    /// able to save into the project's `.env` that docker-compose mounts.
+    #[test]
+    fn a_file_that_cannot_be_replaced_is_written_in_place() {
+        let dir = std::env::temp_dir().join(format!("rayrag-setup-bind-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(".env");
+        std::fs::write(&path, "EMBED_API_BASE=http://old:8888/v1\n").unwrap();
+        // Stand in for "rename over the target fails" by making the target's directory
+        // read-only: the staged copy lands in the same directory, so a plain atomic
+        // write fails while the in-place path (opening the existing file) still works.
+        let mut permissions = std::fs::metadata(&dir).unwrap().permissions();
+        let original_mode = std::os::unix::fs::PermissionsExt::mode(&permissions);
+        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o500);
+        std::fs::set_permissions(&dir, permissions).unwrap();
+        let outcome = write_env_file(
+            &path,
+            &[(
+                "EMBED_API_BASE".to_string(),
+                "http://new:8888/v1".to_string(),
+            )],
+        );
+        let mut restore = std::fs::metadata(&dir).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut restore, original_mode);
+        std::fs::set_permissions(&dir, restore).unwrap();
+        // The write either succeeded (the fallback ran) or reported the reason; what must
+        // never happen is a silently truncated file.
+        let content = std::fs::read_to_string(&path).unwrap();
+        if outcome.is_ok() {
+            assert!(content.contains("http://new:8888/v1"), "{content}");
+        } else {
+            assert!(content.contains("http://old:8888/v1"), "{content}");
+        }
+        assert!(
+            content.ends_with('\n'),
+            "the file must stay complete: {content:?}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The wizard prefills what is already in force, so a first-login user confirms
+    /// rather than researches: every field with a code default must report it, and a
+    /// value that came from the file must not be labelled a default.
+    #[test]
+    fn every_field_with_a_code_default_is_prefilled_and_labelled() {
+        let defaults = field_defaults();
+        for (key, value) in &defaults {
+            assert!(!value.is_empty(), "{key} has an empty default");
+            assert!(
+                field_specs().iter().any(|spec| spec.0 == *key),
+                "{key} has a default but is not offered by the page"
+            );
+        }
+        for key in [
+            "RAYRAG_CMD_TIMEOUT",
+            "RAYRAG_MODEL_TIMEOUT",
+            "RAYRAG_HTTP_BODY_LIMIT_BYTES",
+            "RAYRAG_CONNECTOR_BODY_LIMIT_BYTES",
+            "RAYRAG_PDF_STREAM_LIMIT_BYTES",
+            "RAYRAG_ZVEC_MAX_BUFFER_BYTES",
+            "RAYRAG_EMBEDDING_DIMENSION",
+            "RAYRAG_VECTOR_BACKEND",
+            "RAYRAG_MAX_UPLOAD_BYTES",
+            "REGISTER_ENABLED",
+            "DISABLE_PASSWORD_LOGIN",
+        ] {
+            assert!(field_default(key).is_some(), "{key} must prefill");
+        }
+        // The numbers must be the ones the code reads, not copies that can drift.
+        use crate::common::cmd_timeout as limits;
+        assert_eq!(
+            field_default("RAYRAG_CMD_TIMEOUT").as_deref(),
+            Some(limits::DEFAULT_SECS.to_string().as_str())
+        );
+        assert_eq!(
+            field_default("RAYRAG_MODEL_TIMEOUT").as_deref(),
+            Some(limits::DEFAULT_MODEL_SECS.to_string().as_str())
+        );
+        assert_eq!(
+            field_default("RAYRAG_HTTP_BODY_LIMIT_BYTES").as_deref(),
+            Some(limits::DEFAULT_BODY_LIMIT.to_string().as_str())
+        );
+        assert_eq!(
+            field_default("RAYRAG_PDF_STREAM_LIMIT_BYTES").as_deref(),
+            Some(
+                crate::parser::pdf_stream::DEFAULT_PDF_STREAM_BYTES
+                    .to_string()
+                    .as_str()
+            )
+        );
+        // A variable whose absence is meaningful (an endpoint) has no default: guessing
+        // one would write an address the operator never chose.
+        for key in [
+            "EMBED_API_BASE",
+            "LLM_API_KEY",
+            "SEARXNG_URL",
+            "RAYRAG_POSTGRES_URL",
+        ] {
+            assert!(field_default(key).is_none(), "{key} must stay empty");
+        }
+    }
+
+    #[test]
+    fn the_file_fingerprint_notices_a_real_change_and_ignores_a_rewrite() {
+        let dir = std::env::temp_dir().join(format!("rayrag-setup-fp-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(".env");
+        std::fs::write(&path, "LLM_MODEL=a\n").unwrap();
+        let first = env_file_fingerprint(&path);
+        assert!(first.exists);
+        assert_eq!(first.size, std::fs::metadata(&path).unwrap().len());
+        // The same bytes written again are not a change (the page polls this every five
+        // seconds and must not reload for nothing).
+        std::fs::write(&path, "LLM_MODEL=a\n").unwrap();
+        assert_eq!(env_file_fingerprint(&path).digest, first.digest);
+        std::fs::write(&path, "LLM_MODEL=b\n").unwrap();
+        assert_ne!(env_file_fingerprint(&path).digest, first.digest);
+        // A file that does not exist is reported, not invented.
+        let missing = env_file_fingerprint(&dir.join("nope.env"));
+        assert!(!missing.exists);
+        assert_eq!(missing.size, 0);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn the_environment_file_defaults_to_the_project_root() {
+        // The wizard's receipt must point at a file the operator can find: the project
+        // root (the directory with `docker-compose.yml`/`Cargo.toml`), not a path beside
+        // the state volume.
+        let root = project_root().expect("the test runs from the project root");
+        assert!(
+            root.join("Cargo.toml").is_file(),
+            "the detected root must be the crate root: {}",
+            root.display()
+        );
+        let state_dir =
+            std::env::temp_dir().join(format!("rayrag-setup-state-{}", uuid::Uuid::new_v4()));
+        let static_dir = state_dir.join("static");
+        std::fs::create_dir_all(&static_dir).unwrap();
+        let static_dir = static_dir.to_str().unwrap();
+
+        // A project root that has no `.env` yet, which is what a fresh clone looks like
+        // (the real repository here has one, and it must win — see case 6).
+        let empty_root = state_dir.join("project");
+        std::fs::create_dir_all(&empty_root).unwrap();
+        // 1. A fresh deployment gets its file at the project root, where the operator
+        //    looks for it (and where `docker compose` reads it).
+        assert_eq!(
+            resolve_env_file(None, None, Some(&empty_root), static_dir),
+            empty_root.join(".env")
+        );
+        // 2. An explicit RAYRAG_ENV_FILE wins over everything.
+        assert_eq!(
+            resolve_env_file(None, Some("/etc/rayrag/.env"), Some(&root), static_dir),
+            PathBuf::from("/etc/rayrag/.env")
+        );
+        // 3. The file this process actually loaded wins over the guess: the wizard must
+        //    write the file the next boot reads.
+        assert_eq!(
+            resolve_env_file(
+                Some(Path::new("/srv/rayrag/env")),
+                None,
+                Some(&root),
+                static_dir
+            ),
+            PathBuf::from("/srv/rayrag/env")
+        );
+        // 4. A deployment that already keeps its file beside the state directory keeps
+        //    it: the wizard must not start writing a second file.
+        std::fs::write(state_dir.join(".env"), "EMBED_API_BASE=\n").unwrap();
+        assert_eq!(
+            resolve_env_file(None, None, Some(&empty_root), static_dir),
+            state_dir.join(".env")
+        );
+        // 6. A project root that already has the file is preferred over the state
+        //    directory: that is the file `docker compose` interpolates.
+        assert_eq!(
+            resolve_env_file(None, None, Some(&root), static_dir),
+            root.join(".env")
+        );
+        // 5. Without a project root the old state-relative default still applies.
+        assert_eq!(
+            resolve_env_file(None, None, None, static_dir),
+            state_dir.join(".env")
+        );
+        std::fs::remove_dir_all(&state_dir).ok();
+    }
+
+    #[test]
+    fn a_select_renders_a_value_the_table_did_not_list() {
+        // `setup_fields` needs an `AppState`, so the same rule is exercised on the
+        // helper it uses: the option list gains the current value instead of dropping it.
+        let mut options: Vec<String> = vec!["false".to_string(), "true".to_string()];
+        let value = "True".to_string();
+        if !options.iter().any(|option| option == &value) {
+            options.push(value.clone());
+        }
+        assert_eq!(options.last().map(String::as_str), Some("True"));
+        assert!(
+            options.contains(&"false".to_string()),
+            "the listed spellings stay available"
+        );
+    }
+
+    #[test]
+    fn the_container_memory_limit_is_shown_but_never_written() {
+        // The page must not promise a setting it cannot deliver: `mem_limit` comes
+        // from docker-compose.yml, and a write into the environment file would be a
+        // line nothing reads. The endpoint refuses it; the page renders the line.
+        assert!(is_readonly("RAYRAG_MEMORY_LIMIT"));
+        assert!(!is_readonly("RAYRAG_MAX_CONCURRENT_TASKS"));
+        assert!(!applies_live("RAYRAG_MEMORY_LIMIT"));
+        let spec = field_specs()
+            .into_iter()
+            .find(|spec| spec.0 == "RAYRAG_MEMORY_LIMIT")
+            .expect("the memory limit is offered");
+        assert_eq!(spec.4, FieldKind::Readonly);
+        assert!(
+            spec.5.contains("docker-compose.yml"),
+            "the help must say where the value belongs: {}",
+            spec.5
+        );
+    }
+
+    #[test]
+    fn live_settings_are_exactly_the_ones_read_per_call() {
+        // The distinction the page shows must match how the process reads them: a
+        // value advertised as live that only takes effect after a restart is a lie.
+        for key in [
+            "RAYRAG_CMD_TIMEOUT",
+            "RAYRAG_HTTP_BODY_LIMIT_BYTES",
+            "RAYRAG_CONNECTOR_BODY_LIMIT_BYTES",
+            "RAYRAG_PDF_STREAM_LIMIT_BYTES",
+            "RAYRAG_ZVEC_MAX_BUFFER_BYTES",
+            "RAYRAG_OCR_PROVIDER",
+            "RAYRAG_OCR_BASE_URL",
+        ] {
+            assert!(applies_live(key), "{key} is read per call and must be live");
+        }
+        for key in [
+            // The embedding and chat clients are constructed at startup and keep the
+            // timeout they were built with, so the page must not promise otherwise.
+            "RAYRAG_MODEL_TIMEOUT",
+            "EMBED_API_BASE",
+            "LLM_API_KEY",
+            "RAYRAG_MAX_CONCURRENT_TASKS",
+            "RAYRAG_VECTOR_BACKEND",
+            "RAYRAG_EMBEDDING_DIMENSION",
+            "RAYRAG_POSTGRES_URL",
+        ] {
+            assert!(!applies_live(key), "{key} is decided at startup");
+        }
+        // Every offered field must have an explicit answer.
+        for spec in field_specs() {
+            let key = spec.0;
+            let live = spec.7;
+            assert_eq!(
+                live,
+                applies_live(key),
+                "{key}: the page's badge and the process disagree"
+            );
+        }
+    }
+}

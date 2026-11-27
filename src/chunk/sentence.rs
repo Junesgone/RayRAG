@@ -41,4 +41,35 @@ pub fn split_sentences_keep_boundaries(text: &str) -> Vec<String> {
     out
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn pattern_matches_upstream_constant() {
+        assert_eq!(SENTENCE_BOUNDARY_PATTERN, r"([。!?？；！\n]|\. )");
+        let regex = sentence_boundary_regex();
+        assert!(regex.is_match("你好。"));
+        assert!(regex.is_match("Done!"));
+        assert!(regex.is_match("End. Next"));
+        assert!(regex.is_match("line\nnext"));
+        assert!(!regex.is_match("no boundary here"));
+    }
+
+    #[test]
+    fn split_keeps_boundaries_attached() {
+        assert_eq!(
+            split_sentences_keep_boundaries("第一句。第二句！\n第三句"),
+            vec!["第一句。", "第二句！", "\n", "第三句"]
+        );
+        assert_eq!(
+            split_sentences_keep_boundaries("End. Next"),
+            vec!["End. ", "Next"]
+        );
+        assert_eq!(
+            split_sentences_keep_boundaries("尾部边界。"),
+            vec!["尾部边界。"]
+        );
+        assert!(split_sentences_keep_boundaries("").is_empty());
+    }
+}

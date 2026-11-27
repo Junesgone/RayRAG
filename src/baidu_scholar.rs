@@ -222,4 +222,79 @@ pub fn baidu_scholar_results_to_tool_rows(results: &[BaiduScholarResult]) -> Vec
         .collect()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn parses_baidu_scholar_html_into_rows() {
+        let html = r#"
+<html><body>
+<div class="result sc_content">
+  <h3 class="sc_title"><a href="https://xueshu.baidu.com/usercenter/paper/show?paperid=1">Retrieval-Augmented Generation Survey</a></h3>
+  <div class="sc_abstract">A comprehensive survey of RAG methods.</div>
+  <div class="sc_author">Lewis et al.</div>
+  <div class="sc_year">2024</div>
+</div>
+<div class="result sc_content">
+  <h3 class="sc_title"><a href="https://xueshu.baidu.com/paper/2">Second Paper</a></h3>
+  <div class="sc_abstract">Another paper.</div>
+</div>
+</body></html>"#;
+        let results = parse_baidu_scholar_results(html);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].title, "Retrieval-Augmented Generation Survey");
+        assert!(results[0].link.contains("paperid=1"));
+        assert!(results[0].snippet.contains("survey"));
+        assert_eq!(results[0].authors, "Lewis et al.");
+        assert_eq!(results[0].year, "2024");
+    }
+
+    #[test]
+    fn rows_are_ragflow_shaped() {
+        let rows = baidu_scholar_results_to_tool_rows(&[BaiduScholarResult {
+            title: "t".into(),
+            link: "https://l".into(),
+            snippet: "s".into(),
+            authors: "a".into(),
+            year: "2024".into(),
+        }]);
+        assert_eq!(rows[0]["title"], "t");
+        assert_eq!(rows[0]["authors"], "a");
+        assert_eq!(rows[0]["year"], "2024");
+    }
+
+    #[tokio::test]
+    async fn empty_query_is_rejected() {
+        let client = BaiduScholarClient::default();
+        let error = client
+            .search(&BaiduScholarRequest {
+                query: "".into(),
+                top_n: 5,
+            })
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("query is required"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live access to xueshu.baidu.com"]
+    async fn live_baidu_scholar_search() {
+        let result = BaiduScholarClient::default()
+            .search(&BaiduScholarRequest {
+                query: "RAG".into(),
+                top_n: 5,
+            })
+            .await;
+        match result {
+            Ok(results) => assert!(
+                !results.is_empty(),
+                "baidu_scholar returned success but zero parsed results"
+            ),
+            Err(error) if error.to_string().contains("safety verification") => {
+                eprintln!("baidu_scholar live search skipped: {}", error);
+            }
+            Err(error) => panic!("baidu_scholar live search error: {error:?}"),
+        }
+    }
+}

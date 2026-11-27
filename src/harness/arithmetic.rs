@@ -1475,4 +1475,82 @@ pub async fn compute_from_facts(
     }))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn helpers_mirror_upstream() {
+        assert_eq!(
+            letters(&[json!("Ada Lovelace"), json!("Alan Turing")]).unwrap(),
+            21
+        );
+        assert_eq!(letters(&[json!(["Ada", "Alan"])]).unwrap(), 7);
+        assert!(letters(&[json!(42)]).is_err());
+        assert_eq!(digit_sum(&[json!("L7 7BN")]).unwrap(), 14);
+        assert_eq!(digit_sum(&[json!(2020)]).unwrap(), 4);
+        assert_eq!(
+            date_diff(&["1941-07-28".to_string(), "1959-07-17".to_string()]).unwrap(),
+            6563
+        );
+        assert!(date_diff(&["not-a-date".to_string(), "1959-07-17".to_string()]).is_err());
+    }
+
+    #[test]
+    fn compute_arithmetic_and_formatting() {
+        assert_eq!(
+            compute("12345 + 6789 + 101112"),
+            ("120246".to_string(), String::new())
+        );
+        assert_eq!(
+            compute("100 * 4523 / 18092"),
+            ("25".to_string(), String::new())
+        );
+        assert_eq!(compute("0.1 + 0.2"), ("0.3".to_string(), String::new()));
+        assert_eq!(compute("1998 - 1954"), ("44".to_string(), String::new()));
+        assert_eq!(
+            compute("100 * 2.7 / 556"),
+            ("0.485612".to_string(), String::new())
+        );
+        assert_eq!(compute("2 ** 10"), ("1024".to_string(), String::new()));
+        assert_eq!(compute("7 // 2"), ("3".to_string(), String::new()));
+        assert_eq!(compute("7 % 3"), ("1".to_string(), String::new()));
+        assert_eq!(compute("-7 % 3"), ("2".to_string(), String::new()));
+    }
+
+    #[test]
+    fn compute_refuses_unsafe_or_invalid() {
+        assert!(!compute("").1.is_empty());
+        assert!(
+            compute(&"1+".repeat(300))
+                .1
+                .starts_with("expression is longer")
+        );
+        assert!(
+            compute("__import__('os')")
+                .1
+                .contains("only the listed functions may be called")
+        );
+        assert_eq!(
+            compute("open('x')").1,
+            "only the listed functions may be called"
+        );
+        assert!(
+            compute("2 * 'abc'")
+                .1
+                .contains("multiplication is only allowed on numbers")
+        );
+        assert!(compute("2 ** 100").1.contains("exponent is too large"));
+        assert!(compute("len(\"Ada Lovelace\")").1.contains("use letters()"));
+        assert!(compute("letters(42)").1.contains("letters() takes names"));
+        assert!(compute("1 / 0").1.contains("division by zero"));
+        assert!(compute("True").1.contains("result is bool, not a number"));
+        assert!(compute("abs(-5)").0 == "5");
+        assert_eq!(compute("round(2.5)").0, "2");
+        assert_eq!(
+            compute("sorted([3, 1, 2])").1,
+            "result is list, not a number"
+        );
+        assert_eq!(compute("sum([1, 2, 3]) + max(4, 2) + min([9, 5])").0, "15");
+    }
+}

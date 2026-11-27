@@ -813,4 +813,130 @@ fn server_error(message: &str) -> axum::response::Response {
         .into_response()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn retrieval_metrics_match_ragflow_formulas() {
+        let retrieved = vec!["x".into(), "b".into(), "a".into()];
+        let relevant = vec!["a".into(), "b".into(), "c".into()];
+        let metrics = retrieval_metrics(&retrieved, &relevant, &[], &[]);
+        assert!((metrics["precision"] - 2.0 / 3.0).abs() < 1e-6);
+        assert!((metrics["recall"] - 2.0 / 3.0).abs() < 1e-6);
+        assert!((metrics["f1_score"] - 2.0 / 3.0).abs() < 1e-6);
+        assert_eq!(metrics["hit_rate"], 1.0);
+        assert_eq!(metrics["mrr"], 0.5);
+    }
+
+    #[test]
+    fn persistence_failure_rolls_back_dataset_creation() {
+        let root = std::env::temp_dir().join(format!("rayrag-eval-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("evaluations.json");
+        let store = EvaluationStore::new(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(
+            store
+                .create_dataset(
+                    "owner",
+                    DatasetRequest {
+                        name: "Evaluation".into(),
+                        description: String::new(),
+                        kb_ids: vec!["kb-a".into()],
+                    },
+                )
+                .is_err()
+        );
+        assert!(store.list_datasets("owner", false).is_empty());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn evaluation_state_survives_restart_and_dataset_delete_cascades() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-eval-restart-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("evaluations.json");
+        let store = EvaluationStore::new(&path).unwrap();
+        let dataset = store
+            .create_dataset(
+                "owner",
+                DatasetRequest {
+                    name: "Evaluation".into(),
+                    description: "Restart".into(),
+                    kb_ids: vec!["kb-a".into()],
+                },
+            )
+            .unwrap();
+        let case = store
+            .add_case(
+                &dataset.id,
+                "owner",
+                false,
+                CaseRequest {
+                    question: "water quality".into(),
+                    reference_answer: None,
+                    relevant_doc_ids: vec!["doc-a".into()],
+                    relevant_chunk_ids: vec!["chunk-a".into()],
+                    metadata: HashMap::new(),
+                },
+            )
+            .unwrap()
+            .unwrap();
+        let (run, _) = store
+            .begin_run(
+                &dataset,
+                RunRequest {
+                    name: Some("Baseline".into()),
+                    top_k: 5,
+                    vector_weight: 0.0,
+                },
+            )
+            .unwrap();
+        store
+            .finish_run(
+                &run.id,
+                vec![EvaluationResult {
+                    id: "result-a".into(),
+                    run_id: run.id.clone(),
+                    case_id: case.id,
+                    retrieved_chunk_ids: vec!["chunk-a".into()],
+                    retrieved_doc_ids: vec!["doc-a".into()],
+                    metrics: HashMap::from([("mrr".into(), 1.0)]),
+                    execution_time_ms: 1.0,
+                    created_at: now_ms(),
+                }],
+            )
+            .unwrap();
+        drop(store);
+
+        let restored = EvaluationStore::new(&path).unwrap();
+        assert_eq!(restored.list_datasets("owner", false).len(), 1);
+        assert_eq!(
+            restored
+                .cases_for(&dataset.id, "owner", false)
+                .unwrap()
+                .len(),
+            1
+        );
+        let (restored_run, restored_results) =
+            restored.run_results(&run.id, "owner", false).unwrap();
+        assert_eq!(restored_run.status, "COMPLETED");
+        assert_eq!(restored_results.len(), 1);
+        assert!(
+            restored
+                .delete_dataset(&dataset.id, "owner", false)
+                .unwrap()
+        );
+        assert!(restored.list_datasets("owner", false).is_empty());
+        assert!(restored.run_results(&run.id, "owner", false).is_none());
+        drop(restored);
+
+        let after_delete = EvaluationStore::new(&path).unwrap();
+        assert!(after_delete.list_datasets("owner", false).is_empty());
+        assert!(after_delete.run_results(&run.id, "owner", false).is_none());
+        std::fs::remove_dir_all(root).ok();
+    }
+}

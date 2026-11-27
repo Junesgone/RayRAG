@@ -159,7 +159,19 @@ impl PubMedClient {
         })
     }
 
-    
+    #[cfg(test)]
+    pub(crate) fn new_with_endpoints(
+        esearch_endpoint: &str,
+        efetch_endpoint: &str,
+        esummary_endpoint: &str,
+    ) -> Result<Self> {
+        Self::new(
+            esearch_endpoint,
+            efetch_endpoint,
+            esummary_endpoint,
+            Duration::ZERO,
+        )
+    }
 
     async fn get_bounded(
         &self,
@@ -719,4 +731,258 @@ async fn read_bounded_body(response: reqwest::Response) -> Result<Vec<u8>> {
     Ok(body)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::Router;
+    use axum::extract::State;
+    use axum::http::{HeaderMap, Uri};
+    use axum::response::IntoResponse;
+    use axum::routing::get;
+    use std::sync::{Arc, Mutex};
 
+    const ESEARCH_XML: &str = r#"<?xml version="1.0"?>
+<eSearchResult><IdList><Id>11111</Id><Id>22222</Id></IdList></eSearchResult>"#;
+    const EFETCH_XML: &str = r#"<?xml version="1.0"?>
+<PubmedArticleSet>
+  <PubmedArticle>
+    <MedlineCitation>
+      <PMID>11111</PMID>
+      <Article>
+        <ArticleTitle>Deep <b>retrieval</b> &amp; generation</ArticleTitle>
+        <Abstract><AbstractText>  A <i>short</i> abstract.  </AbstractText></Abstract>
+        <Journal><Title>Nature Machine Intelligence</Title><JournalIssue><PubDate><Year>2020</Year></PubDate><Volume>10</Volume><Issue>2</Issue></JournalIssue></Journal>
+        <Pagination><MedlinePgn>101-110</MedlinePgn></Pagination>
+        <AuthorList>
+          <Author><LastName>Khan</LastName><ForeName>Furqan</ForeName></Author>
+          <Author><LastName>Smith</LastName><ForeName>Jane</ForeName></Author>
+        </AuthorList>
+      </Article>
+    </MedlineCitation>
+    <PubmedData><ArticleIdList><ArticleId IdType="pubmed">11111</ArticleId><ArticleId IdType="doi">10.1000/example.doi</ArticleId></ArticleIdList></PubmedData>
+  </PubmedArticle>
+  <PubmedArticle>
+    <MedlineCitation><PMID>22222</PMID><Article><ArticleTitle>No author paper</ArticleTitle></Article></MedlineCitation>
+  </PubmedArticle>
+</PubmedArticleSet>"#;
+    const ESEARCH_JSON: &str = r#"{"esearchresult":{"idlist":["11111","22222"]}}"#;
+    const ESUMMARY_JSON: &str = r#"{
+      "result": {
+        "uids": ["11111", "22222"],
+        "11111": {"title":"  Cochrane review of masks  ","authors":[{"name":"Smith J"},{"name":"Doe A"}],"fulljournalname":"Cochrane Database Syst Rev","pubdate":"2020 Nov 1"},
+        "22222": {"title":"Vaccine efficacy","authors":[{"name":"Alice"},{"name":"Bob"},{"name":"Carol"},{"name":"Dave"}],"fulljournalname":"Lancet","pubdate":"2021 Mar-Apr"}
+      }
+    }"#;
+
+    #[derive(Clone, Default)]
+    struct Recorded(Arc<Mutex<Vec<(Uri, HeaderMap)>>>);
+
+    async fn python_handler(
+        State(recorded): State<Recorded>,
+        uri: Uri,
+        headers: HeaderMap,
+    ) -> impl IntoResponse {
+        recorded.0.lock().unwrap().push((uri.clone(), headers));
+        if uri.path().ends_with("esearch.fcgi") {
+            (
+                [(&axum::http::header::CONTENT_TYPE, "application/xml")],
+                ESEARCH_XML,
+            )
+        } else {
+            (
+                [(&axum::http::header::CONTENT_TYPE, "application/xml")],
+                EFETCH_XML,
+            )
+        }
+    }
+
+    async fn go_handler(
+        State(recorded): State<Recorded>,
+        uri: Uri,
+        headers: HeaderMap,
+    ) -> impl IntoResponse {
+        recorded.0.lock().unwrap().push((uri.clone(), headers));
+        if uri.path().ends_with("esearch.fcgi") {
+            (
+                [(&axum::http::header::CONTENT_TYPE, "application/json")],
+                ESEARCH_JSON,
+            )
+        } else {
+            (
+                [(&axum::http::header::CONTENT_TYPE, "application/json")],
+                ESUMMARY_JSON,
+            )
+        }
+    }
+
+    async fn empty_go_handler(
+        State(recorded): State<Recorded>,
+        uri: Uri,
+        headers: HeaderMap,
+    ) -> impl IntoResponse {
+        recorded.0.lock().unwrap().push((uri, headers));
+        (
+            [(&axum::http::header::CONTENT_TYPE, "application/json")],
+            r#"{"esearchresult":{"idlist":[]}}"#,
+        )
+    }
+
+    async fn server(
+        handler: axum::routing::MethodRouter<Recorded>,
+    ) -> (String, Recorded, tokio::task::JoinHandle<()>) {
+        let recorded = Recorded::default();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let app = Router::new()
+            .route("/esearch.fcgi", handler.clone())
+            .route("/efetch.fcgi", handler.clone())
+            .route("/esummary.fcgi", handler)
+            .with_state(recorded.clone());
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (base, recorded, handle)
+    }
+
+    #[tokio::test]
+    async fn python_contract_sends_email_and_formats_structured_xml_articles() {
+        let (base, recorded, handle) = server(get(python_handler)).await;
+        let client = PubMedClient::new_with_endpoints(
+            &format!("{base}/esearch.fcgi"),
+            &format!("{base}/efetch.fcgi"),
+            &format!("{base}/esummary.fcgi"),
+        )
+        .unwrap();
+        let articles = client
+            .search(&PubMedSearchRequest {
+                query: "retrieval AND generation".into(),
+                top_n: 12,
+                email: "reader@example.test".into(),
+            })
+            .await
+            .unwrap();
+        handle.abort();
+
+        assert_eq!(articles.len(), 2);
+        assert_eq!(articles[0].title, "Deep retrieval & generation");
+        assert_eq!(articles[0].authors, ["Furqan Khan", "Jane Smith"]);
+        assert_eq!(articles[0].doi.as_deref(), Some("10.1000/example.doi"));
+        assert_eq!(articles[0].publication_date, "2020");
+        assert_eq!(articles[0].url(), "https://pubmed.ncbi.nlm.nih.gov/11111");
+        assert_eq!(
+            articles[0].formatted_content(),
+            "Title: Deep retrieval & generation\nAuthors: Furqan Khan, Jane Smith\nJournal: Nature Machine Intelligence\nVolume: 10\nIssue: 2\nPages: 101-110\nDOI: 10.1000/example.doi\nAbstract: A short abstract."
+        );
+        assert!(
+            articles[1]
+                .formatted_content()
+                .contains("Authors: Unknown Authors")
+        );
+
+        let requests = recorded.0.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        let search: HashMap<_, _> =
+            reqwest::Url::parse(&format!("http://localhost{}", requests[0].0))
+                .unwrap()
+                .query_pairs()
+                .into_owned()
+                .collect();
+        assert_eq!(search["term"], "retrieval AND generation");
+        assert_eq!(search["retmax"], "12");
+        assert_eq!(search["tool"], "biopython");
+        assert_eq!(search["email"], "reader@example.test");
+        assert!(!search.contains_key("retmode"));
+        let fetch: HashMap<_, _> =
+            reqwest::Url::parse(&format!("http://localhost{}", requests[1].0))
+                .unwrap()
+                .query_pairs()
+                .into_owned()
+                .collect();
+        assert_eq!(fetch["id"], "11111,22222");
+        assert_eq!(fetch["retmode"], "xml");
+    }
+
+    #[tokio::test]
+    async fn go_contract_defaults_clamps_and_preserves_pmid_order() {
+        let (base, recorded, handle) = server(get(go_handler)).await;
+        let client = PubMedClient::new_with_endpoints(
+            &format!("{base}/esearch.fcgi"),
+            &format!("{base}/efetch.fcgi"),
+            &format!("{base}/esummary.fcgi"),
+        )
+        .unwrap();
+        let envelope = client.search_go("covid vaccine", 999).await.unwrap();
+        handle.abort();
+
+        assert_eq!(envelope.results.len(), 2);
+        assert_eq!(envelope.results[0].pmid, "11111");
+        assert_eq!(envelope.results[0].title, "Cochrane review of masks");
+        assert_eq!(envelope.results[0].authors, "Smith J, Doe A");
+        assert_eq!(envelope.results[0].year, "2020");
+        assert_eq!(envelope.results[1].authors, "Alice, Bob, Carol, et al.");
+
+        let requests = recorded.0.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        let search: HashMap<_, _> =
+            reqwest::Url::parse(&format!("http://localhost{}", requests[0].0))
+                .unwrap()
+                .query_pairs()
+                .into_owned()
+                .collect();
+        assert_eq!(search["retmax"], "100");
+        assert_eq!(search["retmode"], "json");
+        assert_eq!(requests[0].1[USER_AGENT], PUBMED_GO_USER_AGENT);
+        assert_eq!(requests[0].1[ACCEPT], "application/json");
+        let summary: HashMap<_, _> =
+            reqwest::Url::parse(&format!("http://localhost{}", requests[1].0))
+                .unwrap()
+                .query_pairs()
+                .into_owned()
+                .collect();
+        assert_eq!(summary["id"], "11111,22222");
+    }
+
+    #[tokio::test]
+    async fn go_contract_defaults_five_and_skips_esummary_for_empty_ids() {
+        let (base, recorded, handle) = server(get(empty_go_handler)).await;
+        let client = PubMedClient::new_with_endpoints(
+            &format!("{base}/esearch.fcgi"),
+            &format!("{base}/efetch.fcgi"),
+            &format!("{base}/esummary.fcgi"),
+        )
+        .unwrap();
+        let envelope = client.search_go("no-results", 0).await.unwrap();
+        handle.abort();
+
+        assert!(envelope.results.is_empty());
+        let requests = recorded.0.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        let search: HashMap<_, _> =
+            reqwest::Url::parse(&format!("http://localhost{}", requests[0].0))
+                .unwrap()
+                .query_pairs()
+                .into_owned()
+                .collect();
+        assert_eq!(search["retmax"], "5");
+    }
+
+    #[test]
+    fn malformed_xml_and_go_helpers_fail_closed() {
+        assert!(parse_esearch_xml(b"<eSearchResult>").is_err());
+        assert!(parse_pubmed_articles(b"<PubmedArticleSet><PubmedArticle>").is_err());
+        assert!(decode_go_esummary(b"not-json").is_err());
+        assert_eq!(first_four_digit_year("Spring 1899 / 2026"), "2026");
+        assert_eq!(join_go_author_names(&[]), "");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live access to the public NCBI E-utilities API"]
+    async fn live_pubmed_search() {
+        let articles = PubMedClient::default()
+            .search(&PubMedSearchRequest::with_defaults("cancer"))
+            .await
+            .unwrap();
+        assert!(!articles.is_empty());
+        assert!(!articles[0].pmid.is_empty());
+    }
+}

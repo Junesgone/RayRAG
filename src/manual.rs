@@ -175,4 +175,164 @@ pub fn merge_chunks(
     chunks
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn tag_zero_positions_is_empty() {
+        assert_eq!(tag_pos(0, 0.0, 0.0, 0.0, 0.0), "");
+    }
+
+    #[test]
+    fn tag_formats_positions() {
+        assert_eq!(
+            tag_pos(3, 1.25, 2.5, 10.0, 20.0),
+            "@@3\t1.2\t2.5\t10.0\t20.0##"
+        );
+    }
+
+    #[test]
+    fn bigram_similarity_matches_outline_title() {
+        assert_eq!(
+            bigram_similarity("Chapter 1: Introduction", "Chapter 1: Introduction"),
+            1.0
+        );
+        // identical text has > 0.8 overlap with a short outline title
+        assert!(bigram_similarity("引言", "引言") >= 0.8);
+        // unrelated texts score low
+        assert!(bigram_similarity("Introduction", "Table of Contents") < 0.8);
+    }
+
+    #[test]
+    fn section_levels_outline_branch() {
+        let outlines = vec![
+            Outline {
+                title: "1. 概述".into(),
+                level: 1,
+            },
+            Outline {
+                title: "2. 方法".into(),
+                level: 1,
+            },
+            Outline {
+                title: "2.1 采样".into(),
+                level: 2,
+            },
+        ];
+        let sections = vec![
+            Section3 {
+                txt: "1. 概述".into(),
+                layoutno: "title".into(),
+                poss: vec![],
+            },
+            Section3 {
+                txt: "正文一".into(),
+                layoutno: "text".into(),
+                poss: vec![],
+            },
+            Section3 {
+                txt: "2.1 采样".into(),
+                layoutno: "title".into(),
+                poss: vec![],
+            },
+        ];
+        let (most, levels) = section_levels(&sections, &outlines, false);
+        assert_eq!(most, 1);
+        assert_eq!(levels[0], 1);
+        assert_eq!(levels[2], 2);
+        assert_eq!(levels[1], 3, "unmatched body gets max_lvl+1: {levels:?}");
+    }
+
+    #[test]
+    fn section_levels_fallback_branch() {
+        let sections = vec![
+            Section3 {
+                txt: "第一章 总则".into(),
+                layoutno: "title".into(),
+                poss: vec![],
+            },
+            Section3 {
+                txt: "第一条".into(),
+                layoutno: "title".into(),
+                poss: vec![],
+            },
+            Section3 {
+                txt: "第二章 水质".into(),
+                layoutno: "title".into(),
+                poss: vec![],
+            },
+        ];
+        let (most, levels) = section_levels(&sections, &[], true);
+        // family 0: 第…章 is index 1, 第…条 is index 3 (第…部分 is index 0)
+        assert_eq!(most, 1);
+        assert_eq!(levels, vec![1, 3, 1]);
+    }
+
+    #[test]
+    fn sec_ids_group_by_pivot() {
+        let levels = vec![1, 0, 1, 2, 1];
+        let ids = sec_ids(&levels, 1);
+        assert_eq!(ids, vec![0, 1, 2, 2, 3]);
+    }
+
+    #[test]
+    fn merge_chunks_joins_short_and_same_section() {
+        let sections = vec![
+            Section3 {
+                txt: "标题".into(),
+                layoutno: "title".into(),
+                poss: vec![(1, 1.0, 2.0, 3.0, 4.0)],
+            },
+            Section3 {
+                txt: "正文".into(),
+                layoutno: "text".into(),
+                poss: vec![(1, 1.0, 2.0, 5.0, 6.0)],
+            },
+            Section3 {
+                txt: "表格行".into(),
+                layoutno: "table".into(),
+                poss: vec![(1, 1.0, 2.0, 7.0, 8.0)],
+            },
+        ];
+        let ids = vec![0, 0, -1];
+        let chunks = merge_chunks(&sections, &ids, 32, 1024);
+        assert_eq!(chunks.len(), 1, "{chunks:?}");
+        assert!(chunks[0].starts_with("标题@@1\t1.0\t2.0\t3.0\t4.0##"));
+        assert!(chunks[0].contains("正文"));
+        assert!(chunks[0].contains("表格行"));
+    }
+
+    #[test]
+    fn merge_chunks_starts_new_chunk_when_long_and_different_section() {
+        let long = "很长的正文内容".repeat(40);
+        let sections = vec![
+            Section3 {
+                txt: long.clone(),
+                layoutno: "text".into(),
+                poss: vec![(1, 1.0, 2.0, 3.0, 4.0)],
+            },
+            Section3 {
+                txt: "新节".into(),
+                layoutno: "title".into(),
+                poss: vec![(1, 1.0, 2.0, 5.0, 6.0)],
+            },
+        ];
+        let ids = vec![0, 1];
+        let chunks = merge_chunks(&sections, &ids, 32, 1024);
+        assert_eq!(chunks.len(), 2);
+    }
+
+    #[test]
+    fn normalize_section_keeps_fields() {
+        let sec = normalize_section(
+            "内容".to_string(),
+            Some("title".to_string()),
+            vec![(1, 0.0, 1.0, 2.0, 3.0)],
+        )
+        .unwrap();
+        assert_eq!(sec.txt, "内容");
+        assert_eq!(sec.layoutno, "title");
+        assert_eq!(sec.poss.len(), 1);
+    }
+}

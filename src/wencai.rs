@@ -499,4 +499,317 @@ fn escape_cell(text: &str) -> String {
     text.replace('|', "\\|").replace('\n', " ")
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{Json, Router, extract::Form, routing::post};
+    use std::collections::HashMap;
 
+    /// 构造 get-robot-data 响应：content 为 JSON 字符串或对象均可。
+    fn robot_response(content: Value) -> Json<Value> {
+        Json(json!({
+            "status_code": 0,
+            "data": {
+                "answer": [
+                    { "txt": [ { "content": content } ] }
+                ]
+            }
+        }))
+    }
+
+    /// 标准选股表格组件（xuangu_tableV1）。
+    fn xuangu_component(landing_url: &str) -> Value {
+        json!({
+            "show_type": "xuangu_tableV1",
+            "cid": "123",
+            "puuid": "uuid-1",
+            "condition": {"stock": "涨跌幅>5%"},
+            "data": {
+                "meta": { "extra": { "condition": "涨跌幅>5%", "row_count": 2 } }
+            },
+            "config": {
+                "title": "选股结果",
+                "other_info": { "footer_info": { "url": landing_url } }
+            }
+        })
+    }
+
+    #[test]
+    fn payload_serialization_matches_pywencai() {
+        let payload = build_payload("贵州茅台 2024年报", 10, "stock");
+        assert_eq!(payload["question"], "贵州茅台 2024年报");
+        // perpage 是字符串（对齐 pywencai），page 是整数
+        assert_eq!(payload["perpage"], "10");
+        assert_eq!(payload["page"], 1);
+        assert_eq!(payload["secondary_intent"], "stock");
+        assert_eq!(payload["source"], "Ths_iwencai_Xuangu");
+        assert_eq!(payload["version"], "2.0");
+        assert!(
+            payload["add_info"]
+                .as_str()
+                .unwrap()
+                .contains("contentType")
+        );
+        assert!(payload["log_info"].as_str().unwrap().contains("input_type"));
+    }
+
+    #[test]
+    fn payload_uses_top_n_string() {
+        let payload = build_payload("q", 25, "fund");
+        assert_eq!(payload["perpage"], "25");
+        assert_eq!(payload["secondary_intent"], "fund");
+    }
+
+    #[tokio::test]
+    async fn rejects_invalid_query_type() {
+        let client = WenCaiClient::default();
+        let error = client
+            .search(&WenCaiRequest {
+                query: "涨跌幅".into(),
+                top_n: 10,
+                query_type: "invalid_type".into(),
+                cookie: String::new(),
+            })
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("WenCai query_type must be one of"),
+            "{error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_query_returns_empty() {
+        let client = WenCaiClient::default();
+        let output = client
+            .search(&WenCaiRequest {
+                query: "  ".into(),
+                top_n: 10,
+                query_type: "stock".into(),
+                cookie: String::new(),
+            })
+            .await
+            .unwrap();
+        assert!(output.is_empty());
+    }
+
+    /// 完整链路：xuangu_tableV1 单组件 → landing 分页接口 → Markdown 表格。
+    #[tokio::test]
+    async fn xuangu_table_renders_rows_from_landing_api() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = Router::new()
+            .route(
+                "/customized/chart/get-robot-data",
+                post(move |body: Json<Value>| async move {
+                    assert_eq!(body["question"], "贵州茅台");
+                    assert_eq!(body["secondary_intent"], "stock");
+                    robot_response(json!({
+                        "components": [xuangu_component(&format!("http://{addr}/gateway/urp/v7/landing/getDataList?question=test"))]
+                    }))
+                }),
+            )
+            .route(
+                "/gateway/urp/v7/landing/getDataList",
+                post(|form: Form<HashMap<String, String>>| async move {
+                    // 表单契约：url_params ∪ perpage ∪ page ∪ 原始字段
+                    assert_eq!(form.get("perpage").map(String::as_str), Some("10"));
+                    assert_eq!(form.get("page").map(String::as_str), Some("1"));
+                    Json(json!({
+                        "answer": [
+                            { "components": [ { "data": { "datas": [
+                                { "股票代码": "600519", "股票名称": "贵州茅台", "涨跌幅": "1.23%" },
+                                { "股票代码": "000858", "股票名称": "五粮液", "涨跌幅": "-0.45%" }
+                            ] } } ] }
+                        ]
+                    }))
+                }),
+            );
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = WenCaiClient {
+            http: reqwest::Client::builder()
+                .timeout(crate::common::cmd_timeout::duration())
+                .build()
+                .unwrap(),
+            hexin_v: None,
+        };
+        let output = client
+            .search_at(
+                &WenCaiRequest {
+                    query: "贵州茅台".into(),
+                    top_n: 10,
+                    query_type: "stock".into(),
+                    cookie: String::new(),
+                },
+                &format!("http://{addr}/customized/chart/get-robot-data"),
+            )
+            .await
+            .unwrap();
+        assert!(output.starts_with("| index |"), "{output}");
+        assert!(output.contains("600519"));
+        assert!(output.contains("贵州茅台"));
+        assert!(output.contains("五粮液"));
+        assert!(output.contains("涨跌幅"));
+    }
+
+    /// 多组件（common）响应：data.datas 行 → 表格；含 image_url 列 → 跳过。
+    #[tokio::test]
+    async fn multi_component_common_renders_and_skips_image_url() {
+        let app = Router::new().route(
+            "/customized/chart/get-robot-data",
+            post(|_: Json<Value>| async {
+                robot_response(json!({
+                    "components": [
+                        {
+                            "show_type": "common",
+                            "title_config": { "data": { "h1": "业绩预告" } },
+                            "data": { "datas": [
+                                { "股票名称": "宁德时代", "业绩": "预增" },
+                                { "股票名称": "比亚迪", "业绩": "预增" }
+                            ] }
+                        },
+                        {
+                            "show_type": "common",
+                            "config": { "title": "图表" },
+                            "data": { "datas": [
+                                { "image_url": "http://x/1.png", "股票名称": "A" }
+                            ] }
+                        }
+                    ]
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = WenCaiClient::default();
+        let output = client
+            .search_at(
+                &WenCaiRequest {
+                    query: "业绩预增".into(),
+                    top_n: 10,
+                    query_type: "stock".into(),
+                    cookie: String::new(),
+                },
+                &format!("http://{addr}/customized/chart/get-robot-data"),
+            )
+            .await
+            .unwrap();
+        assert!(output.contains("业绩预告"));
+        assert!(output.contains("宁德时代"));
+        assert!(output.contains("比亚迪"));
+        // image_url 段被跳过
+        assert!(!output.contains("image_url"));
+    }
+
+    /// dict 值含 "meta" 键 → 跳过；txt 组件 → 文本段。
+    #[tokio::test]
+    async fn meta_dict_skipped_and_txt_rendered() {
+        let app = Router::new().route(
+            "/customized/chart/get-robot-data",
+            post(|_: Json<Value>| async {
+                robot_response(json!({
+                    "components": [
+                        {
+                            "show_type": "common",
+                            "config": { "title": "含meta" },
+                            "data": { "meta": { "x": 1 }, "datas": [] }
+                        },
+                        {
+                            "show_type": "txt1",
+                            "config": { "title": "资讯" },
+                            "data": { "content": "今日两市成交额突破万亿" }
+                        }
+                    ]
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = WenCaiClient::default();
+        let output = client
+            .search_at(
+                &WenCaiRequest {
+                    query: "资讯".into(),
+                    top_n: 10,
+                    query_type: "stock".into(),
+                    cookie: String::new(),
+                },
+                &format!("http://{addr}/customized/chart/get-robot-data"),
+            )
+            .await
+            .unwrap();
+        assert!(!output.contains("含meta"), "{output}");
+        assert!(output.contains("今日两市成交额突破万亿"));
+    }
+
+    /// content 为 JSON 字符串时也能解析（对齐 convert.py 的二次 json.loads）。
+    #[test]
+    fn content_as_json_string_is_parsed() {
+        let content = json!({
+            "components": [
+                {
+                    "show_type": "common",
+                    "config": { "title": "字符串content" },
+                    "data": { "datas": [ { "代码": "600000" } ] }
+                }
+            ]
+        });
+        let body = json!({
+            "data": { "answer": [ { "txt": [ { "content": content.to_string() } ] } ] }
+        });
+        let parsed = answer_content(&body).unwrap();
+        let value = match parsed {
+            Value::String(text) => serde_json::from_str::<Value>(text).unwrap(),
+            other => other.clone(),
+        };
+        let components = value.get("components").and_then(Value::as_array).unwrap();
+        let sections = render_components(components);
+        assert_eq!(sections.len(), 1);
+        assert!(sections[0].contains("600000"));
+    }
+
+    /// 行渲染：竖线转义 + 表头并集。
+    #[test]
+    fn rows_table_escapes_pipes_and_unions_headers() {
+        let rows = vec![
+            json!({ "a": "x|y", "b": 1 }),
+            json!({ "a": "z", "b": 2, "c": true }),
+        ];
+        let table = render_rows_table(&rows).unwrap();
+        assert!(table.starts_with("| index | a | b | c |"));
+        assert!(table.contains("x\\|y"));
+        assert!(table.contains("true"));
+    }
+
+    #[test]
+    fn rows_table_skips_image_url_columns() {
+        let rows = vec![json!({ "image_url": "http://x", "a": 1 })];
+        assert!(render_rows_table(&rows).is_none());
+    }
+
+    /// 真实网络测试（默认忽略）。
+    #[tokio::test]
+    #[ignore]
+    async fn live_query_returns_markdown() {
+        let client = WenCaiClient::default();
+        let output = client
+            .search(&WenCaiRequest {
+                query: "2024年净利润增长超过50%的股票".into(),
+                top_n: 5,
+                query_type: "stock".into(),
+                cookie: String::new(),
+            })
+            .await
+            .unwrap();
+        assert!(!output.is_empty());
+    }
+}

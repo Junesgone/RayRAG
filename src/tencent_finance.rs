@@ -164,4 +164,50 @@ pub fn tencent_quote_to_tool_row(quote: &TencentQuote) -> Value {
     Value::Object(row)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn parses_gbk_quote_response() {
+        // Simulated GBK-encoded response for sh600519 (贵州茅台) following the
+        // real Tencent protocol field layout: 3=price, 5=open, 31=change,
+        // 32=change%, 33=high, 34=low, 36=volume, 37=amount.
+        let text = "v_sh600519=\"1~贵州茅台~600519~1700.00~1695.00~1698.00~123456~789012~1700.00~1695.00~1690.00~1700.00~1699.00~5.00~0.30~1234567~2098765432~f~sh600519~1700.00~5.00~0.30~1698.00~1700.00~1690.00~1695.00~123456~789012~0.00~0.00~0.00~5.00~0.30~1700.00~1690.00~123456~123456~789012~1~0~0~1~20240802150000~0~0~0~0~0~0~0~0~0~\";";
+        let (encoded, _, _) = GBK.encode(text);
+        let quote = parse_tencent_quote("sh600519", &encoded).unwrap();
+        assert_eq!(quote.name, "贵州茅台");
+        assert_eq!(quote.symbol, "sh600519");
+        assert_eq!(quote.price, "1700.00");
+        assert_eq!(quote.change, "5.00");
+        assert_eq!(quote.change_percent, "0.30");
+    }
+
+    #[test]
+    fn malformed_response_is_rejected() {
+        let error = parse_tencent_quote("sh600519", b"v_sh600519=\"1~only~two\"");
+        assert!(error.is_err());
+    }
+
+    #[tokio::test]
+    async fn empty_symbol_is_rejected() {
+        let client = TencentFinanceClient::default();
+        let error = client
+            .quote(&TencentFinanceRequest { symbol: "".into() })
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("symbol"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live access to qt.gtimg.cn"]
+    async fn live_tencent_quote() {
+        let quote = TencentFinanceClient::default()
+            .quote(&TencentFinanceRequest {
+                symbol: "sh600519".into(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(quote.name, "贵州茅台");
+    }
+}

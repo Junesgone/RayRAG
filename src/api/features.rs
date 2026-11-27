@@ -113,7 +113,10 @@ impl AgentRunRegistry {
         }
     }
 
-    
+    #[cfg(test)]
+    fn contains(&self, canvas_id: &str) -> bool {
+        self.active.lock().unwrap().contains_key(canvas_id)
+    }
 }
 
 impl Drop for AgentRunLease {
@@ -4537,7 +4540,235 @@ fn stats_forbidden() -> axum::response::Response {
         .into_response()
 }
 
+#[cfg(test)]
+mod stats_tests {
+    use super::*;
+    use crate::llm::{ChatMessage, Conversation};
 
+    fn conversation(
+        id: &str,
+        owner_id: &str,
+        created_at: u64,
+        duration_ms: u64,
+        answers: &[(bool, &str)],
+    ) -> Conversation {
+        let mut messages = Vec::new();
+        for (round, (thumbup, answer)) in answers.iter().enumerate() {
+            let message_id = format!("{id}-{round}");
+            messages.push(ChatMessage {
+                id: message_id.clone(),
+                role: "user".into(),
+                content: "one two".into(),
+                citations: None,
+                references: Vec::new(),
+                thumbup: None,
+                feedback: None,
+                usage: None,
+                created_at,
+            });
+            messages.push(ChatMessage {
+                id: message_id,
+                role: "assistant".into(),
+                content: (*answer).into(),
+                citations: None,
+                references: Vec::new(),
+                thumbup: Some(*thumbup),
+                feedback: None,
+                usage: None,
+                created_at,
+            });
+        }
+        Conversation {
+            id: id.into(),
+            name: id.into(),
+            owner_id: owner_id.into(),
+            tenant_id: owner_id.into(),
+            source: "chat".into(),
+            canvas_id: None,
+            app_id: None,
+            kb_ids: Vec::new(),
+            chat_model: None,
+            embedding_model: None,
+            messages,
+            duration_ms,
+            dsl: None,
+            errors: None,
+            version_title: None,
+            created_at,
+            updated_at: created_at,
+        }
+    }
+
+    #[test]
+    fn stats_group_by_day_and_match_ragflow_series_formulas() {
+        let day = parse_utc_datetime("2026-07-18", false).unwrap();
+        let stats = build_stats(
+            vec![
+                conversation("a", "alice", day + 1000, 900, &[(true, "three four")]),
+                conversation(
+                    "b",
+                    "bob",
+                    day + 2000,
+                    1000,
+                    &[(false, "five"), (true, "six seven")],
+                ),
+            ],
+            day,
+            day + 86_399_999,
+        );
+        assert_eq!(stats["pv"], serde_json::json!([["2026-07-18", 2]]));
+        assert_eq!(stats["uv"], serde_json::json!([["2026-07-18", 2]]));
+        let expected_tokens = [
+            "one two",
+            "three four",
+            "one two",
+            "five",
+            "one two",
+            "six seven",
+        ]
+        .into_iter()
+        .map(estimate_tokens)
+        .sum::<u64>() as f64
+            / 1000.0;
+        assert_eq!(
+            stats["tokens"],
+            serde_json::json!([["2026-07-18", expected_tokens]])
+        );
+        assert_eq!(stats["round"], serde_json::json!([["2026-07-18", 1.5]]));
+        assert_eq!(stats["thumb_up"], serde_json::json!([["2026-07-18", 2]]));
+        let speed = stats["speed"][0][1].as_f64().unwrap();
+        assert!((speed - expected_tokens * 1000.0 / 2.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn stats_prefers_exact_usage_per_turn_and_falls_back_for_legacy_turns() {
+        let day = parse_utc_datetime("2026-07-18", false).unwrap();
+        let mut mixed = conversation(
+            "mixed",
+            "alice",
+            day,
+            900,
+            &[(false, "legacy answer"), (true, "exact answer")],
+        );
+        let exact_turn_id = mixed.messages[3].id.clone();
+        mixed.messages[3].usage = Some(crate::llm::TokenUsage {
+            prompt_tokens: 70,
+            completion_tokens: 30,
+            total_tokens: 100,
+        });
+        assert_eq!(mixed.messages[2].id, exact_turn_id);
+
+        let expected_fallback = estimate_tokens(&mixed.messages[0].content)
+            + estimate_tokens(&mixed.messages[1].content);
+        assert_eq!(
+            conversation_token_total(&mixed.messages),
+            expected_fallback + 100
+        );
+        let stats = build_stats(vec![mixed], day, day + 86_399_999);
+        assert_eq!(
+            stats["tokens"],
+            serde_json::json!([["2026-07-18", (expected_fallback + 100) as f64 / 1000.0]])
+        );
+    }
+
+    #[test]
+    fn zero_usage_from_legacy_or_nonconforming_provider_uses_fallback() {
+        let day = parse_utc_datetime("2026-07-18", false).unwrap();
+        let mut legacy = conversation("zero", "alice", day, 0, &[(false, "fallback answer")]);
+        legacy.messages[1].usage = Some(crate::llm::TokenUsage::default());
+        let expected = legacy
+            .messages
+            .iter()
+            .map(|message| estimate_tokens(&message.content))
+            .sum::<u64>();
+        assert_eq!(conversation_token_total(&legacy.messages), expected);
+    }
+
+    #[test]
+    fn stats_usage_total_does_not_double_count_paired_message_content() {
+        let day = parse_utc_datetime("2026-07-18", false).unwrap();
+        let mut exact = conversation("exact", "alice", day, 0, &[(false, "many answer words")]);
+        exact.messages[1].usage = Some(crate::llm::TokenUsage {
+            prompt_tokens: 8,
+            completion_tokens: 4,
+            total_tokens: 12,
+        });
+        assert_eq!(conversation_token_total(&exact.messages), 12);
+    }
+
+    #[test]
+    fn stats_date_only_end_is_inclusive_and_invalid_dates_fail() {
+        assert_eq!(
+            parse_utc_datetime("2024-02-29", true).unwrap(),
+            parse_utc_datetime("2024-02-29 23:59:59", false).unwrap()
+        );
+        assert!(parse_utc_datetime("2025-02-29", false).is_err());
+        // ISO-8601 T separator and trailing Z are accepted (RAGFlow
+        // _normalize_query_date parity); bare `Z` alone is not a date.
+        assert_eq!(
+            parse_utc_datetime("2026-07-19T00:00:00Z", false).unwrap(),
+            parse_utc_datetime("2026-07-19 00:00:00", false).unwrap()
+        );
+        assert_eq!(
+            parse_utc_datetime("2026-07-19T23:59:59", true).unwrap(),
+            parse_utc_datetime("2026-07-19 23:59:59", true).unwrap()
+        );
+        assert!(parse_utc_datetime("Z", false).is_err());
+        assert!(parse_utc_datetime("2026-07-19T25:00:00", false).is_err());
+    }
+
+    #[test]
+    fn stats_filters_outside_the_requested_range() {
+        let day = parse_utc_datetime("2026-07-18", false).unwrap();
+        let stats = build_stats(
+            vec![
+                conversation("before", "alice", day - 1, 0, &[]),
+                conversation("inside", "alice", day, 0, &[]),
+                conversation("after", "alice", day + 86_400_000, 0, &[]),
+            ],
+            day,
+            day + 86_399_999,
+        );
+        assert_eq!(stats["pv"], serde_json::json!([["2026-07-18", 1]]));
+    }
+
+    #[test]
+    fn stats_input_can_be_scoped_to_shared_tenant_without_cross_tenant_records() {
+        let day = parse_utc_datetime("2026-07-18", false).unwrap();
+        let mut shared = conversation("shared", "alice", day, 0, &[]);
+        shared.tenant_id = "shared-tenant".into();
+        let private = conversation("private", "bob", day, 0, &[]);
+        let selected: Vec<_> = [shared, private]
+            .into_iter()
+            .filter(|conversation| conversation.tenant_id == "shared-tenant")
+            .collect();
+        let stats = build_stats(selected, day, day + 86_399_999);
+        assert_eq!(stats["pv"], serde_json::json!([["2026-07-18", 1]]));
+        assert_eq!(stats["uv"], serde_json::json!([["2026-07-18", 1]]));
+    }
+
+    #[test]
+    fn stats_source_canvas_selection_excludes_normal_chat_and_other_canvases() {
+        let day = parse_utc_datetime("2026-07-18", false).unwrap();
+        let mut target = conversation("target", "alice", day, 0, &[(true, "answer")]);
+        target.source = "agent".into();
+        target.canvas_id = Some("canvas-a".into());
+        let mut other = conversation("other", "alice", day, 0, &[]);
+        other.source = "agent".into();
+        other.canvas_id = Some("canvas-b".into());
+        let chat = conversation("chat", "alice", day, 0, &[]);
+        let selected: Vec<_> = [target, other, chat]
+            .into_iter()
+            .filter(|entry| {
+                entry.source == "agent" && entry.canvas_id.as_deref() == Some("canvas-a")
+            })
+            .collect();
+        let stats = build_stats(selected, day, day + 86_399_999);
+        assert_eq!(stats["pv"], serde_json::json!([["2026-07-18", 1]]));
+        assert_eq!(stats["round"], serde_json::json!([["2026-07-18", 1.0]]));
+        assert_eq!(stats["thumb_up"], serde_json::json!([["2026-07-18", 1]]));
+    }
+}
 
 // ── Task Queue ──────────────────────────────────────────────────
 
@@ -4790,7 +5021,16 @@ impl TaskQueue {
         Ok(queue)
     }
 
-    
+    #[cfg(test)]
+    pub fn in_memory() -> Self {
+        Self {
+            tasks: RwLock::new(Vec::new()),
+            file_path: None,
+            active_tasks: Mutex::new(HashSet::new()),
+            save_lock: Mutex::new(()),
+            notify: tokio::sync::Notify::new(),
+        }
+    }
 
     /// Prevent duplicate local futures while the persisted lease handles
     /// ownership across dispatcher iterations and process restarts.
@@ -5627,11 +5867,1217 @@ pub async fn patch_task(
     cancel_task(state, auth, path).await
 }
 
+#[cfg(test)]
+mod memory_store_tests {
+    use super::*;
 
+    fn create_request(name: &str) -> MemoryCreateRequest {
+        MemoryCreateRequest {
+            name: name.into(),
+            memory_type: vec!["semantic".into(), "raw".into()],
+            embd_id: "embedding-model".into(),
+            llm_id: "chat-model".into(),
+            description: String::new(),
+        }
+    }
 
+    #[test]
+    fn memory_api_query_preserves_repeated_and_comma_delimited_values() {
+        let repeated = MemoryApiQuery::parse(Some(
+            "memory_id=memory-a&memory_id=memory-b&agent_id=agent-a&agent_id=agent-b".into(),
+        ));
+        assert_eq!(
+            repeated.list("memory_id"),
+            vec!["memory-a".to_string(), "memory-b".to_string()]
+        );
+        assert_eq!(
+            repeated.list("agent_id"),
+            vec!["agent-a".to_string(), "agent-b".to_string()]
+        );
 
+        let comma = MemoryApiQuery::parse(Some(
+            "memory_id=memory-a%2Cmemory-b&agent_id=agent-a%2Cagent-b".into(),
+        ));
+        assert_eq!(comma.list("memory_id"), repeated.list("memory_id"));
+        assert_eq!(comma.list("agent_id"), repeated.list("agent_id"));
 
+        assert_eq!(memory_api_page_size(100).unwrap(), 100);
+        assert_eq!(
+            memory_api_page_size(101).unwrap_err().to_string(),
+            "page_size must be less than or equal to 100"
+        );
+    }
 
+    #[test]
+    fn memory_store_persists_deduplicates_and_filters() {
+        let root = std::env::temp_dir().join(format!("rayrag-memories-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("memories.json");
+        let store = MemoryStore::new(&path).unwrap();
+        let first = store.create("owner", create_request("Research")).unwrap();
+        let second = store.create("owner", create_request("Research")).unwrap();
+        assert_eq!(first.name, "Research");
+        assert_eq!(second.name, "Research(1)");
+        assert_eq!(first.memory_type, vec!["raw", "semantic"]);
+        assert_eq!(first.permissions, "me");
+        assert_eq!(first.memory_size, MEMORY_DEFAULT_SIZE);
+        assert_eq!(first.temperature, 0.5);
+        assert_eq!(first.forgetting_policy, "FIFO");
+        assert_eq!(
+            first.system_prompt,
+            crate::memory::PromptAssembler::assemble_system_prompt(&first.memory_type)
+        );
+        drop(store);
+
+        let restored = MemoryStore::new(&path).unwrap();
+        assert_eq!(restored.get(&first.id), Some(first.clone()));
+        let query = MemoryListQuery {
+            keywords: Some("research".into()),
+            memory_type: Some("semantic".into()),
+            tenant_id: Some("owner".into()),
+            page: Some(1),
+            page_size: Some(1),
+            ..Default::default()
+        };
+        let (page, total) = restored.list_accessible(
+            "owner",
+            false,
+            |tenant_id, user_id| tenant_id == user_id,
+            &query,
+        );
+        assert_eq!(total, 2);
+        assert_eq!(page.len(), 1);
+
+        let owner_query = MemoryListQuery {
+            tenant_id: Some("  ".into()),
+            owner_ids: Some("owner".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            restored
+                .list_accessible("owner", false, |_, _| false, &owner_query)
+                .1,
+            2
+        );
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn legacy_private_permission_migrates_to_me_wire_value() {
+        let root = std::env::temp_dir().join(format!(
+            "rayrag-memory-permission-migration-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("memories.json");
+        let store = MemoryStore::in_memory();
+        let mut entry = store.create("owner", create_request("Legacy")).unwrap();
+        entry.permissions = "private".into();
+        entry.system_prompt.clear();
+        std::fs::write(&path, serde_json::to_vec(&vec![entry]).unwrap()).unwrap();
+
+        let restored = MemoryStore::new(&path).unwrap();
+        assert_eq!(
+            restored.get_accessible("not-used", "owner", false, |_, _| false),
+            None
+        );
+        let (entries, _) =
+            restored.list_accessible("owner", false, |_, _| false, &MemoryListQuery::default());
+        assert_eq!(entries[0].permissions, "me");
+        // An empty prompt may have been explicitly saved through the fixed
+        // update API, so restart must not guess that it is legacy data.
+        assert!(entries[0].system_prompt.is_empty());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn joined_team_members_can_mutate_team_memory_and_outsiders_cannot() {
+        // `memory_api_service.update_memory` / `delete_memory`:
+        // `_require_memory_access` allows the owner OR a member of the owning
+        // tenant (when permissions == "team") to mutate; outsiders are
+        // rejected exactly like a missing memory.
+        let member = |tenant_id: &str, user_id: &str| tenant_id == "owner" && user_id == "member";
+        let store = MemoryStore::in_memory();
+        let entry = store.create("owner", create_request("Shared")).unwrap();
+        let updated = store
+            .update_owned(
+                &entry.id,
+                "owner",
+                false,
+                MemoryUpdateRequest {
+                    permissions: Some("team".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.permissions, "team");
+        assert!(
+            store
+                .get_accessible(&entry.id, "member", false, member)
+                .is_some()
+        );
+        // Joined member mutation is the fixed-version semantics.
+        let by_member = store
+            .update_accessible(
+                &entry.id,
+                "member",
+                false,
+                member,
+                false,
+                MemoryUpdateRequest {
+                    description: Some("team edit".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(by_member.description, "team edit");
+        // An outsider is indistinguishable from a missing memory.
+        assert!(
+            store
+                .update_accessible(
+                    &entry.id,
+                    "stranger",
+                    false,
+                    member,
+                    false,
+                    MemoryUpdateRequest {
+                        description: Some("forbidden".into()),
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            !store
+                .delete_accessible(&entry.id, "stranger", false, member)
+                .unwrap()
+        );
+        // The joined member may delete the team memory.
+        assert!(
+            store
+                .delete_accessible(&entry.id, "member", false, member)
+                .unwrap()
+        );
+        assert!(store.get(&entry.id).is_none());
+    }
+
+    #[test]
+    fn delete_memory_with_messages_follows_upstream_two_phase_order() {
+        // `memory_api_service.delete_memory`: row first, then the
+        // `has_index`-guarded message cleanup.
+        let memories = MemoryStore::in_memory();
+        let entry = memories.create("owner", create_request("Gone")).unwrap();
+
+        // Empty memory: no native index → the message store is untouched.
+        let messages = crate::api::joint_services::MemoryMessageService::in_memory();
+        delete_memory_with_messages(&memories, &messages, &entry).unwrap();
+        assert!(memories.get(&entry.id).is_none());
+
+        // Indexed memory: rows are removed with the row.
+        let memories = MemoryStore::in_memory();
+        let entry = memories
+            .create("owner", create_request("With rows"))
+            .unwrap();
+        let messages = crate::api::joint_services::MemoryMessageService::in_memory();
+        messages
+            .insert_messages(vec![crate::api::joint_services::MemoryMessage {
+                message_id: 1,
+                message_type: "raw".into(),
+                source_id: 0,
+                memory_id: entry.id.clone(),
+                user_id: "owner".into(),
+                agent_id: "a1".into(),
+                session_id: "s1".into(),
+                content: "row".into(),
+                valid_at: "2026-08-01 00:00:00".into(),
+                invalid_at: None,
+                forget_at: None,
+                status: true,
+                zone_id: 0,
+                content_embed: vec![0.1],
+            }])
+            .unwrap();
+        assert!(messages.has_index("owner", &entry.id));
+        delete_memory_with_messages(&memories, &messages, &entry).unwrap();
+        assert!(memories.get(&entry.id).is_none());
+        assert_eq!(messages.calculate_memory_size(&entry.id), 0);
+    }
+
+    #[test]
+    fn memory_ret_data_projection_matches_upstream_key_set() {
+        let store = MemoryStore::in_memory();
+        let entry = store.create("owner", create_request("Projection")).unwrap();
+        let owner_name = Some("Owner Nick".to_string());
+        let projection = memory_ret_data_with_owner(entry.clone(), owner_name.clone());
+        let object = projection.as_object().expect("projection is an object");
+        let keys: std::collections::BTreeSet<&str> = object.keys().map(String::as_str).collect();
+        let expected: std::collections::BTreeSet<&str> = [
+            "id",
+            "name",
+            "avatar",
+            "tenant_id",
+            "owner_name",
+            "memory_type",
+            "storage_type",
+            "embd_id",
+            "llm_id",
+            "permissions",
+            "description",
+            "memory_size",
+            "forgetting_policy",
+            "temperature",
+            "system_prompt",
+            "user_prompt",
+            "create_time",
+            "create_date",
+            "update_time",
+            "update_date",
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(keys, expected);
+        assert_eq!(
+            object.get("owner_name"),
+            Some(&serde_json::json!(owner_name))
+        );
+        assert_eq!(
+            object.get("create_time"),
+            Some(&serde_json::json!(entry.created_at))
+        );
+        assert_eq!(
+            object.get("update_time"),
+            Some(&serde_json::json!(entry.updated_at))
+        );
+        assert_eq!(
+            object.get("memory_type"),
+            Some(&serde_json::json!(entry.memory_type))
+        );
+        assert!(
+            object
+                .get("create_date")
+                .and_then(|value| value.as_str())
+                .is_some_and(|value| !value.is_empty())
+        );
+        // Unknown owner → null, mirroring Python's hasattr guard.
+        let anonymous = memory_ret_data_with_owner(entry, None);
+        assert_eq!(anonymous.get("owner_name"), Some(&serde_json::Value::Null));
+    }
+
+    #[test]
+    fn failed_memory_persistence_rolls_back_mutation() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-memory-rollback-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("memories.json");
+        let store = MemoryStore::new(&path).unwrap();
+        let entry = store.create("owner", create_request("Stable")).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+
+        assert!(
+            store
+                .update_owned(
+                    &entry.id,
+                    "owner",
+                    false,
+                    MemoryUpdateRequest {
+                        description: Some("must rollback".into()),
+                        ..Default::default()
+                    },
+                )
+                .is_err()
+        );
+        let current = store
+            .get_accessible(&entry.id, "owner", false, |_, _| false)
+            .unwrap();
+        assert!(current.description.is_empty());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn content_presence_not_capacity_budget_locks_embedding_and_type_changes() {
+        let store = MemoryStore::in_memory();
+        let entry = store.create("owner", create_request("Non-empty")).unwrap();
+        let entry = store
+            .update_owned(
+                &entry.id,
+                "owner",
+                false,
+                MemoryUpdateRequest {
+                    memory_size: Some(MEMORY_SIZE_LIMIT),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .unwrap();
+        let updated = store
+            .update_owned(
+                &entry.id,
+                "owner",
+                false,
+                MemoryUpdateRequest {
+                    memory_type: Some(vec!["episodic".into(), "raw".into()]),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.memory_type, vec!["episodic", "raw"]);
+        let error = store
+            .update_owned(
+                &entry.id,
+                "owner",
+                true,
+                MemoryUpdateRequest {
+                    memory_type: Some(vec!["raw".into(), "semantic".into()]),
+                    ..Default::default()
+                },
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("cannot change"));
+        assert!(
+            store
+                .update_owned(
+                    &entry.id,
+                    "owner",
+                    false,
+                    MemoryUpdateRequest {
+                        memory_size: Some(0),
+                        ..Default::default()
+                    },
+                )
+                .unwrap_err()
+                .to_string()
+                .contains("between 1")
+        );
+    }
+
+    #[test]
+    fn memory_type_change_refreshes_only_the_fixed_default_system_prompt() {
+        let store = MemoryStore::in_memory();
+        let entry = store.create("owner", create_request("Prompted")).unwrap();
+        assert!(crate::memory::judge_system_prompt_is_default(
+            &entry.system_prompt,
+            &entry.memory_type
+        ));
+
+        let episodic = store
+            .update_owned(
+                &entry.id,
+                "owner",
+                false,
+                MemoryUpdateRequest {
+                    memory_type: Some(vec!["raw".into(), "episodic".into()]),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert!(episodic.system_prompt.contains("EXTRACT EPISODIC"));
+        assert!(!episodic.system_prompt.contains("EXTRACT SEMANTIC"));
+        assert!(crate::memory::judge_system_prompt_is_default(
+            &episodic.system_prompt,
+            &episodic.memory_type
+        ));
+
+        let customized = store
+            .update_owned(
+                &entry.id,
+                "owner",
+                false,
+                MemoryUpdateRequest {
+                    system_prompt: Some("keep my custom prompt".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(customized.system_prompt, "keep my custom prompt");
+
+        let procedural = store
+            .update_owned(
+                &entry.id,
+                "owner",
+                false,
+                MemoryUpdateRequest {
+                    memory_type: Some(vec!["raw".into(), "procedural".into()]),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(procedural.system_prompt, "keep my custom prompt");
+
+        let explicit = store
+            .update_owned(
+                &entry.id,
+                "owner",
+                false,
+                MemoryUpdateRequest {
+                    memory_type: Some(vec!["raw".into(), "semantic".into()]),
+                    system_prompt: Some(String::new()),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert!(explicit.system_prompt.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod provider_store_tests {
+    use super::*;
+
+    fn provider_update(api_key: Option<&str>) -> ProviderUpdate {
+        ProviderUpdate {
+            name: "Local OpenAI".into(),
+            api_base: "http://127.0.0.1:8080/v1/".into(),
+            models: vec!["model-a".into(), "model-b".into()],
+            enabled: true,
+            api_key: api_key.map(str::to_string),
+            clear_api_key: false,
+        }
+    }
+
+    #[test]
+    fn provider_config_survives_restart_without_exposing_secret() {
+        let root = std::env::temp_dir().join(format!("rayrag-providers-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("providers.json");
+        let store = ProviderStore::new(&path).unwrap();
+        let public = store
+            .create("local-openai", provider_update(Some("secret")))
+            .unwrap();
+        assert!(public.api_key_configured);
+        assert_eq!(public.api_base, "http://127.0.0.1:8080/v1");
+        assert!(
+            serde_json::to_value(&public)
+                .unwrap()
+                .get("api_key")
+                .is_none()
+        );
+        drop(store);
+
+        let restored = ProviderStore::new(&path).unwrap();
+        let configured = restored
+            .list_configured()
+            .into_iter()
+            .find(|provider| provider.id == "local-openai")
+            .unwrap();
+        assert_eq!(configured.api_key.as_deref(), Some("secret"));
+        assert!(
+            restored
+                .list()
+                .into_iter()
+                .find(|provider| provider.id == "local-openai")
+                .unwrap()
+                .api_key_configured
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn provider_update_preserves_or_clears_secret_explicitly() {
+        let store = ProviderStore::in_memory();
+        store
+            .create("local-openai", provider_update(Some("secret")))
+            .unwrap();
+        let mut update = provider_update(None);
+        update.models = vec!["model-c".into()];
+        assert!(
+            store
+                .update("local-openai", update)
+                .unwrap()
+                .api_key_configured
+        );
+
+        let mut clear = provider_update(None);
+        clear.clear_api_key = true;
+        assert!(
+            !store
+                .update("local-openai", clear)
+                .unwrap()
+                .api_key_configured
+        );
+        assert!(
+            store
+                .list_configured()
+                .into_iter()
+                .find(|provider| provider.id == "local-openai")
+                .unwrap()
+                .api_key
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn failed_provider_persistence_rolls_back_memory() {
+        let root = std::env::temp_dir().join(format!(
+            "rayrag-providers-rollback-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("providers.json");
+        let store = ProviderStore::new(&path).unwrap();
+        let before = store.list();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+
+        assert!(
+            store
+                .create("local-openai", provider_update(Some("secret")))
+                .is_err()
+        );
+        assert_eq!(store.list(), before);
+        std::fs::remove_dir_all(root).ok();
+    }
+}
+
+#[cfg(test)]
+mod task_queue_tests {
+    use super::*;
+
+    fn memory_payload(secret: &str) -> MemoryTaskPayload {
+        MemoryTaskPayload::new(
+            "memory-user",
+            "memory-agent",
+            "memory-session",
+            secret,
+            "private agent response",
+        )
+    }
+
+    #[test]
+    fn task_queue_persists_and_recovers_interrupted_tasks() {
+        let root = std::env::temp_dir().join(format!("rayrag-tasks-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("tasks.json");
+        let queue = TaskQueue::new(path.to_str().unwrap()).unwrap();
+        let id = queue.push("owner-1", "Parse test.txt", "doc-1").unwrap();
+        let lease = queue.claim(&id, "worker-1", 1, "Parsing").unwrap().unwrap();
+        assert_eq!(lease.attempt, 1);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        drop(queue);
+
+        let recovered = TaskQueue::new(path.to_str().unwrap()).unwrap();
+        let task = recovered
+            .list()
+            .into_iter()
+            .find(|task| task.id == id)
+            .unwrap();
+        assert_eq!(task.status, "pending");
+        assert_eq!(task.doc_id, "doc-1");
+        assert_eq!(task.retry_count, 1);
+        assert!(task.message.contains("lease"));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn legacy_task_json_defaults_new_memory_fields_and_task_type() {
+        let root = std::env::temp_dir().join(format!("rayrag-tasks-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("tasks.json");
+        let queue = TaskQueue::new(path.to_str().unwrap()).unwrap();
+        let id = queue.push("owner-1", "Legacy", "doc-1").unwrap();
+        drop(queue);
+
+        let mut tasks: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let legacy = tasks[0].as_object_mut().unwrap();
+        legacy.remove("priority");
+        legacy.remove("task_type");
+        legacy.remove("digest");
+        legacy.remove("memory_payload");
+        std::fs::write(&path, serde_json::to_vec_pretty(&tasks).unwrap()).unwrap();
+
+        let recovered = TaskQueue::new(path.to_str().unwrap()).unwrap();
+        let task = recovered
+            .list()
+            .into_iter()
+            .find(|task| task.id == id)
+            .unwrap();
+        assert_eq!(task.priority, TASK_PRIORITY_LOW);
+        assert_eq!(task.task_type, "document_parse");
+        assert!(task.digest.is_empty());
+        assert!(task.memory_payload.is_none());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn memory_staging_survives_restart_and_can_publish_or_discard() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-memory-tasks-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("tasks.json");
+        let queue = TaskQueue::new(path.to_str().unwrap()).unwrap();
+        let staged_id = queue
+            .stage_memory_task("owner-1", "memory-1", 41, memory_payload("private input"))
+            .unwrap();
+        assert!(queue.pending().is_empty());
+        drop(queue);
+
+        let recovered = TaskQueue::new(path.to_str().unwrap()).unwrap();
+        let staged = recovered.get(&staged_id).unwrap();
+        assert_eq!(staged.status, "staging");
+        assert_eq!(staged.task_type, "memory");
+        assert_eq!(staged.digest, "41");
+        assert_eq!(
+            staged.memory_payload.as_ref().unwrap().user_input,
+            "private input"
+        );
+        assert_eq!(recovered.staged_memory_tasks().len(), 1);
+        assert!(recovered.publish_memory_task(&staged_id).unwrap());
+        assert!(!recovered.publish_memory_task(&staged_id).unwrap());
+
+        let discarded_id = recovered
+            .stage_memory_task("owner-1", "memory-1", 42, memory_payload("rollback"))
+            .unwrap();
+        assert!(recovered.discard_staged_memory_task(&discarded_id).unwrap());
+        assert!(!recovered.discard_staged_memory_task(&discarded_id).unwrap());
+        drop(recovered);
+
+        let restarted = TaskQueue::new(path.to_str().unwrap()).unwrap();
+        assert_eq!(restarted.get(&staged_id).unwrap().status, "pending");
+        assert!(restarted.get(&discarded_id).is_none());
+        assert!(
+            restarted
+                .pending()
+                .into_iter()
+                .any(|task| task.id == staged_id)
+        );
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn document_and_memory_dedupe_and_cancel_are_isolated_by_task_type() {
+        let queue = TaskQueue::in_memory();
+        let first_memory = queue
+            .stage_memory_task("owner-1", "shared-id", 51, memory_payload("first"))
+            .unwrap();
+        let second_memory = queue
+            .stage_memory_task("owner-1", "shared-id", 52, memory_payload("second"))
+            .unwrap();
+        assert_ne!(first_memory, second_memory);
+        assert!(queue.publish_memory_task(&first_memory).unwrap());
+        assert!(queue.publish_memory_task(&second_memory).unwrap());
+
+        let (document, created) = queue
+            .push_document_unique(
+                "owner-1",
+                "Parse shared",
+                "shared-id",
+                "kb-1",
+                TASK_PRIORITY_LOW,
+            )
+            .unwrap();
+        assert!(created);
+        let (duplicate, created) = queue
+            .push_document_unique(
+                "owner-1",
+                "Reparse shared",
+                "shared-id",
+                "kb-1",
+                TASK_PRIORITY_HIGH,
+            )
+            .unwrap();
+        assert!(!created);
+        assert_eq!(duplicate, document);
+        assert_eq!(queue.list().len(), 3);
+
+        assert_eq!(queue.cancel_document("shared-id").unwrap(), 1);
+        assert_eq!(queue.get(&document).unwrap().status, "cancelled");
+        assert_eq!(queue.get(&first_memory).unwrap().status, "pending");
+        assert_eq!(queue.get(&second_memory).unwrap().status, "pending");
+        assert_eq!(queue.cancel_memory("shared-id").unwrap(), 2);
+        assert_eq!(queue.get(&first_memory).unwrap().status, "cancelled");
+        assert_eq!(queue.get(&second_memory).unwrap().status, "cancelled");
+    }
+
+    #[test]
+    fn public_task_projections_hide_payload_and_worker_lease_credentials() {
+        let queue = TaskQueue::in_memory();
+        let id = queue
+            .stage_memory_task("owner-1", "memory-1", 61, memory_payload("top secret"))
+            .unwrap();
+        assert!(queue.publish_memory_task(&id).unwrap());
+        queue
+            .claim(&id, "private-worker", 10_000, "Extracting")
+            .unwrap()
+            .unwrap();
+
+        let internal = serde_json::to_value(queue.get(&id).unwrap()).unwrap();
+        assert!(internal.get("memory_payload").is_some());
+        assert_eq!(internal["worker_id"], "private-worker");
+        assert!(
+            internal["lease_token"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+        );
+
+        let public = serde_json::to_value(&queue.public_list_for("owner-1", false)[0]).unwrap();
+        assert_eq!(public["digest"], "61");
+        assert!(public.get("memory_payload").is_none());
+        assert!(public.get("worker_id").is_none());
+        assert!(public.get("lease_token").is_none());
+        assert!(public.get("lease_expires_at").is_none());
+
+        let message_task =
+            serde_json::to_value(queue.memory_tasks_by_digest("memory-1").get(&61).unwrap())
+                .unwrap();
+        assert!(message_task.get("memory_payload").is_none());
+        assert!(message_task.get("worker_id").is_none());
+        assert!(message_task.get("lease_token").is_none());
+        assert!(message_task.get("lease_expires_at").is_none());
+    }
+
+    #[test]
+    fn memory_task_digest_query_uses_fixed_wire_and_latest_task() {
+        let queue = TaskQueue::in_memory();
+        let old = queue
+            .stage_memory_task("owner-1", "memory-1", 71, memory_payload("old"))
+            .unwrap();
+        let latest = queue
+            .stage_memory_task("owner-1", "memory-1", 71, memory_payload("latest"))
+            .unwrap();
+        queue.publish_memory_task(&old).unwrap();
+        queue.publish_memory_task(&latest).unwrap();
+        queue
+            .update(&latest, "failed", 1.0, "Extraction failed")
+            .unwrap();
+        {
+            let mut tasks = queue.tasks.write().unwrap();
+            tasks
+                .iter_mut()
+                .find(|task| task.id == old)
+                .unwrap()
+                .created_at = 10;
+            tasks
+                .iter_mut()
+                .find(|task| task.id == latest)
+                .unwrap()
+                .created_at = 20;
+        }
+
+        let task = queue
+            .memory_tasks_by_digest("memory-1")
+            .remove(&71)
+            .unwrap();
+        assert_eq!(task.id, latest);
+        assert_eq!(task.progress, -1.0);
+        let value = serde_json::to_value(task).unwrap();
+        let keys: std::collections::BTreeSet<_> = value
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            keys,
+            std::collections::BTreeSet::from([
+                "chunk_ids",
+                "create_time",
+                "digest",
+                "doc_id",
+                "from_page",
+                "id",
+                "progress",
+                "progress_msg",
+            ])
+        );
+    }
+
+    #[test]
+    fn cancellation_prevents_additional_attempts() {
+        let queue = TaskQueue::in_memory();
+        let id = queue.push("owner-1", "Parse test.txt", "doc-1").unwrap();
+        assert!(queue.request_cancel(&id).unwrap());
+        assert!(!queue.request_cancel(&id).unwrap());
+        assert_eq!(queue.claim(&id, "worker-1", 1000, "Parsing").unwrap(), None);
+        assert!(queue.is_cancelled(&id));
+        let task = queue.list().into_iter().find(|task| task.id == id).unwrap();
+        assert_eq!(task.message, "Queued\nTask stopped by user.");
+    }
+
+    #[test]
+    fn retry_limit_prevents_a_fourth_attempt() {
+        let queue = TaskQueue::in_memory();
+        let id = queue.push("owner-1", "Parse test.txt", "doc-1").unwrap();
+        for expected in 1..=3 {
+            let lease = queue
+                .claim(&id, "worker-1", 1000, "Parsing")
+                .unwrap()
+                .unwrap();
+            assert_eq!(lease.attempt, expected);
+            queue
+                .update_claimed(&id, &lease.token, "pending", 0.0, "Retrying")
+                .unwrap();
+        }
+        assert_eq!(queue.claim(&id, "worker-1", 1000, "Parsing").unwrap(), None);
+        assert!(!queue.can_retry(&id));
+    }
+
+    #[test]
+    fn only_one_worker_can_claim_an_active_lease() {
+        let queue = TaskQueue::in_memory();
+        let id = queue.push("owner-1", "Parse test.txt", "doc-1").unwrap();
+        let lease = queue
+            .claim(&id, "worker-1", 1000, "Parsing")
+            .unwrap()
+            .unwrap();
+        assert_eq!(lease.attempt, 1);
+        assert_eq!(queue.claim(&id, "worker-2", 1000, "Parsing").unwrap(), None);
+        assert!(queue.owns_lease(&id, &lease.token));
+    }
+
+    #[test]
+    fn expired_lease_is_reclaimed_and_stale_worker_cannot_commit() {
+        let queue = TaskQueue::in_memory();
+        let id = queue.push("owner-1", "Parse test.txt", "doc-1").unwrap();
+        let stale = queue.claim(&id, "worker-1", 1, "Parsing").unwrap().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let current = queue
+            .claim(&id, "worker-2", 1000, "Reclaimed")
+            .unwrap()
+            .unwrap();
+        assert_eq!(current.attempt, 2);
+        assert!(
+            !queue
+                .update_claimed(&id, &stale.token, "done", 1.0, "Stale result")
+                .unwrap()
+        );
+        assert!(
+            queue
+                .update_claimed(&id, &current.token, "done", 1.0, "Current result")
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn lease_renewal_requires_current_unexpired_token() {
+        let queue = TaskQueue::in_memory();
+        let id = queue.push("owner-1", "Parse test.txt", "doc-1").unwrap();
+        let lease = queue
+            .claim(&id, "worker-1", 1000, "Parsing")
+            .unwrap()
+            .unwrap();
+        assert!(!queue.renew_lease(&id, "wrong-token", 1000).unwrap());
+        assert!(queue.renew_lease(&id, &lease.token, 1000).unwrap());
+    }
+
+    #[test]
+    fn expired_lease_cannot_commit_before_reclaim() {
+        let queue = TaskQueue::in_memory();
+        let id = queue.push("owner-1", "Parse test.txt", "doc-1").unwrap();
+        let lease = queue.claim(&id, "worker-1", 1, "Parsing").unwrap().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        assert!(
+            !queue
+                .update_claimed(&id, &lease.token, "done", 1.0, "Late result")
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn running_progress_is_monotonic_and_messages_are_bounded() {
+        let queue = TaskQueue::in_memory();
+        let id = queue.push("owner-1", "Parse test.txt", "doc-1").unwrap();
+        let lease = queue
+            .claim(&id, "worker-1", 1000, "Parsing")
+            .unwrap()
+            .unwrap();
+        assert!(
+            queue
+                .update_claimed(&id, &lease.token, "running", 0.7, "Embedded")
+                .unwrap()
+        );
+        assert!(
+            queue
+                .update_claimed(&id, &lease.token, "running", 0.4, &"x".repeat(4000))
+                .unwrap()
+        );
+        let task = queue.list().into_iter().find(|task| task.id == id).unwrap();
+        assert_eq!(task.progress, 0.7);
+        assert!(task.message.len() <= TASK_MAX_LOG_LENGTH);
+        assert!(task.message.ends_with(&"x".repeat(TASK_MAX_LOG_LENGTH)));
+    }
+
+    #[test]
+    fn active_guard_blocks_duplicate_local_future_until_drop() {
+        let queue = Arc::new(TaskQueue::in_memory());
+        let id = queue.push("owner-1", "Parse test.txt", "doc-1").unwrap();
+        let guard = queue.activate(&id).unwrap();
+        assert!(queue.activate(&id).is_none());
+        drop(guard);
+        assert!(queue.activate(&id).is_some());
+    }
+
+    #[test]
+    fn concurrent_pushes_persist_without_losing_newer_snapshots() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-concurrent-tasks-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("tasks.json");
+        let queue = Arc::new(TaskQueue::new(path.to_str().unwrap()).unwrap());
+        let handles: Vec<_> = (0..16)
+            .map(|index| {
+                let queue = queue.clone();
+                std::thread::spawn(move || {
+                    queue
+                        .push(
+                            "owner-1",
+                            &format!("Parse {index}.txt"),
+                            &format!("doc-{index}"),
+                        )
+                        .unwrap()
+                })
+            })
+            .collect();
+        let mut expected_ids: Vec<_> = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect();
+        expected_ids.sort();
+        drop(queue);
+
+        let recovered = TaskQueue::new(path.to_str().unwrap()).unwrap();
+        let mut actual_ids: Vec<_> = recovered.list().into_iter().map(|task| task.id).collect();
+        actual_ids.sort();
+        assert_eq!(actual_ids, expected_ids);
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn pending_orders_high_priority_before_low_priority() {
+        let queue = TaskQueue::in_memory();
+        let low = queue
+            .push_with_priority("owner-1", "Low", "doc-low", TASK_PRIORITY_LOW)
+            .unwrap();
+        let high = queue
+            .push_with_priority("owner-1", "High", "doc-high", TASK_PRIORITY_HIGH)
+            .unwrap();
+        let ids: Vec<_> = queue.pending().into_iter().map(|task| task.id).collect();
+        assert_eq!(ids, vec![high, low]);
+    }
+
+    #[test]
+    fn pending_preserves_fifo_within_priority() {
+        let queue = TaskQueue::in_memory();
+        let first = queue
+            .push_with_priority("owner-1", "First", "doc-1", TASK_PRIORITY_HIGH)
+            .unwrap();
+        let second = queue
+            .push_with_priority("owner-1", "Second", "doc-2", TASK_PRIORITY_HIGH)
+            .unwrap();
+        {
+            let mut tasks = queue.tasks.write().unwrap();
+            tasks
+                .iter_mut()
+                .find(|task| task.id == first)
+                .unwrap()
+                .created_at = 10;
+            tasks
+                .iter_mut()
+                .find(|task| task.id == second)
+                .unwrap()
+                .created_at = 20;
+        }
+        let ids: Vec<_> = queue
+            .pending_at(20)
+            .into_iter()
+            .map(|task| task.id)
+            .collect();
+        assert_eq!(ids, vec![first, second]);
+    }
+
+    #[test]
+    fn aging_promotes_waiting_low_priority_without_losing_fifo() {
+        let queue = TaskQueue::in_memory();
+        let first_low = queue
+            .push_with_priority("owner-1", "First low", "doc-1", TASK_PRIORITY_LOW)
+            .unwrap();
+        let second_low = queue
+            .push_with_priority("owner-1", "Second low", "doc-2", TASK_PRIORITY_LOW)
+            .unwrap();
+        let high = queue
+            .push_with_priority("owner-1", "High", "doc-3", TASK_PRIORITY_HIGH)
+            .unwrap();
+        {
+            let mut tasks = queue.tasks.write().unwrap();
+            tasks
+                .iter_mut()
+                .find(|task| task.id == first_low)
+                .unwrap()
+                .created_at = 10;
+            tasks
+                .iter_mut()
+                .find(|task| task.id == second_low)
+                .unwrap()
+                .created_at = 20;
+            tasks
+                .iter_mut()
+                .find(|task| task.id == high)
+                .unwrap()
+                .created_at = TASK_PRIORITY_AGING_MS + 10;
+        }
+        let now = TASK_PRIORITY_AGING_MS + 20;
+        let ids: Vec<_> = queue
+            .pending_at(now)
+            .into_iter()
+            .map(|task| task.id)
+            .collect();
+        assert_eq!(ids, vec![first_low, second_low, high]);
+    }
+
+    #[test]
+    fn task_priority_rejects_values_outside_ragflow_range() {
+        let queue = TaskQueue::in_memory();
+        assert!(
+            queue
+                .push_with_priority("owner-1", "Invalid", "doc-1", 2)
+                .is_err()
+        );
+        assert!(queue.list().is_empty());
+    }
+
+    #[test]
+    fn duplicate_document_queue_reuses_live_task_and_promotes_pending_priority() {
+        let queue = TaskQueue::in_memory();
+        let (first, created) = queue
+            .push_document_unique("owner-1", "Parse doc", "doc-1", "kb-1", TASK_PRIORITY_LOW)
+            .unwrap();
+        assert!(created);
+        let (second, created) = queue
+            .push_document_unique(
+                "owner-1",
+                "Reparse doc",
+                "doc-1",
+                "kb-1",
+                TASK_PRIORITY_HIGH,
+            )
+            .unwrap();
+        assert!(!created);
+        assert_eq!(second, first);
+        assert_eq!(queue.list().len(), 1);
+        assert_eq!(queue.list()[0].priority, TASK_PRIORITY_HIGH);
+        assert_eq!(queue.list()[0].kb_id, "kb-1");
+        assert_eq!(queue.list()[0].task_type, "document_parse");
+    }
+
+    #[test]
+    fn task_records_started_and_finished_operation_times() {
+        let queue = TaskQueue::in_memory();
+        let (id, _) = queue
+            .push_document_unique("owner-1", "Parse doc", "doc-1", "kb-1", TASK_PRIORITY_LOW)
+            .unwrap();
+        let lease = queue
+            .claim(&id, "worker-1", 10_000, "Parsing")
+            .unwrap()
+            .unwrap();
+        let running = queue.list().into_iter().find(|task| task.id == id).unwrap();
+        assert!(running.started_at >= running.created_at);
+        assert_eq!(running.finished_at, 0);
+        assert!(
+            queue
+                .update_claimed(&id, &lease.token, "done", 1.0, "Done")
+                .unwrap()
+        );
+        let done = queue.list().into_iter().find(|task| task.id == id).unwrap();
+        assert!(done.finished_at >= done.started_at);
+    }
+
+    #[test]
+    fn retry_pending_is_not_a_finished_operation() {
+        let queue = TaskQueue::in_memory();
+        let (id, _) = queue
+            .push_document_unique("owner-1", "Parse doc", "doc-1", "kb-1", TASK_PRIORITY_LOW)
+            .unwrap();
+        let lease = queue
+            .claim(&id, "worker-1", 10_000, "Parsing")
+            .unwrap()
+            .unwrap();
+        assert!(
+            queue
+                .update_claimed(&id, &lease.token, "pending", 0.0, "Retrying")
+                .unwrap()
+        );
+        let pending = queue.list().into_iter().find(|task| task.id == id).unwrap();
+        assert_eq!(pending.status, "pending");
+        assert_eq!(pending.finished_at, 0);
+        assert!(pending.started_at > 0);
+    }
+
+    #[test]
+    fn terminal_document_task_allows_a_new_attempt() {
+        let queue = TaskQueue::in_memory();
+        let (first, _) = queue
+            .push_document_unique("owner-1", "Parse doc", "doc-1", "kb-1", TASK_PRIORITY_LOW)
+            .unwrap();
+        assert!(queue.update(&first, "failed", 1.0, "Failed").unwrap());
+        let (second, created) = queue
+            .push_document_unique(
+                "owner-1",
+                "Reparse doc",
+                "doc-1",
+                "kb-1",
+                TASK_PRIORITY_HIGH,
+            )
+            .unwrap();
+        assert!(created);
+        assert_ne!(second, first);
+        assert_eq!(queue.list().len(), 2);
+    }
+
+    #[test]
+    fn failed_persistence_rolls_back_task_mutations() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-task-rollback-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("tasks.json");
+        let queue = TaskQueue::new(path.to_str().unwrap()).unwrap();
+        let id = queue.push("owner-1", "Parse", "doc-1").unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+
+        assert!(queue.claim(&id, "worker-1", 1000, "Parsing").is_err());
+        let task = queue.list().into_iter().find(|task| task.id == id).unwrap();
+        assert_eq!(task.status, "pending");
+        assert_eq!(task.retry_count, 0);
+        assert!(task.lease_token.is_empty());
+
+        assert!(queue.request_cancel(&id).is_err());
+        let task = queue.list().into_iter().find(|task| task.id == id).unwrap();
+        assert_eq!(task.status, "pending");
+        assert!(!task.cancel_requested);
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn corrupt_task_json_fails_startup_instead_of_clearing_queue() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-task-corrupt-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("tasks.json");
+        std::fs::write(&path, b"{not-json").unwrap();
+        let error = match TaskQueue::new(path.to_str().unwrap()) {
+            Err(error) => error,
+            Ok(_) => panic!("corrupt task JSON must fail startup"),
+        };
+        assert!(error.to_string().contains("Failed to parse task queue"));
+        std::fs::remove_dir_all(root).ok();
+    }
+}
 
 // ── Agent Canvas ────────────────────────────────────────────────
 
@@ -7883,7 +9329,58 @@ pub fn validate_agent_target(
     None
 }
 
+#[cfg(test)]
+mod agent_target_tests {
+    use super::*;
+    use serde_json::json;
 
+    fn request(name: &str, category: &str, permission: Option<&str>) -> AgentCreateRequest {
+        serde_json::from_value(json!({
+            "name": name,
+            "canvas_category": category,
+            "permission": permission,
+            "dsl": {}
+        }))
+        .expect("agent create request")
+    }
+
+    #[test]
+    fn validate_agent_target_matches_upstream_semantics() {
+        let store = AgentStore::in_memory();
+        let own = store
+            .create("user-a", request("Own", "agent_canvas", None))
+            .expect("create own agent");
+        let dataflow = store
+            .create("user-a", request("Flow", "dataflow_canvas", None))
+            .expect("create dataflow canvas");
+        let shared = store
+            .create("user-b", request("Shared", "agent_canvas", Some("team")))
+            .expect("create team agent");
+
+        let no_member = |_owner: &str, _user: &str| false;
+        assert_eq!(
+            validate_agent_target(&store, "missing", "user-a", &no_member),
+            Some("not_found")
+        );
+        assert_eq!(
+            validate_agent_target(&store, &dataflow.id, "user-a", &no_member),
+            Some("not_found")
+        );
+        assert_eq!(
+            validate_agent_target(&store, &own.id, "user-a", &no_member),
+            None
+        );
+        assert_eq!(
+            validate_agent_target(&store, &shared.id, "user-a", &no_member),
+            Some("forbidden")
+        );
+        let member = |_owner: &str, _user: &str| true;
+        assert_eq!(
+            validate_agent_target(&store, &shared.id, "user-a", &member),
+            None
+        );
+    }
+}
 
 fn validate_agents(agents: &[Agent]) -> anyhow::Result<()> {
     let mut ids = HashSet::new();
@@ -8162,11 +9659,460 @@ fn agent_dsl_error(
     .into_response()
 }
 
+#[cfg(test)]
+mod tag_normalization_tests {
+    use super::*;
 
+    #[test]
+    fn canvas_tags_are_cleaned_deduped_and_bounded() {
+        // Mirrors canvas_service.UserCanvasService.update_tags: commas inside
+        // a tag are stripped (single comma-separated column), tags deduped
+        // case-insensitively preserving order, capped at 64 chars, and the
+        // joined value truncated to fit the 512-char field.
+        let normalized = normalize_agent_tags(vec![
+            "  Marketing ".to_string(),
+            "marketing".to_string(),
+            "a,b".to_string(),
+            "".to_string(),
+            "  ".to_string(),
+        ]);
+        assert_eq!(normalized, vec!["Marketing", "a b"]);
+    }
 
+    #[test]
+    fn canvas_tags_truncate_individual_tag_and_total_field() {
+        let long_tag = "x".repeat(100);
+        let normalized = normalize_agent_tags(vec![long_tag.clone(), "y".to_string()]);
+        assert_eq!(normalized[0].chars().count(), AGENT_TAG_LIMIT);
+        assert_eq!(normalized.len(), 2);
 
+        // Total joined length must not exceed AGENT_TAGS_FIELD_LIMIT.
+        let many = (0..20).map(|i| format!("tag-{i}")).collect::<Vec<_>>();
+        let normalized = normalize_agent_tags(many);
+        let joined = normalized.join(",");
+        assert!(joined.len() <= AGENT_TAGS_FIELD_LIMIT);
+    }
 
+    #[test]
+    fn update_tags_owned_uses_normalized_tags() {
+        let store = AgentStore::in_memory();
+        let created = store
+            .create(
+                "owner",
+                AgentCreateRequest {
+                    name: "Tagged".into(),
+                    description: String::new(),
+                    permission: None,
+                    kb_ids: Vec::new(),
+                    prompt_template: None,
+                    dsl: serde_json::json!({"components": []}),
+                    canvas_category: None,
+                    canvas_type: String::new(),
+                    tags: vec!["A".into(), "a".into(), "B".into()],
+                    avatar: String::new(),
+                    release: None,
+                },
+            )
+            .unwrap();
+        let agent_id = created.id.clone();
+        let updated = store
+            .update_tags_owned(&agent_id, "owner", vec!["c,d".into(), "C".into()])
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.tags, vec!["c d", "C"]);
+    }
+}
 
+#[cfg(test)]
+mod agent_run_registry_tests {
+    use super::*;
+
+    struct DropMarker(Arc<std::sync::atomic::AtomicBool>);
+
+    impl Drop for DropMarker {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test]
+    async fn dropping_sse_receiver_drops_the_in_flight_run_future() {
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (_cancel, mut cancelled) = tokio::sync::watch::channel(false);
+        let started = Arc::new(tokio::sync::Notify::new());
+        let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let run_started = started.clone();
+        let run_dropped = dropped.clone();
+        let task = tokio::spawn(async move {
+            let run = async move {
+                let _marker = DropMarker(run_dropped);
+                run_started.notify_one();
+                std::future::pending::<()>().await;
+                axum::body::Body::empty().into_response()
+            };
+            await_agent_run_or_cancel(run, &sender, &mut cancelled).await
+        });
+        started.notified().await;
+        drop(receiver);
+        assert!(task.await.unwrap().is_none());
+        assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn newer_canvas_run_cancels_old_future_without_old_lease_removing_new_run() {
+        let registry = Arc::new(AgentRunRegistry::default());
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (first_stream, mut first_cancelled) = AgentStreamContext::new(sender);
+        first_stream.register(registry.clone(), "canvas-1");
+        let started = Arc::new(tokio::sync::Notify::new());
+        let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let run_started = started.clone();
+        let run_dropped = dropped.clone();
+        let first = tokio::spawn(async move {
+            let run = async move {
+                let _marker = DropMarker(run_dropped);
+                run_started.notify_one();
+                std::future::pending::<()>().await;
+                axum::body::Body::empty().into_response()
+            };
+            await_agent_run_or_cancel(run, &first_stream.sender, &mut first_cancelled).await
+        });
+        started.notified().await;
+
+        let (second_sender, second_receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (second_stream, second_cancelled) = AgentStreamContext::new(second_sender);
+        second_stream.register(registry.clone(), "canvas-1");
+        assert!(first.await.unwrap().is_none());
+        assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(registry.contains("canvas-1"));
+        assert!(!*second_cancelled.borrow());
+
+        drop(second_stream);
+        drop(second_receiver);
+        drop(receiver);
+        assert!(!registry.contains("canvas-1"));
+    }
+}
+
+#[cfg(test)]
+mod agent_store_tests {
+    use super::*;
+
+    fn create_request(name: &str) -> AgentCreateRequest {
+        AgentCreateRequest {
+            name: name.into(),
+            description: "Research assistant".into(),
+            permission: None,
+            kb_ids: vec!["kb-a".into(), "kb-a".into()],
+            prompt_template: None,
+            dsl: serde_json::json!({ "components": [] }),
+            canvas_category: None,
+            canvas_type: String::new(),
+            tags: vec!["Rust".into(), "rust".into(), "RAG,Flow".into()],
+            avatar: String::new(),
+            release: None,
+        }
+    }
+
+    #[test]
+    fn agents_persist_filter_and_enforce_unique_titles() {
+        let root = std::env::temp_dir().join(format!("rayrag-agents-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("agents.json");
+        let store = AgentStore::new(&path).unwrap();
+        let agent = store.create("owner", create_request("Research")).unwrap();
+        assert_eq!(agent.canvas_category, "agent_canvas");
+        assert_eq!(agent.kb_ids, vec!["kb-a"]);
+        assert_eq!(agent.tags, vec!["Rust", "RAG Flow"]);
+        assert!(store.create("owner", create_request("research")).is_err());
+        drop(store);
+
+        let restored = AgentStore::new(&path).unwrap();
+        let query = AgentListQuery {
+            keywords: Some("search".into()),
+            tags: Some("rust".into()),
+            ..Default::default()
+        };
+        let (agents, total) = restored
+            .list_accessible(
+                "owner",
+                false,
+                |tenant_id, user_id| tenant_id == user_id,
+                &query,
+            )
+            .unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(agents[0].id, agent.id);
+        assert!(restored.list().iter().any(|agent| agent.id == "default"));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn canvas_categories_use_upstream_values_and_migrate_legacy_aliases() {
+        let store = AgentStore::in_memory();
+        let mut request = create_request("Pipeline");
+        request.canvas_category = Some("ingestion".into());
+        let pipeline = store.create("owner", request).unwrap();
+        assert_eq!(pipeline.canvas_category, "dataflow_canvas");
+
+        let query = AgentListQuery {
+            canvas_category: Some("dataflow".into()),
+            ..Default::default()
+        };
+        let (agents, total) = store
+            .list_accessible("owner", false, |_, _| false, &query)
+            .unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(agents[0].id, pipeline.id);
+
+        let mut invalid = create_request("Invalid category");
+        invalid.canvas_category = Some("workflow".into());
+        assert!(store.create("owner", invalid).is_err());
+
+        let root =
+            std::env::temp_dir().join(format!("rayrag-agent-category-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("agents.json");
+        let mut legacy = default_agent();
+        legacy.canvas_category = "agent".into();
+        std::fs::write(&path, serde_json::to_vec_pretty(&vec![legacy]).unwrap()).unwrap();
+        let restored = AgentStore::new(&path).unwrap();
+        assert_eq!(
+            restored
+                .get_accessible("default", "owner", false, |_, _| false)
+                .unwrap()
+                .canvas_category,
+            "agent_canvas"
+        );
+        let persisted: Vec<Agent> = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(persisted[0].canvas_category, "agent_canvas");
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn team_agents_are_readable_but_only_owner_can_mutate() {
+        let store = AgentStore::in_memory();
+        let agent = store.create("owner", create_request("Shared")).unwrap();
+        let agent = store
+            .update_owned(
+                &agent.id,
+                "owner",
+                AgentUpdateRequest {
+                    permission: Some("team".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert!(
+            store
+                .get_accessible(&agent.id, "member", false, |tenant_id, user_id| {
+                    tenant_id == "owner" && user_id == "member"
+                })
+                .is_some()
+        );
+        assert!(
+            store
+                .update_owned(
+                    &agent.id,
+                    "member",
+                    AgentUpdateRequest {
+                        description: Some("forbidden".into()),
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
+                .is_none()
+        );
+        assert!(!store.delete_owned(&agent.id, "member").unwrap());
+        assert!(!store.delete_owned("default", "owner").unwrap());
+    }
+
+    #[test]
+    fn agent_reset_is_atomic_idempotent_and_preserves_canvas_structure() {
+        let store = AgentStore::in_memory();
+        let mut request = create_request("Resettable");
+        request.dsl = serde_json::json!({
+            "components": [],
+            "graph": {"nodes": [{"id": "begin"}]},
+            "history": ["old"],
+            "retrieval": [{"id": "chunk"}],
+            "memory": ["old"],
+            "path": ["begin"],
+            "variables": {"region": {"type": "string", "value": "cn"}},
+            "globals": {
+                "sys.query": "old",
+                "env.region": "stale",
+                "user.keep": 1
+            }
+        });
+        let original = request.dsl.clone();
+        let agent = store.create("owner", request).unwrap();
+
+        let reset = store.reset_owned(&agent.id, "owner").unwrap().unwrap();
+        assert_eq!(reset.dsl["history"], serde_json::json!([]));
+        assert_eq!(reset.dsl["globals"]["sys.query"], "");
+        assert_eq!(reset.dsl["globals"]["env.region"], "cn");
+        assert_eq!(reset.dsl["globals"]["user.keep"], 1);
+        assert_eq!(reset.dsl["graph"], original["graph"]);
+        assert_eq!(original["history"], serde_json::json!(["old"]));
+
+        let unchanged_at = reset.updated_at;
+        let again = store.reset_owned(&agent.id, "owner").unwrap().unwrap();
+        assert_eq!(again.updated_at, unchanged_at);
+        assert!(store.reset_owned(&agent.id, "member").unwrap().is_none());
+        assert!(store.reset_owned("default", "owner").unwrap().is_none());
+    }
+
+    #[test]
+    fn failed_agent_persistence_rolls_back_mutation() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-agent-rollback-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("agents.json");
+        let store = AgentStore::new(&path).unwrap();
+        let agent = store.create("owner", create_request("Stable")).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+
+        assert!(
+            store
+                .update_owned(
+                    &agent.id,
+                    "owner",
+                    AgentUpdateRequest {
+                        description: Some("must rollback".into()),
+                        ..Default::default()
+                    },
+                )
+                .is_err()
+        );
+        let current = store
+            .get_accessible(&agent.id, "owner", false, |_, _| false)
+            .unwrap();
+        assert_eq!(current.description, "Research assistant");
+        let before_reset = current.dsl.clone();
+        assert!(store.reset_owned(&agent.id, "owner").is_err());
+        assert_eq!(
+            store
+                .get_accessible(&agent.id, "owner", false, |_, _| false)
+                .unwrap()
+                .dsl,
+            before_reset
+        );
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn tag_counts_follow_visibility_and_stable_order() {
+        let store = AgentStore::in_memory();
+        let first = store.create("owner", create_request("One")).unwrap();
+        let second = store.create("owner", create_request("Two")).unwrap();
+        store
+            .update_owned(
+                &first.id,
+                "owner",
+                AgentUpdateRequest {
+                    permission: Some("team".into()),
+                    tags: Some(vec!["shared".into(), "rust".into()]),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        store
+            .update_owned(
+                &second.id,
+                "owner",
+                AgentUpdateRequest {
+                    tags: Some(vec!["private".into()]),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let counts = store.tag_counts(
+            "member",
+            false,
+            |tenant_id, user_id| tenant_id == "owner" && user_id == "member",
+            Some("agent_canvas"),
+        );
+        assert_eq!(counts.len(), 2);
+        assert_eq!(counts[0]["count"], 1);
+        assert!(counts.iter().all(|entry| entry["tag"] != "private"));
+    }
+
+    #[test]
+    fn canvas_versions_replace_equal_dsl_and_protect_released_snapshot() {
+        let store = CanvasVersionStore::in_memory();
+        let first = store
+            .save_or_replace_latest(
+                "agent-1",
+                serde_json::json!({"components": []}),
+                Some("first".into()),
+                Some("draft".into()),
+                Some(true),
+            )
+            .unwrap();
+        let draft = store
+            .save_or_replace_latest(
+                "agent-1",
+                serde_json::json!({"components": []}),
+                Some("second".into()),
+                Some("new draft".into()),
+                Some(false),
+            )
+            .unwrap();
+        assert_ne!(first.id, draft.id);
+        assert_eq!(store.list("agent-1").len(), 2);
+
+        let replaced = store
+            .save_or_replace_latest(
+                "agent-1",
+                serde_json::json!({"components": []}),
+                Some("ignored".into()),
+                Some("updated draft".into()),
+                None,
+            )
+            .unwrap();
+        assert_eq!(replaced.id, draft.id);
+        assert_eq!(replaced.title.as_deref(), Some("second"));
+        assert_eq!(replaced.description.as_deref(), Some("updated draft"));
+        assert_eq!(
+            store.latest_title("agent-1", true).as_deref(),
+            Some("first")
+        );
+    }
+
+    #[test]
+    fn canvas_versions_keep_all_releases_and_only_twenty_drafts() {
+        let store = CanvasVersionStore::in_memory();
+        store
+            .save_or_replace_latest(
+                "agent-1",
+                serde_json::json!({"version": "release"}),
+                Some("release".into()),
+                None,
+                Some(true),
+            )
+            .unwrap();
+        for number in 0..25 {
+            store
+                .save_or_replace_latest(
+                    "agent-1",
+                    serde_json::json!({"version": number}),
+                    Some(format!("draft-{number}")),
+                    None,
+                    Some(false),
+                )
+                .unwrap();
+        }
+        let versions = store.list("agent-1");
+        assert_eq!(versions.iter().filter(|version| version.release).count(), 1);
+        assert_eq!(
+            versions.iter().filter(|version| !version.release).count(),
+            20
+        );
+    }
+}
 
 /// Run one agent workflow outside any chat session — the v0.27.2 Begin
 /// `mode=Webhook` trigger path (`agent_api.py::_webhook_impl`). The owner's

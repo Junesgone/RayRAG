@@ -60,6 +60,10 @@ pub struct SyncBatch {
     pub docs: Vec<ConnectorDoc>,
     /// Per-file failure messages (document id / name + reason).
     pub failures: Vec<String>,
+    /// Files deliberately not downloaded (unsupported extension, oversized,
+    /// image disabled). These are not failures but must stay visible in the
+    /// sync log so a missing file is never a silent omission.
+    pub skipped: Vec<String>,
     /// Connector ids of every file considered in this batch, including files
     /// whose fetch/normalize failed. Used for `sync_deleted_files` pruning.
     pub source_keys: Vec<String>,
@@ -116,6 +120,209 @@ fn remote_file_version(file: &RemoteFile) -> Option<String> {
     None
 }
 
+/// Entries that are never useful as knowledge-base documents: version-control
+/// internals, dependency trees and parser caches. They are skipped even when the
+/// source is configured to include hidden files, because ingesting `.git/hooks`
+/// samples or `node_modules` is never what the operator meant.
+const CONNECTOR_SKIP_DIRS: &[&str] = &[
+    ".git",
+    ".svn",
+    ".hg",
+    ".bzr",
+    "node_modules",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".tox",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".cache",
+];
+
+const CONNECTOR_SKIP_FILES: &[&str] = &[".ds_store", "thumbs.db", "desktop.ini"];
+
+fn parse_flag(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+/// `config.include_hidden` (per source) wins over `RAYRAG_CONNECTOR_INCLUDE_HIDDEN`
+/// (global default). Hidden *VCS/dependency* entries stay excluded either way.
+fn connector_includes_hidden(extra: &HashMap<String, String>) -> bool {
+    extra
+        .get("config.include_hidden")
+        .or_else(|| extra.get("include_hidden"))
+        .and_then(|value| parse_flag(value))
+        .or_else(|| {
+            std::env::var("RAYRAG_CONNECTOR_INCLUDE_HIDDEN")
+                .ok()
+                .and_then(|value| parse_flag(&value))
+        })
+        .unwrap_or(false)
+}
+
+fn excluded_connector_entry(name: &str, include_hidden: bool) -> bool {
+    let lower = name.to_ascii_lowercase();
+    if CONNECTOR_SKIP_DIRS.contains(&lower.as_str()) {
+        return true;
+    }
+    !include_hidden && name.starts_with('.')
+}
+
+fn excluded_connector_file(name: &str, include_hidden: bool) -> bool {
+    let lower = name.to_ascii_lowercase();
+    CONNECTOR_SKIP_FILES.contains(&lower.as_str()) || excluded_connector_entry(name, include_hidden)
+}
+
+/// Apply the same exclusion rules to a WebDAV path. The href may be
+/// percent-encoded, so decode before looking at its segments.
+fn webdav_path_excluded(path: &str, include_hidden: bool) -> bool {
+    let decoded = percent_decode_href(path);
+    decoded
+        .split('/')
+        .filter(|segment| !segment.is_empty() && *segment != "." && *segment != "..")
+        .any(|segment| excluded_connector_file(segment, include_hidden))
+}
+
+/// RAGFlow `is_accepted_file_ext` — plain-text extensions
+/// (`common/data_source/utils.py`). Kept as a literal list so a parser gaining
+/// a new extension does not silently widen what a data source downloads.
+const CONNECTOR_TEXT_EXTENSIONS: &[&str] = &[
+    ".txt", ".md", ".mdx", ".conf", ".log", ".json", ".csv", ".tsv", ".xml", ".yml", ".yaml",
+    ".sql",
+];
+
+/// RAGFlow `is_accepted_file_ext` — document extensions.
+const CONNECTOR_DOCUMENT_EXTENSIONS: &[&str] =
+    &[".pdf", ".docx", ".pptx", ".xlsx", ".eml", ".epub", ".html"];
+
+/// RAGFlow `is_accepted_file_ext` — image extensions, accepted only when the
+/// source enables `allow_images`.
+const CONNECTOR_IMAGE_EXTENSIONS: &[&str] =
+    &[".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp"];
+
+/// RAGFlow data sources accept images only when `allow_images` is on. RayRAG
+/// keeps the same default (off) so a photo folder does not turn into a wall of
+/// OCR failures, while the per-source switch makes it opt-in.
+fn connector_allows_images(extra: &HashMap<String, String>) -> bool {
+    extra
+        .get("config.allow_images")
+        .or_else(|| extra.get("allow_images"))
+        .and_then(|value| parse_flag(value))
+        .unwrap_or(false)
+}
+
+/// Per-file ceiling for data-source downloads. `BLOB_STORAGE_SIZE_THRESHOLD`
+/// is RAGFlow's own variable (default 20 MiB); `RAYRAG_CONNECTOR_MAX_FILE_BYTES`
+/// is a RayRAG-specific override, and `0` disables the ceiling.
+fn connector_max_file_bytes() -> Option<u64> {
+    for key in [
+        "RAYRAG_CONNECTOR_MAX_FILE_BYTES",
+        "BLOB_STORAGE_SIZE_THRESHOLD",
+    ] {
+        if let Ok(raw) = std::env::var(key) {
+            match raw.trim().parse::<u64>() {
+                Ok(0) => return None,
+                Ok(value) => return Some(value),
+                Err(_) => tracing::warn!(
+                    %key,
+                    %raw,
+                    "data source: invalid file size limit; using the default"
+                ),
+            }
+        }
+    }
+    Some(20 * 1024 * 1024)
+}
+
+/// Per-source override (`config.max_file_size_mb`, 0 = unlimited) on top of
+/// the process-wide `BLOB_STORAGE_SIZE_THRESHOLD`.
+fn connector_max_file_bytes_for(extra: &HashMap<String, String>) -> Option<u64> {
+    if let Some(raw) = extra
+        .get("config.max_file_size_mb")
+        .or_else(|| extra.get("max_file_size_mb"))
+        .filter(|value| !value.trim().is_empty())
+    {
+        match raw.trim().parse::<u64>() {
+            Ok(0) => return None,
+            Ok(mb) => return Some(mb.saturating_mul(1024 * 1024)),
+            Err(_) => tracing::warn!(
+                raw = %raw,
+                "data source: invalid config.max_file_size_mb; using the global limit"
+            ),
+        }
+    }
+    connector_max_file_bytes()
+}
+
+/// Shared listing filter for WebDAV/local sources: never download a file the
+/// parser cannot read, and report the reason instead of dropping it silently.
+fn connector_file_skip_reason(
+    file: &RemoteFile,
+    allow_images: bool,
+    max_file_bytes: Option<u64>,
+) -> Option<String> {
+    let extension = file.extension.trim().to_ascii_lowercase();
+    if extension.is_empty() {
+        return Some(
+            "no file extension, so the format cannot be detected; add the correct extension or exclude the file"
+                .into(),
+        );
+    }
+    if CONNECTOR_IMAGE_EXTENSIONS.contains(&extension.as_str()) {
+        if !allow_images {
+            return Some(format!(
+                "image file {extension} is disabled for this source; enable \"Allow images\" to OCR it"
+            ));
+        }
+    } else if !CONNECTOR_TEXT_EXTENSIONS.contains(&extension.as_str())
+        && !CONNECTOR_DOCUMENT_EXTENSIONS.contains(&extension.as_str())
+    {
+        return Some(format!(
+            "unsupported file type {extension}; accepted types are PDF, DOCX, XLSX, PPTX, TXT, MD/MDX, HTML, CSV/TSV, JSON, XML, YAML, SQL, CONF, LOG, EML, EPUB and images when enabled"
+        ));
+    }
+    // RAGFlow skips files whose size the server did not report when the size
+    // guard is active, because it cannot prove the download is bounded.
+    if max_file_bytes.is_some()
+        && file.metadata.get("size_known").map(String::as_str) == Some("false")
+    {
+        return Some(
+            "the WebDAV server did not report this file's size, so the download cannot be bounded; fix the server's PROPFIND getcontentlength or set the per-source limit to 0"
+                .into(),
+        );
+    }
+    if let Some(limit) = max_file_bytes
+        && file.size_bytes > limit
+    {
+        return Some(format!(
+            "file is {:.1} MiB, above the {:.1} MiB limit (BLOB_STORAGE_SIZE_THRESHOLD); raise the limit or exclude the file",
+            file.size_bytes as f64 / (1024.0 * 1024.0),
+            limit as f64 / (1024.0 * 1024.0)
+        ));
+    }
+    None
+}
+
+/// Recursion limits: unset uses the default, `0` means "no limit", and a bad
+/// value falls back to the default with a warning instead of failing the sync.
+fn webdav_recursion_limit(key: &str, default: usize) -> Option<usize> {
+    match std::env::var(key) {
+        Ok(raw) => match raw.trim().parse::<usize>() {
+            Ok(0) => None,
+            Ok(value) => Some(value),
+            Err(_) => {
+                tracing::warn!(%key, %raw, default, "webdav: invalid recursion limit; using the default");
+                Some(default)
+            }
+        },
+        Err(_) => Some(default),
+    }
+}
+
 // ── Connector trait ──────────────────────────────────────────────────────────
 
 /// Connector contract: 授权 → 拉取 → 规范化存储.
@@ -143,6 +350,14 @@ pub trait Connector: Send + Sync {
     /// 规范化存储: convert raw bytes into a `ConnectorDoc` (RAGFlow
     /// `Document`: blob + semantic_identifier + extension + metadata).
     fn normalize(&self, file: &RemoteFile, raw: Vec<u8>) -> Result<ConnectorDoc>;
+
+    /// Pre-download filter (RAGFlow `_is_supported_file` + size threshold).
+    /// Returning `Some(reason)` skips the file before its bytes are fetched;
+    /// the reason is reported in the sync log. Connectors that accept every
+    /// listed entry keep the default.
+    fn skip_reason(&self, _file: &RemoteFile) -> Option<String> {
+        None
+    }
 
     /// Batch runner — RAGFlow `ConnectorRunner.run()` equivalent: list →
     /// fetch → normalize with per-file failure tolerance. Applies
@@ -182,6 +397,10 @@ pub trait Connector: Send + Sync {
             // fetch/normalize failure still protects its existing document
             // from sync_deleted_files pruning.
             batch.source_keys.push(file.id.clone());
+            if let Some(reason) = self.skip_reason(&file) {
+                batch.skipped.push(format!("{}: {reason}", file.name));
+                continue;
+            }
             let version = remote_file_version(&file);
             if let (Some(current), Some(known)) = (version.as_deref(), known_versions.get(&file.id))
                 && known == current
@@ -191,6 +410,13 @@ pub trait Connector: Send + Sync {
                 continue;
             }
             match self.fetch_file(&file).await {
+                Ok(raw) if raw.is_empty() => {
+                    // RAGFlow warns and continues instead of creating an empty
+                    // document that would fail parsing later.
+                    batch
+                        .skipped
+                        .push(format!("{}: remote file is empty; skipped", file.name));
+                }
                 Ok(raw) => {
                     let next = total_bytes.saturating_add(raw.len() as u64);
                     if next > max_bytes {
@@ -948,6 +1174,9 @@ impl ConnectorRegistry {
 pub struct LocalConnector {
     root: PathBuf,
     subdir: String,
+    include_hidden: bool,
+    allow_images: bool,
+    max_file_bytes: Option<u64>,
 }
 
 impl LocalConnector {
@@ -963,6 +1192,9 @@ impl LocalConnector {
         Ok(Self {
             root: path,
             subdir: options.target.trim().trim_matches('/').to_string(),
+            include_hidden: connector_includes_hidden(&options.extra),
+            allow_images: connector_allows_images(&options.extra),
+            max_file_bytes: connector_max_file_bytes_for(&options.extra),
         })
     }
 
@@ -1000,7 +1232,7 @@ impl Connector for LocalConnector {
             self.root.join(&self.subdir)
         };
         let mut files = Vec::new();
-        walk_dir(&base, &base, &mut files)?;
+        walk_dir(&base, &base, self.include_hidden, &mut files)?;
         files.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(files)
     }
@@ -1028,27 +1260,40 @@ impl Connector for LocalConnector {
             raw_bytes: Some(raw),
         })
     }
+
+    fn skip_reason(&self, file: &RemoteFile) -> Option<String> {
+        connector_file_skip_reason(file, self.allow_images, self.max_file_bytes)
+    }
 }
 
-fn walk_dir(base: &Path, dir: &Path, out: &mut Vec<RemoteFile>) -> Result<()> {
+fn walk_dir(
+    base: &Path,
+    dir: &Path,
+    include_hidden: bool,
+    out: &mut Vec<RemoteFile>,
+) -> Result<()> {
     for entry in std::fs::read_dir(dir)
         .with_context(|| format!("local: read_dir failed: {}", dir.display()))?
     {
         let entry = entry?;
         let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
         let file_type = entry.file_type()?;
         if file_type.is_dir() {
-            walk_dir(base, &path, out)?;
-        } else if file_type.is_file() {
+            if !excluded_connector_entry(&name, include_hidden) {
+                walk_dir(base, &path, include_hidden, out)?;
+            }
+            continue;
+        }
+        if !file_type.is_file() || excluded_connector_file(&name, include_hidden) {
+            continue;
+        }
+        {
             let rel = path
                 .strip_prefix(base)
                 .unwrap_or(&path)
                 .to_string_lossy()
                 .to_string();
-            let name = path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| rel.clone());
             let ext = path
                 .extension()
                 .map(|e| format!(".{}", e.to_string_lossy()))
@@ -1109,7 +1354,7 @@ pub fn is_lan_webdav_host(host: &str) -> bool {
         .any(|suffix| host.ends_with(suffix))
 }
 
-const WEBDAV_PROPFIND_BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?><D:propfind xmlns:D="DAV:"><D:prop><D:displayname/><D:getcontentlength/><D:getlastmodified/><D:resourcetype/></D:prop></D:propfind>"#;
+const WEBDAV_PROPFIND_BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?><D:propfind xmlns:D="DAV:"><D:prop><D:displayname/><D:getcontentlength/><D:getlastmodified/><D:getetag/><D:getcontenttype/><D:resourcetype/></D:prop></D:propfind>"#;
 
 /// Decode %XX escapes in a WebDAV href. WebDAV servers return encoded hrefs
 /// (`/<share>/<folder>/file.txt` arrives as `/%3Cshare%3E...`); re-encoding
@@ -1148,6 +1393,9 @@ pub struct WebDavConnector {
     username: String,
     password: String,
     max_items: usize,
+    include_hidden: bool,
+    allow_images: bool,
+    max_file_bytes: Option<u64>,
 }
 
 impl WebDavConnector {
@@ -1167,7 +1415,12 @@ impl WebDavConnector {
                 .and_then(|parsed| parsed.host_str().map(str::to_string))
                 .is_some_and(|host| is_lan_webdav_host(&host));
         let insecure = forced || lan_https;
-        let mut client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(60));
+        // WebDAV listings and downloads may legitimately take longer than a
+        // minute on large or slow shares; respect the operator's command timeout
+        // instead of a hardcoded 60s ceiling.
+        let mut client = reqwest::Client::builder()
+            .timeout(crate::common::cmd_timeout::duration())
+            .connect_timeout(std::time::Duration::from_secs(30));
         if insecure {
             tracing::info!(
                 "webdav: accepting a self-signed certificate for the local-network HTTPS source"
@@ -1201,6 +1454,9 @@ impl WebDavConnector {
             } else {
                 options.max_items
             },
+            include_hidden: connector_includes_hidden(&options.extra),
+            allow_images: connector_allows_images(&options.extra),
+            max_file_bytes: connector_max_file_bytes_for(&options.extra),
         }
     }
 
@@ -1340,27 +1596,44 @@ impl WebDavConnector {
     /// Walk every collection under one configured target. WebDAV listings are
     /// Depth:1, so subfolders must be discovered and queried recursively.
     async fn collect_recursive(&self, root: &str) -> Result<Vec<RemoteFile>> {
-        const MAX_DEPTH: usize = 64;
-        const MAX_DIRECTORIES: usize = 10_000;
+        // Defaults are generous; operators can raise them (or set `0` for no
+        // limit) with RAYRAG_WEBDAV_MAX_DEPTH / RAYRAG_WEBDAV_MAX_DIRECTORIES.
+        let max_depth = webdav_recursion_limit("RAYRAG_WEBDAV_MAX_DEPTH", 512);
+        let max_directories = webdav_recursion_limit("RAYRAG_WEBDAV_MAX_DIRECTORIES", 100_000);
+        self.collect_recursive_with_limits(root, max_depth, max_directories)
+            .await
+    }
+
+    async fn collect_recursive_with_limits(
+        &self,
+        root: &str,
+        max_depth: Option<usize>,
+        max_directories: Option<usize>,
+    ) -> Result<Vec<RemoteFile>> {
         let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut stack = vec![(root.to_string(), 0_usize)];
         let mut files = Vec::new();
+        let mut skipped_entries = 0_usize;
         while let Some((directory, depth)) = stack.pop() {
-            if depth > MAX_DEPTH {
-                tracing::warn!(
-                    folder = %directory,
-                    max_depth = MAX_DEPTH,
-                    "webdav: folder nesting exceeds the recursion limit; skipping deeper folders"
+            if max_depth.is_some_and(|max| depth > max) {
+                // Failing loudly beats returning a partial listing that looks
+                // complete: pruning would otherwise delete documents that live
+                // in the unvisited folders.
+                anyhow::bail!(
+                    "webdav: folder nesting under {} exceeds the {} level limit at {}; raise RAYRAG_WEBDAV_MAX_DEPTH or sync a narrower target",
+                    self.remote_path,
+                    max_depth.unwrap_or_default(),
+                    directory
                 );
-                continue;
             }
             let normalized = directory.trim_end_matches('/').to_string();
             if normalized.is_empty() || !visited.insert(normalized.clone()) {
                 continue;
             }
-            if visited.len() > MAX_DIRECTORIES {
+            if max_directories.is_some_and(|max| visited.len() > max) {
                 anyhow::bail!(
-                    "webdav: more than {MAX_DIRECTORIES} folders under {}; narrow the configured target or sync in smaller batches",
+                    "webdav: more than {} folders under {}; narrow the configured target or sync in smaller batches",
+                    max_directories.unwrap_or_default(),
                     self.remote_path
                 );
             }
@@ -1377,10 +1650,15 @@ impl WebDavConnector {
                 Err(error) => return Err(error),
             };
             for file in entries.files {
+                if webdav_path_excluded(&file.path, self.include_hidden) {
+                    skipped_entries += 1;
+                    continue;
+                }
                 files.push(file);
                 if files.len() >= self.max_items {
                     tracing::warn!(
                         limit = self.max_items,
+                        skipped_entries,
                         "webdav: file limit reached; stopping the recursive listing. Raise the data source file limit to sync more."
                     );
                     return Ok(files);
@@ -1388,8 +1666,49 @@ impl WebDavConnector {
             }
             for subfolder in entries.directories {
                 let subfolder = subfolder.trim_end_matches('/').to_string();
-                if !subfolder.is_empty() && subfolder != normalized {
-                    stack.push((format!("{subfolder}/"), depth + 1));
+                if subfolder.is_empty() || subfolder == normalized {
+                    continue;
+                }
+                if webdav_path_excluded(&subfolder, self.include_hidden) {
+                    skipped_entries += 1;
+                    continue;
+                }
+                stack.push((format!("{subfolder}/"), depth + 1));
+            }
+        }
+        if skipped_entries > 0 {
+            tracing::info!(
+                skipped_entries,
+                include_hidden = self.include_hidden,
+                "webdav: skipped hidden/VCS/dependency entries"
+            );
+        }
+        // RAGFlow disambiguates duplicate basenames with the relative path
+        // ("folder / file.pdf") so two same-named files do not look identical
+        // in the knowledge base. Apply the same rule only when a collision
+        // actually exists; unique names stay as plain basenames.
+        let mut name_counts: HashMap<String, usize> = HashMap::new();
+        for file in &files {
+            *name_counts.entry(file.name.clone()).or_default() += 1;
+        }
+        let duplicates: std::collections::HashSet<String> = name_counts
+            .into_iter()
+            .filter(|(_, count)| *count > 1)
+            .map(|(name, _)| name)
+            .collect();
+        if !duplicates.is_empty() {
+            let decoded_root = percent_decode_href(root).trim_end_matches('/').to_string();
+            for file in &mut files {
+                if !duplicates.contains(&file.name) {
+                    continue;
+                }
+                let decoded_path = percent_decode_href(&file.path);
+                let relative = decoded_path
+                    .strip_prefix(&decoded_root)
+                    .unwrap_or(&decoded_path)
+                    .trim_start_matches('/');
+                if !relative.is_empty() {
+                    file.name = relative.replace('/', " / ");
                 }
             }
         }
@@ -1523,6 +1842,10 @@ impl Connector for WebDavConnector {
             raw_bytes: Some(raw),
         })
     }
+
+    fn skip_reason(&self, file: &RemoteFile) -> Option<String> {
+        connector_file_skip_reason(file, self.allow_images, self.max_file_bytes)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -1604,17 +1927,12 @@ fn parse_propfind(xml: &str) -> Result<PropfindEntries> {
                             .filter(|n| !n.is_empty())
                             .cloned()
                             .or_else(|| {
-                                raw_href
-                                    .trim_end_matches('/')
-                                    .rsplit('/')
-                                    .next()
-                                    .map(|s| s.to_string())
+                                let decoded = percent_decode_href(raw_href.trim_end_matches('/'));
+                                decoded.rsplit('/').next().map(|s| s.to_string())
                             })
                             .unwrap_or_else(|| raw_href.clone());
-                        let size = map
-                            .get("size")
-                            .and_then(|s| s.parse::<u64>().ok())
-                            .unwrap_or(0);
+                        let parsed_size = map.get("size").and_then(|s| s.parse::<u64>().ok());
+                        let size = parsed_size.unwrap_or(0);
                         let ext = Path::new(&name)
                             .extension()
                             .or_else(|| Path::new(&raw_href).extension())
@@ -1622,6 +1940,9 @@ fn parse_propfind(xml: &str) -> Result<PropfindEntries> {
                             .unwrap_or_default();
                         let mut metadata = HashMap::new();
                         metadata.insert("source".into(), "webdav".into());
+                        if parsed_size.is_none() {
+                            metadata.insert("size_known".into(), "false".into());
+                        }
                         entries.files.push(RemoteFile {
                             id: format!("webdav:{raw_href}"),
                             name,
@@ -4376,7 +4697,10 @@ impl SitemapConnector {
         Self::with_private_hosts(options, false)
     }
 
-    
+    #[cfg(test)]
+    pub fn new_for_test(options: SourceOptions) -> Result<Self> {
+        Self::with_private_hosts(options, true)
+    }
 
     fn with_private_hosts(options: SourceOptions, allow_private_hosts: bool) -> Result<Self> {
         let extra = &options.extra;
@@ -5342,7 +5666,10 @@ impl AzureDevOpsConnector {
         Self::with_http_override(options, false)
     }
 
-    
+    #[cfg(test)]
+    pub fn new_for_test(options: SourceOptions) -> Result<Self> {
+        Self::with_http_override(options, true)
+    }
 
     fn with_http_override(options: SourceOptions, allow_http: bool) -> Result<Self> {
         let extra = &options.extra;
@@ -5972,11 +6299,730 @@ impl Connector for AzureDevOpsConnector {
     }
 }
 
+#[cfg(test)]
+mod azure_devops_tests {
+    use super::*;
+    use axum::Router;
+    use axum::body::Body;
+    use axum::http::{StatusCode, Uri};
 
+    /// NAS WebDAV services normally present a self-signed certificate on the LAN;
+    /// public hostnames must keep full certificate validation.
+    #[test]
+    fn lan_webdav_hosts_are_detected() {
+        for host in [
+            "192.168.3.20",
+            "10.0.0.5",
+            "172.16.4.4",
+            "127.0.0.1",
+            "fe80::1",
+            "fd00::10",
+            "nas",
+            "nas.local",
+            "dav.lan",
+        ] {
+            assert!(is_lan_webdav_host(host), "{host} should be local");
+        }
+        for host in ["dav.example.com", "8.8.8.8", "storage.googleapis.com"] {
+            assert!(!is_lan_webdav_host(host), "{host} must stay verified");
+        }
+    }
 
+    #[test]
+    fn webdav_href_resolution_handles_root_and_directory_targets() {
+        let connector = |url: &str, target: &str| {
+            WebDavConnector::new(SourceOptions {
+                url: url.to_owned(),
+                token: "user:secret".to_owned(),
+                target: target.to_owned(),
+                ..SourceOptions::default()
+            })
+        };
+        let root = connector("https://nas.local:5006/dav", "/");
+        assert_eq!(root.url_for("/"), "https://nas.local:5006/dav/");
+        assert_eq!(
+            root.url_for("/dav/manual.md"),
+            "https://nas.local:5006/dav/manual.md"
+        );
+        let sub = connector("https://nas.local:5006/dav", "/handbook");
+        assert_eq!(
+            sub.url_for("/handbook/guide.md"),
+            "https://nas.local:5006/dav/handbook/guide.md"
+        );
+        assert_eq!(
+            sub.url_for("/guide.md"),
+            "https://nas.local:5006/dav/guide.md"
+        );
+        let plain = connector("http://192.168.3.20:18080", "/");
+        assert_eq!(
+            plain.url_for("/notes.txt"),
+            "http://192.168.3.20:18080/notes.txt"
+        );
+    }
 
+    fn options(url: &str) -> SourceOptions {
+        SourceOptions {
+            url: url.to_owned(),
+            token: "pat-test".to_owned(),
+            ..SourceOptions::default()
+        }
+    }
 
+    #[test]
+    fn validation_and_url_rules() {
+        assert!(AzureDevOpsConnector::new(SourceOptions::default()).is_err());
+        let mut no_pat = options("myorg");
+        no_pat.token = String::new();
+        assert!(
+            AzureDevOpsConnector::new(no_pat)
+                .unwrap_err()
+                .to_string()
+                .contains("personal access token")
+        );
+        // Plain HTTP collection URLs are refused outside the test constructor.
+        assert!(
+            AzureDevOpsConnector::new(options("http://tfs.local/collection"))
+                .unwrap_err()
+                .to_string()
+                .contains("HTTPS")
+        );
+        let mut bad_mode = options("myorg");
+        bad_mode
+            .extra
+            .insert("index_mode".to_owned(), "everything".to_owned());
+        assert!(AzureDevOpsConnector::new(bad_mode).is_err());
+        let mut bad_content = options("myorg");
+        bad_content
+            .extra
+            .insert("content_types".to_owned(), "issues".to_owned());
+        assert!(AzureDevOpsConnector::new(bad_content).is_err());
+        // Bare organization names resolve to dev.azure.com.
+        let connector = AzureDevOpsConnector::new(options("myorg")).unwrap();
+        assert_eq!(connector.org_url, "https://dev.azure.com/myorg");
+    }
 
+    fn json_response(body: String) -> axum::response::Response {
+        axum::response::Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .unwrap()
+    }
+
+    fn repositories_body() -> String {
+        serde_json::json!({
+            "value": [{
+                "name": "repo",
+                "project": {"name": "proj"},
+                "defaultBranch": "refs/heads/main",
+                "isDisabled": false
+            }]
+        })
+        .to_string()
+    }
+
+    fn items_body() -> String {
+        serde_json::json!({
+            "value": [
+                {
+                    "path": "/src/main.rs",
+                    "gitObjectType": "blob",
+                    "size": 12,
+                    "latestProcessedChange": {
+                        "commitId": "c1",
+                        "committer": {"name": "Alice", "date": "2026-01-01T00:00:00Z"}
+                    }
+                },
+                {
+                    "path": "/README.md",
+                    "gitObjectType": "blob",
+                    "size": 5,
+                    "latestProcessedChange": {
+                        "commitId": "c2",
+                        "committer": {"name": "Bob", "date": "2026-01-02T00:00:00Z"}
+                    }
+                },
+                {"path": "/logo.png", "gitObjectType": "blob"},
+                {"path": "/node_modules/dep/index.js", "gitObjectType": "blob"},
+                {"path": "/.gitignore", "gitObjectType": "blob"},
+                {"path": "/src", "gitObjectType": "tree", "isFolder": true}
+            ]
+        })
+        .to_string()
+    }
+
+    async fn site(uri: Uri) -> axum::response::Response {
+        let path = uri.path().to_owned();
+        let query = uri.query().unwrap_or_default().to_owned();
+        if path.ends_with("/_apis/git/repositories") {
+            return json_response(repositories_body());
+        }
+        if path.ends_with("/items") && query.contains("includeContent=true") {
+            if query.contains("path=%2Fsrc%2Fmain.rs") || query.contains("path=/src/main.rs") {
+                return json_response("fn main() {}".to_owned());
+            }
+            return json_response("# Readme".to_owned());
+        }
+        if path.ends_with("/items") {
+            return json_response(items_body());
+        }
+        if path.ends_with("/pullrequests/7") {
+            return json_response(
+                serde_json::json!({
+                    "pullRequestId": 7,
+                    "title": "Active work",
+                    "description": "full description from detail endpoint",
+                    "status": "active",
+                    "createdBy": {"displayName": "Alice"},
+                    "reviewers": [{"displayName": "Bob"}],
+                    "sourceRefName": "refs/heads/feature",
+                    "targetRefName": "refs/heads/main",
+                    "creationDate": "2025-06-01T00:00:00Z"
+                })
+                .to_string(),
+            );
+        }
+        if path.ends_with("/pullrequests") {
+            return json_response(
+                serde_json::json!({
+                    "value": [
+                        {
+                            "pullRequestId": 7,
+                            "title": "Active work",
+                            "description": "x".repeat(450),
+                            "status": "active",
+                            "createdBy": {"displayName": "Alice"},
+                            "reviewers": [],
+                            "sourceRefName": "refs/heads/feature",
+                            "targetRefName": "refs/heads/main",
+                            "creationDate": "2025-06-01T00:00:00Z"
+                        },
+                        {
+                            "pullRequestId": 8,
+                            "title": "Old closed",
+                            "description": "short",
+                            "status": "completed",
+                            "createdBy": {"displayName": "Carol"},
+                            "reviewers": [],
+                            "sourceRefName": "refs/heads/old",
+                            "targetRefName": "refs/heads/main",
+                            "creationDate": "2019-01-01T00:00:00Z",
+                            "closedDate": "2020-01-01T00:00:00Z"
+                        },
+                        {
+                            "pullRequestId": 9,
+                            "title": "Recent closed",
+                            "description": "short",
+                            "status": "completed",
+                            "createdBy": {"displayName": "Dave"},
+                            "reviewers": [],
+                            "sourceRefName": "refs/heads/recent",
+                            "targetRefName": "refs/heads/main",
+                            "creationDate": "2025-01-01T00:00:00Z",
+                            "closedDate": "2025-06-15T00:00:00Z"
+                        }
+                    ]
+                })
+                .to_string(),
+            );
+        }
+        axum::response::Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::from("missing"))
+            .unwrap()
+    }
+
+    async fn spawn_site() -> (String, tokio::task::JoinHandle<()>) {
+        let app = Router::new().fallback(site);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{address}"), server)
+    }
+
+    #[tokio::test]
+    async fn code_listing_maps_files_and_skips_noise() {
+        let (base, server) = spawn_site().await;
+        let mut opts = options(&base);
+        opts.extra
+            .insert("content_types".to_owned(), "code".to_owned());
+        let connector = AzureDevOpsConnector::new_for_test(opts).unwrap();
+        let batch = connector.fetch_all(20).await.unwrap();
+        server.abort();
+        assert_eq!(batch.docs.len(), 2, "{:?}", batch.failures);
+        let readme = batch
+            .docs
+            .iter()
+            .find(|doc| doc.id.ends_with("file:README.md"))
+            .expect("README indexed");
+        assert!(readme.id.starts_with("azure_devops:"));
+        assert_eq!(readme.extension, ".md");
+        assert!(readme.blob.contains("Readme"), "{}", readme.blob);
+        assert_eq!(readme.metadata.get("type"), Some(&"CodeFile".to_owned()));
+        assert!(
+            readme
+                .metadata
+                .get("web_url")
+                .unwrap()
+                .contains("/proj/_git/repo")
+        );
+        assert!(
+            batch
+                .docs
+                .iter()
+                .any(|doc| doc.id.ends_with("file:src/main.rs"))
+        );
+    }
+
+    #[tokio::test]
+    async fn pull_requests_respect_window_and_fetch_truncated_details() {
+        let (base, server) = spawn_site().await;
+        let mut opts = options(&base);
+        opts.extra
+            .insert("content_types".to_owned(), "pull_requests".to_owned());
+        opts.extra
+            .insert("since".to_owned(), "2021-01-01T00:00:00Z".to_owned());
+        let connector = AzureDevOpsConnector::new_for_test(opts).unwrap();
+        let batch = connector.fetch_all(20).await.unwrap();
+        server.abort();
+        assert_eq!(batch.docs.len(), 2, "{:?}", batch.failures);
+        let active = batch
+            .docs
+            .iter()
+            .find(|doc| doc.id.ends_with(":pr:7"))
+            .expect("active PR kept");
+        assert!(
+            active
+                .blob
+                .contains("full description from detail endpoint"),
+            "{}",
+            active.blob
+        );
+        assert!(active.blob.contains("Pull Request Information"));
+        assert_eq!(active.metadata.get("status"), Some(&"active".to_owned()));
+        assert!(batch.docs.iter().any(|doc| doc.id.ends_with(":pr:9")));
+        assert!(
+            !batch.docs.iter().any(|doc| doc.id.ends_with(":pr:8")),
+            "the 2020-closed PR must fall outside the 2021 window"
+        );
+    }
+
+    #[tokio::test]
+    async fn auth_failures_map_to_credential_errors() {
+        let app = Router::new().fallback(|| async {
+            axum::response::Response::builder()
+                .status(StatusCode::NON_AUTHORITATIVE_INFORMATION)
+                .body(Body::from("<html>sign in</html>"))
+                .unwrap()
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let connector =
+            AzureDevOpsConnector::new_for_test(options(&format!("http://{address}"))).unwrap();
+        let error = connector.list_files().await.unwrap_err().to_string();
+        server.abort();
+        assert!(error.contains("personal access token"), "{error}");
+    }
+}
+
+#[cfg(test)]
+mod sitemap_tests {
+    use super::*;
+    use axum::Router;
+    use axum::http::{HeaderMap, Uri};
+
+    fn options(url: &str) -> SourceOptions {
+        SourceOptions {
+            url: url.to_owned(),
+            ..SourceOptions::default()
+        }
+    }
+
+    #[test]
+    fn validation_rejects_bad_inputs() {
+        assert!(SitemapConnector::new(options("")).is_err());
+        assert!(SitemapConnector::new(options("ftp://example.com/s.xml")).is_err());
+        assert!(
+            SitemapConnector::new(options("http://127.0.0.1:9/s.xml"))
+                .unwrap_err()
+                .to_string()
+                .contains("private")
+        );
+        let mut zero_batch = options("http://example.com/s.xml");
+        zero_batch
+            .extra
+            .insert("batch_size".to_owned(), "0".to_owned());
+        assert!(SitemapConnector::new(zero_batch).is_err());
+        let mut long_filter = options("http://example.com/s.xml");
+        long_filter.extra.insert(
+            "url_filter".to_owned(),
+            "a".repeat(SITEMAP_MAX_FILTER_LENGTH + 1),
+        );
+        assert!(
+            SitemapConnector::new(long_filter)
+                .unwrap_err()
+                .to_string()
+                .contains("too long")
+        );
+        let mut nested = options("http://example.com/s.xml");
+        nested
+            .extra
+            .insert("url_filter".to_owned(), "(a+)+$".to_owned());
+        assert!(
+            SitemapConnector::new(nested)
+                .unwrap_err()
+                .to_string()
+                .contains("nested quantifiers")
+        );
+        let mut invalid = options("http://example.com/s.xml");
+        invalid
+            .extra
+            .insert("url_filter".to_owned(), "(a".to_owned());
+        assert!(
+            SitemapConnector::new(invalid)
+                .unwrap_err()
+                .to_string()
+                .contains("not a valid regex")
+        );
+    }
+
+    async fn site(uri: Uri, headers: HeaderMap) -> axum::response::Response {
+        let host = headers
+            .get("host")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("127.0.0.1")
+            .to_owned();
+        let base = format!("http://{host}");
+        let (content_type, body) = match uri.path() {
+            "/sitemap.xml" => (
+                "application/xml",
+                format!(
+                    r#"<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>{base}/page1</loc><lastmod>2025-01-01T00:00:00Z</lastmod></url>
+  <url><loc>{base}/page2</loc><lastmod>2020-01-01</lastmod></url>
+</urlset>"#
+                ),
+            ),
+            "/index.xml" => (
+                "application/xml",
+                format!(
+                    r#"<?xml version="1.0"?><sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+<sitemap><loc>{base}/index.xml</loc></sitemap>
+<sitemap><loc>{base}/child.xml</loc></sitemap>
+</sitemapindex>"#
+                ),
+            ),
+            "/child.xml" => (
+                "application/xml",
+                format!(
+                    r#"<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+<url><loc>{base}/page3</loc></url></urlset>"#
+                ),
+            ),
+            "/page1" => (
+                "text/html",
+                "<html><body><h1>One</h1><p>Hello</p></body></html>".to_owned(),
+            ),
+            "/page2" => (
+                "text/html",
+                "<html><body><h1>Two</h1></body></html>".to_owned(),
+            ),
+            "/page3" => (
+                "text/html",
+                "<html><body><h1>Three</h1></body></html>".to_owned(),
+            ),
+            _ => {
+                return axum::response::Response::builder()
+                    .status(404)
+                    .body(axum::body::Body::from("missing"))
+                    .unwrap();
+            }
+        };
+        axum::response::Response::builder()
+            .status(200)
+            .header("content-type", content_type)
+            .body(axum::body::Body::from(body))
+            .unwrap()
+    }
+
+    async fn spawn_site() -> (String, tokio::task::JoinHandle<()>) {
+        let app = Router::new().fallback(site);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{address}"), server)
+    }
+
+    #[tokio::test]
+    async fn urlset_fetch_builds_markdown_docs() {
+        let (base, server) = spawn_site().await;
+        let connector =
+            SitemapConnector::new_for_test(options(&format!("{base}/sitemap.xml"))).unwrap();
+        let batch = connector.fetch_all(10).await.unwrap();
+        server.abort();
+        assert_eq!(batch.docs.len(), 2);
+        assert!(batch.docs[0].id.starts_with("sitemap:"));
+        assert_eq!(batch.docs[0].extension, ".md");
+        assert!(
+            batch.docs[0].blob.contains("One"),
+            "blob: {}",
+            batch.docs[0].blob
+        );
+        assert_eq!(
+            batch.docs[0].metadata.get("source"),
+            Some(&"sitemap".to_owned())
+        );
+        assert_eq!(
+            batch.docs[0].metadata.get("url"),
+            Some(&format!("{base}/page1"))
+        );
+    }
+
+    #[tokio::test]
+    async fn index_recurses_and_guards_cycles() {
+        let (base, server) = spawn_site().await;
+        let connector =
+            SitemapConnector::new_for_test(options(&format!("{base}/index.xml"))).unwrap();
+        let batch = connector.fetch_all(10).await.unwrap();
+        server.abort();
+        assert_eq!(batch.docs.len(), 1);
+        assert!(batch.docs[0].blob.contains("Three"));
+        assert_eq!(
+            batch.docs[0].metadata.get("url"),
+            Some(&format!("{base}/page3"))
+        );
+    }
+
+    #[tokio::test]
+    async fn window_and_filter_narrow_the_url_set() {
+        let (base, server) = spawn_site().await;
+        let sitemap = format!("{base}/sitemap.xml");
+
+        let mut windowed = options(&sitemap);
+        windowed
+            .extra
+            .insert("since".to_owned(), "2021-01-01T00:00:00Z".to_owned());
+        let connector = SitemapConnector::new_for_test(windowed).unwrap();
+        let batch = connector.fetch_all(10).await.unwrap();
+        assert_eq!(
+            batch.docs.len(),
+            1,
+            "only the 2025 page survives the window"
+        );
+        assert!(batch.docs[0].blob.contains("One"));
+
+        let mut filtered = options(&sitemap);
+        filtered
+            .extra
+            .insert("url_filter".to_owned(), "page2$".to_owned());
+        let connector = SitemapConnector::new_for_test(filtered).unwrap();
+        let batch = connector.fetch_all(10).await.unwrap();
+        server.abort();
+        assert_eq!(batch.docs.len(), 1);
+        assert!(batch.docs[0].blob.contains("Two"));
+    }
+
+    #[tokio::test]
+    async fn validation_requires_at_least_one_matching_url() {
+        let (base, server) = spawn_site().await;
+        let mut opts = options(&format!("{base}/sitemap.xml"));
+        opts.extra
+            .insert("url_filter".to_owned(), "nomatch$".to_owned());
+        let mut connector = SitemapConnector::new_for_test(opts).unwrap();
+        let error = connector.load_credentials().await.unwrap_err().to_string();
+        server.abort();
+        assert!(error.contains("no URLs matching the filter"), "{error}");
+    }
+}
+
+#[cfg(test)]
+mod xquik_tests {
+    use super::*;
+    use axum::{Json, Router, extract::Query, http::HeaderMap, routing::get};
+    use serde_json::json;
+    use std::collections::HashMap as StdHashMap;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    fn options(endpoint: &str) -> SourceOptions {
+        let mut options = SourceOptions {
+            url: endpoint.to_owned(),
+            token: "sk-x".to_owned(),
+            ..SourceOptions::default()
+        };
+        options.extra.insert("query".to_owned(), "rust".to_owned());
+        options
+            .extra
+            .insert("request_delay".to_owned(), "0".to_owned());
+        options
+    }
+
+    #[test]
+    fn validation_matches_upstream_messages() {
+        let mut missing = SourceOptions {
+            token: "sk".to_owned(),
+            ..SourceOptions::default()
+        };
+        assert!(XquikConnector::new(missing.clone()).is_err());
+        missing.extra.insert("query".to_owned(), "q".to_owned());
+        let bad_type = {
+            let mut options = missing.clone();
+            options
+                .extra
+                .insert("query_type".to_owned(), "mixed".to_owned());
+            options
+        };
+        assert!(
+            XquikConnector::new(bad_type)
+                .unwrap_err()
+                .to_string()
+                .contains("query_type must be Latest or Top")
+        );
+        let bad_page = {
+            let mut options = missing.clone();
+            options.extra.insert("page_size".to_owned(), "0".to_owned());
+            options
+        };
+        assert!(XquikConnector::new(bad_page).is_err());
+        let bad_delay = {
+            let mut options = missing.clone();
+            options
+                .extra
+                .insert("request_delay".to_owned(), "-1".to_owned());
+            options
+        };
+        assert!(XquikConnector::new(bad_delay).is_err());
+        let no_key = {
+            let mut options = missing.clone();
+            options.token = String::new();
+            options
+        };
+        assert!(
+            XquikConnector::new(no_key)
+                .unwrap_err()
+                .to_string()
+                .contains("xquik_api_key")
+        );
+        // `Top` normalizes case-insensitively.
+        let mut ok = missing.clone();
+        ok.extra.insert("query_type".to_owned(), "top".to_owned());
+        assert!(XquikConnector::new(ok).is_ok());
+    }
+
+    async fn spawn_pages(
+        pages: Vec<Value>,
+    ) -> (String, Arc<StdMutexSeen>, tokio::task::JoinHandle<()>) {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let state = counter.clone();
+        let captured = seen.clone();
+        let app = Router::new().route(
+            "/search",
+            get(move |headers: HeaderMap, Query(params): Query<StdHashMap<String, String>>| {
+                let state = state.clone();
+                let captured = captured.clone();
+                let pages = pages.clone();
+                async move {
+                    let index = state.fetch_add(1, Ordering::SeqCst);
+                    captured.lock().unwrap().push(json!({
+                        "api_key": headers.get("x-api-key").and_then(|v| v.to_str().ok()).unwrap_or_default(),
+                        "params": params,
+                    }));
+                    let page = pages.get(index).cloned().unwrap_or(json!({"tweets": []}));
+                    Json(page)
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{address}/search"), seen, server)
+    }
+
+    // Placeholder alias because `StdMutexSeen` is declared per test above.
+    type StdMutexSeen = std::sync::Mutex<Vec<Value>>;
+
+    fn tweet(id: &str, text: &str) -> Value {
+        json!({
+            "id": id,
+            "text": text,
+            "createdAt": "2026-01-02T03:04:05Z",
+            "url": format!("https://x.com/i/status/{id}"),
+            "lang": "en",
+            "author": {"id": "u1", "username": "alice", "name": "Alice", "verified": true},
+            "likeCount": 7,
+        })
+    }
+
+    #[tokio::test]
+    async fn paginates_with_cursor_auth_and_metadata() {
+        let pages = vec![
+            json!({"tweets": [tweet("1", "first")], "next_cursor": "c2", "has_next_page": true}),
+            json!({"tweets": [tweet("2", "second")], "next_cursor": Value::Null, "has_next_page": false}),
+        ];
+        let (endpoint, seen, server) = spawn_pages(pages).await;
+        let connector = XquikConnector::new(options(&endpoint)).unwrap();
+        let batch = connector.fetch_all(10).await.unwrap();
+        server.abort();
+        assert_eq!(batch.docs.len(), 2);
+        assert_eq!(batch.docs[0].id, "xquik:1");
+        assert!(
+            batch.docs[0]
+                .blob
+                .contains("Author: @alice\nPublished: 2026-01-02T03:04:05Z")
+        );
+        assert_eq!(
+            batch.docs[0].metadata.get("likeCount"),
+            Some(&"7".to_owned())
+        );
+        assert_eq!(
+            batch.docs[0].metadata.get("author.username"),
+            Some(&"alice".to_owned())
+        );
+        assert_eq!(batch.docs[0].source, DocumentSource::Xquik);
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen[0]["api_key"], "sk-x");
+        assert_eq!(seen[0]["params"]["q"], "rust");
+        assert_eq!(seen[0]["params"]["queryType"], "Latest");
+        assert_eq!(seen[0]["params"]["limit"], "100");
+        assert!(seen[0]["params"].get("cursor").is_none());
+        assert_eq!(seen[1]["params"]["cursor"], "c2");
+    }
+
+    #[tokio::test]
+    async fn repeated_cursor_stops_the_loop() {
+        let pages = vec![
+            json!({"tweets": [tweet("1", "first")], "next_cursor": "c2", "has_next_page": true}),
+            json!({"tweets": [tweet("2", "second")], "next_cursor": "c2", "has_next_page": true}),
+        ];
+        let (endpoint, seen, server) = spawn_pages(pages).await;
+        let connector = XquikConnector::new(options(&endpoint)).unwrap();
+        let batch = connector.fetch_all(10).await.unwrap();
+        server.abort();
+        assert_eq!(batch.docs.len(), 2);
+        assert_eq!(seen.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn http_errors_surface_with_status() {
+        let app = Router::new().route(
+            "/search",
+            get(|| async { (axum::http::StatusCode::UNAUTHORIZED, "nope") }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let connector = XquikConnector::new(options(&format!("http://{address}/search"))).unwrap();
+        let error = connector.fetch_all(5).await.unwrap_err().to_string();
+        server.abort();
+        assert!(error.contains("401"), "{error}");
+    }
+}
 
 #[derive(Debug)]
 pub struct RssConnector {
@@ -6018,7 +7064,31 @@ impl RssConnector {
         Self::with_batch_size(options, batch_size)
     }
 
-    
+    /// Test-only constructor: skips the private-host guard so the connector
+    /// can talk to a `127.0.0.1` TcpListener mock (the yuque/dingtalk tests
+    /// exercise their local HTTP mocks the same way).
+    #[cfg(test)]
+    pub fn new_for_test(options: SourceOptions) -> Result<Self> {
+        let batch_size = if options.max_items == 0 {
+            50
+        } else {
+            options.max_items
+        };
+        if batch_size < 1 {
+            bail!("rss: batch_size must be greater than 0");
+        }
+        let feed_url = options.url.trim().to_string();
+        validate_feed_url(&feed_url, true)?;
+        Ok(Self {
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(60))
+                .build()
+                .expect("reqwest client"),
+            feed_url,
+            batch_size,
+            allow_private_hosts: true,
+        })
+    }
 
     /// Fetch the feed body (non-2xx ⇒ error), re-validating the SSRF guard
     /// on every fetch (RAGFlow re-validates every hop of a redirect chain).
@@ -6765,21 +7835,2149 @@ impl Connector for AirtableConnector {
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
+#[cfg(test)]
+mod registry_kind_tests {
+    use super::*;
 
+    #[test]
+    fn kinds_covers_ragflow_sources_and_china_alternatives() {
+        let kinds: Vec<&str> = ConnectorRegistry::kinds()
+            .iter()
+            .map(|info| info.kind)
+            .collect();
+        // RAGFlow v0.26.4 数据源管理页全量 35 源（constant/index.tsx DataSourceKey）
+        for expected in [
+            "confluence",
+            "notion",
+            "google_drive",
+            "gmail",
+            "gcs",
+            "oracle",
+            "s3",
+            "r2",
+            "jira",
+            "box",
+            "dropbox",
+            "bitbucket",
+            "gitlab",
+            "github",
+            "moodle",
+            "discord",
+            "zendesk",
+            "webdav",
+            "airtable",
+            "asana",
+            "imap",
+            "dingtalk_ai_table",
+            "seafile",
+            "mysql",
+            "postgresql",
+            "bigquery",
+            "rest_api",
+            "rss",
+            "onedrive",
+            "outlook",
+            "salesforce",
+            "azure_blob",
+            "teams",
+            "slack",
+            "sharepoint",
+        ] {
+            assert!(
+                kinds.contains(&expected),
+                "missing RAGFlow source: {expected}"
+            );
+        }
+        // 中国大陆替代源
+        for expected in ["feishu", "dingtalk", "tencent_docs", "yuque", "wechat_docs"] {
+            assert!(
+                kinds.contains(&expected),
+                "missing China source: {expected}"
+            );
+        }
+        // 现有源不受影响（"blob" 已并入 azure_blob，分发保留兼容旧记录）
+        for expected in ["gitlab", "azure_blob", "local", "webdav"] {
+            assert!(kinds.contains(&expected), "missing legacy kind: {expected}");
+        }
+    }
+}
 
+#[cfg(test)]
+mod s3_connector_tests {
+    use super::*;
 
+    /// AWS SigV4 official test vector (docs.aws.amazon.com/general/latest/gr/sigv4-calculate-signature.html).
+    #[test]
+    fn sigv4_matches_aws_official_vector() {
+        // GET /test.txt on examplebucket.s3.amazonaws.com, 2013-05-24.
+        let canonical_request = "GET\n/test.txt\n\nhost:examplebucket.s3.amazonaws.com\nrange:bytes=0-9\nx-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nx-amz-date:20130524T000000Z\n\nhost;range;x-amz-content-sha256;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        let string_to_sign = format!(
+            "AWS4-HMAC-SHA256\n20130524T000000Z\n20130524/us-east-1/s3/aws4_request\n{}",
+            sha256_hex(canonical_request.as_bytes())
+        );
+        // AWS 文档：canonical request 的 SHA-256 = 7344ae5b…，
+        // 最终签名 = f0e8bdb…（独立用 Python hmac 复核一致）。
+        assert_eq!(
+            sha256_hex(canonical_request.as_bytes()),
+            "7344ae5b7ee6c3e7e6b0fe0640412a37625d1fbfff95c48bbb2dc43964946972"
+        );
+        let signature = sigv4_signature(
+            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            "us-east-1",
+            "20130524",
+            "20130524T000000Z",
+            &string_to_sign,
+        );
+        assert_eq!(
+            signature,
+            "f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41"
+        );
+    }
 
+    #[test]
+    fn canonical_uri_encodes_segments_but_keeps_slashes() {
+        assert_eq!(
+            canonical_uri("/bucket/key with spaces.txt"),
+            "/bucket/key%20with%20spaces.txt"
+        );
+        assert_eq!(canonical_uri("/plain/path"), "/plain/path");
+    }
 
+    #[test]
+    fn canonical_query_is_sorted_and_encoded() {
+        let q = canonical_query_string(&[("list-type", "2"), ("prefix", "a b/文件")]);
+        assert_eq!(q, "list-type=2&prefix=a%20b%2F%E6%96%87%E4%BB%B6");
+    }
 
+    #[test]
+    fn guess_region_handles_aws_and_cn_endpoints() {
+        assert_eq!(
+            guess_s3_region("https://s3.cn-north-1.amazonaws.com.cn"),
+            "cn-north-1"
+        );
+        assert_eq!(
+            guess_s3_region("https://s3.ap-southeast-1.amazonaws.com"),
+            "ap-southeast-1"
+        );
+        assert_eq!(guess_s3_region("http://minio:9000"), "us-east-1");
+    }
 
+    #[test]
+    fn parse_list_objects_extracts_keys_sizes_and_etags() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+  <Name>bucket</Name>
+  <IsTruncated>false</IsTruncated>
+  <Contents>
+    <Key>docs/readme.md</Key>
+    <LastModified>2026-08-13T10:00:00.000Z</LastModified>
+    <ETag>"f1c9645dbc14efddc7d8a322685f26eb"</ETag>
+    <Size>1204</Size>
+  </Contents>
+  <Contents>
+    <Key>docs/guide.pdf</Key>
+    <LastModified>2026-08-12T09:00:00.000Z</LastModified>
+    <ETag>"abc"</ETag>
+    <Size>4096</Size>
+  </Contents>
+</ListBucketResult>"#;
+        let page = parse_list_objects(xml).unwrap();
+        assert_eq!(page.objects.len(), 2);
+        assert_eq!(page.objects[0].0, "docs/readme.md");
+        assert_eq!(page.objects[0].1, 1204);
+        assert_eq!(page.objects[0].2, "2026-08-13T10:00:00.000Z");
+        assert_eq!(page.objects[0].3, "\"f1c9645dbc14efddc7d8a322685f26eb\"");
+        assert_eq!(page.objects[1].0, "docs/guide.pdf");
+        assert!(page.next_token.is_none());
+    }
 
+    #[test]
+    fn parse_list_objects_reads_continuation_token() {
+        let xml = r#"<ListBucketResult>
+  <IsTruncated>true</IsTruncated>
+  <NextContinuationToken>tok123</NextContinuationToken>
+  <Contents><Key>a.txt</Key><Size>1</Size></Contents>
+</ListBucketResult>"#;
+        let page = parse_list_objects(xml).unwrap();
+        assert_eq!(page.next_token.as_deref(), Some("tok123"));
+    }
 
+    #[test]
+    fn s3_source_roundtrips_via_str() {
+        assert_eq!(DocumentSource::S3.as_str(), "s3");
+        assert_eq!(DocumentSource::from_str("s3").unwrap().as_str(), "s3");
+    }
+}
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    /// Fake connector for contract tests: 3 files, second one fails to fetch
+    /// (exercises the ConnectorRunner-style failure tolerance).
+    struct FakeConnector {
+        kind: &'static str,
+        files: Vec<RemoteFile>,
+        fail_fetch: Vec<String>,
+    }
 
+    impl FakeConnector {
+        fn new() -> Self {
+            Self {
+                kind: "fake",
+                files: vec![
+                    RemoteFile {
+                        id: "f1".into(),
+                        name: "a.md".into(),
+                        path: "a.md".into(),
+                        extension: ".md".into(),
+                        size_bytes: 3,
+                        updated_at: String::new(),
+                        fingerprint: "fp-a".into(),
+                        metadata: HashMap::new(),
+                    },
+                    RemoteFile {
+                        id: "f2".into(),
+                        name: "b.txt".into(),
+                        path: "b.txt".into(),
+                        extension: ".txt".into(),
+                        size_bytes: 3,
+                        updated_at: String::new(),
+                        fingerprint: "fp-b".into(),
+                        metadata: HashMap::new(),
+                    },
+                    RemoteFile {
+                        id: "f3".into(),
+                        name: "c.md".into(),
+                        path: "c.md".into(),
+                        extension: ".md".into(),
+                        size_bytes: 3,
+                        updated_at: String::new(),
+                        fingerprint: "fp-c".into(),
+                        metadata: HashMap::new(),
+                    },
+                ],
+                fail_fetch: vec!["f2".into()],
+            }
+        }
+    }
 
+    #[async_trait]
+    impl Connector for FakeConnector {
+        fn kind(&self) -> &'static str {
+            self.kind
+        }
 
+        async fn load_credentials(&mut self) -> Result<()> {
+            Ok(())
+        }
 
+        async fn list_files(&self) -> Result<Vec<RemoteFile>> {
+            Ok(self.files.clone())
+        }
+
+        async fn fetch_file(&self, file: &RemoteFile) -> Result<Vec<u8>> {
+            if self.fail_fetch.contains(&file.id) {
+                bail!("fake: boom");
+            }
+            Ok(format!("content-of-{}", file.id).into_bytes())
+        }
+
+        fn normalize(&self, file: &RemoteFile, raw: Vec<u8>) -> Result<ConnectorDoc> {
+            let blob = String::from_utf8_lossy(&raw).to_string();
+            Ok(ConnectorDoc {
+                id: file.id.clone(),
+                blob,
+                source: DocumentSource::Local,
+                semantic_identifier: file.name.clone(),
+                extension: file.extension.clone(),
+                doc_updated_at: file.updated_at.clone(),
+                size_bytes: raw.len(),
+                metadata: HashMap::new(),
+                raw_bytes: None,
+            })
+        }
+    }
+
+    /// Trait contract: list → fetch → normalize produces documents with the
+    /// expected identifiers, and per-file failures are recorded without
+    /// aborting the batch (ConnectorRunner.run semantics).
+    #[tokio::test]
+    async fn fetch_all_batches_and_tolerates_failures() {
+        let connector = FakeConnector::new();
+        let batch = connector.fetch_all(10).await.unwrap();
+        assert_eq!(batch.docs.len(), 2);
+        assert_eq!(batch.failures.len(), 1);
+        assert!(batch.failures[0].contains("b.txt"));
+        assert!(batch.failures[0].contains("boom"));
+        let a = batch.docs.iter().find(|d| d.id == "f1").unwrap();
+        assert_eq!(a.semantic_identifier, "a.md");
+        assert_eq!(a.extension, ".md");
+        assert_eq!(a.blob, "content-of-f1");
+        let c = batch.docs.iter().find(|d| d.id == "f3").unwrap();
+        assert_eq!(c.blob, "content-of-f3");
+    }
+
+    /// fetch_all applies the max_items safety bound (RAGFlow _ITERATION_LIMIT).
+    #[tokio::test]
+    async fn fetch_all_respects_max_items() {
+        let connector = FakeConnector::new();
+        let batch = connector.fetch_all(1).await.unwrap();
+        assert_eq!(batch.docs.len() + batch.failures.len(), 1);
+        assert_eq!(batch.docs.first().map(|d| d.id.as_str()), Some("f1"));
+    }
+
+    /// Registry dispatches by kind; unknown kinds are rejected.
+    #[test]
+    fn registry_dispatches_by_kind() {
+        let mut options = SourceOptions::default();
+        options.url = "/tmp".into();
+        for kind in ["local", "webdav", "blob", "feishu", "confluence"] {
+            let connector = ConnectorRegistry::create(kind, options.clone()).unwrap();
+            assert_eq!(connector.kind(), kind);
+        }
+        assert!(ConnectorRegistry::create("nope", options.clone()).is_err());
+        // All kinds advertised by the registry are constructible.
+        for info in ConnectorRegistry::kinds() {
+            assert!(!info.label.is_empty());
+        }
+    }
+
+    /// Local connector full contract: 授权 → 拉取列表 → 拉取内容 → 规范化.
+    #[tokio::test]
+    async fn local_connector_full_contract() {
+        let dir = std::env::temp_dir().join(format!("rayrag-conn-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("readme.md"), "# Hello\nWorld").unwrap();
+        std::fs::write(dir.join("sub").join("notes.txt"), "note body").unwrap();
+
+        let mut options = SourceOptions::default();
+        options.url = dir.to_string_lossy().to_string();
+        options.max_items = 50;
+
+        let mut connector = LocalConnector::new(options).unwrap();
+        connector.load_credentials().await.unwrap();
+        let files = connector.list_files().await.unwrap();
+        assert_eq!(files.len(), 2);
+        let readme = files.iter().find(|f| f.name == "readme.md").unwrap();
+        assert_eq!(readme.extension, ".md");
+
+        let raw = connector.fetch_file(readme).await.unwrap();
+        let doc = connector.normalize(readme, raw).unwrap();
+        assert_eq!(doc.semantic_identifier, "readme.md");
+        assert_eq!(doc.blob, "# Hello\nWorld");
+        assert_eq!(doc.source, DocumentSource::Local);
+
+        // registry path end-to-end
+        let mut options2 = SourceOptions::default();
+        options2.url = dir.to_string_lossy().to_string();
+        options2.max_items = 50;
+        let registry_connector = ConnectorRegistry::create("local", options2).unwrap();
+        let batch = registry_connector.fetch_all(50).await.unwrap();
+        assert_eq!(batch.docs.len(), 2);
+        assert!(batch.failures.is_empty());
+        std::fs::remove_dir_all(dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod yuque_connector_tests {
+    use super::*;
+    use serde_json::json;
+    use std::io::{Read, Write};
+
+    /// Spawn a single-threaded HTTP mock server on `127.0.0.1:<random port>`.
+    /// The handler receives the request path (query string stripped) and the
+    /// raw query string, and returns `(status, json_body)`. No real network —
+    /// the connector's `options.url` override points at this base.
+    fn mock_yuque_server(handler: impl Fn(&str, &str) -> (u16, String) + Send + 'static) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut buf = [0u8; 8192];
+                let n = match stream.read(&mut buf) {
+                    Ok(n) => n,
+                    Err(_) => return,
+                };
+                if n == 0 {
+                    return;
+                }
+                let request = String::from_utf8_lossy(&buf[..n]).to_string();
+                let first_line = request.lines().next().unwrap_or_default();
+                let mut parts = first_line.split_whitespace();
+                let _method = parts.next().unwrap_or_default();
+                let raw_target = parts.next().unwrap_or_default();
+                let (path, query) = raw_target.split_once('?').unwrap_or((raw_target, ""));
+                let (status, body) = handler(path, query);
+                let reason = if status == 200 { "OK" } else { "Not Found" };
+                let response = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    fn options(base_url: String, token: &str, target: &str) -> SourceOptions {
+        let mut options = SourceOptions::default();
+        options.url = base_url;
+        options.token = token.to_string();
+        options.target = target.to_string();
+        options.max_items = 50;
+        options
+    }
+
+    /// Listing paginates with `offset` (0/20/40/…) and maps each doc onto a
+    /// `RemoteFile` (name = title + \".md\", path = slug, fingerprint =
+    /// updated_at, metadata carries namespace/slug/source).
+    #[tokio::test]
+    async fn list_files_paginates_across_pages() {
+        let list_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let calls = list_calls.clone();
+        let base = mock_yuque_server(move |path, query| match (path, query) {
+            ("/repos/team/kb/docs", "offset=0") => {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                (
+                    200,
+                    json!({"data": [
+                        {"id": 101, "title": "Doc One", "slug": "doc-one",
+                         "created_at": "2026-01-01T00:00:00.000Z",
+                         "updated_at": "2026-02-01T00:00:00.000Z"},
+                        {"id": 102, "title": "Doc Two", "slug": "doc-two",
+                         "created_at": "2026-01-02T00:00:00.000Z",
+                         "updated_at": "2026-02-02T00:00:00.000Z"}
+                    ]})
+                    .to_string(),
+                )
+            }
+            ("/repos/team/kb/docs", "offset=20") => {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                (
+                    200,
+                    json!({"data": [
+                        {"id": 103, "title": "Doc Three", "slug": "doc-three",
+                         "created_at": "2026-01-03T00:00:00.000Z",
+                         "updated_at": "2026-02-03T00:00:00.000Z"}
+                    ]})
+                    .to_string(),
+                )
+            }
+            ("/repos/team/kb/docs", "offset=40") => {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                (200, json!({"data": []}).to_string())
+            }
+            _ => (404, "{}".to_string()),
+        });
+
+        let connector = YuqueConnector::new(options(base, "tok-123", "team/kb")).unwrap();
+        let files = connector.list_files().await.unwrap();
+
+        // Three requests: offset=0, offset=20, offset=40 (empty → stop).
+        assert_eq!(list_calls.load(std::sync::atomic::Ordering::SeqCst), 3);
+        assert_eq!(files.len(), 3);
+
+        let first = &files[0];
+        assert_eq!(first.id, "yuque:101");
+        assert_eq!(first.name, "Doc One.md");
+        assert_eq!(first.path, "doc-one");
+        assert_eq!(first.extension, ".md");
+        assert_eq!(first.size_bytes, 0);
+        assert_eq!(first.updated_at, "2026-02-01T00:00:00.000Z");
+        assert_eq!(first.fingerprint, "2026-02-01T00:00:00.000Z");
+        assert_eq!(
+            first.metadata.get("namespace").map(String::as_str),
+            Some("team/kb")
+        );
+        assert_eq!(
+            first.metadata.get("source").map(String::as_str),
+            Some("yuque")
+        );
+        assert_eq!(
+            first.metadata.get("slug").map(String::as_str),
+            Some("doc-one")
+        );
+        assert_eq!(files[2].name, "Doc Three.md");
+        assert_eq!(files[2].id, "yuque:103");
+    }
+
+    /// fetch_file hits `/repos/{namespace}/docs/{slug}` and returns the
+    /// Markdown `data.body`.
+    #[tokio::test]
+    async fn fetch_file_returns_markdown_body() {
+        let base = mock_yuque_server(move |path, _query| match path {
+            "/repos/team/kb/docs/doc-one" => (
+                200,
+                json!({"data": {"id": 101, "slug": "doc-one", "title": "Doc One",
+                                "body": "# Hello\n\nYuque markdown body."}})
+                .to_string(),
+            ),
+            _ => (404, "{}".to_string()),
+        });
+
+        let connector = YuqueConnector::new(options(base, "tok-123", "team/kb")).unwrap();
+        let file = RemoteFile {
+            id: "yuque:101".into(),
+            name: "Doc One.md".into(),
+            path: "doc-one".into(),
+            extension: ".md".into(),
+            size_bytes: 0,
+            updated_at: "2026-02-01T00:00:00.000Z".into(),
+            fingerprint: String::new(),
+            metadata: HashMap::new(),
+        };
+        let raw = connector.fetch_file(&file).await.unwrap();
+        assert_eq!(
+            String::from_utf8(raw).unwrap(),
+            "# Hello\n\nYuque markdown body."
+        );
+    }
+
+    /// load_credentials rejects an empty token before any network call.
+    #[tokio::test]
+    async fn load_credentials_rejects_empty_token() {
+        let mut connector =
+            YuqueConnector::new(options("http://127.0.0.1:1".into(), "", "team/kb")).unwrap();
+        let error = connector.load_credentials().await.unwrap_err();
+        assert!(error.to_string().contains("token"), "got: {error:#}");
+    }
+
+    /// load_credentials probes `GET /user` to validate the token.
+    #[tokio::test]
+    async fn load_credentials_probes_user_endpoint() {
+        let base = mock_yuque_server(move |path, _query| match path {
+            "/user" => (
+                200,
+                json!({"data": {"id": 7, "name": "tester"}}).to_string(),
+            ),
+            _ => (404, "{}".to_string()),
+        });
+        let mut connector = YuqueConnector::new(options(base, "tok-123", "team/kb")).unwrap();
+        connector.load_credentials().await.unwrap();
+    }
+
+    /// new() requires the `target` namespace.
+    #[test]
+    fn new_requires_namespace() {
+        let error = YuqueConnector::new(options(String::new(), "tok-123", "")).unwrap_err();
+        assert!(error.to_string().contains("namespace"));
+    }
+
+    /// normalize marks the doc with source=yuque metadata; the
+    /// `DocumentSource` field falls back to `Confluence` until the enum gains
+    /// a Yuque variant.
+    #[test]
+    fn normalize_marks_yuque_metadata() {
+        let connector = YuqueConnector::new(options(String::new(), "tok-123", "team/kb")).unwrap();
+        let file = RemoteFile {
+            id: "yuque:101".into(),
+            name: "Doc One.md".into(),
+            path: "doc-one".into(),
+            extension: ".md".into(),
+            size_bytes: 0,
+            updated_at: "2026-02-01T00:00:00.000Z".into(),
+            fingerprint: String::new(),
+            metadata: HashMap::new(),
+        };
+        let doc = connector.normalize(&file, b"# Body".to_vec()).unwrap();
+        assert_eq!(doc.blob, "# Body");
+        assert_eq!(doc.semantic_identifier, "Doc One.md");
+        assert_eq!(doc.extension, ".md");
+        assert_eq!(doc.size_bytes, 6);
+        assert_eq!(
+            doc.metadata.get("source").map(String::as_str),
+            Some("yuque")
+        );
+        assert_eq!(
+            doc.metadata.get("namespace").map(String::as_str),
+            Some("team/kb")
+        );
+        assert_eq!(
+            doc.metadata.get("slug").map(String::as_str),
+            Some("doc-one")
+        );
+        assert_eq!(doc.source, DocumentSource::Yuque);
+    }
+
+    /// Registry dispatch end-to-end: `create("yuque", …)` → fetch_all over the
+    /// mock server produces a normalized ConnectorDoc.
+    #[tokio::test]
+    async fn registry_creates_and_fetches_all() {
+        let base = mock_yuque_server(move |path, query| match (path, query) {
+            ("/repos/team/kb/docs", "offset=0") => (
+                200,
+                json!({"data": [
+                    {"id": 1, "title": "One", "slug": "one",
+                     "updated_at": "2026-01-01T00:00:00Z"}
+                ]})
+                .to_string(),
+            ),
+            ("/repos/team/kb/docs", "offset=20") => (200, json!({"data": []}).to_string()),
+            ("/repos/team/kb/docs/one", _) => {
+                (200, json!({"data": {"body": "# One body"}}).to_string())
+            }
+            _ => (404, "{}".to_string()),
+        });
+
+        let connector =
+            ConnectorRegistry::create("yuque", options(base, "tok-123", "team/kb")).unwrap();
+        assert_eq!(connector.kind(), "yuque");
+        let batch = connector.fetch_all(10).await.unwrap();
+        assert_eq!(batch.docs.len(), 1);
+        assert!(batch.failures.is_empty());
+        let doc = &batch.docs[0];
+        assert_eq!(doc.blob, "# One body");
+        assert_eq!(doc.semantic_identifier, "One.md");
+        assert_eq!(
+            doc.metadata.get("source").map(String::as_str),
+            Some("yuque")
+        );
+    }
+}
+
+#[cfg(test)]
+mod dingtalk_connector_tests {
+    use super::*;
+    use serde_json::json;
+    use std::io::{Read, Write};
+
+    /// Spawn a single-threaded HTTP mock server on `127.0.0.1:<random port>`.
+    /// The handler receives `(method, path, query, header_block, body)` and
+    /// returns `(status, body)`. `header_block` is the raw request-header
+    /// section so tests can assert the `x-acs-dingtalk-access-token` header;
+    /// `body` is the request body (DingTalk POST endpoints carry JSON). No
+    /// real network — the connector's `options.url` override points here.
+    fn mock_dingtalk_server(
+        handler: impl Fn(&str, &str, &str, &str, &str) -> (u16, String) + Send + 'static,
+    ) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                // Read until the full header block + declared body arrived.
+                let mut data = Vec::new();
+                let mut chunk = [0u8; 16384];
+                loop {
+                    let n = match stream.read(&mut chunk) {
+                        Ok(n) => n,
+                        Err(_) => return,
+                    };
+                    if n == 0 {
+                        break;
+                    }
+                    data.extend_from_slice(&chunk[..n]);
+                    let Some(header_end) = data.windows(4).position(|w| w == b"\r\n\r\n") else {
+                        continue;
+                    };
+                    let head = String::from_utf8_lossy(&data[..header_end]).to_string();
+                    let mut content_length = 0usize;
+                    for line in head.lines() {
+                        if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                            content_length = v.trim().parse().unwrap_or(0);
+                        }
+                    }
+                    if data.len() >= header_end + 4 + content_length {
+                        break;
+                    }
+                    if data.len() > 1_000_000 {
+                        break;
+                    }
+                }
+                if data.is_empty() {
+                    return;
+                }
+                let request = String::from_utf8_lossy(&data).to_string();
+                let (head, body) = request
+                    .split_once("\r\n\r\n")
+                    .unwrap_or((request.as_ref(), ""));
+                let first_line = head.lines().next().unwrap_or_default();
+                let mut parts = first_line.split_whitespace();
+                let method = parts.next().unwrap_or_default();
+                let raw_target = parts.next().unwrap_or_default();
+                let (path, query) = raw_target.split_once('?').unwrap_or((raw_target, ""));
+                let (status, body) = handler(method, path, query, head, body);
+                let reason = if status == 200 { "OK" } else { "Not Found" };
+                let response = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    fn options(base_url: String, token: &str, target: &str) -> SourceOptions {
+        let mut options = SourceOptions::default();
+        options.url = base_url;
+        options.token = token.to_string();
+        options.target = target.to_string();
+        options.max_items = 50;
+        options
+    }
+
+    /// `new()` requires `token = "appKey:appSecret"` (a colon-separated pair).
+    #[test]
+    fn new_requires_app_key_and_app_secret() {
+        let error = DingTalkConnector::new(options(String::new(), "no-colon", "")).unwrap_err();
+        assert!(error.to_string().contains("appKey"), "got: {error:#}");
+        let error = DingTalkConnector::new(options(String::new(), "", "")).unwrap_err();
+        assert!(error.to_string().contains("appKey"), "got: {error:#}");
+    }
+
+    /// load_credentials exchanges appKey/appSecret for an accessToken, caches
+    /// it, and probes the spaces/list first page. Subsequent calls reuse the
+    /// cached token — exactly ONE accessToken request.
+    #[tokio::test]
+    async fn load_credentials_acquires_and_caches_access_token() {
+        let token_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let calls = token_calls.clone();
+        let base = mock_dingtalk_server(move |method, path, _query, headers, _body| {
+            match (method, path) {
+                ("POST", "/v1.0/oauth2/accessToken") => {
+                    calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    (
+                        200,
+                        json!({"accessToken": "acc-abc", "expireIn": 7200}).to_string(),
+                    )
+                }
+                ("POST", "/v1.0/storage/spaces/list") => {
+                    if headers.contains("x-acs-dingtalk-access-token: acc-abc") {
+                        (
+                            200,
+                            json!({"spaces": [{"spaceId": "sp1", "spaceName": "Space One"}],
+                                   "nextToken": ""})
+                            .to_string(),
+                        )
+                    } else {
+                        (403, json!({"message": "missing token"}).to_string())
+                    }
+                }
+                ("POST", "/v1.0/storage/spaces/sp1/files") => {
+                    (200, json!({"files": [], "nextToken": ""}).to_string())
+                }
+                _ => (404, "{}".to_string()),
+            }
+        });
+
+        let mut connector = DingTalkConnector::new(options(base, "appk:apps", "")).unwrap();
+        connector.load_credentials().await.unwrap();
+        // list_files reuses the cached token — no second accessToken request.
+        let files = connector.list_files().await.unwrap();
+        assert!(files.is_empty());
+        assert_eq!(
+            token_calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "accessToken must be cached after load_credentials"
+        );
+    }
+
+    /// list_files paginates spaces (nextToken) and files per space, mapping
+    /// each entry onto a RemoteFile (id=fileId, path=spaceId/fileId,
+    /// fingerprint=modifyTime, metadata carries space/fileId/source).
+    #[tokio::test]
+    async fn list_files_paginates_spaces_and_files() {
+        let space_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let sc = space_calls.clone();
+        let file_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let fc = file_calls.clone();
+        let base = mock_dingtalk_server(move |method, path, _query, _headers, body| {
+            let body = body.trim();
+            match (method, path) {
+                ("POST", "/v1.0/oauth2/accessToken") => (
+                    200,
+                    json!({"accessToken": "tok", "expireIn": 7200}).to_string(),
+                ),
+                // Spaces page 1 (empty body) → sp1 + nextToken; page 2 → sp2.
+                ("POST", "/v1.0/storage/spaces/list") if body == "{}" => {
+                    sc.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    (
+                        200,
+                        json!({"spaces": [{"spaceId": "sp1", "spaceName": "One"}],
+                               "nextToken": "nt-2"})
+                        .to_string(),
+                    )
+                }
+                ("POST", "/v1.0/storage/spaces/list") if body.contains("nt-2") => {
+                    sc.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    (
+                        200,
+                        json!({"spaces": [{"spaceId": "sp2", "spaceName": "Two"}],
+                               "nextToken": ""})
+                        .to_string(),
+                    )
+                }
+                // sp1 files page 1 (nextToken "") → 2 files + nextToken ft2.
+                ("POST", "/v1.0/storage/spaces/sp1/files")
+                    if body.contains("\"nextToken\":\"\"") =>
+                {
+                    fc.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    (
+                        200,
+                        json!({"files": [
+                            {"fileId": "f1", "fileName": "readme.md", "fileSize": 10,
+                             "createTime": "2026-01-01T00:00:00Z",
+                             "modifyTime": "2026-02-01T00:00:00Z"},
+                            {"fileId": "f2", "fileName": "notes", "fileSize": 20,
+                             "createTime": "2026-01-02T00:00:00Z",
+                             "modifyTime": "2026-02-02T00:00:00Z"}
+                        ], "nextToken": "ft2"})
+                        .to_string(),
+                    )
+                }
+                ("POST", "/v1.0/storage/spaces/sp1/files") if body.contains("ft2") => {
+                    fc.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    (
+                        200,
+                        json!({"files": [
+                            {"fileId": "f3", "fileName": "extra.txt", "fileSize": 30,
+                             "createTime": "2026-01-03T00:00:00Z",
+                             "modifyTime": "2026-02-03T00:00:00Z"}
+                        ], "nextToken": ""})
+                        .to_string(),
+                    )
+                }
+                ("POST", "/v1.0/storage/spaces/sp2/files") => {
+                    (200, json!({"files": [], "nextToken": ""}).to_string())
+                }
+                _ => (404, format!(r#"{{"path":"{path}","body":"{body}"}}"#)),
+            }
+        });
+
+        let connector = DingTalkConnector::new(options(base, "appk:apps", "")).unwrap();
+        let files = connector.list_files().await.unwrap();
+
+        assert_eq!(space_calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(file_calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(files.len(), 3);
+
+        let first = &files[0];
+        assert_eq!(first.id, "f1");
+        assert_eq!(first.name, "readme.md");
+        assert_eq!(first.path, "sp1/f1");
+        assert_eq!(first.extension, ".md");
+        assert_eq!(first.size_bytes, 10);
+        assert_eq!(first.updated_at, "2026-02-01T00:00:00Z");
+        assert_eq!(first.fingerprint, "2026-02-01T00:00:00Z");
+        assert_eq!(first.metadata.get("space").map(String::as_str), Some("sp1"));
+        assert_eq!(first.metadata.get("fileId").map(String::as_str), Some("f1"));
+        assert_eq!(
+            first.metadata.get("source").map(String::as_str),
+            Some("dingtalk")
+        );
+        // Extension-less name → empty extension.
+        assert_eq!(files[1].name, "notes");
+        assert_eq!(files[1].extension, "");
+        assert_eq!(files[1].size_bytes, 20);
+        // Second file page belongs to the same space.
+        assert_eq!(files[2].id, "f3");
+        assert_eq!(files[2].path, "sp1/f3");
+    }
+
+    /// fetch_file resolves the download Location (auth header attached) and
+    /// fetches the bytes from it (no auth header on the signed link).
+    #[tokio::test]
+    async fn fetch_file_follows_download_location() {
+        let base = mock_dingtalk_server(move |method, path, _query, headers, _body| {
+            match (method, path) {
+                ("POST", "/v1.0/oauth2/accessToken") => (
+                    200,
+                    json!({"accessToken": "tok", "expireIn": 7200}).to_string(),
+                ),
+                ("GET", "/v1.0/storage/spaces/sp1/files/f1/download") => {
+                    if headers.contains("x-acs-dingtalk-access-token: tok") {
+                        (
+                            200,
+                            json!({"headers": {"Location": "/dl-target"}, "result": {}})
+                                .to_string(),
+                        )
+                    } else {
+                        (403, json!({"message": "no token"}).to_string())
+                    }
+                }
+                ("GET", "/dl-target") => (200, "hello dingtalk file".to_string()),
+                _ => (404, "{}".to_string()),
+            }
+        });
+
+        let connector = DingTalkConnector::new(options(base, "appk:apps", "sp1")).unwrap();
+        let file = RemoteFile {
+            id: "f1".into(),
+            name: "readme.md".into(),
+            path: "sp1/f1".into(),
+            extension: ".md".into(),
+            size_bytes: 0,
+            updated_at: String::new(),
+            fingerprint: String::new(),
+            metadata: HashMap::from([
+                ("space".into(), "sp1".into()),
+                ("fileId".into(), "f1".into()),
+            ]),
+        };
+        let raw = connector.fetch_file(&file).await.unwrap();
+        assert_eq!(String::from_utf8(raw).unwrap(), "hello dingtalk file");
+    }
+
+    /// normalize marks the doc with source=dingtalk metadata; the
+    /// `DocumentSource` field falls back to `Local` until the enum gains a
+    /// DingTalk variant.
+    #[test]
+    fn normalize_marks_dingtalk_metadata() {
+        let connector = DingTalkConnector::new(options(String::new(), "appk:apps", "sp1")).unwrap();
+        let file = RemoteFile {
+            id: "f1".into(),
+            name: "readme.md".into(),
+            path: "sp1/f1".into(),
+            extension: ".md".into(),
+            size_bytes: 0,
+            updated_at: "2026-02-01T00:00:00Z".into(),
+            fingerprint: String::new(),
+            metadata: HashMap::from([
+                ("space".into(), "sp1".into()),
+                ("fileId".into(), "f1".into()),
+            ]),
+        };
+        let doc = connector.normalize(&file, b"# Body".to_vec()).unwrap();
+        assert_eq!(doc.blob, "# Body");
+        assert_eq!(doc.semantic_identifier, "readme.md");
+        assert_eq!(doc.extension, ".md");
+        assert_eq!(doc.doc_updated_at, "2026-02-01T00:00:00Z");
+        assert_eq!(doc.size_bytes, 6);
+        assert_eq!(doc.source, DocumentSource::DingTalk);
+        assert_eq!(
+            doc.metadata.get("source").map(String::as_str),
+            Some("dingtalk")
+        );
+        assert_eq!(doc.metadata.get("space").map(String::as_str), Some("sp1"));
+        assert_eq!(doc.metadata.get("fileId").map(String::as_str), Some("f1"));
+    }
+
+    /// Registry dispatch end-to-end: `create("dingtalk", …)` → fetch_all over
+    /// the mock server produces a normalized ConnectorDoc. With a `target`
+    /// spaceId configured, spaces/list is skipped entirely.
+    #[tokio::test]
+    async fn registry_creates_and_fetches_all() {
+        let base = mock_dingtalk_server(move |method, path, _query, _headers, _body| {
+            match (method, path) {
+                ("POST", "/v1.0/oauth2/accessToken") => (
+                    200,
+                    json!({"accessToken": "tok", "expireIn": 7200}).to_string(),
+                ),
+                ("POST", "/v1.0/storage/spaces/sp1/files") => (
+                    200,
+                    json!({"files": [
+                        {"fileId": "f1", "fileName": "one.md", "fileSize": 8,
+                         "createTime": "2026-01-01T00:00:00Z",
+                         "modifyTime": "2026-01-01T00:00:00Z"}
+                    ], "nextToken": ""})
+                    .to_string(),
+                ),
+                ("GET", "/v1.0/storage/spaces/sp1/files/f1/download") => (
+                    200,
+                    json!({"headers": {"Location": "/dl-target"}, "result": {}}).to_string(),
+                ),
+                ("GET", "/dl-target") => (200, "# One body".to_string()),
+                _ => (404, "{}".to_string()),
+            }
+        });
+
+        let connector =
+            ConnectorRegistry::create("dingtalk", options(base, "appk:apps", "sp1")).unwrap();
+        assert_eq!(connector.kind(), "dingtalk");
+        let batch = connector.fetch_all(10).await.unwrap();
+        assert_eq!(batch.docs.len(), 1);
+        assert!(batch.failures.is_empty());
+        let doc = &batch.docs[0];
+        assert_eq!(doc.blob, "# One body");
+        assert_eq!(doc.semantic_identifier, "one.md");
+        assert_eq!(
+            doc.metadata.get("source").map(String::as_str),
+            Some("dingtalk")
+        );
+    }
+}
+
+#[cfg(test)]
+mod rss_connector_tests {
+    use super::*;
+    use std::io::{Read, Write};
+
+    const RSS2_FEED: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Test Feed</title>
+    <link>http://example.com/</link>
+    <description>channel description</description>
+    <item>
+      <title>Post One</title>
+      <link>http://example.com/posts/one</link>
+      <guid>http://example.com/posts/one</guid>
+      <description>&lt;p&gt;Hello &amp; welcome&lt;/p&gt;</description>
+      <pubDate>Tue, 10 Jun 2025 09:00:00 GMT</pubDate>
+      <author>alice@example.com</author>
+      <category>rust</category>
+    </item>
+    <item>
+      <title>Post Two</title>
+      <link>http://example.com/posts/two.php</link>
+      <description><![CDATA[Second <b>post</b>]]></description>
+      <pubDate>Wed, 11 Jun 2025 09:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>
+"#;
+
+    const ATOM_FEED: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Atom Feed</title>
+  <id>urn:uuid:feed-1</id>
+  <updated>2025-06-01T00:00:00Z</updated>
+  <entry>
+    <title>Atom One</title>
+    <link href="https://blog.example.com/atom-one.html"/>
+    <id>urn:uuid:entry-aaa</id>
+    <updated>2025-07-01T12:34:56Z</updated>
+    <summary>Summary <em>text</em> here</summary>
+    <author><name>Bob</name></author>
+  </entry>
+  <entry>
+    <title>Atom Two</title>
+    <link href="https://blog.example.com/atom-two"/>
+    <id>urn:uuid:entry-bbb</id>
+    <updated>2025-07-02T00:00:00+02:00</updated>
+    <content type="html">&lt;p&gt;Full &lt;b&gt;content&lt;/b&gt;&lt;/p&gt;</content>
+  </entry>
+</feed>
+"#;
+
+    /// Spawn a single-threaded HTTP mock server on `127.0.0.1:<random port>`.
+    /// The handler receives the request path and returns `(status,
+    /// content_type, body)`; every connection serves exactly one request
+    /// (`Connection: close`), which matches the RSS connector's behaviour of
+    /// refetching the feed per file. No real network — the connector's
+    /// `options.url` points here.
+    fn mock_feed_server(
+        handler: impl Fn(&str) -> (u16, &'static str, String) + Send + 'static,
+    ) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut data = Vec::new();
+                let mut chunk = [0u8; 16384];
+                loop {
+                    match stream.read(&mut chunk) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            data.extend_from_slice(&chunk[..n]);
+                            if data.windows(4).any(|window| window == b"\r\n\r\n") {
+                                break;
+                            }
+                            if data.len() > 1_000_000 {
+                                break;
+                            }
+                        }
+                        Err(_) => return,
+                    }
+                }
+                if data.is_empty() {
+                    return;
+                }
+                let request = String::from_utf8_lossy(&data).to_string();
+                let head = request.split("\r\n\r\n").next().unwrap_or_default();
+                let path = head
+                    .lines()
+                    .next()
+                    .and_then(|line| line.split_whitespace().nth(1))
+                    .unwrap_or_default();
+                let (status, content_type, body) = handler(path);
+                let reason = if status == 200 { "OK" } else { "Not Found" };
+                let response = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    fn options(feed_url: String) -> SourceOptions {
+        let mut options = SourceOptions::default();
+        options.url = feed_url;
+        options.max_items = 50;
+        options
+    }
+
+    /// RSS 2.0: list_files maps `<item>`s onto RemoteFile (id=link,
+    /// name=title, extension from link / `.html` fallback, pubDate → ISO),
+    /// fetch_file refetches and returns the assembled content, normalize
+    /// tags the doc with source=rss + feed metadata.
+    #[tokio::test]
+    async fn list_fetch_normalize_rss2_feed() {
+        let base = mock_feed_server(|_path| (200, "application/rss+xml", RSS2_FEED.to_string()));
+        let feed_url = format!("{base}/feed.xml");
+        let connector = RssConnector::new_for_test(options(feed_url.clone())).unwrap();
+
+        let files = connector.list_files().await.unwrap();
+        assert_eq!(files.len(), 2);
+
+        let first = &files[0];
+        assert_eq!(first.id, "http://example.com/posts/one");
+        assert_eq!(first.name, "Post One");
+        assert_eq!(first.path, "http://example.com/posts/one");
+        assert_eq!(first.extension, ".html"); // link carries no extension
+        assert_eq!(first.updated_at, "2025-06-10T09:00:00Z");
+        assert_eq!(first.fingerprint, first.updated_at);
+        assert_eq!(first.size_bytes, "Post One\n\nHello & welcome".len() as u64);
+        assert_eq!(
+            first.metadata.get("source").map(String::as_str),
+            Some("rss")
+        );
+        assert_eq!(
+            first.metadata.get("feed").map(String::as_str),
+            Some(feed_url.as_str())
+        );
+        assert_eq!(
+            first.metadata.get("author").map(String::as_str),
+            Some("alice@example.com")
+        );
+        assert_eq!(
+            first.metadata.get("categories").map(String::as_str),
+            Some("rust")
+        );
+
+        // Extension taken from the link when present.
+        assert_eq!(files[1].extension, ".php");
+
+        // fetch_file refetches the feed and returns the assembled content.
+        let raw = connector.fetch_file(first).await.unwrap();
+        assert_eq!(
+            String::from_utf8(raw).unwrap(),
+            "Post One\n\nHello & welcome"
+        );
+
+        // normalize produces a ConnectorDoc with source=rss metadata.
+        let raw = connector.fetch_file(first).await.unwrap();
+        let doc = connector.normalize(first, raw).unwrap();
+        assert_eq!(doc.blob, "Post One\n\nHello & welcome");
+        assert_eq!(doc.semantic_identifier, "Post One");
+        assert_eq!(doc.extension, ".html");
+        assert_eq!(doc.metadata.get("source").map(String::as_str), Some("rss"));
+        assert_eq!(
+            doc.metadata.get("feed").map(String::as_str),
+            Some(feed_url.as_str())
+        );
+        assert_eq!(doc.source, DocumentSource::Rss);
+
+        // Unknown id → error.
+        let ghost = RemoteFile {
+            id: "http://example.com/missing".into(),
+            ..first.clone()
+        };
+        let error = connector.fetch_file(&ghost).await.unwrap_err();
+        assert!(error.to_string().contains("not found"), "{error:#}");
+    }
+
+    /// Atom: default-namespace `<feed><entry>` documents parse via
+    /// `local_name()`; link@href becomes the id, summary/content become the
+    /// body, `updated` (ISO8601 with offset) normalizes to UTC.
+    #[tokio::test]
+    async fn list_fetch_normalize_atom_feed() {
+        let base = mock_feed_server(|_path| (200, "application/atom+xml", ATOM_FEED.to_string()));
+        let feed_url = format!("{base}/feed.xml");
+        let connector = RssConnector::new_for_test(options(feed_url.clone())).unwrap();
+
+        let files = connector.list_files().await.unwrap();
+        assert_eq!(files.len(), 2);
+
+        let first = &files[0];
+        assert_eq!(first.id, "https://blog.example.com/atom-one.html");
+        assert_eq!(first.name, "Atom One");
+        assert_eq!(first.extension, ".html");
+        assert_eq!(first.updated_at, "2025-07-01T12:34:56Z");
+        assert_eq!(
+            first.metadata.get("author").map(String::as_str),
+            Some("Bob")
+        );
+        let raw = connector.fetch_file(first).await.unwrap();
+        assert_eq!(
+            String::from_utf8(raw).unwrap(),
+            "Atom One\n\nSummary text here"
+        );
+
+        // Offset timestamp → UTC; link without extension → .html fallback.
+        let second = &files[1];
+        assert_eq!(second.id, "https://blog.example.com/atom-two");
+        assert_eq!(second.extension, ".html");
+        assert_eq!(second.updated_at, "2025-07-01T22:00:00Z");
+        let raw = connector.fetch_file(second).await.unwrap();
+        assert_eq!(String::from_utf8(raw).unwrap(), "Atom Two\n\nFull content");
+    }
+
+    /// SSRF guard: private / loopback / link-local / unspecified targets are
+    /// rejected; non-http(s) schemes are rejected; a public IP literal passes
+    /// with no network access.
+    #[test]
+    fn ssrf_rejects_private_and_loopback_urls() {
+        for url in [
+            "http://127.0.0.1/feed.xml",
+            "http://127.8.8.8/feed.xml",
+            "http://10.1.2.3/feed.xml",
+            "http://172.16.0.1/feed.xml",
+            "http://172.31.255.255/feed.xml",
+            "http://192.168.1.10/feed.xml",
+            "http://169.254.169.254/latest/meta-data",
+            "http://0.0.0.0/feed.xml",
+            "http://[::1]/feed.xml",
+            "http://[fe80::1]/feed.xml",
+        ] {
+            let error = validate_feed_url(url, false).unwrap_err();
+            assert!(
+                error.to_string().contains("private"),
+                "expected SSRF rejection for {url}, got: {error:#}"
+            );
+        }
+        // Non-http(s) schemes are rejected outright.
+        assert!(validate_feed_url("ftp://example.com/feed.xml", false).is_err());
+        assert!(validate_feed_url("file:///etc/passwd", false).is_err());
+        // A public IP literal passes without any network access.
+        assert!(validate_feed_url("https://8.8.8.8/feed.xml", false).is_ok());
+        assert!(validate_feed_url("https://1.1.1.1/feed.xml", false).is_ok());
+        // Test-only exemption permits loopback (local mock servers).
+        assert!(validate_feed_url("http://127.0.0.1:1234/feed.xml", true).is_ok());
+    }
+
+    /// Constructor validation: scheme enforced, private hosts rejected at
+    /// construction, `max_items=0` defaults to batch 50, explicit
+    /// batch_size < 1 rejected.
+    #[test]
+    fn new_validates_feed_url_and_batch_size() {
+        let mut options = SourceOptions::default();
+        options.url = "ftp://example.com/feed".into();
+        let error = RssConnector::new(options.clone()).unwrap_err();
+        assert!(error.to_string().contains("http"), "{error:#}");
+
+        options.url = "http://10.0.0.1/feed.xml".into();
+        assert!(
+            RssConnector::new(options.clone())
+                .unwrap_err()
+                .to_string()
+                .contains("private")
+        );
+
+        // Public IP literal constructs fine; max_items=0 → default batch 50.
+        options.url = "https://8.8.8.8/feed.xml".into();
+        options.max_items = 0;
+        assert!(RssConnector::new(options.clone()).is_ok());
+
+        // Explicit batch_size < 1 rejected.
+        assert!(
+            RssConnector::with_batch_size(options, 0)
+                .unwrap_err()
+                .to_string()
+                .contains("batch_size")
+        );
+    }
+
+    /// load_credentials probes the feed: non-2xx upstream is an error, a
+    /// healthy feed passes.
+    #[tokio::test]
+    async fn load_credentials_probes_feed_and_rejects_non_2xx() {
+        let base = mock_feed_server(|_path| (500, "text/plain", "boom".to_string()));
+        let mut connector =
+            RssConnector::new_for_test(options(format!("{base}/feed.xml"))).unwrap();
+        let error = connector.load_credentials().await.unwrap_err();
+        assert!(error.to_string().contains("500"), "{error:#}");
+
+        let base = mock_feed_server(|_path| (200, "application/rss+xml", RSS2_FEED.to_string()));
+        let mut connector =
+            RssConnector::new_for_test(options(format!("{base}/feed.xml"))).unwrap();
+        connector.load_credentials().await.unwrap();
+    }
+
+    /// Registry dispatch: `create("rss", …)` now returns an RssConnector
+    /// instead of bailing with "not implemented".
+    #[test]
+    fn registry_dispatches_rss_connector() {
+        let connector =
+            ConnectorRegistry::create("rss", options("https://8.8.8.8/feed.xml".into())).unwrap();
+        assert_eq!(connector.kind(), "rss");
+    }
+}
+
+#[cfg(test)]
+mod dingtalk_ai_table_tests {
+    use super::*;
+    use serde_json::json;
+    use std::io::{Read, Write};
+
+    /// Spawn a single-threaded HTTP mock server on `127.0.0.1:<random port>`.
+    /// The handler receives `(method, path, query, header_block, body)` and
+    /// returns `(status, body)`; the connector's `options.url` override points
+    /// here — no real network.
+    fn mock_ai_table_server(
+        handler: impl Fn(&str, &str, &str, &str, &str) -> (u16, String) + Send + 'static,
+    ) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut data = Vec::new();
+                let mut chunk = [0u8; 16384];
+                loop {
+                    let n = match stream.read(&mut chunk) {
+                        Ok(n) => n,
+                        Err(_) => return,
+                    };
+                    if n == 0 {
+                        break;
+                    }
+                    data.extend_from_slice(&chunk[..n]);
+                    let Some(header_end) = data.windows(4).position(|w| w == b"\r\n\r\n") else {
+                        continue;
+                    };
+                    let head = String::from_utf8_lossy(&data[..header_end]).to_string();
+                    let mut content_length = 0usize;
+                    for line in head.lines() {
+                        if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                            content_length = v.trim().parse().unwrap_or(0);
+                        }
+                    }
+                    if data.len() >= header_end + 4 + content_length {
+                        break;
+                    }
+                    if data.len() > 1_000_000 {
+                        break;
+                    }
+                }
+                if data.is_empty() {
+                    return;
+                }
+                let request = String::from_utf8_lossy(&data).to_string();
+                let (head, body) = request
+                    .split_once("\r\n\r\n")
+                    .unwrap_or((request.as_ref(), ""));
+                let first_line = head.lines().next().unwrap_or_default();
+                let mut parts = first_line.split_whitespace();
+                let method = parts.next().unwrap_or_default();
+                let raw_target = parts.next().unwrap_or_default();
+                let (path, query) = raw_target.split_once('?').unwrap_or((raw_target, ""));
+                let (status, body) = handler(method, path, query, head, body);
+                let reason = if status == 200 { "OK" } else { "Not Found" };
+                let response = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    fn options(base_url: String, token: &str, target: &str) -> SourceOptions {
+        let mut options = SourceOptions::default();
+        options.url = base_url;
+        options.token = token.to_string();
+        options.target = target.to_string();
+        options.max_items = 50;
+        options
+    }
+
+    fn record(id: &str, fields: serde_json::Value) -> serde_json::Value {
+        json!({ "id": id, "fields": fields })
+    }
+
+    /// `new()` requires `token = "appKey:appSecret"` and a non-empty
+    /// `target` (Notable table id); `target = "op:tbl"` splits the operator
+    /// unionId off the table id.
+    #[test]
+    fn new_requires_app_key_app_secret_and_target() {
+        let error =
+            DingTalkAiTableConnector::new(options(String::new(), "no-colon", "tbl1")).unwrap_err();
+        assert!(error.to_string().contains("appKey"), "got: {error:#}");
+        let error = DingTalkAiTableConnector::new(options(String::new(), "", "tbl1")).unwrap_err();
+        assert!(error.to_string().contains("appKey"), "got: {error:#}");
+        let error =
+            DingTalkAiTableConnector::new(options(String::new(), "appk:apps", "")).unwrap_err();
+        assert!(error.to_string().contains("target"), "got: {error:#}");
+
+        // operator_id:table_id target splits cleanly.
+        let connector =
+            DingTalkAiTableConnector::new(options(String::new(), "appk:apps", "op-union-1:tbl9"))
+                .unwrap();
+        assert_eq!(connector.table_id, "tbl9");
+        assert_eq!(connector.operator_id, "op-union-1");
+    }
+
+    /// load_credentials exchanges appKey/appSecret for an accessToken (cached
+    /// until 60s before expireIn) and probes the GetAllSheets endpoint; a
+    /// later list_files reuses the cached token — exactly ONE accessToken
+    /// request.
+    #[tokio::test]
+    async fn load_credentials_acquires_and_caches_access_token() {
+        let token_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let calls = token_calls.clone();
+        let base = mock_ai_table_server(move |method, path, _query, headers, _body| {
+            match (method, path) {
+                ("POST", "/v1.0/oauth2/accessToken") => {
+                    calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    (
+                        200,
+                        json!({"accessToken": "acc-abc", "expireIn": 7200}).to_string(),
+                    )
+                }
+                ("GET", "/v1.0/notable/tables/tbl1/sheets") => {
+                    if headers.contains("x-acs-dingtalk-access-token: acc-abc") {
+                        (200, json!({"value": []}).to_string())
+                    } else {
+                        (
+                            403,
+                            json!({"code": "invalidToken", "message": "bad token"}).to_string(),
+                        )
+                    }
+                }
+                _ => (404, "{}".to_string()),
+            }
+        });
+
+        let mut connector =
+            DingTalkAiTableConnector::new(options(base, "appk:apps", "tbl1")).unwrap();
+        connector.load_credentials().await.unwrap();
+        // list_files reuses the cached token — no second accessToken request.
+        let files = connector.list_files().await.unwrap();
+        assert!(files.is_empty());
+        assert_eq!(
+            token_calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "accessToken must be cached after load_credentials"
+        );
+    }
+
+    /// list_files walks sheets → paginated records, mapping every row onto a
+    /// RemoteFile: id=`dingtalk_ai_table:{table}:{sheet}:{record}` (row{idx}
+    /// fallback when the API lists a record without an id), name = first short
+    /// string field, metadata carries source/table/sheet/record ids.
+    #[tokio::test]
+    async fn list_files_walks_sheets_and_paginates_records() {
+        let base = mock_ai_table_server(move |method, path, query, _headers, _body| {
+            match (method, path) {
+                ("POST", "/v1.0/oauth2/accessToken") => (
+                    200,
+                    json!({"accessToken": "tok", "expireIn": 7200}).to_string(),
+                ),
+                ("GET", "/v1.0/notable/tables/tbl1/sheets") => (
+                    200,
+                    json!({"value": [
+                        {"id": "s1", "name": "Sheet One"},
+                        {"id": "s2", "name": "Sheet Two"}
+                    ]})
+                    .to_string(),
+                ),
+                ("GET", "/v1.0/notable/tables/tbl1/sheets/s1/records") => {
+                    // First page carries nextToken; second page terminates.
+                    if query.contains("nt-2") {
+                        (
+                            200,
+                            json!({"records": [
+                                record("r3", json!({"标题": "第三条", "状态": "done"}))
+                            ], "nextToken": ""})
+                            .to_string(),
+                        )
+                    } else {
+                        (
+                            200,
+                            json!({"records": [
+                                record("r1", json!({"标题": "例会纪要", "负责人": "张三"})),
+                                record("r2", json!({"标题": "周报", "负责人": "李四"}))
+                            ], "nextToken": "nt-2"})
+                            .to_string(),
+                        )
+                    }
+                }
+                ("GET", "/v1.0/notable/tables/tbl1/sheets/s2/records") => (
+                    200,
+                    json!({"records": [
+                        record("r4", json!({"标题": "待办"})),
+                        json!({"fields": {"标题": "无 id 行"}})
+                    ], "nextToken": ""})
+                    .to_string(),
+                ),
+                _ => (404, "{}".to_string()),
+            }
+        });
+
+        let connector = DingTalkAiTableConnector::new(options(base, "appk:apps", "tbl1")).unwrap();
+        let files = connector.list_files().await.unwrap();
+        assert_eq!(files.len(), 5, "3 records in s1 + 2 in s2");
+
+        let first = &files[0];
+        assert_eq!(first.id, "dingtalk_ai_table:tbl1:s1:r1");
+        assert_eq!(first.name, "Sheet One - 例会纪要");
+        assert_eq!(first.path, "tbl1/s1/r1");
+        assert_eq!(first.extension, ".txt");
+        assert_eq!(
+            first.metadata.get("source").map(String::as_str),
+            Some("dingtalk_ai_table")
+        );
+        assert_eq!(
+            first.metadata.get("table_id").map(String::as_str),
+            Some("tbl1")
+        );
+        assert_eq!(
+            first.metadata.get("sheet_id").map(String::as_str),
+            Some("s1")
+        );
+        assert_eq!(
+            first.metadata.get("sheet_name").map(String::as_str),
+            Some("Sheet One")
+        );
+        assert_eq!(
+            first.metadata.get("record_id").map(String::as_str),
+            Some("r1")
+        );
+
+        // Paginated page 2 lands under the same sheet.
+        assert_eq!(files[2].id, "dingtalk_ai_table:tbl1:s1:r3");
+
+        // Record without an id falls back to row{index} (sheet_id kept in the
+        // composite id, satisfying sheet_id+row 序号).
+        assert_eq!(files[4].id, "dingtalk_ai_table:tbl1:s2:row1");
+        assert_eq!(files[4].name, "Sheet Two - 无 id 行");
+    }
+
+    /// fetch_file re-lists the sheet and rebuilds the `列名: 值` blob for the
+    /// record; normalize tags the doc with source=dingtalk_ai_table metadata
+    /// and DocumentSource::DingTalk.
+    #[tokio::test]
+    async fn fetch_file_and_normalize_build_record_doc() {
+        let base = mock_ai_table_server(move |method, path, _query, _headers, _body| {
+            match (method, path) {
+                ("POST", "/v1.0/oauth2/accessToken") => (
+                    200,
+                    json!({"accessToken": "tok", "expireIn": 7200}).to_string(),
+                ),
+                ("GET", "/v1.0/notable/tables/tbl1/sheets") => (
+                    200,
+                    json!({"value": [{"id": "s1", "name": "Sheet One"}]}).to_string(),
+                ),
+                ("GET", "/v1.0/notable/tables/tbl1/sheets/s1/records") => (
+                    200,
+                    json!({"records": [
+                        record("r1", json!({"标题": "例会纪要", "负责人": "张三", "人数": 3}))
+                    ], "nextToken": ""})
+                    .to_string(),
+                ),
+                _ => (404, "{}".to_string()),
+            }
+        });
+
+        let connector = DingTalkAiTableConnector::new(options(base, "appk:apps", "tbl1")).unwrap();
+        let files = connector.list_files().await.unwrap();
+        assert_eq!(files.len(), 1);
+
+        let raw = connector.fetch_file(&files[0]).await.unwrap();
+        let blob = String::from_utf8(raw).unwrap();
+        assert_eq!(blob, "标题: 例会纪要\n负责人: 张三\n人数: 3\n");
+
+        let doc = connector
+            .normalize(&files[0], blob.clone().into_bytes())
+            .unwrap();
+        assert_eq!(doc.blob, blob);
+        assert_eq!(doc.source, DocumentSource::DingTalk);
+        assert_eq!(doc.semantic_identifier, "Sheet One - 例会纪要");
+        assert_eq!(doc.extension, ".txt");
+        assert_eq!(
+            doc.metadata.get("source").map(String::as_str),
+            Some("dingtalk_ai_table")
+        );
+        assert_eq!(
+            doc.metadata.get("sheet_name").map(String::as_str),
+            Some("Sheet One")
+        );
+        assert_eq!(
+            doc.metadata.get("record_id").map(String::as_str),
+            Some("r1")
+        );
+
+        // Unknown record id → readable error.
+        let ghost = RemoteFile {
+            id: "dingtalk_ai_table:tbl1:s1:ghost".into(),
+            name: "ghost".into(),
+            path: "tbl1/s1/ghost".into(),
+            extension: ".txt".into(),
+            size_bytes: 0,
+            updated_at: String::new(),
+            fingerprint: String::new(),
+            metadata: [
+                ("sheet_id".to_string(), "s1".to_string()),
+                ("record_id".to_string(), "ghost".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+        };
+        let error = connector.fetch_file(&ghost).await.unwrap_err();
+        assert!(error.to_string().contains("not found"), "{error:#}");
+    }
+
+    /// Any non-2xx upstream response surfaces the upstream code/message in
+    /// the error (token exchange and OpenAPI probes alike).
+    #[tokio::test]
+    async fn upstream_error_response_reports_code_and_message() {
+        // GetAllSheets probe fails with a structured DingTalk error.
+        let base = mock_ai_table_server(move |method, path, _query, _headers, _body| {
+            match (method, path) {
+                ("POST", "/v1.0/oauth2/accessToken") => (
+                    200,
+                    json!({"accessToken": "tok", "expireIn": 7200}).to_string(),
+                ),
+                ("GET", "/v1.0/notable/tables/tbl1/sheets") => (
+                    400,
+                    json!({"code": "invalidParameter.value.invalid",
+                           "message": "table not found"})
+                    .to_string(),
+                ),
+                _ => (404, "{}".to_string()),
+            }
+        });
+        let mut connector =
+            DingTalkAiTableConnector::new(options(base, "appk:apps", "tbl1")).unwrap();
+        let error = connector.load_credentials().await.unwrap_err().to_string();
+        assert!(error.contains("400"), "{error}");
+        assert!(error.contains("invalidParameter.value.invalid"), "{error}");
+        assert!(error.contains("table not found"), "{error}");
+
+        // A failing accessToken exchange reports code/message as well.
+        let base = mock_ai_table_server(move |method, path, _query, _headers, _body| {
+            match (method, path) {
+                ("POST", "/v1.0/oauth2/accessToken") => (
+                    401,
+                    json!({"code": "InvalidAuthentication",
+                           "message": "appSecret error"})
+                    .to_string(),
+                ),
+                _ => (404, "{}".to_string()),
+            }
+        });
+        let mut connector =
+            DingTalkAiTableConnector::new(options(base, "appk:bad", "tbl1")).unwrap();
+        let error = connector.load_credentials().await.unwrap_err().to_string();
+        assert!(error.contains("401"), "{error}");
+        assert!(error.contains("InvalidAuthentication"), "{error}");
+        assert!(error.contains("appSecret error"), "{error}");
+    }
+
+    /// Registry dispatch: `create("dingtalk_ai_table", …)` returns the
+    /// DingTalkAiTableConnector instead of bailing with "not implemented";
+    /// the "dingtalk" (cloud drive) kind is untouched.
+    #[test]
+    fn registry_dispatches_dingtalk_ai_table_connector() {
+        let connector = ConnectorRegistry::create(
+            "dingtalk_ai_table",
+            options(String::new(), "appk:apps", "tbl1"),
+        )
+        .unwrap();
+        assert_eq!(connector.kind(), "dingtalk_ai_table");
+        assert_eq!(
+            ConnectorRegistry::create("dingtalk", options(String::new(), "appk:apps", "sp1"))
+                .unwrap()
+                .kind(),
+            "dingtalk"
+        );
+    }
+}
+
+#[cfg(test)]
+mod box_connector_tests {
+    use super::*;
+    use serde_json::json;
+    use std::io::{Read, Write};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Spawn a single-threaded HTTP mock server on `127.0.0.1:<random port>`.
+    /// The handler receives `(method, path, query, header_block, body)` and
+    /// returns `(status, content_type, body)`; the connector's `options.url`
+    /// override points here — no real network. `Connection: close` makes every
+    /// request land on a fresh connection, matching the one-request-per-
+    /// connection loop.
+    fn mock_box_server(
+        handler: impl Fn(&str, &str, &str, &str, &str) -> (u16, &'static str, String) + Send + 'static,
+    ) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut data = Vec::new();
+                let mut chunk = [0u8; 16384];
+                loop {
+                    let n = match stream.read(&mut chunk) {
+                        Ok(n) => n,
+                        Err(_) => return,
+                    };
+                    if n == 0 {
+                        break;
+                    }
+                    data.extend_from_slice(&chunk[..n]);
+                    let Some(header_end) = data.windows(4).position(|w| w == b"\r\n\r\n") else {
+                        continue;
+                    };
+                    let head = String::from_utf8_lossy(&data[..header_end]).to_string();
+                    let mut content_length = 0usize;
+                    for line in head.lines() {
+                        if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                            content_length = v.trim().parse().unwrap_or(0);
+                        }
+                    }
+                    if data.len() >= header_end + 4 + content_length {
+                        break;
+                    }
+                    if data.len() > 1_000_000 {
+                        break;
+                    }
+                }
+                if data.is_empty() {
+                    return;
+                }
+                let request = String::from_utf8_lossy(&data).to_string();
+                let (head, body) = request
+                    .split_once("\r\n\r\n")
+                    .unwrap_or((request.as_ref(), ""));
+                let first_line = head.lines().next().unwrap_or_default();
+                let mut parts = first_line.split_whitespace();
+                let method = parts.next().unwrap_or_default();
+                let raw_target = parts.next().unwrap_or_default();
+                let (path, query) = raw_target.split_once('?').unwrap_or((raw_target, ""));
+                let (status, content_type, body) = handler(method, path, query, head, body);
+                let reason = if status == 200 { "OK" } else { "Not Found" };
+                let response = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    fn options(base: String, token: &str, target: &str) -> SourceOptions {
+        let mut options = SourceOptions::default();
+        options.url = base;
+        options.token = token.to_string();
+        options.target = target.to_string();
+        options.max_items = 50;
+        options
+    }
+
+    /// RAGFlow `box-token-field.tsx` credential shape stored in the token
+    /// field. `with_access_token` adds the OAuth result payload.
+    fn oauth_json(with_access_token: bool) -> String {
+        if with_access_token {
+            json!({
+                "client_id": "cid-1",
+                "client_secret": "csec-1",
+                "refresh_token": "rt-1",
+                "access_token": "at-init",
+            })
+            .to_string()
+        } else {
+            json!({
+                "client_id": "cid-1",
+                "client_secret": "csec-1",
+                "refresh_token": "rt-1",
+            })
+            .to_string()
+        }
+    }
+
+    fn remote_file(id: &str, name: &str, extension: &str) -> RemoteFile {
+        RemoteFile {
+            id: id.to_string(),
+            name: name.to_string(),
+            path: id.to_string(),
+            extension: extension.to_string(),
+            size_bytes: 5,
+            updated_at: "2025-08-01T09:00:00Z".to_string(),
+            fingerprint: "2025-08-01T09:00:00Z".to_string(),
+            metadata: [
+                ("source".to_string(), "box".to_string()),
+                ("file_id".to_string(), id.to_string()),
+            ]
+            .into_iter()
+            .collect(),
+        }
+    }
+
+    /// `new()` credential parsing: OAuth JSON (with/without access_token),
+    /// legacy raw access token, empty/malformed tokens rejected, target
+    /// defaults to root folder "0".
+    #[test]
+    fn new_accepts_oauth_json_and_legacy_access_token() {
+        assert!(BoxConnector::new(options(String::new(), &oauth_json(true), "123")).is_ok());
+        assert!(BoxConnector::new(options(String::new(), &oauth_json(false), "123")).is_ok());
+
+        // Legacy raw access token + empty target → folder "0".
+        let connector = BoxConnector::new(options(String::new(), "raw-token", "")).unwrap();
+        assert_eq!(connector.folder_id, "0");
+        let guard = connector.auth.lock().unwrap_or_else(|p| p.into_inner());
+        let state = &*guard;
+        assert_eq!(state.access_token, "raw-token");
+        assert!(!state.refreshable);
+
+        // Empty token rejected with a readable error.
+        let error = BoxConnector::new(options(String::new(), "", "")).unwrap_err();
+        assert!(error.to_string().contains("credentials"), "{error:#}");
+
+        // JSON without access_token and without the refresh triple rejected.
+        let bad = json!({"client_id": "cid-only"}).to_string();
+        let error = BoxConnector::new(options(String::new(), &bad, "")).unwrap_err();
+        assert!(error.to_string().contains("credentials"), "{error:#}");
+    }
+
+    /// load_credentials: no initial access token → ONE refresh_token grant
+    /// (form fields verified), then GET /2.0/users/me probe with the fresh
+    /// bearer; a later list_files reuses the cached token (no second refresh).
+    #[tokio::test]
+    async fn load_credentials_refreshes_token_and_probes_user() {
+        let refresh_calls = std::sync::Arc::new(AtomicUsize::new(0));
+        let calls = refresh_calls.clone();
+        let base =
+            mock_box_server(
+                move |method, path, _query, headers, body| match (method, path) {
+                    ("POST", "/oauth2/token") => {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        let lower = headers.to_ascii_lowercase();
+                        for required in [
+                            "grant_type=refresh_token",
+                            "refresh_token=rt-1",
+                            "client_id=cid-1",
+                            "client_secret=csec-1",
+                        ] {
+                            if !body.contains(required) {
+                                return (
+                                    400,
+                                    "application/json",
+                                    json!({"code": "missing_form_field",
+                                       "message": required})
+                                    .to_string(),
+                                );
+                            }
+                        }
+                        let _ = lower;
+                        (
+                            200,
+                            "application/json",
+                            json!({"access_token": "at-fresh", "expires_in": 3600}).to_string(),
+                        )
+                    }
+                    ("GET", "/2.0/users/me") => {
+                        if headers
+                            .to_ascii_lowercase()
+                            .contains("authorization: bearer at-fresh")
+                        {
+                            (
+                                200,
+                                "application/json",
+                                json!({"type": "user", "id": "u1", "name": "Me"}).to_string(),
+                            )
+                        } else {
+                            (
+                                401,
+                                "application/json",
+                                json!({"code": "unauthorized", "message": "bad token"}).to_string(),
+                            )
+                        }
+                    }
+                    ("GET", "/2.0/folders/0/items") => (
+                        200,
+                        "application/json",
+                        json!({"entries": [], "next_marker": ""}).to_string(),
+                    ),
+                    _ => (404, "application/json", "{}".to_string()),
+                },
+            );
+
+        let mut connector = BoxConnector::new(options(base, &oauth_json(false), "")).unwrap();
+        connector.load_credentials().await.unwrap();
+
+        // list_files reuses the cached token — still exactly one refresh.
+        let files = connector.list_files().await.unwrap();
+        assert!(files.is_empty());
+        assert_eq!(
+            refresh_calls.load(Ordering::SeqCst),
+            1,
+            "access token must be cached after load_credentials"
+        );
+    }
+
+    /// list_files: marker pagination across pages AND recursive descent into
+    /// subfolders (mirrors `_iter_files_recursive`): root page 1 yields
+    /// f1 + folder `sub` (recurse → f3) before root page 2 yields f2.
+    /// Entry mapping: id/name/path/extension(lowercased)/size/updated_at.
+    #[tokio::test]
+    async fn list_files_paginates_and_recurses_subfolders() {
+        let base =
+            mock_box_server(
+                move |method, path, query, _headers, _body| match (method, path) {
+                    ("POST", "/oauth2/token") => (
+                        200,
+                        "application/json",
+                        json!({"access_token": "tok", "expires_in": 3600}).to_string(),
+                    ),
+                    ("GET", "/2.0/folders/0/items") => {
+                        if query.contains("marker=m1") {
+                            (
+                                200,
+                                "application/json",
+                                json!({
+                                    "entries": [
+                                        {"type": "file", "id": "f2", "name": "second.md",
+                                         "size": 22, "modified_at": "2025-08-01T10:00:00Z"}
+                                    ],
+                                    "next_marker": ""
+                                })
+                                .to_string(),
+                            )
+                        } else {
+                            (
+                                200,
+                                "application/json",
+                                json!({
+                                    "entries": [
+                                        {"type": "file", "id": "f1", "name": "report.PDF",
+                                         "size": 11, "modified_at": "2025-08-01T09:00:00Z"},
+                                        {"type": "folder", "id": "sub", "name": "Sub Folder",
+                                         "size": 0, "modified_at": "2025-08-01T08:00:00Z"}
+                                    ],
+                                    "next_marker": "m1"
+                                })
+                                .to_string(),
+                            )
+                        }
+                    }
+                    ("GET", "/2.0/folders/sub/items") => (
+                        200,
+                        "application/json",
+                        json!({
+                            "entries": [
+                                {"type": "file", "id": "f3", "name": "nested.docx",
+                                 "size": 33, "modified_at": "2025-08-02T00:00:00Z"}
+                            ],
+                            "next_marker": ""
+                        })
+                        .to_string(),
+                    ),
+                    _ => (404, "application/json", "{}".to_string()),
+                },
+            );
+
+        let connector = BoxConnector::new(options(base, &oauth_json(true), "0")).unwrap();
+        let files = connector.list_files().await.unwrap();
+        assert_eq!(files.len(), 3, "f1 + f3 (recursed) + f2 (page 2)");
+
+        let first = &files[0];
+        assert_eq!(first.id, "f1");
+        assert_eq!(first.name, "report.PDF");
+        assert_eq!(first.path, "f1");
+        assert_eq!(first.extension, ".pdf"); // lowercased like get_file_ext
+        assert_eq!(first.size_bytes, 11);
+        assert_eq!(first.updated_at, "2025-08-01T09:00:00Z");
+        assert_eq!(first.fingerprint, first.updated_at);
+        assert_eq!(
+            first.metadata.get("source").map(String::as_str),
+            Some("box")
+        );
+        assert_eq!(
+            first.metadata.get("file_id").map(String::as_str),
+            Some("f1")
+        );
+
+        // Recursion happens inline before the root folder's page 2.
+        assert_eq!(files[1].id, "f3");
+        assert_eq!(files[1].extension, ".docx");
+        assert_eq!(files[2].id, "f2");
+        assert_eq!(files[2].extension, ".md");
+        assert_eq!(files[2].size_bytes, 22);
+        assert_eq!(files[2].updated_at, "2025-08-01T10:00:00Z");
+    }
+
+    /// fetch_file downloads `/2.0/files/{id}/content`; normalize maps the raw
+    /// bytes onto a ConnectorDoc (Local stand-in + metadata source=box).
+    #[tokio::test]
+    async fn fetch_file_and_normalize_build_box_doc() {
+        let base =
+            mock_box_server(
+                move |method, path, _query, _headers, _body| match (method, path) {
+                    ("POST", "/oauth2/token") => (
+                        200,
+                        "application/json",
+                        json!({"access_token": "tok", "expires_in": 3600}).to_string(),
+                    ),
+                    ("GET", "/2.0/files/f1/content") => (
+                        200,
+                        "application/octet-stream",
+                        "# Hello Box\n\nbody text".to_string(),
+                    ),
+                    _ => (404, "application/json", "{}".to_string()),
+                },
+            );
+
+        let connector = BoxConnector::new(options(base, &oauth_json(true), "")).unwrap();
+        let file = remote_file("f1", "hello.md", ".md");
+        let raw = connector.fetch_file(&file).await.unwrap();
+        assert_eq!(
+            String::from_utf8(raw.clone()).unwrap(),
+            "# Hello Box\n\nbody text"
+        );
+
+        let doc = connector.normalize(&file, raw).unwrap();
+        assert_eq!(doc.id, "f1");
+        assert_eq!(doc.blob, "# Hello Box\n\nbody text");
+        assert_eq!(doc.semantic_identifier, "hello.md");
+        assert_eq!(doc.extension, ".md");
+        assert_eq!(doc.doc_updated_at, "2025-08-01T09:00:00Z");
+        // Stand-in until the parent adds a DocumentSource::Box variant.
+        assert_eq!(doc.source, DocumentSource::Local);
+        assert_eq!(doc.metadata.get("source").map(String::as_str), Some("box"));
+        assert_eq!(doc.metadata.get("file_id").map(String::as_str), Some("f1"));
+    }
+
+    /// 401 on an API call → exactly one refresh-token grant → retry with the
+    /// fresh bearer succeeds; the refreshed token is then cached (a second
+    /// download issues no further refresh).
+    #[tokio::test]
+    async fn unauthorized_response_triggers_single_refresh_then_retry() {
+        let refresh_calls = std::sync::Arc::new(AtomicUsize::new(0));
+        let calls = refresh_calls.clone();
+        let base =
+            mock_box_server(
+                move |method, path, _query, headers, _body| match (method, path) {
+                    ("POST", "/oauth2/token") => {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        (
+                            200,
+                            "application/json",
+                            json!({"access_token": "at-refreshed", "expires_in": 3600}).to_string(),
+                        )
+                    }
+                    ("GET", "/2.0/files/f1/content") => {
+                        if headers
+                            .to_ascii_lowercase()
+                            .contains("authorization: bearer at-refreshed")
+                        {
+                            (
+                                200,
+                                "application/octet-stream",
+                                "retried-content".to_string(),
+                            )
+                        } else {
+                            (
+                                401,
+                                "application/json",
+                                json!({"code": "unauthorized",
+                                   "message": "token expired"})
+                                .to_string(),
+                            )
+                        }
+                    }
+                    _ => (404, "application/json", "{}".to_string()),
+                },
+            );
+
+        let connector = BoxConnector::new(options(base, &oauth_json(true), "")).unwrap();
+        // Initial cached token is "at-init" → first download 401 → refresh →
+        // retry with "at-refreshed" → 200.
+        let file = remote_file("f1", "hello.md", ".md");
+        let raw = connector.fetch_file(&file).await.unwrap();
+        assert_eq!(String::from_utf8(raw).unwrap(), "retried-content");
+        assert_eq!(refresh_calls.load(Ordering::SeqCst), 1);
+
+        // Second download uses the cached refreshed token — no new refresh.
+        let raw = connector.fetch_file(&file).await.unwrap();
+        assert_eq!(String::from_utf8(raw).unwrap(), "retried-content");
+        assert_eq!(refresh_calls.load(Ordering::SeqCst), 1);
+    }
+
+    /// Non-2xx upstream responses surface the Box code/message envelope
+    /// (users/me probe and oauth2/token alike).
+    #[tokio::test]
+    async fn upstream_error_reports_code_and_message() {
+        // Probe fails with a structured Box error.
+        let base =
+            mock_box_server(
+                move |method, path, _query, _headers, _body| match (method, path) {
+                    ("POST", "/oauth2/token") => (
+                        200,
+                        "application/json",
+                        json!({"access_token": "tok", "expires_in": 3600}).to_string(),
+                    ),
+                    ("GET", "/2.0/users/me") => (
+                        403,
+                        "application/json",
+                        json!({"type": "error", "status": 403,
+                           "code": "access_denied_insufficient_permissions",
+                           "message": "Access denied"})
+                        .to_string(),
+                    ),
+                    _ => (404, "application/json", "{}".to_string()),
+                },
+            );
+        let mut connector = BoxConnector::new(options(base, &oauth_json(true), "")).unwrap();
+        let error = connector.load_credentials().await.unwrap_err().to_string();
+        assert!(error.contains("403"), "{error}");
+        assert!(
+            error.contains("access_denied_insufficient_permissions"),
+            "{error}"
+        );
+        assert!(error.contains("Access denied"), "{error}");
+
+        // A failing token exchange reports code/message as well.
+        let base =
+            mock_box_server(
+                move |method, path, _query, _headers, _body| match (method, path) {
+                    ("POST", "/oauth2/token") => (
+                        400,
+                        "application/json",
+                        json!({"code": "invalid_grant",
+                           "error_description": "Refresh token has expired"})
+                        .to_string(),
+                    ),
+                    _ => (404, "application/json", "{}".to_string()),
+                },
+            );
+        let mut connector = BoxConnector::new(options(base, &oauth_json(false), "")).unwrap();
+        let error = connector.load_credentials().await.unwrap_err().to_string();
+        assert!(error.contains("400"), "{error}");
+        assert!(error.contains("invalid_grant"), "{error}");
+        assert!(error.contains("Refresh token has expired"), "{error}");
+    }
+
+    /// Registry dispatch: `create("box", …)` returns a BoxConnector instead
+    /// of bailing with "not implemented"; a legacy raw access token works too.
+    #[test]
+    fn registry_dispatches_box_connector() {
+        let connector =
+            ConnectorRegistry::create("box", options(String::new(), &oauth_json(true), "0"))
+                .unwrap();
+        assert_eq!(connector.kind(), "box");
+
+        let connector =
+            ConnectorRegistry::create("box", options(String::new(), "legacy-raw-token", ""))
+                .unwrap();
+        assert_eq!(connector.kind(), "box");
+    }
+}
 
 // ── RdbmsConnector (PostgreSQL 外部库直读) ───────────────────────────────────
 
@@ -7094,12 +10292,1095 @@ impl Connector for RdbmsConnector {
     }
 }
 
+#[cfg(test)]
+mod rdbms_connector_tests {
+    use super::*;
 
+    fn opts(extra: &[(&str, &str)]) -> SourceOptions {
+        SourceOptions {
+            url: String::new(),
+            token: String::new(),
+            target: String::new(),
+            include_issues: false,
+            include_merge_requests: false,
+            max_items: 100,
+            extra: extra
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        }
+    }
 
+    #[test]
+    fn requires_connect_str_or_host_database() {
+        let err = RdbmsConnector::new(&opts(&[])).unwrap_err();
+        assert!(err.to_string().contains("missing connect_str"), "{err}");
+        let err = RdbmsConnector::new(&opts(&[("host", "h")])).unwrap_err();
+        assert!(err.to_string().contains("missing connect_str"), "{err}");
+    }
 
+    #[test]
+    fn builds_connect_str_from_parts_and_defaults() {
+        let c = RdbmsConnector::new(&opts(&[
+            ("host", "db.example.com"),
+            ("user", "reader"),
+            ("password", "s3cret"),
+            ("database", "analytics"),
+        ]))
+        .unwrap();
+        assert_eq!(
+            c.connect_str(),
+            "postgres://reader:s3cret@db.example.com:5432/analytics"
+        );
+        // 显式 connect_str 优先
+        let c2 = RdbmsConnector::new(&opts(&[("connect_str", "postgres://u:p@h:9999/d")])).unwrap();
+        assert_eq!(c2.connect_str(), "postgres://u:p@h:9999/d");
+        assert_eq!(c2.kind(), "postgresql");
+    }
 
+    #[test]
+    fn sanitizes_markdown_fenced_sql() {
+        assert_eq!(sanitize_sql_query("SELECT 1"), "SELECT 1");
+        assert_eq!(sanitize_sql_query("```sql\nSELECT 1\n```"), "SELECT 1");
+        assert_eq!(
+            sanitize_sql_query("sql\nSELECT * FROM t;"),
+            "SELECT * FROM t;"
+        );
+        assert_eq!(sanitize_sql_query(""), "");
+    }
 
+    #[test]
+    fn renders_row_blob_as_column_value_lines() {
+        let blob = rdbms_row_blob(
+            &["name".into(), "age".into()],
+            &[Some("Alice".into()), Some("30".into())],
+        );
+        assert_eq!(blob, "name: Alice\nage: 30");
+        assert_eq!(rdbms_row_blob(&["a".into()], &[None]), "a: ");
+    }
+}
 
+#[cfg(test)]
+mod airtable_connector_tests {
+    use super::*;
+    use serde_json::json;
+    use std::io::{Read, Write};
 
+    /// Spawn a single-threaded HTTP mock server on `127.0.0.1:<random port>`.
+    /// The handler receives `(method, path, query, header_block, body)` and
+    /// returns `(status, content_type, body)`; the connector's `options.url`
+    /// override points here — no real network. `Connection: close` makes every
+    /// request land on a fresh connection.
+    fn mock_airtable_server(
+        handler: impl Fn(&str, &str, &str, &str, &str) -> (u16, &'static str, String) + Send + 'static,
+    ) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut data = Vec::new();
+                let mut chunk = [0u8; 16384];
+                loop {
+                    let n = match stream.read(&mut chunk) {
+                        Ok(n) => n,
+                        Err(_) => return,
+                    };
+                    if n == 0 {
+                        break;
+                    }
+                    data.extend_from_slice(&chunk[..n]);
+                    let Some(header_end) = data.windows(4).position(|w| w == b"\r\n\r\n") else {
+                        continue;
+                    };
+                    let head = String::from_utf8_lossy(&data[..header_end]).to_string();
+                    let mut content_length = 0usize;
+                    for line in head.lines() {
+                        if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                            content_length = v.trim().parse().unwrap_or(0);
+                        }
+                    }
+                    if data.len() >= header_end + 4 + content_length {
+                        break;
+                    }
+                    if data.len() > 1_000_000 {
+                        break;
+                    }
+                }
+                if data.is_empty() {
+                    return;
+                }
+                let request = String::from_utf8_lossy(&data).to_string();
+                let (head, body) = request
+                    .split_once("\r\n\r\n")
+                    .unwrap_or((request.as_ref(), ""));
+                let first_line = head.lines().next().unwrap_or_default();
+                let mut parts = first_line.split_whitespace();
+                let method = parts.next().unwrap_or_default();
+                let raw_target = parts.next().unwrap_or_default();
+                let (path, query) = raw_target.split_once('?').unwrap_or((raw_target, ""));
+                let (status, content_type, body) = handler(method, path, query, head, body);
+                let reason = if status == 200 { "OK" } else { "Not Found" };
+                let response = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        format!("http://{addr}")
+    }
 
+    fn options(base: &str, token: &str, base_id: &str) -> SourceOptions {
+        let mut options = SourceOptions::default();
+        options.url = base.to_string();
+        options.token = token.to_string();
+        options.target = base_id.to_string();
+        options.max_items = 50;
+        options
+    }
 
+    /// `new()` credential parsing: token and base id (target) are both
+    /// mandatory; the API base defaults to https://api.airtable.com.
+    #[test]
+    fn new_requires_token_and_base_id() {
+        // Empty token → readable error.
+        let error = AirtableConnector::new(options("", "", "appBase1")).unwrap_err();
+        assert!(error.to_string().contains("token"), "{error:#}");
+
+        // Empty base id (target) → readable error.
+        let error = AirtableConnector::new(options("", "pat123", "")).unwrap_err();
+        assert!(error.to_string().contains("base id"), "{error:#}");
+
+        // Valid credentials → default API base, target carried as base id.
+        let connector = AirtableConnector::new(options("", "pat123", "appBase1")).unwrap();
+        assert_eq!(connector.base_url, "https://api.airtable.com");
+        assert_eq!(connector.base_id, "appBase1");
+    }
+
+    /// list_files: enumerates tables via the metadata API, paginates each
+    /// table's records via `offset`, and maps every row onto a RemoteFile
+    /// (id=record id, name=first text field or `{table}-{row_n}`, blob-size
+    /// from the `列名: 值` rendering, metadata source/table/table_id/
+    /// record_id). The mock also enforces the PAT Bearer header.
+    #[tokio::test]
+    async fn list_files_enumerates_tables_and_paginates_records() {
+        let base = mock_airtable_server(move |method, path, query, headers, _body| {
+            if headers
+                .to_ascii_lowercase()
+                .contains("authorization: bearer pat123")
+            {
+                match (method, path) {
+                    ("GET", "/v0/meta/bases/appBase1/tables") => (
+                        200,
+                        "application/json",
+                        json!({
+                            "tables": [
+                                {"id": "tbl1", "name": "Users"},
+                                {"id": "tbl2", "name": "Pets"}
+                            ]
+                        })
+                        .to_string(),
+                    ),
+                    ("GET", "/v0/appBase1/tbl1") => {
+                        if query.contains("offset=itr1") {
+                            (
+                                200,
+                                "application/json",
+                                json!({
+                                    "records": [
+                                        {"id": "rec3", "createdTime": "2025-08-01T09:00:00.000Z",
+                                         "fields": {"Name": "Cara"}}
+                                    ],
+                                    "offset": ""
+                                })
+                                .to_string(),
+                            )
+                        } else {
+                            (
+                                200,
+                                "application/json",
+                                json!({
+                                    "records": [
+                                        {"id": "rec1", "createdTime": "2025-08-01T08:00:00.000Z",
+                                         "fields": {"Name": "Alice", "Email": "alice@example.com"}},
+                                        {"id": "rec2", "createdTime": "2025-08-01T08:30:00.000Z",
+                                         "fields": {"Name": "Bob"}}
+                                    ],
+                                    "offset": "itr1"
+                                })
+                                .to_string(),
+                            )
+                        }
+                    }
+                    ("GET", "/v0/appBase1/tbl2") => (
+                        200,
+                        "application/json",
+                        json!({
+                            "records": [
+                                {"id": "rec9", "createdTime": "2025-08-02T00:00:00.000Z",
+                                 "fields": {}}
+                            ],
+                            "offset": ""
+                        })
+                        .to_string(),
+                    ),
+                    _ => (404, "application/json", "{}".to_string()),
+                }
+            } else {
+                (
+                    401,
+                    "application/json",
+                    json!({"error": {"type": "AUTHENTICATION_REQUIRED", "message": "no token"}})
+                        .to_string(),
+                )
+            }
+        });
+
+        let connector = AirtableConnector::new(options(&base, "pat123", "appBase1")).unwrap();
+        let files = connector.list_files().await.unwrap();
+        assert_eq!(
+            files.len(),
+            4,
+            "tbl1 page1 (rec1,rec2) + page2 (rec3) + tbl2 (rec9)"
+        );
+
+        // Row 1 of table "Users": id/name/metadata/extension/updated_at mapping.
+        let first = &files[0];
+        assert_eq!(first.id, "rec1");
+        assert_eq!(first.name, "Alice");
+        assert_eq!(first.path, "appBase1/tbl1/rec1");
+        assert_eq!(first.extension, ".txt");
+        assert_eq!(first.updated_at, "2025-08-01T08:00:00.000Z");
+        assert_eq!(
+            first.metadata.get("source").map(String::as_str),
+            Some("airtable")
+        );
+        assert_eq!(
+            first.metadata.get("table").map(String::as_str),
+            Some("Users")
+        );
+        assert_eq!(
+            first.metadata.get("table_id").map(String::as_str),
+            Some("tbl1")
+        );
+        assert_eq!(
+            first.metadata.get("record_id").map(String::as_str),
+            Some("rec1")
+        );
+        // size_bytes = rendered `列名: 值` blob length.
+        assert_eq!(
+            first.size_bytes as usize,
+            "Name: Alice\nEmail: alice@example.com\n".len()
+        );
+
+        // Rows 2 and 3 (page 2 via offset).
+        assert_eq!(files[1].id, "rec2");
+        assert_eq!(files[1].name, "Bob");
+        assert_eq!(files[2].id, "rec3");
+        assert_eq!(files[2].name, "Cara");
+
+        // Record without any text field → `{table}-{row_n}` fallback name.
+        let last = &files[3];
+        assert_eq!(last.id, "rec9");
+        assert_eq!(last.name, "Pets-1");
+        assert_eq!(last.metadata.get("table").map(String::as_str), Some("Pets"));
+    }
+
+    /// fetch_file re-lists the table and re-renders the record blob; normalize
+    /// maps it onto a ConnectorDoc (Local stand-in + metadata source=airtable).
+    #[tokio::test]
+    async fn fetch_file_and_normalize_build_airtable_doc() {
+        let base = mock_airtable_server(move |method, path, _query, _headers, _body| {
+            match (method, path) {
+                ("GET", "/v0/meta/bases/appBase1/tables") => (
+                    200,
+                    "application/json",
+                    json!({
+                        "tables": [{"id": "tbl1", "name": "Users"}]
+                    })
+                    .to_string(),
+                ),
+                ("GET", "/v0/appBase1/tbl1") => (
+                    200,
+                    "application/json",
+                    json!({
+                        "records": [
+                            {"id": "rec1", "createdTime": "2025-08-01T08:00:00.000Z",
+                             "fields": {"Name": "Alice", "Email": "alice@example.com"}}
+                        ],
+                        "offset": ""
+                    })
+                    .to_string(),
+                ),
+                _ => (404, "application/json", "{}".to_string()),
+            }
+        });
+
+        let connector = AirtableConnector::new(options(&base, "pat123", "appBase1")).unwrap();
+        let files = connector.list_files().await.unwrap();
+        assert_eq!(files.len(), 1);
+        let file = files.into_iter().next().unwrap();
+
+        let raw = connector.fetch_file(&file).await.unwrap();
+        assert_eq!(
+            String::from_utf8(raw.clone()).unwrap(),
+            "Name: Alice\nEmail: alice@example.com\n"
+        );
+
+        let doc = connector.normalize(&file, raw).unwrap();
+        assert_eq!(doc.id, "rec1");
+        assert_eq!(doc.blob, "Name: Alice\nEmail: alice@example.com\n");
+        assert_eq!(doc.semantic_identifier, "Alice");
+        assert_eq!(doc.extension, ".txt");
+        assert_eq!(doc.doc_updated_at, "2025-08-01T08:00:00.000Z");
+        assert_eq!(doc.source, DocumentSource::AirTable);
+        assert_eq!(
+            doc.metadata.get("source").map(String::as_str),
+            Some("airtable")
+        );
+        assert_eq!(doc.metadata.get("table").map(String::as_str), Some("Users"));
+        assert_eq!(
+            doc.metadata.get("table_id").map(String::as_str),
+            Some("tbl1")
+        );
+        assert_eq!(
+            doc.metadata.get("record_id").map(String::as_str),
+            Some("rec1")
+        );
+    }
+
+    /// Non-2xx upstream responses surface the Airtable error envelope
+    /// (type + message) through the load_credentials probe.
+    #[tokio::test]
+    async fn upstream_error_reports_error_message() {
+        let base = mock_airtable_server(move |method, path, _query, _headers, _body| {
+            match (method, path) {
+                ("GET", "/v0/meta/bases/appBase1/tables") => (
+                    403,
+                    "application/json",
+                    json!({
+                        "error": {
+                            "type": "INVALID_PERMISSIONS_OR_MODEL_NOT_FOUND",
+                            "message": "Permission denied for base appBase1"
+                        }
+                    })
+                    .to_string(),
+                ),
+                _ => (404, "application/json", "{}".to_string()),
+            }
+        });
+
+        let mut connector = AirtableConnector::new(options(&base, "pat123", "appBase1")).unwrap();
+        let error = connector.load_credentials().await.unwrap_err().to_string();
+        assert!(error.contains("403"), "{error}");
+        assert!(
+            error.contains("INVALID_PERMISSIONS_OR_MODEL_NOT_FOUND"),
+            "{error}"
+        );
+        assert!(
+            error.contains("Permission denied for base appBase1"),
+            "{error}"
+        );
+    }
+
+    /// Registry dispatch: `create("airtable", …)` returns an AirtableConnector
+    /// instead of bailing with "not implemented".
+    #[test]
+    fn registry_dispatches_airtable_connector() {
+        let connector =
+            ConnectorRegistry::create("airtable", options("", "pat123", "appBase1")).unwrap();
+        assert_eq!(connector.kind(), "airtable");
+    }
+}
+
+#[cfg(test)]
+mod exact_bytes_tests {
+    use super::*;
+    use crate::connectors::{Connector, RemoteFile, SourceOptions, WebDavConnector};
+
+    fn binary_bytes() -> Vec<u8> {
+        let mut raw = b"%PDF-1.7\n".to_vec();
+        // Bytes that a lossy UTF-8 conversion would replace with EF BF BD.
+        raw.extend_from_slice(&[0x78, 0x9c, 0x00, 0xff, 0x80, 0xfe]);
+        raw.extend_from_slice(b"\n%%EOF\n");
+        raw
+    }
+
+    #[test]
+    fn connector_doc_bytes_prefer_exact_raw_bytes() {
+        let raw = binary_bytes();
+        let doc = ConnectorDoc {
+            id: "webdav:/x.pdf".into(),
+            blob: String::from_utf8_lossy(&raw).to_string(),
+            raw_bytes: Some(raw.clone()),
+            source: DocumentSource::WebDav,
+            semantic_identifier: "x.pdf".into(),
+            extension: ".pdf".into(),
+            doc_updated_at: String::new(),
+            size_bytes: raw.len(),
+            metadata: Default::default(),
+        };
+        assert_eq!(doc.bytes(), raw.as_slice());
+        assert!(doc.blob.contains('\u{FFFD}'));
+    }
+
+    #[test]
+    fn webdav_normalize_keeps_pdf_bytes_exact() {
+        let connector = WebDavConnector::new(SourceOptions {
+            url: "https://nas.local:5006".into(),
+            token: "user:password".into(),
+            target: "/files".into(),
+            ..Default::default()
+        });
+        let file = RemoteFile {
+            id: "webdav:/files/x.pdf".into(),
+            name: "x.pdf".into(),
+            path: "/files/x.pdf".into(),
+            extension: ".pdf".into(),
+            size_bytes: 0,
+            updated_at: String::new(),
+            fingerprint: String::new(),
+            metadata: Default::default(),
+        };
+        let raw = binary_bytes();
+        let doc = connector.normalize(&file, raw.clone()).unwrap();
+        assert_eq!(doc.raw_bytes.as_deref(), Some(raw.as_slice()));
+        assert_eq!(doc.bytes(), raw.as_slice());
+    }
+}
+
+#[cfg(test)]
+mod batch_limit_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn batch_byte_limit_stops_before_the_batch_grows_past_the_budget() {
+        let root = tempfile::tempdir().unwrap();
+        for (name, body) in [("a.txt", "aaaa"), ("b.txt", "bbbb"), ("c.txt", "cccc")] {
+            std::fs::write(root.path().join(name), body).unwrap();
+        }
+        let connector = LocalConnector::new(SourceOptions {
+            url: root.path().to_string_lossy().into_owned(),
+            token: String::new(),
+            target: String::new(),
+            ..Default::default()
+        })
+        .unwrap();
+        let batch = connector.fetch_all_with_limits(10, 5).await.unwrap();
+        assert_eq!(batch.docs.len(), 1, "only the first 4-byte file fits");
+        assert_eq!(batch.failures.len(), 1);
+        assert!(
+            batch.failures[0].contains("batch byte limit"),
+            "{}",
+            batch.failures[0]
+        );
+    }
+
+    #[tokio::test]
+    async fn batch_records_considered_source_keys_and_truncation() {
+        let root = tempfile::tempdir().unwrap();
+        for name in ["a.txt", "b.txt", "c.txt"] {
+            std::fs::write(root.path().join(name), "x").unwrap();
+        }
+        let connector = LocalConnector::new(SourceOptions {
+            url: root.path().to_string_lossy().into_owned(),
+            token: String::new(),
+            target: String::new(),
+            ..Default::default()
+        })
+        .unwrap();
+        let complete = connector.fetch_all_with_limits(10, 1 << 20).await.unwrap();
+        assert_eq!(complete.source_keys.len(), 3);
+        assert!(!complete.truncated);
+        let capped = connector.fetch_all_with_limits(2, 1 << 20).await.unwrap();
+        assert_eq!(capped.source_keys.len(), 2);
+        assert!(capped.truncated);
+    }
+
+    #[tokio::test]
+    async fn known_versions_skip_unchanged_files_before_download() {
+        let root = tempfile::tempdir().unwrap();
+        for name in ["a.txt", "b.txt", "c.txt"] {
+            std::fs::write(root.path().join(name), "content").unwrap();
+        }
+        let connector = LocalConnector::new(SourceOptions {
+            url: root.path().to_string_lossy().into_owned(),
+            token: String::new(),
+            target: String::new(),
+            ..Default::default()
+        })
+        .unwrap();
+        let first = connector.fetch_all_with_limits(10, 1 << 20).await.unwrap();
+        assert_eq!(first.docs.len(), 3);
+        let known: HashMap<String, String> = first
+            .docs
+            .iter()
+            .filter_map(|doc| {
+                doc.metadata
+                    .get("source_version")
+                    .map(|version| (doc.id.clone(), version.clone()))
+            })
+            .collect();
+        assert_eq!(known.len(), 3);
+        let second = connector
+            .fetch_all_with_known(10, 1 << 20, &known)
+            .await
+            .unwrap();
+        assert!(second.docs.is_empty(), "unchanged files were downloaded");
+        assert_eq!(second.unchanged_source_keys.len(), 3);
+        assert_eq!(second.unchanged_files.len(), 3);
+        assert_eq!(second.source_keys.len(), 3);
+        assert!(!second.truncated);
+    }
+
+    #[test]
+    fn detected_batch_limit_scales_with_available_memory_and_cpus() {
+        let eight_gib = 8 * 1024_u64 * 1024 * 1024;
+        assert_eq!(
+            detected_connector_batch_limit_bytes(&crate::host_resources::HostResources {
+                cpus: 4,
+                available_memory_bytes: Some(eight_gib),
+            }),
+            2 * 1024_u64 * 1024 * 1024
+        );
+        assert_eq!(
+            detected_connector_batch_limit_bytes(&crate::host_resources::HostResources {
+                cpus: 4,
+                available_memory_bytes: Some(128 * 1024 * 1024),
+            }),
+            crate::host_resources::BYTES_PER_DOCUMENT_TASK / 2
+        );
+        assert_eq!(
+            detected_connector_batch_limit_bytes(&crate::host_resources::HostResources {
+                cpus: 4,
+                available_memory_bytes: None,
+            }),
+            4 * crate::host_resources::BYTES_PER_DOCUMENT_TASK / 2
+        );
+    }
+
+    #[test]
+    fn batch_limit_env_defaults_and_rejects_zero() {
+        // The accessor is process-global; tests that set the variable restore it.
+        let previous = std::env::var("RAYRAG_CONNECTOR_BATCH_LIMIT_BYTES").ok();
+        unsafe {
+            std::env::remove_var("RAYRAG_CONNECTOR_BATCH_LIMIT_BYTES");
+        }
+        // Available host memory moves between the accessor's detection and this
+        // test's own detection (caches, other containers), so compare within 1%
+        // instead of requiring byte-identical reads of a live host counter.
+        let auto_limit_matches_detected =
+            |limit: u64, detected: u64| limit.abs_diff(detected) <= detected / 100 + 1;
+        let detected =
+            detected_connector_batch_limit_bytes(&crate::host_resources::HostResources::detect());
+        assert!(
+            auto_limit_matches_detected(connector_batch_limit_bytes(), detected),
+            "unset env should auto-detect"
+        );
+        unsafe {
+            std::env::set_var("RAYRAG_CONNECTOR_BATCH_LIMIT_BYTES", "0");
+        }
+        let detected =
+            detected_connector_batch_limit_bytes(&crate::host_resources::HostResources::detect());
+        assert!(
+            auto_limit_matches_detected(connector_batch_limit_bytes(), detected),
+            "zero env should auto-detect"
+        );
+        unsafe {
+            std::env::set_var("RAYRAG_CONNECTOR_BATCH_LIMIT_BYTES", "1234");
+        }
+        assert_eq!(connector_batch_limit_bytes(), 1234);
+        unsafe {
+            match previous {
+                Some(value) => std::env::set_var("RAYRAG_CONNECTOR_BATCH_LIMIT_BYTES", value),
+                None => std::env::remove_var("RAYRAG_CONNECTOR_BATCH_LIMIT_BYTES"),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod webdav_path_tests {
+    use super::*;
+    use axum::Router;
+    use axum::http::{Method, StatusCode, Uri};
+    use axum::response::IntoResponse;
+
+    fn connector(url: &str, target: &str) -> WebDavConnector {
+        WebDavConnector::new(SourceOptions {
+            url: url.to_owned(),
+            token: "user:secret".to_owned(),
+            target: target.to_owned(),
+            ..SourceOptions::default()
+        })
+    }
+
+    #[test]
+    fn webdav_hrefs_are_decoded_exactly_once() {
+        let dav = connector("https://nas.local:5006/dav", "/");
+        let url = dav.url_for("/dav/%E6%B5%8B%E8%AF%95/%E7%9B%AE%E5%BD%95/file.txt");
+        assert!(
+            url.contains("%E6%B5%8B%E8%AF%95"),
+            "Chinese path must stay encoded: {url}"
+        );
+        assert!(
+            !url.contains("%25"),
+            "href must not be double-encoded: {url}"
+        );
+        assert!(url.ends_with("/file.txt"), "file suffix lost: {url}");
+    }
+
+    #[tokio::test]
+    async fn filesystem_target_falls_back_to_the_webdav_virtual_root() {
+        async fn propfind(method: Method, uri: Uri) -> axum::response::Response {
+            if method == Method::GET {
+                if uri.path().contains("%25") {
+                    return (StatusCode::BAD_REQUEST, "double-encoded href").into_response();
+                }
+                return (StatusCode::OK, "hello").into_response();
+            }
+            if method != Method::from_bytes(b"PROPFIND").expect("PROPFIND") {
+                return StatusCode::METHOD_NOT_ALLOWED.into_response();
+            }
+            if uri.path().starts_with("/vol1") {
+                return (StatusCode::NOT_FOUND, "Not Found").into_response();
+            }
+            (
+                StatusCode::MULTI_STATUS,
+                [("Content-Type", "application/xml")],
+                r#"<?xml version="1.0" encoding="utf-8"?><D:multistatus xmlns:D="DAV:"><D:response><D:href>/%E6%B5%8B%E8%AF%95/%E7%9B%AE%E5%BD%95/file.txt</D:href><D:propstat><D:prop><D:displayname>file.txt</D:displayname><D:getcontentlength>5</D:getcontentlength><D:resourcetype/></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>"#,
+            )
+                .into_response()
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, Router::new().fallback(propfind))
+                .await
+                .unwrap()
+        });
+        let mut dav = connector(&format!("http://{address}"), "/vol1/1000/share/folder");
+        dav.load_credentials().await.expect("PROPFIND probe");
+        let files = dav.list_files().await.expect("fallback listing");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].name, "file.txt");
+        assert!(!dav.url_for(&files[0].path).contains("%25"));
+        let body = dav.fetch_file(&files[0]).await.expect("file download");
+        assert_eq!(body, b"hello");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn webdav_pdf_survives_fetch_and_normalize_with_exact_bytes() {
+        async fn handler(method: Method, uri: Uri) -> axum::response::Response {
+            if method == Method::GET {
+                let mut body = b"%PDF-1.7\n".to_vec();
+                // Binary bytes a lossy UTF-8 conversion would destroy.
+                body.extend_from_slice(&[
+                    0x25, 0xe2, 0xe3, 0xcf, 0xd3, 0x00, 0x78, 0x9c, 0xff, 0x80,
+                ]);
+                body.extend_from_slice(b"\n%%EOF\n");
+                return axum::response::Response::builder()
+                    .status(StatusCode::OK)
+                    .body(axum::body::Body::from(body))
+                    .unwrap();
+            }
+            if method != Method::from_bytes(b"PROPFIND").expect("PROPFIND") {
+                return StatusCode::METHOD_NOT_ALLOWED.into_response();
+            }
+            (
+                StatusCode::MULTI_STATUS,
+                [("Content-Type", "application/xml")],
+                r#"<?xml version="1.0" encoding="utf-8"?><D:multistatus xmlns:D="DAV:"><D:response><D:href>/files/x.pdf</D:href><D:propstat><D:prop><D:displayname>x.pdf</D:displayname><D:getcontentlength>30</D:getcontentlength><D:resourcetype/></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>"#,
+            )
+                .into_response()
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, Router::new().fallback(handler))
+                .await
+                .unwrap()
+        });
+        let mut dav = connector(&format!("http://{address}"), "/files");
+        dav.load_credentials().await.expect("PROPFIND probe");
+        let files = dav.list_files().await.expect("listing");
+        assert_eq!(files.len(), 1);
+        let raw = dav.fetch_file(&files[0]).await.expect("download");
+        assert!(raw.starts_with(b"%PDF-1.7"));
+        let doc = dav.normalize(&files[0], raw.clone()).expect("normalize");
+        assert_eq!(doc.raw_bytes.as_deref(), Some(raw.as_slice()));
+        assert_eq!(doc.bytes(), raw.as_slice());
+        assert!(
+            doc.blob.as_bytes() != raw.as_slice(),
+            "the lossy blob should differ from the exact PDF bytes"
+        );
+        server.abort();
+    }
+
+    #[test]
+    fn webdav_etag_becomes_the_fingerprint() {
+        let xml = r#"<?xml version="1.0"?><D:multistatus xmlns:D="DAV:">
+<D:response><D:href>/files/a.pdf</D:href><D:propstat><D:prop><D:displayname>a.pdf</D:displayname><D:getcontentlength>12</D:getcontentlength><D:getetag>"etag-abc-1"</D:getetag><D:resourcetype/></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+</D:multistatus>"#;
+        let entries = parse_propfind(xml).unwrap();
+        assert_eq!(entries.files.len(), 1);
+        assert_eq!(entries.files[0].fingerprint, "etag-abc-1");
+        assert!(entries.files[0].metadata.get("size_known").is_none());
+    }
+
+    #[test]
+    fn webdav_missing_content_length_is_recorded_and_skipped_by_the_size_guard() {
+        let xml = r#"<?xml version="1.0"?><D:multistatus xmlns:D="DAV:">
+<D:response><D:href>/files/a.pdf</D:href><D:propstat><D:prop><D:displayname>a.pdf</D:displayname><D:resourcetype/></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+</D:multistatus>"#;
+        let entries = parse_propfind(xml).unwrap();
+        assert_eq!(entries.files.len(), 1);
+        let file = &entries.files[0];
+        assert_eq!(file.size_bytes, 0);
+        assert_eq!(
+            file.metadata.get("size_known").map(String::as_str),
+            Some("false")
+        );
+        let reason = connector_file_skip_reason(file, false, Some(20 * 1024 * 1024))
+            .expect("unknown size cannot be bounded");
+        assert!(
+            reason.contains("did not report this file's size"),
+            "{reason}"
+        );
+        assert!(
+            connector_file_skip_reason(file, false, None).is_none(),
+            "disabling the limit also disables the unknown-size guard"
+        );
+    }
+
+    #[test]
+    fn webdav_extension_falls_back_to_the_href_when_displayname_has_none() {
+        let xml = r#"<?xml version="1.0"?><D:multistatus xmlns:D="DAV:">
+<D:response><D:href>/files/scanner.pdf</D:href><D:propstat><D:prop><D:displayname>scanner</D:displayname><D:resourcetype/></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+</D:multistatus>"#;
+        let entries = parse_propfind(xml).unwrap();
+        assert_eq!(entries.files.len(), 1);
+        assert_eq!(entries.files[0].name, "scanner");
+        assert_eq!(entries.files[0].extension, ".pdf");
+    }
+
+    #[tokio::test]
+    async fn webdav_listing_recurses_all_subfolders() {
+        async fn handler(method: Method, uri: Uri) -> axum::response::Response {
+            if method != Method::from_bytes(b"PROPFIND").expect("PROPFIND") {
+                return StatusCode::METHOD_NOT_ALLOWED.into_response();
+            }
+            let xml = match uri.path().trim_end_matches('/') {
+                "/files" => {
+                    r#"<?xml version="1.0" encoding="utf-8"?><D:multistatus xmlns:D="DAV:">
+<D:response><D:href>/files/</D:href><D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+<D:response><D:href>/files/a.pdf</D:href><D:propstat><D:prop><D:displayname>a.pdf</D:displayname><D:getcontentlength>10</D:getcontentlength><D:resourcetype/></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+<D:response><D:href>/files/sub/</D:href><D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+</D:multistatus>"#
+                }
+                "/files/sub" => {
+                    r#"<?xml version="1.0" encoding="utf-8"?><D:multistatus xmlns:D="DAV:">
+<D:response><D:href>/files/sub/</D:href><D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+<D:response><D:href>/files/sub/b.txt</D:href><D:propstat><D:prop><D:displayname>b.txt</D:displayname><D:getcontentlength>11</D:getcontentlength><D:resourcetype/></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+<D:response><D:href>/files/sub/deep/</D:href><D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+</D:multistatus>"#
+                }
+                "/files/sub/deep" => {
+                    r#"<?xml version="1.0" encoding="utf-8"?><D:multistatus xmlns:D="DAV:">
+<D:response><D:href>/files/sub/deep/</D:href><D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+<D:response><D:href>/files/sub/deep/c.md</D:href><D:propstat><D:prop><D:displayname>c.md</D:displayname><D:getcontentlength>12</D:getcontentlength><D:resourcetype/></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+</D:multistatus>"#
+                }
+                _ => return StatusCode::NOT_FOUND.into_response(),
+            };
+            (
+                StatusCode::MULTI_STATUS,
+                [("Content-Type", "application/xml")],
+                xml,
+            )
+                .into_response()
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, Router::new().fallback(handler))
+                .await
+                .unwrap()
+        });
+        let mut dav = connector(&format!("http://{address}"), "/files");
+        dav.load_credentials().await.expect("PROPFIND probe");
+        let mut names: Vec<String> = dav
+            .list_files()
+            .await
+            .expect("recursive listing")
+            .into_iter()
+            .map(|file| file.name)
+            .collect();
+        names.sort();
+        assert_eq!(names, vec!["a.pdf", "b.txt", "c.md"]);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn webdav_depth_limit_fails_loudly_instead_of_returning_a_partial_listing() {
+        async fn handler(method: Method, uri: Uri) -> axum::response::Response {
+            if method != Method::from_bytes(b"PROPFIND").expect("PROPFIND") {
+                return StatusCode::METHOD_NOT_ALLOWED.into_response();
+            }
+            let body = |href: &str, child: &str, is_dir: bool| {
+                let resource = if is_dir {
+                    "<D:resourcetype><D:collection/></D:resourcetype>"
+                } else {
+                    "<D:resourcetype/>"
+                };
+                format!(
+                    r#"<D:response><D:href>{href}</D:href><D:propstat><D:prop>{resource}<D:displayname>{child}</D:displayname><D:getcontentlength>1</D:getcontentlength></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>"#
+                )
+            };
+            let xml = match uri.path().trim_end_matches('/') {
+                "/files" => format!(
+                    r#"<?xml version="1.0"?><D:multistatus xmlns:D="DAV:">{}{}{}</D:multistatus>"#,
+                    body("/files/", "files", true),
+                    body("/files/a.txt", "a.txt", false),
+                    body("/files/sub/", "sub", true)
+                ),
+                "/files/sub" => format!(
+                    r#"<?xml version="1.0"?><D:multistatus xmlns:D="DAV:">{}{}</D:multistatus>"#,
+                    body("/files/sub/", "sub", true),
+                    body("/files/sub/deep/", "deep", true)
+                ),
+                _ => return StatusCode::NOT_FOUND.into_response(),
+            };
+            (
+                StatusCode::MULTI_STATUS,
+                [("Content-Type", "application/xml")],
+                xml,
+            )
+                .into_response()
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, Router::new().fallback(handler))
+                .await
+                .unwrap()
+        });
+        let dav = connector(&format!("http://{address}"), "/files");
+        let error = dav
+            .collect_recursive_with_limits("/files", Some(1), Some(100))
+            .await
+            .expect_err("depth 2 must not be silently ignored");
+        let message = format!("{error:#}");
+        assert!(message.contains("RAYRAG_WEBDAV_MAX_DEPTH"), "{message}");
+        assert!(message.contains("/files/sub/deep"), "{message}");
+        server.abort();
+    }
+
+    fn remote_file(name: &str, size: u64) -> RemoteFile {
+        let extension = Path::new(name)
+            .extension()
+            .map(|value| format!(".{}", value.to_string_lossy()))
+            .unwrap_or_default();
+        RemoteFile {
+            id: format!("webdav:/files/{name}"),
+            name: name.to_string(),
+            path: format!("/files/{name}"),
+            extension,
+            size_bytes: size,
+            updated_at: String::new(),
+            fingerprint: String::new(),
+            metadata: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn connector_file_filter_matches_ragflow_extensions_and_limits() {
+        // RAGFlow's exact allowlist: plain text, documents, and opt-in images.
+        for name in [
+            "a.pdf", "b.DOCX", "c.md", "d.mdx", "e.conf", "f.log", "g.json", "h.csv", "i.tsv",
+            "j.xml", "k.yml", "l.yaml", "m.sql", "n.pptx", "o.xlsx", "p.eml", "q.epub", "r.html",
+        ] {
+            assert!(
+                connector_file_skip_reason(&remote_file(name, 10), false, Some(100)).is_none(),
+                "{name} should be accepted"
+            );
+        }
+
+        // Extensions RayRAG can parse but RAGFlow's data-source filter rejects
+        // stay rejected here so the sync surface matches upstream.
+        for name in [
+            "old.doc",
+            "old.xls",
+            "old.ppt",
+            "vector.svg",
+            "audio.mp3",
+            "page.htm",
+        ] {
+            let reason = connector_file_skip_reason(&remote_file(name, 10), false, None)
+                .unwrap_or_else(|| panic!("{name} is outside the RAGFlow allowlist"));
+            assert!(reason.contains("unsupported file type"), "{name}: {reason}");
+        }
+
+        let image = connector_file_skip_reason(&remote_file("photo.png", 10), false, None)
+            .expect("images are opt-in");
+        assert!(image.contains("Allow images"), "{image}");
+        assert!(connector_file_skip_reason(&remote_file("photo.png", 10), true, None).is_none());
+
+        let oversized =
+            connector_file_skip_reason(&remote_file("big.pdf", 2048), false, Some(1024))
+                .expect("over the size threshold");
+        assert!(
+            oversized.contains("BLOB_STORAGE_SIZE_THRESHOLD"),
+            "{oversized}"
+        );
+
+        let extensionless = connector_file_skip_reason(&remote_file("README", 10), false, None)
+            .expect("no extension cannot be parsed");
+        assert!(
+            extensionless.contains("no file extension"),
+            "{extensionless}"
+        );
+    }
+
+    #[tokio::test]
+    async fn webdav_listing_skips_hidden_and_disambiguates_duplicate_names() {
+        async fn handler(method: Method, uri: Uri) -> axum::response::Response {
+            if method != Method::from_bytes(b"PROPFIND").expect("PROPFIND") {
+                return StatusCode::METHOD_NOT_ALLOWED.into_response();
+            }
+            let xml = match uri.path().trim_end_matches('/') {
+                "/files" => {
+                    r#"<?xml version="1.0" encoding="utf-8"?><D:multistatus xmlns:D="DAV:">
+<D:response><D:href>/files/</D:href><D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+<D:response><D:href>/files/a.pdf</D:href><D:propstat><D:prop><D:displayname>a.pdf</D:displayname><D:getcontentlength>10</D:getcontentlength><D:resourcetype/></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+<D:response><D:href>/files/.hidden.txt</D:href><D:propstat><D:prop><D:displayname>.hidden.txt</D:displayname><D:resourcetype/></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+<D:response><D:href>/files/node_modules/</D:href><D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+<D:response><D:href>/files/sub/</D:href><D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+</D:multistatus>"#
+                }
+                "/files/sub" => {
+                    r#"<?xml version="1.0" encoding="utf-8"?><D:multistatus xmlns:D="DAV:">
+<D:response><D:href>/files/sub/</D:href><D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+<D:response><D:href>/files/sub/a.pdf</D:href><D:propstat><D:prop><D:displayname>a.pdf</D:displayname><D:getcontentlength>11</D:getcontentlength><D:resourcetype/></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+</D:multistatus>"#
+                }
+                _ => return StatusCode::NOT_FOUND.into_response(),
+            };
+            (
+                StatusCode::MULTI_STATUS,
+                [("Content-Type", "application/xml")],
+                xml,
+            )
+                .into_response()
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, Router::new().fallback(handler))
+                .await
+                .unwrap()
+        });
+        let mut dav = connector(&format!("http://{address}"), "/files");
+        dav.load_credentials().await.expect("PROPFIND probe");
+        let mut names: Vec<String> = dav
+            .list_files()
+            .await
+            .expect("listing")
+            .into_iter()
+            .map(|file| file.name)
+            .collect();
+        names.sort();
+        assert_eq!(names, vec!["a.pdf", "sub / a.pdf"]);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn webdav_skips_unsupported_oversized_and_disabled_images_before_download() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let downloads = Arc::new(AtomicUsize::new(0));
+        let counter = downloads.clone();
+        let handler = move |method: Method, uri: Uri| {
+            let counter = counter.clone();
+            async move {
+                if method == Method::GET {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    if uri.path().ends_with("/empty.txt") {
+                        return (StatusCode::OK, "").into_response();
+                    }
+                    return (StatusCode::OK, "text body").into_response();
+                }
+                if method != Method::from_bytes(b"PROPFIND").expect("PROPFIND") {
+                    return StatusCode::METHOD_NOT_ALLOWED.into_response();
+                }
+                if !uri.path().starts_with("/files") {
+                    return StatusCode::NOT_FOUND.into_response();
+                }
+                (
+                    StatusCode::MULTI_STATUS,
+                    [("Content-Type", "application/xml")],
+                    r#"<?xml version="1.0" encoding="utf-8"?><D:multistatus xmlns:D="DAV:">
+<D:response><D:href>/files/</D:href><D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+<D:response><D:href>/files/a.txt</D:href><D:propstat><D:prop><D:displayname>a.txt</D:displayname><D:getcontentlength>9</D:getcontentlength><D:resourcetype/></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+<D:response><D:href>/files/old.doc</D:href><D:propstat><D:prop><D:displayname>old.doc</D:displayname><D:getcontentlength>9</D:getcontentlength><D:resourcetype/></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+<D:response><D:href>/files/big.pdf</D:href><D:propstat><D:prop><D:displayname>big.pdf</D:displayname><D:getcontentlength>2048</D:getcontentlength><D:resourcetype/></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+<D:response><D:href>/files/photo.png</D:href><D:propstat><D:prop><D:displayname>photo.png</D:displayname><D:getcontentlength>9</D:getcontentlength><D:resourcetype/></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+<D:response><D:href>/files/empty.txt</D:href><D:propstat><D:prop><D:displayname>empty.txt</D:displayname><D:getcontentlength>0</D:getcontentlength><D:resourcetype/></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+</D:multistatus>"#,
+                )
+                    .into_response()
+            }
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, Router::new().fallback(handler))
+                .await
+                .unwrap()
+        });
+        let mut dav = connector(&format!("http://{address}"), "/files");
+        dav.max_file_bytes = Some(1024);
+        dav.allow_images = false;
+        dav.load_credentials().await.expect("PROPFIND probe");
+        let batch = dav
+            .fetch_all_with_known(10, 10 * 1024 * 1024, &HashMap::new())
+            .await
+            .expect("batch");
+        assert_eq!(batch.docs.len(), 1, "only a.txt is downloadable");
+        assert_eq!(batch.docs[0].semantic_identifier, "a.txt");
+        assert_eq!(batch.skipped.len(), 4, "{:?}", batch.skipped);
+        assert_eq!(
+            downloads.load(Ordering::SeqCst),
+            2,
+            "no GET for pre-download skips; the empty file is fetched and then skipped"
+        );
+        let joined = batch.skipped.join("\n");
+        assert!(joined.contains("unsupported file type .doc"), "{joined}");
+        assert!(joined.contains("BLOB_STORAGE_SIZE_THRESHOLD"), "{joined}");
+        assert!(joined.contains("Allow images"), "{joined}");
+        assert!(joined.contains("remote file is empty"), "{joined}");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn missing_webdav_paths_are_a_visible_probe_error() {
+        async fn not_found() -> StatusCode {
+            StatusCode::NOT_FOUND
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, Router::new().fallback(not_found))
+                .await
+                .unwrap()
+        });
+        let mut dav = connector(&format!("http://{address}"), "/vol1/1000/missing");
+        let error = dav.load_credentials().await.unwrap_err().to_string();
+        assert!(error.contains("remote path not found"), "{error}");
+        assert!(error.contains("Tried:"), "{error}");
+        server.abort();
+    }
+}

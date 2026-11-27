@@ -206,4 +206,76 @@ pub fn baidu_results_to_tool_rows(results: &[BaiduSearchResult]) -> Vec<Value> {
         .collect()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn parses_baidu_html_into_rows() {
+        let html = r#"
+<html><body><div id="content_left">
+<div class="result c-container">
+  <h3 class="t"><a href="https://baike.baidu.com/item/RAGFlow">RAGFlow_百度百科</a></h3>
+  <div class="c-span-last"><span class="content-right_8Zs40">检索增强生成引擎介绍</span></div>
+</div>
+<div class="result c-container">
+  <h3 class="t"><a href="https://github.com/infiniflow/ragflow">ragflow: GitHub</a></h3>
+  <div class="c-abstract">开源 RAG 引擎</div>
+</div>
+</div></body></html>"#;
+        let results = parse_baidu_results(html);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].title, "RAGFlow_百度百科");
+        assert!(results[0].link.contains("baike.baidu.com"));
+        assert!(results[1].snippet.contains("开源"));
+    }
+
+    #[test]
+    fn rows_are_ragflow_shaped() {
+        let rows = baidu_results_to_tool_rows(&[BaiduSearchResult {
+            title: "t".into(),
+            link: "https://l".into(),
+            snippet: "s".into(),
+        }]);
+        assert_eq!(rows[0]["title"], "t");
+        assert_eq!(rows[0]["link"], "https://l");
+        assert_eq!(rows[0]["snippet"], "s");
+    }
+
+    #[tokio::test]
+    async fn empty_query_is_rejected() {
+        let client = BaiduClient::default();
+        let error = client
+            .search(&BaiduSearchRequest {
+                query: "".into(),
+                top_n: 5,
+            })
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("query is required"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live access to baidu.com"]
+    async fn live_baidu_search() {
+        let result = BaiduClient::default()
+            .search(&BaiduSearchRequest {
+                query: "RAGFlow".into(),
+                top_n: 5,
+            })
+            .await;
+        match result {
+            Ok(results) => {
+                eprintln!("baidu live search returned {} results", results.len());
+                assert!(
+                    !results.is_empty(),
+                    "baidu returned success but zero parsed results"
+                );
+            }
+            Err(error) if error.to_string().contains("safety verification") => {
+                eprintln!("baidu live search skipped: {}", error);
+            }
+            Err(error) => panic!("baidu live search error: {error:?}"),
+        }
+    }
+}

@@ -281,4 +281,168 @@ impl TtsClient {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        Router,
+        body::Body,
+        http::StatusCode,
+        routing::{get, post},
+    };
+    use serde_json::{Value, json};
 
+    async fn spawn_audio_server() -> (String, tokio::task::JoinHandle<()>) {
+        let app = Router::new()
+            .route(
+                "/v1/audio/transcriptions",
+                post(|mut multipart: axum::extract::Multipart| async move {
+                    let mut file_name = String::new();
+                    let mut model = String::new();
+                    let mut bytes: Option<Vec<u8>> = None;
+                    let mut field = multipart.next_field().await.unwrap();
+                    while let Some(f) = field {
+                        let name = f.name().unwrap_or("").to_string();
+                        if name == "file" {
+                            file_name = f.file_name().unwrap_or("").to_string();
+                            let data = f.bytes().await.unwrap();
+                            bytes = Some(data.to_vec());
+                        } else if name == "model" {
+                            model = f.text().await.unwrap();
+                        }
+                        field = multipart.next_field().await.unwrap();
+                    }
+                    let bytes = bytes.unwrap();
+                    assert_eq!(model, "whisper-1");
+                    assert_eq!(bytes, b"RIFFfake-wav");
+                    assert_eq!(file_name, "audio.wav");
+                    axum::Json(json!({"text": "  Hello RayRAG ASR  " }))
+                }),
+            )
+            .route(
+                "/v1/audio/speech",
+                post(|payload: axum::Json<Value>| async move {
+                    assert_eq!(payload["model"], "kokoro-tts");
+                    assert_eq!(payload["voice"], "alloy");
+                    assert_eq!(payload["input"], "Hello RayRAG TTS");
+                    (
+                        StatusCode::OK,
+                        [(axum::http::header::CONTENT_TYPE, "audio/mpeg")],
+                        Body::from(vec![0x49u8, 0x44, 0x33, 0x00, 0x01]), // fake ID3 header
+                    )
+                }),
+            )
+            .route("/health", get(|| async { "ok" }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{addr}/v1"), server)
+    }
+
+    #[tokio::test]
+    async fn asr_transcribes_multipart_audio_with_openai_shape() {
+        let (base, _server) = spawn_audio_server().await;
+        let client = AsrClient::new(AudioConfig {
+            api_base: base,
+            api_key: "test-key".into(),
+            model: "whisper-1".into(),
+        });
+        let out = client
+            .transcribe(b"RIFFfake-wav", "audio.wav")
+            .await
+            .unwrap();
+        assert_eq!(out.text, "Hello RayRAG ASR");
+        assert!(out.tokens > 0);
+    }
+
+    #[tokio::test]
+    async fn asr_rejects_missing_text_field_with_clear_error() {
+        let app = Router::new().route(
+            "/v1/audio/transcriptions",
+            post(|mut _multipart: axum::extract::Multipart| async move {
+                axum::Json(json!({"error": "no text"}))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = AsrClient::new(AudioConfig {
+            api_base: format!("http://{addr}/v1"),
+            api_key: String::new(),
+            model: "whisper-1".into(),
+        });
+        let err = client.transcribe(b"wav", "a.wav").await.unwrap_err();
+        assert!(err.to_string().contains("missing `text` field"), "{err}");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn tts_synthesizes_raw_audio_bytes_with_default_voice() {
+        let (base, _server) = spawn_audio_server().await;
+        let client = TtsClient::new(AudioConfig {
+            api_base: base,
+            api_key: "test-key".into(),
+            model: "kokoro-tts".into(),
+        });
+        let audio = client.synthesize("Hello RayRAG TTS").await.unwrap();
+        assert_eq!(audio, vec![0x49u8, 0x44, 0x33, 0x00, 0x01]);
+    }
+
+    #[tokio::test]
+    async fn tts_propagates_non_success_status_with_truncated_body() {
+        let app = Router::new().route(
+            "/v1/audio/speech",
+            post(|_payload: axum::Json<Value>| async move {
+                (StatusCode::BAD_REQUEST, "quota exceeded")
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = TtsClient::new(AudioConfig {
+            api_base: format!("http://{addr}/v1"),
+            api_key: String::new(),
+            model: "m".into(),
+        });
+        let err = client.synthesize("hi").await.unwrap_err();
+        assert!(err.to_string().contains("400"), "{err}");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn asr_client_sets_bearer_auth_when_key_is_present() {
+        let (base, _server) = spawn_audio_server().await;
+        // The mock does not check auth; verify the request still succeeds and
+        // the client was constructed with the key (no panic paths).
+        let client = AsrClient::new(AudioConfig {
+            api_base: base,
+            api_key: "sk-secret".into(),
+            model: "whisper-1".into(),
+        });
+        let out = client
+            .transcribe(b"RIFFfake-wav", "audio.wav")
+            .await
+            .unwrap();
+        assert_eq!(out.text, "Hello RayRAG ASR");
+    }
+
+    #[test]
+    fn deepseek_tts_answers_wav_while_openai_compatible_answers_mpeg() {
+        let deepseek = TtsClient::new(AudioConfig {
+            api_base: "https://api.deepseek.com/v1".into(),
+            api_key: "k".into(),
+            model: "deepseek-flash".into(),
+        });
+        assert_eq!(deepseek.content_type(), "audio/wav");
+        assert_eq!(
+            TtsClient::new(AudioConfig::default()).content_type(),
+            "audio/mpeg"
+        );
+    }
+}

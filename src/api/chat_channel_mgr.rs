@@ -310,4 +310,44 @@ pub async fn delete_chat_channel(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn store_is_tenant_scoped_and_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir
+            .path()
+            .join("channels.json")
+            .to_string_lossy()
+            .into_owned();
+        let store = ChatChannelStore::new(&path).unwrap();
+        let row = ChatChannelRecord {
+            id: "cc-1".into(),
+            tenant_id: "tenant-a".into(),
+            name: "Telegram Bot".into(),
+            channel: "telegram".into(),
+            config: serde_json::json!({ "credential": { "token": "tok" } }),
+            chat_id: None,
+            created_at: 1,
+            updated_at: 1,
+        };
+        store.insert(row).unwrap();
+        assert_eq!(store.list("tenant-a").len(), 1);
+        assert!(store.list("tenant-b").is_empty());
+        assert!(
+            ChatChannelStore::new(&path)
+                .unwrap()
+                .get("tenant-a", "cc-1")
+                .is_some()
+        );
+        assert!(store.delete("tenant-a", "cc-1").unwrap());
+        assert!(
+            ChatChannelStore::new(&path)
+                .unwrap()
+                .list("tenant-a")
+                .is_empty()
+        );
+    }
+}

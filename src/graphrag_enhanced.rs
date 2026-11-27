@@ -625,4 +625,40 @@ impl EntityGraph {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn test_ner_extraction() {
+        let ner = NerExtractor::new();
+        let entities = ner.extract("John Smith works at Google Inc in San Francisco since 2023.");
+        assert!(entities.iter().any(|e| e.name == "John Smith"));
+        assert!(entities.iter().any(|e| e.name.contains("Google")));
+        assert!(entities.iter().any(|e| e.name == "San Francisco"));
+    }
+
+    #[test]
+    fn test_entity_resolution() {
+        let resolver = EntityResolver::new(0.3); // Lower threshold for short names
+        let groups = resolver.resolve(&[
+            "Google Inc".into(),
+            "Google".into(),
+            "Microsoft Corp".into(),
+        ]);
+        assert!(groups.len() == 2); // Google Inc + Google merged, Microsoft separate
+    }
+
+    #[test]
+    fn test_graph_search() {
+        let mut graph = EntityGraph::new();
+        // Use entity names that match our patterns
+        let entities = NerExtractor::new().extract("John Smith works at Google Inc and uses Rust.");
+        graph.add_entities(&entities);
+        graph.add_relation("John Smith", "Google Inc", 1.0);
+        graph.add_relation("Google Inc", "Rust", 1.0);
+
+        let connected = graph.search_connected("John Smith", 2);
+        assert!(!connected.is_empty());
+    }
+}

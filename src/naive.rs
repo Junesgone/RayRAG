@@ -272,4 +272,114 @@ pub fn naive_chunk_text(
     Ok(docs)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn normalize_overlapped_clamps_90() {
+        assert_eq!(normalize_overlapped_percent(0.0), 0);
+        assert_eq!(normalize_overlapped_percent(0.5), 50);
+        assert_eq!(normalize_overlapped_percent(95.0), 90);
+        assert_eq!(normalize_overlapped_percent(f64::NAN), 0);
+    }
+
+    #[test]
+    fn add_positions_increments_page() {
+        let mut d = ChunkDoc::base("f.txt", vec![], vec![]);
+        add_positions(&mut d, &[(0.0, 1.0, 2.0, 3.0, 4.0)]);
+        assert_eq!(d.page_num_int.as_ref().unwrap(), &vec![1]);
+        assert_eq!(d.top_int.as_ref().unwrap(), &vec![3]);
+        assert_eq!(d.position_int.as_ref().unwrap(), &vec![(1, 1, 2, 3, 4)]);
+    }
+
+    #[test]
+    fn tokenize_strips_table_tags() {
+        let mut d = ChunkDoc::base("f.txt", vec![], vec![]);
+        tokenize_doc(&mut d, "a<table><tr><td>cell</td></tr></table>b");
+        assert_eq!(
+            d.content_with_weight,
+            "a<table><tr><td>cell</td></tr></table>b"
+        );
+        assert_eq!(d.content_ltks, vec!["a", "cell", "b"]);
+    }
+
+    #[test]
+    fn split_with_pattern_pairs_separators() {
+        let d = ChunkDoc::base("f.txt", vec![], vec![]);
+        let docs = split_with_pattern(&d, "。", "第一句。第二句。").unwrap();
+        assert_eq!(docs.len(), 2);
+        assert!(docs[0].content_with_weight.contains("第一句。"));
+        assert!(docs[1].content_with_weight.contains("第二句。"));
+    }
+
+    #[test]
+    fn split_with_pattern_invalid_falls_back() {
+        let d = ChunkDoc::base("f.txt", vec![], vec![]);
+        let docs = split_with_pattern(&d, "(", "内容").unwrap();
+        assert_eq!(docs.len(), 1);
+    }
+
+    #[test]
+    fn tokenize_chunks_skips_empty_and_adds_positions() {
+        let docs = tokenize_chunks(
+            &[
+                "正文一".to_string(),
+                "   ".to_string(),
+                "正文二".to_string(),
+            ],
+            "f.txt",
+            vec![],
+            vec![],
+            None,
+        );
+        assert_eq!(docs.len(), 2);
+        assert_eq!(docs[0].page_num_int.as_ref().unwrap(), &vec![1]);
+        assert_eq!(docs[1].page_num_int.as_ref().unwrap(), &vec![3]);
+    }
+
+    #[test]
+    fn tokenize_chunks_child_delimiter_sets_mom() {
+        let docs = tokenize_chunks(
+            &["第一句。第二句。".to_string()],
+            "f.txt",
+            vec![],
+            vec![],
+            Some("。"),
+        );
+        assert_eq!(docs.len(), 2);
+        assert!(docs[0].mom_with_weight.is_some());
+        assert_eq!(
+            docs[0].mom_with_weight.as_deref().unwrap(),
+            "第一句。第二句。"
+        );
+    }
+
+    #[test]
+    fn merge_markdown_sections_with_overlap() {
+        let long = "长内容".repeat(60);
+        let sections = vec![(long.clone(), String::new()), (long.clone(), String::new())];
+        let merged = merge_markdown_sections(&sections, 32, 10);
+        assert_eq!(merged.len(), 2);
+        // 10% of 180 chars = 18-char overlap tail carried into next chunk
+        let overlap_len = long.chars().count() * 10 / 100;
+        let tail: String = long
+            .chars()
+            .rev()
+            .take(overlap_len)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        assert!(merged[1].starts_with(&tail), "{:?}", merged);
+    }
+
+    #[test]
+    fn naive_chunk_text_txt_family() {
+        let text = "第一段。第二段。第三段。";
+        let docs = naive_chunk_text("code.py", text, 128, "\n。；！？", 0.0, None).unwrap();
+        assert!(!docs.is_empty());
+        assert_eq!(docs[0].docnm_kwd, "code.py");
+        assert!(naive_chunk_text("book.pdf", text, 128, "\n。；！？", 0.0, None).is_err());
+    }
+}

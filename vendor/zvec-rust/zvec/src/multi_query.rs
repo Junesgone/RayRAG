@@ -322,4 +322,90 @@ impl Drop for SubQuery {
 // Safety: SubQuery owns its handle exclusively.
 unsafe impl Send for SubQuery {}
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn create_and_drop_multi_query() {
+        let mq = MultiQuery::new().expect("create multi-query");
+        assert_eq!(mq.sub_query_count(), 0);
+    }
+
+    #[test]
+    fn create_and_drop_sub_query() {
+        let _sq = SubQuery::new().expect("create sub-query");
+    }
+
+    #[test]
+    fn multi_query_basic_setters() {
+        let mut mq = MultiQuery::new().expect("create multi-query");
+        mq.set_topk(20).expect("set topk");
+        assert_eq!(mq.topk(), 20);
+        mq.set_include_vector(true).expect("set include_vector");
+        assert!(mq.include_vector());
+    }
+
+    #[test]
+    fn add_sub_query_increments_count() {
+        let mut mq = MultiQuery::new().expect("create multi-query");
+        let mut sq = SubQuery::new().expect("create sub-query");
+        sq.set_field_name("vec").expect("set field name");
+        sq.set_query_vector(&[0.1, 0.2, 0.3, 0.4])
+            .expect("set query vector");
+        sq.set_num_candidates(50).expect("set num candidates");
+        mq.add_sub_query(&sq).expect("add sub-query");
+        assert_eq!(mq.sub_query_count(), 1);
+    }
+
+    #[test]
+    fn rerank_weighted_rejects_empty() {
+        let mut mq = MultiQuery::new().expect("create multi-query");
+        let err = mq.set_rerank_weighted(&[]).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidArgument);
+    }
+
+    #[test]
+    fn sub_query_set_fts() {
+        let mut sub = SubQuery::new().expect("create sub-query");
+        sub.set_field_name("content").expect("set field name");
+
+        let mut fts = Fts::new().expect("create fts payload");
+        fts.set_match_string("hello world")
+            .expect("set match string");
+
+        sub.set_fts(&fts).expect("set fts payload");
+    }
+
+    #[test]
+    fn sub_query_set_fts_params() {
+        let mut sub = SubQuery::new().expect("create sub-query");
+        sub.set_field_name("content").expect("set field name");
+
+        let params = FtsQueryParams::new(Some("AND")).expect("create fts params");
+        sub.set_fts_params(params).expect("set fts params");
+    }
+
+    #[test]
+    fn sub_query_set_ivf_rabitq_params() {
+        let mut sub = SubQuery::new().expect("create sub-query");
+        sub.set_field_name("embedding").expect("set field name");
+        sub.set_query_vector(&[0.1, 0.2, 0.3, 0.4])
+            .expect("set query vector");
+
+        let params = IvfRabitqQueryParams::new(16, 0.0, false, false);
+        sub.set_ivf_rabitq_params(params)
+            .expect("set ivf rabitq params");
+    }
+
+    #[test]
+    fn sub_query_set_diskann_params() {
+        let mut sub = SubQuery::new().expect("create sub-query");
+        sub.set_field_name("embedding").expect("set field name");
+        sub.set_query_vector(&[0.1, 0.2, 0.3, 0.4])
+            .expect("set query vector");
+
+        let params = DiskannQueryParams::new(200);
+        sub.set_diskann_params(params).expect("set diskann params");
+    }
+}

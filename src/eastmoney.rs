@@ -239,4 +239,74 @@ pub fn eastmoney_results_to_tool_rows(results: &[EastMoneyNewsResult]) -> Vec<Va
         .collect()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn rows_are_ragflow_shaped() {
+        let rows = eastmoney_results_to_tool_rows(&[EastMoneyNewsResult {
+            title: "t".into(),
+            link: "https://l".into(),
+            snippet: "s".into(),
+            publish_time: "2026-08-01 09:00:00".into(),
+            media_name: "东方财富".into(),
+        }]);
+        assert_eq!(rows[0]["title"], "t");
+        assert_eq!(rows[0]["link"], "https://l");
+        assert_eq!(rows[0]["snippet"], "s");
+        assert_eq!(rows[0]["publish_time"], "2026-08-01 09:00:00");
+        assert_eq!(rows[0]["media_name"], "东方财富");
+    }
+
+    #[test]
+    fn build_param_is_compact_json_with_cms_article_type() {
+        let param = EastMoneyClient::build_param("600519", 5);
+        let value: Value = serde_json::from_str(&param).unwrap();
+        assert_eq!(value["keyword"], "600519");
+        assert_eq!(value["type"][0], "cmsArticleWebOld");
+        assert_eq!(value["param"]["cmsArticleWebOld"]["pageSize"], 5);
+    }
+
+    #[test]
+    fn jsonp_strip_parses_inner_json() {
+        let body = r#"x({"code":0,"result":{"cmsArticleWebOld":[{"title":"t"}]}})"#;
+        let value = EastMoneyClient::strip_jsonp(body).unwrap();
+        assert_eq!(value["code"], 0);
+        assert_eq!(value["result"]["cmsArticleWebOld"][0]["title"], "t");
+    }
+
+    #[test]
+    fn jsonp_strip_rejects_plain_json() {
+        let error = EastMoneyClient::strip_jsonp(r#"{"code":0}"#).unwrap_err();
+        assert!(error.to_string().contains("JSONP"));
+    }
+
+    #[tokio::test]
+    async fn missing_symbol_is_rejected() {
+        let client = EastMoneyClient::default();
+        let error = client
+            .search(&EastMoneyNewsRequest {
+                symbol: "".into(),
+                top_n: 5,
+            })
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("symbol"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live mainland-China access to EastMoney"]
+    async fn live_eastmoney_news() {
+        let results = EastMoneyClient::default()
+            .search(&EastMoneyNewsRequest {
+                symbol: "农业".into(),
+                top_n: 3,
+            })
+            .await
+            .unwrap();
+        assert!(!results.is_empty());
+        assert!(!results[0].title.is_empty());
+        assert!(!results[0].link.is_empty());
+    }
+}

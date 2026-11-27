@@ -671,4 +671,199 @@ fn detect_format(data: &[u8]) -> &'static str {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vision::VisionConfig;
 
+    #[test]
+    fn svg_text_parsing_handles_nested_spans_and_entities() {
+        let parsed = parse_svg(
+            br#"<svg><text>Lead <tspan>A &amp; B</tspan> tail</text><path d="M0 0"/></svg>"#,
+        )
+        .unwrap();
+        assert!(parsed.contains("Lead\nA & B\ntail\n"));
+    }
+
+    #[test]
+    fn invalid_ocr_configuration_is_reported_without_blocking_text_svg() {
+        let parser = FigureParser::from_ocr_config(Err(anyhow::anyhow!(
+            "Unsupported RAYRAG_OCR_PROVIDER: invalid-provider"
+        )));
+        for filename in ["sample.jpg", "sample.jpeg", "sample.png", "sample.tiff"] {
+            let error = parser.parse(filename, b"unused").unwrap_err().to_string();
+            assert!(error.contains("invalid-provider"), "{error}");
+            assert!(error.contains("RAYRAG_OCR_PROVIDER"), "{error}");
+            assert!(error.contains("URL, credentials and model"), "{error}");
+            assert!(error.contains("parse again"), "{error}");
+        }
+        let document = parser
+            .parse("sample.svg", br#"<svg><text>Searchable text</text></svg>"#)
+            .unwrap();
+        assert!(document.content.contains("Searchable text"));
+    }
+
+    #[test]
+    fn clean_markdown_block_strips_fences_and_whitespace() {
+        assert_eq!(clean_markdown_block("```markdown\n# Title\n```"), "# Title");
+        assert_eq!(clean_markdown_block("```md\nbody\n```"), "body");
+        assert_eq!(clean_markdown_block("```\ncode\n```"), "code");
+        assert_eq!(clean_markdown_block("  plain text  "), "plain text");
+        // No closing fence → leading fence stripped, rest kept (Python behavior).
+        assert_eq!(clean_markdown_block("```unclosed"), "unclosed");
+    }
+
+    #[test]
+    fn dimensions_detected_from_png_jpeg_webp_gif_bmp_magic_bytes() {
+        // PNG: signature + 8-byte IHDR chunk header, then BE width/height.
+        let mut png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        png.extend_from_slice(&[0, 0, 0, 13]); // IHDR len
+        png.extend_from_slice(b"IHDR");
+        png.extend_from_slice(&100u32.to_be_bytes());
+        png.extend_from_slice(&200u32.to_be_bytes());
+        assert_eq!(detect_dimensions(&png), Some((100, 200)));
+
+        // JPEG: SOI + SOF0 with dims (height at +5, width at +7 after marker).
+        let mut jpeg = vec![0xFF, 0xD8];
+        jpeg.extend_from_slice(&[0xFF, 0xC0, 0x00, 0x11, 0x08]);
+        jpeg.extend_from_slice(&300u16.to_be_bytes()); // height
+        jpeg.extend_from_slice(&400u16.to_be_bytes()); // width
+        assert_eq!(detect_dimensions(&jpeg), Some((400, 300)));
+
+        // WEBP VP8 lossy: RIFF....WEBPVP8 ... dims at +26 (LE, low 14 bits).
+        let mut webp = vec![b'R', b'I', b'F', b'F', 0, 0, 0, 0, b'W', b'E', b'B', b'P'];
+        webp.extend_from_slice(b"VP8 ");
+        webp.resize(26, 0);
+        webp.extend_from_slice(&640u16.to_le_bytes()); // width (low 14 bits)
+        webp.extend_from_slice(&480u16.to_le_bytes()); // height (low 14 bits)
+        assert_eq!(detect_dimensions(&webp), Some((640, 480)));
+
+        // GIF87a: dims at +6 LE.
+        let mut gif = vec![b'G', b'I', b'F', b'8', b'7', b'a'];
+        gif.extend_from_slice(&16u16.to_le_bytes());
+        gif.extend_from_slice(&32u16.to_le_bytes());
+        assert_eq!(detect_dimensions(&gif), Some((16, 32)));
+
+        // BMP: dims at +18 LE signed.
+        let mut bmp = vec![b'B', b'M', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        bmp.extend_from_slice(&50i32.to_le_bytes());
+        bmp.extend_from_slice(&25i32.to_le_bytes());
+        assert_eq!(detect_dimensions(&bmp), Some((50, 25)));
+
+        // Unknown/truncated → None.
+        assert_eq!(detect_dimensions(b"hello"), None);
+        assert_eq!(detect_dimensions(&[0xFF, 0xD8]), None);
+    }
+
+    #[test]
+    fn tiny_images_are_skipped_by_vision_llm_chunk_sync() {
+        // A 1x1 PNG: signature + IHDR with BE width/height = 1.
+        let mut png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        png.extend_from_slice(&[0, 0, 0, 13]);
+        png.extend_from_slice(b"IHDR");
+        png.extend_from_slice(&1u32.to_be_bytes());
+        png.extend_from_slice(&1u32.to_be_bytes());
+        png.extend_from_slice(&[8, 6, 0, 0, 0]);
+
+        // Without a live endpoint the client construction succeeds but the
+        // tiny-image gate must short-circuit BEFORE any network call.
+        let vision = VisionClient::new(VisionConfig::default());
+        let result = vision_llm_chunk_sync(&vision, &png, "image/png", None).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    #[ignore = "requires opt-in GPU vision endpoint"]
+    fn gpu_vision_describes_png_via_vision_llm_chunk_sync() {
+        // 64x24 white PNG with a black rectangle (same generator as the
+        // agent::tests::gpu_vision_endpoint_describes_image_with_prompt test).
+        fn encode_png(width: u32, height: u32, pixels: &[u8]) -> Vec<u8> {
+            use flate2::Compression;
+            use flate2::write::ZlibEncoder;
+            use std::io::Write;
+            let mut raw = Vec::with_capacity((width * height * 3 + height) as usize);
+            for y in 0..height {
+                raw.push(0);
+                for x in 0..width {
+                    let i = ((y * width + x) * 3) as usize;
+                    raw.extend_from_slice(&pixels[i..i + 3]);
+                }
+            }
+            let mut z = ZlibEncoder::new(Vec::new(), Compression::default());
+            z.write_all(&raw).unwrap();
+            let idat = z.finish().unwrap();
+            // PNG chunk CRC-32 (IEEE 802.3, poly 0xEDB88320), no external crate.
+            fn crc32(bytes: &[u8]) -> u32 {
+                let mut table = [0u32; 256];
+                for (i, entry) in table.iter_mut().enumerate() {
+                    let mut c = i as u32;
+                    for _ in 0..8 {
+                        c = if c & 1 != 0 {
+                            0xEDB8_8320 ^ (c >> 1)
+                        } else {
+                            c >> 1
+                        };
+                    }
+                    *entry = c;
+                }
+                let mut crc = 0xFFFF_FFFFu32;
+                for &b in bytes {
+                    crc = table[((crc ^ b as u32) & 0xFF) as usize] ^ (crc >> 8);
+                }
+                crc ^ 0xFFFF_FFFF
+            }
+            fn chunk(tag: &[u8; 4], data: &[u8]) -> Vec<u8> {
+                let mut out = Vec::new();
+                out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+                out.extend_from_slice(tag);
+                out.extend_from_slice(data);
+                out.extend_from_slice(&crc32(&[tag, data].concat()).to_be_bytes());
+                out
+            }
+            let mut png = Vec::new();
+            png.extend_from_slice(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+            let mut ihdr = Vec::new();
+            ihdr.extend_from_slice(&width.to_be_bytes());
+            ihdr.extend_from_slice(&height.to_be_bytes());
+            ihdr.extend_from_slice(&[8, 2, 0, 0, 0]);
+            png.extend_from_slice(&chunk(b"IHDR", &ihdr));
+            png.extend_from_slice(&chunk(b"IDAT", &idat));
+            png.extend_from_slice(&chunk(b"IEND", &[]));
+            png
+        }
+        let (w, h) = (64u32, 24u32);
+        let mut pixels = vec![255u8; (w * h * 3) as usize];
+        for y in 8..16 {
+            for x in 8..56 {
+                let i = ((y * w + x) * 3) as usize;
+                pixels[i] = 0;
+                pixels[i + 1] = 0;
+                pixels[i + 2] = 0;
+            }
+        }
+        let png = encode_png(w, h, &pixels);
+
+        let base = std::env::var("RAYRAG_TEST_VISION_BASE").unwrap();
+        let model = std::env::var("RAYRAG_TEST_VISION_MODEL").unwrap_or_else(|_| "default".into());
+        let vision = VisionClient::new(VisionConfig {
+            api_base: base,
+            api_key: String::new(),
+            model,
+            lang: "Chinese".into(),
+        });
+        // Long prompt path: describe_image_bytes with a custom prompt.
+        let described = vision_llm_chunk_sync(
+            &vision,
+            &png,
+            "image/png",
+            Some("What color is the rectangle? Answer in one word."),
+        )
+        .unwrap();
+        assert!(!described.is_empty());
+        let lower = described.to_ascii_lowercase();
+        assert!(
+            lower.contains("black") || lower.contains("dark") || described.contains("黑"),
+            "unexpected vision reply: {described}"
+        );
+    }
+}

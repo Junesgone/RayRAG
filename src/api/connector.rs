@@ -887,6 +887,173 @@ pub async fn mcp_tools_full() -> impl IntoResponse {
     }))
 }
 
+#[cfg(test)]
+mod channel_config_tests {
+    use super::*;
 
+    #[test]
+    fn both_configuration_shapes_are_read_and_the_wrapper_is_not_a_channel() {
+        // The shape `channels_config_from_env()` produces.
+        let wrapped = serde_json::json!({
+            "channels": {
+                "feishu": {"enabled": true, "app_id": "a"},
+                "webhook": {"enabled": false, "callback_url": "https://example.com/hook"}
+            }
+        });
+        assert_eq!(channel_entries(&wrapped).len(), 2);
+        let rows = channel_rows_from_config(&wrapped);
+        assert_eq!(rows.len(), 2);
+        assert!(
+            rows.iter().all(|row| row["id"] != "channels"),
+            "the wrapper key must not be reported as a channel: {rows:?}"
+        );
+        assert!(
+            rows.iter()
+                .any(|row| row["id"] == "feishu" && row["enabled"] == true)
+        );
+        assert!(
+            rows.iter()
+                .any(|row| row["id"] == "webhook" && row["enabled"] == false)
+        );
 
+        // The unwrapped shape, which RAYRAG_CHANNELS_CONFIG may be given as.
+        let plain = serde_json::json!({"feishu": {"enabled": true}});
+        let rows = channel_rows_from_config(&plain);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["id"], "feishu");
 
+        // Nothing configured means nothing claimed.
+        assert!(channel_rows_from_config(&serde_json::json!({})).is_empty());
+        assert!(channel_rows_from_config(&serde_json::json!({"channels": {}})).is_empty());
+    }
+
+    #[test]
+    fn a_bot_is_a_channel_with_a_callback() {
+        let config = serde_json::json!({
+            "channels": {
+                "webhook": {"callback_url": "https://example.com/hook", "enabled": true},
+                "feishu": {"app_id": "a", "app_secret": "b"}
+            }
+        });
+        let bots = bot_rows_from_config(&config);
+        assert_eq!(
+            bots.len(),
+            1,
+            "only the callback channel is a bot: {bots:?}"
+        );
+        assert_eq!(bots[0]["platform"], "webhook");
+        assert_eq!(bots[0]["webhook_url"], "https://example.com/hook");
+        assert_eq!(bots[0]["id"], "webhook-local");
+    }
+
+    #[test]
+    fn a_display_name_is_capitalised_not_invented() {
+        assert_eq!(channel_display_name("feishu"), "Feishu");
+        assert_eq!(channel_display_name("webhook"), "Webhook");
+        assert_eq!(channel_display_name(""), "");
+    }
+}
+
+#[cfg(test)]
+mod connector_store_tests {
+    use super::*;
+
+    fn sample(id: &str, owner: &str) -> Connector {
+        Connector {
+            id: id.into(),
+            name: "files".into(),
+            source_type: "local".into(),
+            enabled: true,
+            config: serde_json::json!({"path": "/tmp"}),
+            owner_id: owner.into(),
+            created_at: 1,
+            updated_at: 1,
+            last_test: None,
+        }
+    }
+
+    #[test]
+    fn the_list_is_scoped_to_the_owner_unless_the_caller_administers_the_deployment() {
+        let store = ConnectorStore::in_memory();
+        store.put(sample("a", "user-1")).unwrap();
+        store.put(sample("b", "user-2")).unwrap();
+        assert_eq!(store.list("user-1", false).len(), 1);
+        assert_eq!(store.list("user-1", false)[0].id, "a");
+        assert_eq!(store.list("user-1", true).len(), 2);
+        // A connector another user owns is not readable, and reads as absent rather than forbidden,
+        // which is what an unknown id reads as too.
+        assert!(store.get_for("b", "user-1", false).is_none());
+        assert!(store.get_for("b", "user-1", true).is_some());
+        assert!(store.get_for("missing", "user-1", true).is_none());
+    }
+
+    #[test]
+    fn deleting_a_connector_takes_its_history_with_it() {
+        let store = ConnectorStore::in_memory();
+        store.put(sample("a", "user-1")).unwrap();
+        store.log("a", "created", "info", "created").unwrap();
+        store.log("a", "test", "error", "refused").unwrap();
+        assert_eq!(store.log_count("a"), 2);
+        // Newest first, so the most recent failure is the first thing a user sees.
+        assert_eq!(store.logs_for("a", 10)[0].message, "refused");
+        assert!(store.delete("a").unwrap());
+        assert_eq!(store.log_count("a"), 0);
+        assert!(!store.delete("a").unwrap());
+    }
+
+    #[test]
+    fn the_log_is_bounded_so_a_retried_connector_cannot_grow_without_end() {
+        let store = ConnectorStore::in_memory();
+        store.put(sample("a", "user-1")).unwrap();
+        for index in 0..(MAX_LOG_LINES + 25) {
+            store
+                .log("a", "test", "info", &format!("line {index}"))
+                .unwrap();
+        }
+        assert_eq!(store.log_count("a"), MAX_LOG_LINES);
+        // The oldest lines are the ones dropped.
+        assert_eq!(
+            store.logs_for("a", 5)[0].message,
+            format!("line {}", MAX_LOG_LINES + 24)
+        );
+        // One response is clamped to 500 lines even though 2000 are kept, so a caller cannot pull the
+        // whole history into memory by asking for it.
+        assert_eq!(store.logs_for("a", 5_000).len(), 500);
+        assert_eq!(
+            store.logs_for("a", 5_000).last().unwrap().message,
+            format!("line {}", MAX_LOG_LINES - 500 + 25)
+        );
+    }
+
+    #[test]
+    fn the_known_types_come_from_the_registry_rather_than_a_second_list() {
+        let known = known_source_types();
+        assert!(known.iter().any(|kind| kind == "local"), "{known:?}");
+        assert!(known.iter().any(|kind| kind == "webdav"), "{known:?}");
+        // A type nobody implements is not offered, so validation cannot accept one.
+        assert!(
+            !known.iter().any(|kind| kind == "not-a-real-source"),
+            "{known:?}"
+        );
+    }
+
+    #[test]
+    fn configuration_is_read_under_both_the_upstream_and_the_local_key_names() {
+        // `path` is the friendly alias for the source location, and the registry reads it from `url`.
+        let options =
+            source_options(&serde_json::json!({"path": "/srv/data", "api_key": "secret"}));
+        assert_eq!(options.url, "/srv/data");
+        assert_eq!(options.token, "secret");
+        assert!(options.target.is_empty());
+        let options =
+            source_options(&serde_json::json!({"token": "t2", "target": "sub", "subdir": "x"}));
+        assert_eq!(options.token, "t2");
+        assert_eq!(options.target, "sub");
+        // An explicit url wins over the alias, so a caller that sets both is not second-guessed.
+        let options = source_options(&serde_json::json!({"url": "/explicit", "path": "/alias"}));
+        assert_eq!(options.url, "/explicit");
+        // Absent keys are empty rather than guessed.
+        let options = source_options(&serde_json::json!({}));
+        assert!(options.target.is_empty() && options.token.is_empty() && options.url.is_empty());
+    }
+}

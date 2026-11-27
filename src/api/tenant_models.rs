@@ -4013,7 +4013,1989 @@ pub async fn delete_tenant_model_instance(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    /// `use-set-default-model.ts` sends RAGFlow's composite
+    /// `{model_name}@{instance_name}@{provider_name}`; `resolve()` accepted it
+    /// while this validator only knew the bare name and RayRAG's internal
+    /// `provider/instance/model`, so the request answered 409 and the default
+    /// could never be persisted from the upstream-shaped client.
+    #[test]
+    fn default_chat_selector_accepts_the_ragflow_composite() {
+        let instance = TenantModelInstance {
+            tenant_id: "t1".into(),
+            provider_id: "openai".into(),
+            instance_id: "primary".into(),
+            instance_name: "Hosted".into(),
+            api_base: "http://127.0.0.1:1/v1".into(),
+            api_key: None,
+            region: None,
+            models: vec![TenantModelSpec {
+                name: "gpt-4o".into(),
+                model_types: vec![ModelCapability::Chat],
+                max_tokens: None,
+                enabled: true,
+                is_tools: false,
+                ocr_config: None,
+            }],
+            extra: Default::default(),
+        };
+        for selector in ["gpt-4o", "openai/primary/gpt-4o", "gpt-4o@Hosted@OpenAI"] {
+            let defaults = HashMap::from([("t1".to_string(), selector.to_string())]);
+            assert!(
+                validate_default_chat_models(std::slice::from_ref(&instance), &defaults).is_ok(),
+                "selector {selector} must validate"
+            );
+        }
+        // An unknown model still fails.
+        let defaults = HashMap::from([("t1".to_string(), "nope@Hosted@OpenAI".to_string())]);
+        assert!(validate_default_chat_models(std::slice::from_ref(&instance), &defaults).is_err());
+    }
+
+    use super::*;
+    use crate::api::features::ProviderUpdate;
+
+    #[test]
+    fn sync_model_types_adds_removes_and_counts_ops() {
+        let store = TenantModelStore::in_memory();
+        store
+            .upsert(
+                &providers(),
+                "tenant-a",
+                "local",
+                "inst-1",
+                update(Some("secret-key")),
+            )
+            .unwrap();
+        // Add a missing capability, keep an existing one, remove another.
+        let operated = store
+            .sync_model_types(
+                "tenant-a",
+                "local",
+                "inst-1",
+                "model-a",
+                &[ModelCapability::Rerank, ModelCapability::Chat],
+                &[ModelCapability::Embedding],
+            )
+            .unwrap();
+        assert_eq!(operated, 3);
+        let model = &store.list("tenant-a")[0].models[0];
+        assert!(model.model_types.contains(&ModelCapability::Rerank));
+        assert!(model.model_types.contains(&ModelCapability::Chat));
+        assert!(!model.model_types.contains(&ModelCapability::Embedding));
+        assert!(model.enabled);
+    }
+
+    #[test]
+    fn sync_model_types_is_idempotent_for_repeated_add() {
+        let store = TenantModelStore::in_memory();
+        store
+            .upsert(
+                &providers(),
+                "tenant-a",
+                "local",
+                "inst-1",
+                update(Some("secret-key")),
+            )
+            .unwrap();
+        store
+            .sync_model_types(
+                "tenant-a",
+                "local",
+                "inst-1",
+                "model-a",
+                &[ModelCapability::Rerank],
+                &[],
+            )
+            .unwrap();
+        store
+            .sync_model_types(
+                "tenant-a",
+                "local",
+                "inst-1",
+                "model-a",
+                &[ModelCapability::Rerank],
+                &[],
+            )
+            .unwrap();
+        let model = &store.list("tenant-a")[0].models[0];
+        let rerank_count = model
+            .model_types
+            .iter()
+            .filter(|t| **t == ModelCapability::Rerank)
+            .count();
+        assert_eq!(rerank_count, 1, "no duplicate capability entries");
+    }
+
+    #[test]
+    fn add_instance_model_appends_new_row_and_rejects_duplicates() {
+        let store = TenantModelStore::in_memory();
+        store
+            .upsert(
+                &providers(),
+                "tenant-a",
+                "local",
+                "inst-1",
+                update(Some("secret-key")),
+            )
+            .unwrap();
+        // Add a brand-new model row with capabilities + is_tools.
+        store
+            .add_instance_model(
+                "tenant-a",
+                "local",
+                "inst-1",
+                "custom-model",
+                &[ModelCapability::Chat],
+                Some(4096),
+                true,
+                None,
+            )
+            .unwrap();
+        let models = &store.list("tenant-a")[0].models;
+        let added = models.iter().find(|m| m.name == "custom-model").unwrap();
+        assert!(added.enabled);
+        assert!(added.model_types.contains(&ModelCapability::Chat));
+        assert_eq!(added.max_tokens, Some(4096));
+        assert!(added.is_tools);
+        // The same model name on the same instance is rejected (upstream
+        // `Model ... already exists`).
+        let duplicate = store.add_instance_model(
+            "tenant-a",
+            "local",
+            "inst-1",
+            "custom-model",
+            &[ModelCapability::Chat],
+            Some(4096),
+            false,
+            None,
+        );
+        assert!(duplicate.is_err());
+        assert!(
+            duplicate
+                .unwrap_err()
+                .to_string()
+                .contains("already exists")
+        );
+        // An empty capability list is rejected fail-closed.
+        assert!(
+            store
+                .add_instance_model(
+                    "tenant-a",
+                    "local",
+                    "inst-1",
+                    "other-model",
+                    &[],
+                    None,
+                    false,
+                    None,
+                )
+                .is_err()
+        );
+        // Unknown instance fails closed.
+        assert!(
+            store
+                .add_instance_model(
+                    "tenant-a",
+                    "local",
+                    "missing-instance",
+                    "m",
+                    &[ModelCapability::Chat],
+                    None,
+                    false,
+                    None,
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn factory_catalog_exposes_per_model_detail_for_show_provider_model() {
+        // The `show_provider_model` endpoint reads the embedded full factory
+        // catalog; assert the detail fields it emits (name / type /
+        // max_tokens) match the upstream llm_factories.json shape.
+        let deepseek = crate::providers::factory_full_models("deepseek", "DeepSeek");
+        assert!(!deepseek.is_empty(), "DeepSeek catalog must not be empty");
+        let model = deepseek
+            .iter()
+            .find(|m| m.n == "deepseek-v4-flash")
+            .expect("deepseek-v4-flash present in DeepSeek catalog");
+        assert_eq!(model.t, "chat");
+        assert!(model.mx > 0, "catalog carries max_tokens");
+
+        // Case-insensitive name matching (mirrors upstream `_factory_llm_name`).
+        let matched = deepseek
+            .iter()
+            .find(|m| m.n.eq_ignore_ascii_case("DEEPSEEK-V4-FLASH"))
+            .is_some();
+        assert!(matched, "case-insensitive model lookup");
+    }
+
+    #[test]
+    fn add_provider_added_state_derives_from_tenant_instances() {
+        // `add_ragflow_provider` treats a provider as already-added once the
+        // tenant owns at least one instance for it (the modal creates the
+        // instance right after calling add_provider).
+        let provider_store = providers();
+        let store = TenantModelStore::in_memory();
+        store
+            .upsert(&provider_store, "tenant-a", "local", "inst-1", update(None))
+            .unwrap();
+        let configured = store.list_configured("tenant-a");
+        // 'local' has an instance -> considered added.
+        assert!(configured.iter().any(|i| i.provider_id == "local"));
+        // A provider without instances is not yet added.
+        assert!(!configured.iter().any(|i| i.provider_id == "openai"));
+    }
+
+    #[test]
+    fn sync_model_types_errors_on_unknown_instance_or_model() {
+        let store = TenantModelStore::in_memory();
+        store
+            .upsert(
+                &providers(),
+                "tenant-a",
+                "local",
+                "inst-1",
+                update(Some("secret-key")),
+            )
+            .unwrap();
+        assert!(
+            store
+                .sync_model_types("tenant-a", "local", "nope", "model-a", &[], &[])
+                .is_err()
+        );
+        assert!(
+            store
+                .sync_model_types("tenant-a", "local", "inst-1", "missing", &[], &[])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn replace_model_types_clears_an_incompatible_chat_default() {
+        let provider_store = providers();
+        let store = TenantModelStore::in_memory();
+        store
+            .upsert(&provider_store, "tenant-a", "local", "inst-1", update(None))
+            .unwrap();
+        store
+            .set_default_chat_model(&provider_store, "tenant-a", Some("local/inst-1/model-a"))
+            .unwrap();
+
+        store
+            .replace_model_types(
+                "tenant-a",
+                "local",
+                "Local",
+                "inst-1",
+                "model-a",
+                &[ModelCapability::Rerank],
+                Some(8192),
+            )
+            .unwrap();
+
+        assert_eq!(store.default_chat_model("tenant-a"), None);
+        assert_eq!(
+            store.list("tenant-a")[0].models[0].model_types,
+            vec![ModelCapability::Rerank]
+        );
+    }
+
+    #[test]
+    fn requested_model_types_accepts_upstream_aliases_and_rejects_unknowns() {
+        assert_eq!(
+            requested_model_types(&[
+                "vision".to_string(),
+                "asr".to_string(),
+                "ocr".to_string(),
+                "vision".to_string(),
+            ])
+            .unwrap(),
+            vec![
+                ModelCapability::ImageToText,
+                ModelCapability::SpeechToText,
+                ModelCapability::Ocr,
+            ]
+        );
+        assert!(requested_model_types(&["unknown".to_string()]).is_err());
+    }
+
+    fn update(api_key: Option<&str>) -> TenantModelInstanceUpdate {
+        TenantModelInstanceUpdate {
+            tenant_id: None,
+            instance_name: "Primary".into(),
+            api_base: None,
+            api_key: api_key.map(str::to_string),
+            clear_api_key: false,
+            models: vec![TenantModelSpec {
+                name: "model-a".into(),
+                model_types: vec![ModelCapability::Chat, ModelCapability::Embedding],
+                max_tokens: Some(8192),
+                enabled: true,
+                is_tools: false,
+                ocr_config: None,
+            }],
+        }
+    }
+
+    fn providers() -> ProviderStore {
+        let providers = ProviderStore::in_memory();
+        providers
+            .create(
+                "local",
+                ProviderUpdate {
+                    name: "Local".into(),
+                    api_base: "http://127.0.0.1:8080/v1".into(),
+                    models: vec!["model-a".into()],
+                    enabled: true,
+                    api_key: None,
+                    clear_api_key: false,
+                },
+            )
+            .unwrap();
+        providers
+    }
+
+    #[test]
+    fn tenant_models_survive_restart_without_exposing_secret() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-tenant-models-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("tenant_models.json");
+        let store = TenantModelStore::new(&path).unwrap();
+        let public = store
+            .upsert(
+                &providers(),
+                "tenant-a",
+                "local",
+                "primary",
+                update(Some("secret")),
+            )
+            .unwrap();
+        assert!(public.api_key_configured);
+        assert!(
+            serde_json::to_value(&public)
+                .unwrap()
+                .get("api_key")
+                .is_none()
+        );
+        drop(store);
+
+        let restored = TenantModelStore::new(&path).unwrap();
+        assert_eq!(
+            restored.list_configured("tenant-a")[0].api_key.as_deref(),
+            Some("secret")
+        );
+        assert_eq!(restored.list("tenant-a")[0].models[0].model_types.len(), 2);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn failed_tenant_model_persistence_rolls_back_memory() {
+        let root = std::env::temp_dir().join(format!(
+            "rayrag-tenant-models-rollback-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("tenant_models.json");
+        let store = TenantModelStore::new(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(
+            store
+                .upsert(&providers(), "tenant-a", "local", "primary", update(None))
+                .is_err()
+        );
+        assert!(store.list("tenant-a").is_empty());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn tenant_model_update_preserves_or_clears_secret_explicitly() {
+        let store = TenantModelStore::in_memory();
+        let providers = providers();
+        store
+            .upsert(
+                &providers,
+                "tenant-a",
+                "local",
+                "primary",
+                update(Some("secret")),
+            )
+            .unwrap();
+
+        store
+            .upsert(&providers, "tenant-a", "local", "primary", update(Some("")))
+            .unwrap();
+        assert_eq!(
+            store.list_configured("tenant-a")[0].api_key.as_deref(),
+            Some("secret")
+        );
+
+        let mut clear = update(None);
+        clear.clear_api_key = true;
+        store
+            .upsert(&providers, "tenant-a", "local", "primary", clear)
+            .unwrap();
+        assert_eq!(store.list_configured("tenant-a")[0].api_key, None);
+    }
+
+    #[test]
+    fn default_chat_selector_survives_restart_and_delete_modes_differ() {
+        let root = std::env::temp_dir().join(format!(
+            "rayrag-default-chat-model-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("tenant_models.json");
+        let provider_store = providers();
+
+        // Legacy array snapshots migrate to the object envelope without inventing a default.
+        std::fs::write(&path, "[]").unwrap();
+        let store = TenantModelStore::new(&path).unwrap();
+        assert_eq!(store.default_chat_model("tenant-a"), None);
+        assert!(
+            serde_json::from_slice::<serde_json::Value>(&std::fs::read(&path).unwrap())
+                .unwrap()
+                .is_object()
+        );
+
+        store
+            .upsert(
+                &provider_store,
+                "tenant-a",
+                "local",
+                "primary",
+                update(None),
+            )
+            .unwrap();
+        let selector = "local/primary/model-a";
+        assert_eq!(
+            store
+                .set_default_chat_model(&provider_store, "tenant-a", Some(selector))
+                .unwrap()
+                .as_deref(),
+            Some(selector)
+        );
+
+        let mut disabled = update(None);
+        disabled.models[0].enabled = false;
+        let error = store
+            .upsert(&provider_store, "tenant-a", "local", "primary", disabled)
+            .unwrap_err();
+        assert!(error.to_string().contains("Tenant default chat selector"));
+        assert!(store.list_configured("tenant-a")[0].models[0].enabled);
+
+        let error = store
+            .delete(&provider_store, "tenant-a", "local", "primary")
+            .unwrap_err();
+        assert!(error.to_string().contains("Tenant default chat selector"));
+        assert_eq!(store.list_configured("tenant-a").len(), 1);
+        drop(store);
+
+        let restored = TenantModelStore::new(&path).unwrap();
+        assert_eq!(
+            restored.default_chat_model("tenant-a").as_deref(),
+            Some(selector)
+        );
+        assert!(
+            restored
+                .delete_clearing_defaults(&provider_store, "tenant-a", "local", "primary")
+                .unwrap()
+        );
+        assert_eq!(restored.default_chat_model("tenant-a"), None);
+        drop(restored);
+        let restored = TenantModelStore::new(&path).unwrap();
+        assert_eq!(restored.default_chat_model("tenant-a"), None);
+        assert!(restored.list_configured("tenant-a").is_empty());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn ragflow_instance_creation_allows_catalog_fallback_and_deduplicates_names() {
+        let provider_store = providers();
+        let store = TenantModelStore::in_memory();
+        let first = store
+            .create_ragflow_instance(
+                &provider_store,
+                "tenant-a",
+                "local",
+                "Hosted",
+                "https://example.com/v1",
+                Some("secret".into()),
+                None,
+                Vec::new(),
+            )
+            .unwrap();
+        let second = store
+            .create_ragflow_instance(
+                &provider_store,
+                "tenant-a",
+                "local",
+                "Hosted",
+                "https://example.com/v1",
+                None,
+                None,
+                Vec::new(),
+            )
+            .unwrap();
+        assert_eq!(first.instance_name, "Hosted");
+        assert_eq!(second.instance_name, "Hosted(1)");
+        assert!(first.models.is_empty());
+        assert!(first.api_key_configured);
+        assert!(!second.api_key_configured);
+
+        let mut empty_legacy = update(None);
+        empty_legacy.models.clear();
+        assert!(
+            store
+                .upsert(&provider_store, "tenant-a", "local", "legacy", empty_legacy,)
+                .unwrap_err()
+                .to_string()
+                .contains("At least one tenant model")
+        );
+    }
+
+    #[test]
+    fn available_provider_urls_advertise_fixed_default_intl_region_maps() {
+        let providers = plan_available_providers(factory_llm_entries());
+        let siliconflow = providers
+            .iter()
+            .find(|provider| provider.name == "SILICONFLOW")
+            .expect("missing SILICONFLOW card");
+        assert_eq!(
+            siliconflow.url.get("default").map(String::as_str),
+            Some("https://api.siliconflow.cn/v1")
+        );
+        assert_eq!(
+            siliconflow.url.get("intl").map(String::as_str),
+            Some("https://api.siliconflow.com/v1")
+        );
+
+        let tongyi = providers
+            .iter()
+            .find(|provider| provider.name == "Tongyi-Qianwen")
+            .expect("missing Tongyi-Qianwen card");
+        assert_eq!(
+            tongyi.url.get("default").map(String::as_str),
+            Some("https://dashscope.aliyuncs.com/compatible-mode/v1")
+        );
+        assert_eq!(
+            tongyi.url.get("intl").map(String::as_str),
+            Some("https://dashscope-intl.aliyuncs.com/compatible-model/v1")
+        );
+
+        let openai = providers
+            .iter()
+            .find(|provider| provider.name == "OpenAI")
+            .expect("missing OpenAI card");
+        assert_eq!(openai.url.len(), 1);
+        assert!(openai.url.contains_key("default"));
+    }
+
+    #[test]
+    fn ragflow_instance_creation_persists_selected_region() {
+        let provider_store = providers();
+        let store = TenantModelStore::in_memory();
+        store
+            .create_ragflow_instance(
+                &provider_store,
+                "tenant-a",
+                "local",
+                "Primary",
+                "https://example.com/v1",
+                Some("secret".into()),
+                Some("intl"),
+                Vec::new(),
+            )
+            .unwrap();
+        let configured = store.list_configured("tenant-a");
+        assert_eq!(configured.len(), 1);
+        assert_eq!(configured[0].region.as_deref(), Some("intl"));
+
+        // Empty / whitespace regions are normalized away like upstream's
+        // `extra_fields` construction.
+        store
+            .create_ragflow_instance(
+                &provider_store,
+                "tenant-a",
+                "local",
+                "Fallback",
+                "https://example.com/v1",
+                None,
+                Some("  "),
+                Vec::new(),
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .list_configured("tenant-a")
+                .iter()
+                .find(|instance| instance.instance_name == "Fallback")
+                .unwrap()
+                .region,
+            None
+        );
+    }
+
+    #[test]
+    fn composite_model_selectors_are_right_anchored_and_default_to_the_sole_instance() {
+        let provider_store = ProviderStore::in_memory();
+        provider_store
+            .create(
+                "siliconflow-test",
+                ProviderUpdate {
+                    name: "SILICONFLOW".into(),
+                    api_base: "https://api.siliconflow.example/v1".into(),
+                    models: vec!["text-embedding@nomic".into(), "chat-model".into()],
+                    enabled: true,
+                    api_key: None,
+                    clear_api_key: false,
+                },
+            )
+            .unwrap();
+        let store = TenantModelStore::in_memory();
+        store
+            .upsert(
+                &provider_store,
+                "tenant-a",
+                "siliconflow-test",
+                "instance-east",
+                TenantModelInstanceUpdate {
+                    tenant_id: None,
+                    instance_name: "prod-east".into(),
+                    api_base: Some("https://tenant.example/v1".into()),
+                    api_key: Some("tenant-secret".into()),
+                    clear_api_key: false,
+                    models: vec![
+                        TenantModelSpec {
+                            name: "text-embedding@nomic".into(),
+                            model_types: vec![ModelCapability::Chat],
+                            max_tokens: Some(4096),
+                            enabled: true,
+                            is_tools: false,
+                            ocr_config: None,
+                        },
+                        TenantModelSpec {
+                            name: "chat-model".into(),
+                            model_types: vec![ModelCapability::Chat],
+                            max_tokens: Some(4096),
+                            enabled: true,
+                            is_tools: false,
+                            ocr_config: None,
+                        },
+                    ],
+                },
+            )
+            .unwrap();
+
+        let explicit = store
+            .resolve(
+                &provider_store,
+                "tenant-a",
+                ModelCapability::Chat,
+                Some("text-embedding@nomic@prod-east@SILICONFLOW"),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(explicit.model_name, "text-embedding@nomic");
+        assert_eq!(explicit.instance_id, "instance-east");
+        assert_eq!(explicit.instance_name, "prod-east");
+        assert_eq!(
+            explicit.ragflow_selector(),
+            "text-embedding@nomic@prod-east@SILICONFLOW"
+        );
+
+        let legacy_default = store
+            .resolve(
+                &provider_store,
+                "tenant-a",
+                ModelCapability::Chat,
+                Some("chat-model@SILICONFLOW"),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(legacy_default.instance_id, "instance-east");
+
+        store
+            .upsert(
+                &provider_store,
+                "tenant-a",
+                "siliconflow-test",
+                "instance-west",
+                TenantModelInstanceUpdate {
+                    tenant_id: None,
+                    instance_name: "prod-west".into(),
+                    api_base: Some("https://tenant-west.example/v1".into()),
+                    api_key: Some("tenant-west-secret".into()),
+                    clear_api_key: false,
+                    models: vec![
+                        TenantModelSpec {
+                            name: "text-embedding@nomic".into(),
+                            model_types: vec![ModelCapability::Chat],
+                            max_tokens: Some(4096),
+                            enabled: true,
+                            is_tools: false,
+                            ocr_config: None,
+                        },
+                        TenantModelSpec {
+                            name: "chat-model".into(),
+                            model_types: vec![ModelCapability::Chat],
+                            max_tokens: Some(4096),
+                            enabled: true,
+                            is_tools: false,
+                            ocr_config: None,
+                        },
+                    ],
+                },
+            )
+            .unwrap();
+        let error = store
+            .resolve(
+                &provider_store,
+                "tenant-a",
+                ModelCapability::Chat,
+                Some("chat-model@SILICONFLOW"),
+            )
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("Instance default not found for model")
+        );
+    }
+
+    #[test]
+    fn tenant_api_key_envelopes_are_decoded_without_accepting_non_string_secrets() {
+        assert_eq!(
+            decode_tenant_api_key(Some(r#"{"api_key":"secret","is_tools":true}"#)).as_deref(),
+            Some("secret")
+        );
+        assert_eq!(
+            decode_tenant_api_key(Some(r#"{"api_key":7,"is_tools":true}"#)).as_deref(),
+            Some("")
+        );
+        assert_eq!(
+            decode_tenant_api_key(Some(r#"{"is_tools":true}"#)).as_deref(),
+            Some("")
+        );
+        assert_eq!(
+            decode_tenant_api_key(Some("plain-secret")).as_deref(),
+            Some("plain-secret")
+        );
+        assert_eq!(decode_tenant_api_key(None), None);
+    }
+
+    // ── models_api_service port tests ─────────────────────────────────
+
+    fn fake_provider(id: &str, name: &str) -> crate::api::features::Provider {
+        crate::api::features::Provider {
+            id: id.into(),
+            name: name.into(),
+            api_base: "http://127.0.0.1:8080/v1".into(),
+            models: vec![],
+            enabled: true,
+            api_key: None,
+        }
+    }
+
+    fn fake_factory(name: &str, rank: Option<&str>, rows: &[(&str, &[&str])]) -> FactoryLlmEntry {
+        FactoryLlmEntry {
+            name: name.into(),
+            rank: rank.map(str::to_string),
+            llm: rows
+                .iter()
+                .map(|(llm_name, types)| FactoryLlmRow {
+                    llm_name: (*llm_name).into(),
+                    model_types: types.iter().map(|value| value.to_string()).collect(),
+                    max_tokens: 8192,
+                })
+                .collect(),
+        }
+    }
+
+    fn fake_instance(
+        tenant: &str,
+        provider_id: &str,
+        instance_id: &str,
+        instance_name: &str,
+        models: Vec<TenantModelSpec>,
+    ) -> TenantModelInstance {
+        TenantModelInstance {
+            tenant_id: tenant.into(),
+            provider_id: provider_id.into(),
+            instance_id: instance_id.into(),
+            instance_name: instance_name.into(),
+            api_base: "http://127.0.0.1:8080/v1".into(),
+            api_key: None,
+            region: None,
+            models,
+            extra: Default::default(),
+        }
+    }
+
+    fn spec(name: &str, types: &[ModelCapability], enabled: bool) -> TenantModelSpec {
+        TenantModelSpec {
+            name: name.into(),
+            model_types: types.to_vec(),
+            max_tokens: Some(8192),
+            enabled,
+            is_tools: false,
+            ocr_config: None,
+        }
+    }
+
+    /// Pick a real `(factory name, model name)` pair from the embedded
+    /// catalog whose model carries the requested raw capability.
+    fn factory_model_for_type(raw_type: &str) -> (String, String) {
+        for entry in factory_llm_entries() {
+            if let Some(row) = entry.llm.iter().find(|row| {
+                row.model_types
+                    .iter()
+                    .any(|capability| capability == raw_type)
+            }) {
+                return (entry.name.clone(), row.llm_name.clone());
+            }
+        }
+        panic!("embedded factory catalog has no {raw_type} model");
+    }
+
+    #[test]
+    fn instance_model_rows_keep_inactive_models_visible_and_use_explicit_types() {
+        let factory = factory_llm_entries()
+            .iter()
+            .find(|entry| !entry.llm.is_empty())
+            .unwrap();
+        let model_name = factory.llm[0].llm_name.clone();
+        let provider = fake_provider("factory", &factory.name);
+        let instance = fake_instance(
+            "tenant-a",
+            "factory",
+            "primary",
+            "default",
+            vec![spec(&model_name, &[ModelCapability::Ocr], false)],
+        );
+
+        let row = instance_model_rows(&provider, &instance)
+            .into_iter()
+            .find(|row| row.name == model_name)
+            .unwrap();
+        assert_eq!(row.status, "inactive");
+        assert_eq!(row.model_type, vec!["ocr"]);
+    }
+
+    #[test]
+    fn model_type_mappings_match_ragflow_constant_tables() {
+        assert_eq!(model_type_field("chat"), Some("llm_id"));
+        assert_eq!(model_type_field("embedding"), Some("embd_id"));
+        assert_eq!(model_type_field("rerank"), Some("rerank_id"));
+        assert_eq!(model_type_field("asr"), Some("asr_id"));
+        assert_eq!(model_type_field("vision"), Some("img2txt_id"));
+        assert_eq!(model_type_field("tts"), Some("tts_id"));
+        assert_eq!(model_type_field("ocr"), Some("ocr_id"));
+        assert_eq!(model_type_field("unknown"), None);
+        assert_eq!(model_tag_type("asr"), "speech2text");
+        assert_eq!(model_tag_type("vision"), "image2text");
+        assert_eq!(model_tag_type("chat"), "chat");
+        assert_eq!(model_tag_type("embedding"), "embedding");
+        assert_eq!(model_tag_type("ocr"), "ocr");
+        assert_eq!(model_tag_type("something-else"), "something-else");
+    }
+
+    #[test]
+    fn split_model_default_is_right_anchored() {
+        assert_eq!(split_model_default("a@b@c"), ("a", "b", "c"));
+        assert_eq!(split_model_default("a@c"), ("a", "default", "c"));
+        assert_eq!(split_model_default("a"), ("a", "default", ""));
+        // '@' inside the model name stays in the leftmost field.
+        assert_eq!(
+            split_model_default("text-embedding@q8_0@lmstudio@LM-Studio"),
+            ("text-embedding@q8_0", "lmstudio", "LM-Studio")
+        );
+    }
+
+    #[test]
+    fn get_model_info_resolves_entity_factory_fallback_and_specials() {
+        let providers = vec![fake_provider("oa", "OpenAI")];
+        let instances = vec![fake_instance(
+            "tenant-a",
+            "oa",
+            "inst",
+            "default",
+            vec![
+                spec("gpt-chat", &[ModelCapability::Chat], true),
+                spec("gpt-disabled", &[ModelCapability::Chat], false),
+            ],
+        )];
+        let factory = vec![fake_factory(
+            "OpenAI",
+            Some("999"),
+            &[
+                ("gpt-chat", &["chat"]),
+                ("gpt-factory-only", &["chat"]),
+                ("embed-model", &["embedding"]),
+            ],
+        )];
+
+        let info = get_model_info(
+            &providers,
+            &instances,
+            &factory,
+            "gpt-chat@default@OpenAI",
+            "chat",
+            "",
+            "",
+        )
+        .unwrap();
+        assert_eq!(info.model_type, "chat");
+        assert_eq!(info.selector, "gpt-chat@default@OpenAI");
+        assert!(info.enable);
+
+        // Disabled entity -> None (status != ACTIVE upstream).
+        assert!(
+            get_model_info(
+                &providers,
+                &instances,
+                &factory,
+                "gpt-disabled@default@OpenAI",
+                "chat",
+                "",
+                ""
+            )
+            .is_none()
+        );
+
+        // Factory fallback: model not configured on the instance but present
+        // in the factory catalog with the right capability.
+        let fallback = get_model_info(
+            &providers,
+            &instances,
+            &factory,
+            "gpt-factory-only@default@OpenAI",
+            "chat",
+            "",
+            "",
+        )
+        .unwrap();
+        assert_eq!(fallback.model_name, "gpt-factory-only");
+        assert!(fallback.enable);
+
+        // Capability mismatch in the factory -> None.
+        assert!(
+            get_model_info(
+                &providers,
+                &instances,
+                &factory,
+                "embed-model@default@OpenAI",
+                "chat",
+                "",
+                ""
+            )
+            .is_none()
+        );
+
+        // Unknown provider / instance -> None.
+        assert!(
+            get_model_info(
+                &providers,
+                &instances,
+                &factory,
+                "gpt-chat@default@Nope",
+                "chat",
+                "",
+                ""
+            )
+            .is_none()
+        );
+        assert!(
+            get_model_info(
+                &providers,
+                &instances,
+                &factory,
+                "gpt-chat@other@OpenAI",
+                "chat",
+                "",
+                ""
+            )
+            .is_none()
+        );
+
+        // Empty selector -> None.
+        assert!(get_model_info(&providers, &instances, &factory, "", "chat", "", "").is_none());
+
+        // deepdoc OCR special case is always enabled without any lookup.
+        let deepdoc = get_model_info(
+            &providers,
+            &instances,
+            &factory,
+            "deepdoc@default@infiniflow",
+            "ocr",
+            "",
+            "",
+        )
+        .unwrap();
+        assert_eq!(deepdoc.model_type, "ocr");
+        assert!(deepdoc.enable);
+
+        // TEI builtin embedding special case (env-injected).
+        let tei = get_model_info(
+            &providers,
+            &instances,
+            &factory,
+            "bge-m3@Builtin",
+            "embedding",
+            "tei-test",
+            "bge-m3",
+        )
+        .unwrap();
+        assert_eq!(tei.model_provider, "Builtin");
+        assert_eq!(tei.model_instance, "default");
+        assert_eq!(tei.model_type, "embedding");
+        assert!(tei.enable);
+
+        // API tag -> mapped tag: a `vision` default resolves with the
+        // `image2text` raw capability.
+        let vision_factory = vec![fake_factory(
+            "OpenAI",
+            Some("999"),
+            &[("gpt-4o", &["chat", "image2text"])],
+        )];
+        let vision = get_model_info(
+            &providers,
+            &instances,
+            &vision_factory,
+            "gpt-4o@default@OpenAI",
+            "vision",
+            "",
+            "",
+        )
+        .unwrap();
+        assert_eq!(vision.model_type, "image2text");
+    }
+
+    #[test]
+    fn check_model_available_matches_upstream_validation_messages() {
+        let providers = vec![
+            fake_provider("oa", "OpenAI"),
+            fake_provider("inf", "infiniflow"),
+        ];
+        let instances = vec![fake_instance(
+            "tenant-a",
+            "oa",
+            "inst",
+            "default",
+            vec![
+                spec("gpt-chat", &[ModelCapability::Chat], true),
+                spec("gpt-disabled", &[ModelCapability::Chat], false),
+            ],
+        )];
+        let factory = vec![fake_factory(
+            "OpenAI",
+            Some("999"),
+            &[("gpt-chat", &["chat"]), ("embed-model", &["embedding"])],
+        )];
+        let check = |provider: &str, instance: &str, model: &str, model_type: &str| {
+            check_model_available(
+                &providers, &instances, &factory, provider, instance, model, model_type, "", "",
+            )
+        };
+
+        // deepdoc OCR is always available (both upstream early returns).
+        assert!(
+            check_model_available(
+                &providers,
+                &instances,
+                &factory,
+                "infiniflow",
+                "default",
+                "deepdoc",
+                "ocr",
+                "",
+                ""
+            )
+            .is_ok()
+        );
+        assert!(
+            check_model_available(
+                &providers,
+                &instances,
+                &factory,
+                "infiniflow",
+                "default",
+                "deepdoc",
+                "chat",
+                "",
+                ""
+            )
+            .is_ok()
+        );
+        // TEI builtin embedding (env-injected).
+        assert!(
+            check_model_available(
+                &providers,
+                &instances,
+                &factory,
+                "Builtin",
+                "default",
+                "bge-m3",
+                "embedding",
+                "tei-test",
+                "bge-m3"
+            )
+            .is_ok()
+        );
+        // Happy path: configured + enabled entity.
+        assert!(check("OpenAI", "default", "gpt-chat", "chat").is_ok());
+
+        assert_eq!(
+            check("Missing", "default", "x", "chat").unwrap_err(),
+            "Provider 'Missing' not found"
+        );
+        assert_eq!(
+            check("OpenAI", "nope", "x", "chat").unwrap_err(),
+            "Instance 'nope' not found for provider 'OpenAI'"
+        );
+        // The tenant's own instance model rows are the authority (upstream
+        // `set_default_models` validates tenant LLM rows first); the factory
+        // catalog only backfills models the instance does not carry.
+        let empty_factory: Vec<FactoryLlmEntry> = vec![];
+        assert!(
+            check_model_available(
+                &providers,
+                &instances,
+                &empty_factory,
+                "OpenAI",
+                "default",
+                "gpt-chat",
+                "chat",
+                "",
+                ""
+            )
+            .is_ok()
+        );
+        assert_eq!(
+            check_model_available(
+                &providers,
+                &instances,
+                &empty_factory,
+                "OpenAI",
+                "default",
+                "ghost",
+                "chat",
+                "",
+                ""
+            )
+            .unwrap_err(),
+            "Provider 'OpenAI' not found in factory info"
+        );
+        assert_eq!(
+            check("OpenAI", "default", "gpt-disabled", "chat").unwrap_err(),
+            "Model 'gpt-disabled' isn't available"
+        );
+        assert_eq!(
+            check("OpenAI", "default", "ghost", "chat").unwrap_err(),
+            "Model 'ghost' not found for provider 'OpenAI'"
+        );
+        assert_eq!(
+            check("OpenAI", "default", "embed-model", "chat").unwrap_err(),
+            "Model 'embed-model' isn't a chat model"
+        );
+    }
+
+    #[test]
+    fn set_tenant_default_model_accepts_tenant_local_provider_without_factory_entry() {
+        let root = std::env::temp_dir().join(format!(
+            "rayrag-local-rerank-default-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("tenant_models.json");
+        let provider_store = ProviderStore::in_memory();
+        provider_store
+            .create(
+                "local-rerank",
+                ProviderUpdate {
+                    name: "mxbai-rerank-large-v2".into(),
+                    api_base: "http://127.0.0.1:8080/v1".into(),
+                    models: vec!["mxbai-rerank-large-v2".to_string()],
+                    enabled: true,
+                    api_key: None,
+                    clear_api_key: false,
+                },
+            )
+            .unwrap();
+        let store = TenantModelStore::new(&path).unwrap();
+        store
+            .upsert(
+                &provider_store,
+                "tenant-a",
+                "local-rerank",
+                "primary",
+                TenantModelInstanceUpdate {
+                    tenant_id: None,
+                    instance_name: "GPU mxbai-rerank".into(),
+                    api_base: None,
+                    api_key: None,
+                    clear_api_key: false,
+                    models: vec![spec(
+                        "mxbai-rerank-large-v2",
+                        &[ModelCapability::Rerank],
+                        true,
+                    )],
+                },
+            )
+            .unwrap();
+        // Premise: the tenant-local provider name is absent from the upstream
+        // factory JSON, so only the instance's own model row can authorise it.
+        assert!(factory_llm_entries().iter().all(|entry| {
+            crate::providers::canonical_provider_name("local-rerank", "mxbai-rerank-large-v2")
+                != entry.name
+        }));
+        store
+            .set_tenant_default_model(
+                &provider_store,
+                "tenant-a",
+                "mxbai-rerank-large-v2",
+                "GPU mxbai-rerank",
+                "mxbai-rerank-large-v2",
+                "rerank",
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .default_capability_model("tenant-a", "rerank")
+                .as_deref(),
+            Some("mxbai-rerank-large-v2@GPU mxbai-rerank@mxbai-rerank-large-v2")
+        );
+    }
+
+    #[test]
+    fn set_tenant_default_model_validates_sets_clears_and_persists() {
+        let root = std::env::temp_dir().join(format!(
+            "rayrag-capability-defaults-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("tenant_models.json");
+        let (factory_name, model_name) = factory_model_for_type("embedding");
+        let provider_id = factory_name.to_ascii_lowercase();
+        let provider_store = ProviderStore::in_memory();
+        // `in_memory()` seeds the default provider catalog — remove any
+        // pre-seeded entry for this factory so create() is idempotent
+        // (stored ids are lowercased, factory catalog names are not).
+        let _ = provider_store.delete(&factory_name.to_ascii_lowercase());
+        provider_store
+            .create(
+                &provider_id,
+                ProviderUpdate {
+                    name: factory_name.clone(),
+                    api_base: "http://127.0.0.1:8080/v1".into(),
+                    models: vec![model_name.clone()],
+                    enabled: true,
+                    api_key: None,
+                    clear_api_key: false,
+                },
+            )
+            .unwrap();
+        let store = TenantModelStore::new(&path).unwrap();
+        store
+            .upsert(
+                &provider_store,
+                "tenant-a",
+                &provider_id,
+                "primary",
+                TenantModelInstanceUpdate {
+                    tenant_id: None,
+                    instance_name: "Primary".into(),
+                    api_base: None,
+                    api_key: None,
+                    clear_api_key: false,
+                    models: vec![spec("chat-dummy", &[ModelCapability::Chat], true)],
+                },
+            )
+            .unwrap();
+
+        // Invalid model type (MODEL_TYPE_TO_FIELD miss).
+        let error = store
+            .set_tenant_default_model(&provider_store, "tenant-a", "", "", "", "bogus")
+            .unwrap_err();
+        assert!(error.to_string().contains("model type 'bogus' is invalid"));
+
+        // Partial triple.
+        let error = store
+            .set_tenant_default_model(
+                &provider_store,
+                "tenant-a",
+                &factory_name,
+                "",
+                "",
+                "embedding",
+            )
+            .unwrap_err();
+        assert!(
+            error.to_string().contains(
+                "model_provider, model_instance and model_name must be specified together"
+            )
+        );
+
+        // Valid set persists the composite `{model}@{instance}@{provider}`.
+        store
+            .set_tenant_default_model(
+                &provider_store,
+                "tenant-a",
+                &factory_name,
+                "Primary",
+                &model_name,
+                "embedding",
+            )
+            .unwrap();
+        let expected = format!("{model_name}@Primary@{factory_name}");
+        assert_eq!(
+            store
+                .default_capability_model("tenant-a", "embedding")
+                .as_deref(),
+            Some(expected.as_str())
+        );
+
+        // Survives restart.
+        drop(store);
+        let restored = TenantModelStore::new(&path).unwrap();
+        assert_eq!(
+            restored
+                .default_capability_model("tenant-a", "embedding")
+                .as_deref(),
+            Some(expected.as_str())
+        );
+
+        // All-empty triple clears the default.
+        restored
+            .set_tenant_default_model(&provider_store, "tenant-a", "", "", "", "embedding")
+            .unwrap();
+        assert_eq!(
+            restored.default_capability_model("tenant-a", "embedding"),
+            None
+        );
+
+        // The `chat` capability routes through the chat-default store; the
+        // stored id-format selector uses the lowercase provider id.
+        restored
+            .set_tenant_default_model(
+                &provider_store,
+                "tenant-a",
+                &factory_name,
+                "Primary",
+                "chat-dummy",
+                "chat",
+            )
+            .unwrap();
+        assert_eq!(
+            restored.default_chat_model("tenant-a").as_deref(),
+            Some(format!("{provider_id}/primary/chat-dummy").as_str())
+        );
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn list_default_models_emits_chat_then_capabilities_in_field_order() {
+        // Seed a capability default that resolves through the REAL embedded
+        // catalog; the tenant also needs an instance of that factory.
+        let (factory_name, model_name) = factory_model_for_type("rerank");
+        let provider_id = factory_name.to_ascii_lowercase();
+        let provider_store = ProviderStore::in_memory();
+        // `in_memory()` seeds the default provider catalog — remove any
+        // pre-seeded entry for this factory so create() is idempotent
+        // (stored ids are lowercased, factory catalog names are not).
+        let _ = provider_store.delete(&factory_name.to_ascii_lowercase());
+        provider_store
+            .create(
+                &provider_id,
+                ProviderUpdate {
+                    name: factory_name.clone(),
+                    api_base: "http://127.0.0.1:8080/v1".into(),
+                    models: vec![model_name.clone(), "chat-dummy".into()],
+                    enabled: true,
+                    api_key: None,
+                    clear_api_key: false,
+                },
+            )
+            .unwrap();
+        let store = TenantModelStore::in_memory();
+        store
+            .upsert(
+                &provider_store,
+                "tenant-a",
+                &provider_id,
+                "primary",
+                TenantModelInstanceUpdate {
+                    tenant_id: None,
+                    instance_name: "Primary".into(),
+                    api_base: None,
+                    api_key: None,
+                    clear_api_key: false,
+                    models: vec![spec("chat-dummy", &[ModelCapability::Chat], true)],
+                },
+            )
+            .unwrap();
+        store
+            .set_tenant_default_model(
+                &provider_store,
+                "tenant-a",
+                &factory_name,
+                "Primary",
+                &model_name,
+                "rerank",
+            )
+            .unwrap();
+        // And a chat default for ordering (selector id-segment is the
+        // lowercase store id, matching the candidate scan).
+        store
+            .set_default_chat_model(
+                &provider_store,
+                "tenant-a",
+                Some(&format!("{provider_id}/primary/chat-dummy")),
+            )
+            .unwrap();
+        let models = store.list_default_models(&provider_store, "tenant-a");
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0].model_type, "chat");
+        assert_eq!(models[0].model_name, "chat-dummy");
+        assert_eq!(models[1].model_type, "rerank");
+        assert_eq!(models[1].model_name, model_name);
+        assert_eq!(
+            models[1].selector,
+            format!("{model_name}@Primary@{factory_name}")
+        );
+        assert!(models[1].enable);
+    }
+
+    #[test]
+    fn plan_added_models_expands_catalog_with_overrides_and_ranking() {
+        let providers = vec![
+            fake_provider("oa", "OpenAI"),
+            fake_provider("custom", "MyCustom"),
+        ];
+        let instances = vec![
+            fake_instance(
+                "tenant-a",
+                "oa",
+                "i1",
+                "default",
+                vec![
+                    spec("gpt-a", &[ModelCapability::Chat], true),
+                    // Fully disabled -> all factory types removed -> skipped.
+                    spec("gpt-b", &[ModelCapability::Chat], false),
+                ],
+            ),
+            fake_instance(
+                "tenant-a",
+                "custom",
+                "i2",
+                "default",
+                vec![spec("custom-model", &[ModelCapability::Rerank], true)],
+            ),
+        ];
+        let factory = vec![
+            fake_factory(
+                "OpenAI",
+                Some("999"),
+                &[
+                    ("gpt-a", &["chat"]),
+                    ("gpt-b", &["chat"]),
+                    ("gpt-extra", &["chat", "image2text"]),
+                ],
+            ),
+            fake_factory("DeepSeek", Some("980"), &[("deepseek-chat", &["chat"])]),
+        ];
+        let entries = plan_added_models(&providers, &instances, &factory, &[], "", "");
+        let names: Vec<&str> = entries.iter().map(|entry| entry.name.as_str()).collect();
+        assert!(names.contains(&"gpt-a"));
+        assert!(!names.contains(&"gpt-b"), "disabled model is removed");
+        assert!(
+            !names.contains(&"deepseek-chat"),
+            "no instance for DeepSeek"
+        );
+
+        // Multi-type factory row keeps its full type list.
+        let extra = entries
+            .iter()
+            .find(|entry| entry.name == "gpt-extra")
+            .unwrap();
+        assert_eq!(extra.model_type, vec!["chat", "image2text"]);
+
+        // Manual-only model appended with active types.
+        let manual = entries
+            .iter()
+            .find(|entry| entry.name == "custom-model")
+            .unwrap();
+        assert_eq!(manual.provider_name, "MyCustom");
+        assert_eq!(manual.model_type, vec!["rerank"]);
+
+        // Ranking: ranked factories first (rank desc), unknown names last.
+        assert_eq!(entries.first().unwrap().provider_name, "OpenAI");
+        assert_eq!(entries.last().unwrap().provider_name, "MyCustom");
+    }
+
+    #[test]
+    fn plan_added_models_resolves_instance_name_by_provider_pair() {
+        // Two providers share the same `instance_id` ("primary") with
+        // different `instance_name`s. A manual-only model on the second
+        // provider must carry that provider's instance name; the flat
+        // instance_id-only lookup leaked the first provider's instance name
+        // into the selector (deployed catalog showed the embedding entry with
+        // "GPU Qwen3.5-9B" instead of "GPU Qwen3-Embedding-4B").
+        let providers = vec![
+            fake_provider("local-llm", "Local Qwen3.5-9B"),
+            fake_provider("local-embedding", "Qwen3-Embedding-4B"),
+        ];
+        let instances = vec![
+            fake_instance(
+                "tenant-a",
+                "local-llm",
+                "primary",
+                "GPU Qwen3.5-9B",
+                Vec::new(),
+            ),
+            fake_instance(
+                "tenant-a",
+                "local-embedding",
+                "primary",
+                "GPU Qwen3-Embedding-4B",
+                vec![spec(
+                    "qwen3-embedding-4b",
+                    &[ModelCapability::Embedding],
+                    true,
+                )],
+            ),
+        ];
+        let entries = plan_added_models(&providers, &instances, &[], &[], "", "");
+        let manual = entries
+            .iter()
+            .find(|entry| entry.name == "qwen3-embedding-4b")
+            .unwrap();
+        assert_eq!(manual.provider_name, "Qwen3-Embedding-4B");
+        assert_eq!(manual.instance_name, "GPU Qwen3-Embedding-4B");
+    }
+
+    #[test]
+    fn plan_added_models_applies_authoritative_overrides_and_filters() {
+        let providers = vec![fake_provider("oa", "OpenAI")];
+        let instances = vec![fake_instance(
+            "tenant-a",
+            "oa",
+            "i1",
+            "default",
+            vec![spec("gpt-a", &[ModelCapability::Rerank], true)],
+        )];
+        let factory = vec![fake_factory("OpenAI", Some("999"), &[("gpt-a", &["chat"])])];
+        let entries = plan_added_models(&providers, &instances, &factory, &[], "", "");
+        assert_eq!(
+            entries[0].model_type,
+            vec!["rerank"],
+            "the explicit active capability set replaces the factory fallback"
+        );
+
+        // Filtering: only rerank survives and the entry is rebuilt from the
+        // filtered manual record (factory row has no rerank type).
+        let filtered = plan_added_models(
+            &providers,
+            &instances,
+            &factory,
+            &["rerank".to_string()],
+            "",
+            "",
+        );
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].name, "gpt-a");
+        assert_eq!(filtered[0].model_type, vec!["rerank"]);
+    }
+
+    #[test]
+    fn available_provider_plan_matches_fixed_v0272_directory() {
+        let available = plan_available_providers(factory_llm_entries());
+        assert_eq!(available.len(), 71);
+        assert_eq!(
+            available
+                .iter()
+                .take(8)
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "OpenAI",
+                "Anthropic",
+                "Gemini",
+                "DeepSeek",
+                "Moonshot",
+                "Tongyi-Qianwen",
+                "ZHIPU-AI",
+                "xAI",
+            ]
+        );
+        for excluded in ["Youdao", "FastEmbed", "BAAI", "Builtin", "siliconflow_intl"] {
+            assert!(!available.iter().any(|entry| entry.name == excluded));
+        }
+        assert!(available.iter().any(|entry| entry.name == "SoMark"));
+        assert!(available.iter().any(|entry| entry.name == "New API"));
+        let ocr: Vec<_> = available
+            .iter()
+            .filter(|entry| {
+                entry
+                    .model_types
+                    .iter()
+                    .any(|model_type| model_type == "ocr")
+            })
+            .map(|entry| entry.name.as_str())
+            .collect();
+        assert_eq!(
+            ocr,
+            vec![
+                "Tongyi-Qianwen",
+                "Mistral OCR",
+                "SoMark",
+                "MinerU",
+                "OpenDataLoader",
+                "PaddleOCR",
+            ]
+        );
+    }
+
+    #[test]
+    fn added_models_use_canonical_factory_name_for_legacy_provider_ids() {
+        let providers = vec![fake_provider("aliyun", "Aliyun")];
+        let instances = vec![fake_instance("tenant-a", "aliyun", "i1", "default", vec![])];
+        let factory = vec![fake_factory(
+            "Tongyi-Qianwen",
+            Some("994"),
+            &[("qwen-plus", &["chat"])],
+        )];
+        let entries = plan_added_models(&providers, &instances, &factory, &[], "", "");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].provider_name, "Tongyi-Qianwen");
+        assert_eq!(entries[0].name, "qwen-plus");
+
+        let default = get_model_info(
+            &providers,
+            &instances,
+            &factory,
+            "qwen-plus@default@Tongyi-Qianwen",
+            "chat",
+            "",
+            "",
+        )
+        .expect("canonical default selector must resolve a legacy provider row");
+        assert_eq!(default.model_provider, "Tongyi-Qianwen");
+        assert!(
+            check_model_available(
+                &providers,
+                &instances,
+                &factory,
+                "Tongyi-Qianwen",
+                "default",
+                "qwen-plus",
+                "chat",
+                "",
+                "",
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn plan_added_models_synthesizes_tei_builtin_embedding() {
+        let providers = vec![fake_provider("oa", "OpenAI")];
+        let instances = vec![fake_instance(
+            "tenant-a",
+            "oa",
+            "i1",
+            "default",
+            vec![spec("gpt-a", &[ModelCapability::Chat], true)],
+        )];
+        let factory = vec![fake_factory("OpenAI", Some("999"), &[("gpt-a", &["chat"])])];
+        let entries = plan_added_models(
+            &providers,
+            &instances,
+            &factory,
+            &[],
+            "tei-profile",
+            "bge-m3",
+        );
+        let tei = entries
+            .iter()
+            .find(|entry| entry.provider_name == "Builtin")
+            .unwrap();
+        assert_eq!(tei.name, "bge-m3");
+        assert_eq!(tei.model_type, vec!["embedding"]);
+        assert_eq!(tei.instance_name, "default");
+        assert_eq!(tei.provider_id, "");
+        assert_eq!(tei.instance_id, "");
+
+        // Filtered out when the filter excludes embedding.
+        let filtered = plan_added_models(
+            &providers,
+            &instances,
+            &factory,
+            &["chat".to_string()],
+            "tei-profile",
+            "bge-m3",
+        );
+        assert!(
+            !filtered
+                .iter()
+                .any(|entry| entry.provider_name == "Builtin")
+        );
+
+        // Not synthesized without the compose profile.
+        let none = plan_added_models(&providers, &instances, &factory, &[], "", "bge-m3");
+        assert!(!none.iter().any(|entry| entry.provider_name == "Builtin"));
+    }
+
+    #[test]
+    fn factory_rank_key_negates_rank_and_defaults_unknowns() {
+        assert_eq!(to_int(Some("999"), 500), 999);
+        assert_eq!(to_int(None, 500), 500);
+        assert_eq!(to_int(Some("1.0"), 500), 500);
+        assert_eq!(factory_rank_key("OpenAI"), -999);
+        assert_eq!(factory_rank_key("Not-A-Factory"), -500);
+    }
+
+    #[test]
+    fn embedded_factory_catalog_covers_ragflow_factories_with_full_type_lists() {
+        let catalog = factory_llm_entries();
+        assert_eq!(catalog.len(), 74);
+        let openai = catalog.iter().find(|entry| entry.name == "OpenAI").unwrap();
+        assert_eq!(openai.rank.as_deref(), Some("999"));
+        assert!(!openai.llm.is_empty());
+        // Multi-type rows keep the FULL type list (the compiled providers
+        // catalog only carries the first type).
+        let tongyi = catalog
+            .iter()
+            .find(|entry| entry.name == "Tongyi-Qianwen")
+            .unwrap();
+        let omni = tongyi
+            .llm
+            .iter()
+            .find(|row| row.llm_name == "qwen3.8-max")
+            .unwrap();
+        assert_eq!(omni.model_types, vec!["chat", "image2text"]);
+        // Unranked factories carry rank None.
+        let builtin = catalog
+            .iter()
+            .find(|entry| entry.name == "Builtin")
+            .unwrap();
+        assert!(builtin.rank.is_none());
+    }
+
+    #[test]
+    fn somark_ocr_model_extra_promotes_to_ocr_config() {
+        let info: RagflowCreateModelInfo = serde_json::from_value(serde_json::json!({
+            "model_name": "somark-from-env-1",
+            "model_type": ["ocr"],
+            "max_tokens": 0,
+            "extra": {
+                "somark_image_format": "base64",
+                "somark_formula_format": "mathml",
+                "somark_table_format": "markdown",
+                "somark_cs_format": "image",
+                "somark_enable_text_cross_page": true,
+                "somark_enable_table_cross_page": false,
+                "somark_enable_title_level_recognition": true,
+                "somark_enable_inline_image": false,
+                "somark_enable_table_image": true,
+                "somark_enable_image_understanding": true,
+                "somark_keep_header_footer": false,
+            }
+        }))
+        .unwrap();
+        let specs = create_model_specs("SoMark", vec![info]).unwrap();
+        assert_eq!(specs.len(), 1);
+        assert!(specs[0].model_types.contains(&ModelCapability::Ocr));
+        let config = specs[0].ocr_config.as_ref().expect("ocr_config persisted");
+        assert_eq!(config.len(), 11);
+        assert_eq!(config["somark_image_format"], serde_json::json!("base64"));
+        assert_eq!(config["somark_table_format"], serde_json::json!("markdown"));
+        assert_eq!(config["somark_enable_table_image"], serde_json::json!(true));
+        assert!(!specs[0].is_tools);
+    }
+
+    #[test]
+    fn non_somark_model_extra_keeps_narrow_is_tools_contract() {
+        let info: RagflowCreateModelInfo = serde_json::from_value(serde_json::json!({
+            "model_name": "custom-chat",
+            "model_type": ["chat"],
+            "max_tokens": 4096,
+            "extra": {
+                "is_tools": true,
+                "somark_image_format": "none"
+            }
+        }))
+        .unwrap();
+        let specs = create_model_specs("OpenAI", vec![info]).unwrap();
+        assert_eq!(specs.len(), 1);
+        assert!(specs[0].is_tools);
+        assert!(
+            specs[0].ocr_config.is_none(),
+            "non-SoMark extra keys are intentionally dropped, not promoted"
+        );
+    }
+
+    #[test]
+    fn instance_model_rows_emit_ocr_config_extra_for_somark() {
+        let provider = fake_provider("somark", "SoMark");
+        let mut model = spec("somark-from-env-1", &[ModelCapability::Ocr], true);
+        let config: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_value(serde_json::json!({
+                "somark_image_format": "url",
+                "somark_formula_format": "latex",
+                "somark_table_format": "html",
+                "somark_cs_format": "image",
+                "somark_enable_text_cross_page": false,
+                "somark_enable_table_cross_page": false,
+                "somark_enable_title_level_recognition": false,
+                "somark_enable_inline_image": false,
+                "somark_enable_table_image": true,
+                "somark_enable_image_understanding": true,
+                "somark_keep_header_footer": false,
+            }))
+            .unwrap();
+        model.ocr_config = Some(config);
+        let instance = fake_instance("tenant-a", "somark", "i1", "default", vec![model]);
+        let rows = instance_model_rows(&provider, &instance);
+        assert_eq!(
+            rows.len(),
+            2,
+            "factory SoMark-model row plus the explicit instance row"
+        );
+        assert!(rows.iter().any(|row| row.name == "SoMark-model"));
+        let explicit = rows
+            .iter()
+            .find(|row| row.name == "somark-from-env-1")
+            .expect("explicit instance row");
+        let extra = explicit.extra.as_ref().expect("ocr extra emitted");
+        assert_eq!(extra["max_tokens"], serde_json::json!(8192));
+        assert_eq!(
+            extra["ocr_config"]["somark_table_format"],
+            serde_json::json!("html")
+        );
+
+        // The effective runtime spec round-trips the same config.
+        let effective = effective_instance_models(&provider, &instance);
+        assert_eq!(effective.len(), 2);
+        let effective_explicit = effective
+            .iter()
+            .find(|spec| spec.name == "somark-from-env-1")
+            .expect("explicit effective spec");
+        assert_eq!(
+            effective_explicit
+                .ocr_config
+                .as_ref()
+                .and_then(|config| config.get("somark_cs_format")),
+            Some(&serde_json::json!("image"))
+        );
+    }
+
+    #[test]
+    fn bedrock_api_key_object_deserializes_to_json_string() {
+        let request: CreateRagflowProviderInstanceRequest =
+            serde_json::from_value(serde_json::json!({
+                "instance_name": "bedrock-primary",
+                "llm_factory": "Bedrock",
+                "api_key": {
+                    "auth_mode": "access_key_secret",
+                    "bedrock_ak": "ak",
+                    "bedrock_sk": "sk",
+                    "bedrock_region": "us-east-1",
+                },
+                "region": "default",
+                "model_info": [{
+                    "model_name": "anthropic.claude-sonnet",
+                    "model_type": ["chat"],
+                    "max_tokens": 8192
+                }]
+            }))
+            .unwrap();
+        let api_key = request.api_key.expect("Bedrock key object is present");
+        let parsed: serde_json::Value = serde_json::from_str(&api_key).unwrap();
+        assert_eq!(parsed["auth_mode"], serde_json::json!("access_key_secret"));
+        assert_eq!(parsed["bedrock_ak"], serde_json::json!("ak"));
+        assert_eq!(parsed["bedrock_region"], serde_json::json!("us-east-1"));
+        assert_eq!(request.model_info.len(), 1);
+        assert_eq!(request.model_info[0].model_name, "anthropic.claude-sonnet");
+    }
+
+    #[test]
+    fn ocr_providers_read_their_endpoint_from_the_api_key_object() {
+        let mineru = serde_json::json!({
+            "mineru_apiserver": "https://mineru.example",
+            "mineru_backend": "pipeline",
+        })
+        .to_string();
+        assert_eq!(
+            ocr_provider_api_base("MinerU", Some(&mineru)).as_deref(),
+            Some("https://mineru.example")
+        );
+        let paddle = serde_json::json!({ "paddleocr_api_url": "http://ocr.local" }).to_string();
+        assert_eq!(
+            ocr_provider_api_base("PaddleOCR", Some(&paddle)).as_deref(),
+            Some("http://ocr.local")
+        );
+        let loader =
+            serde_json::json!({ "opendataloader_apiserver": "http://odl.local" }).to_string();
+        assert_eq!(
+            ocr_provider_api_base("OpenDataLoader", Some(&loader)).as_deref(),
+            Some("http://odl.local")
+        );
+        assert!(ocr_provider_api_base("OpenAI", Some(&loader)).is_none());
+        assert!(ocr_provider_api_base("MinerU", Some("not-json")).is_none());
+    }
+    #[test]
+    fn create_request_deserializes_provider_extra_map_and_instance_round_trips_it() {
+        let raw = r#"{"instance_name":"spark-1","api_key":"k","model_info":[{"model_name":"x","model_type":["chat"]}],"extra":{"spark_app_id":"A1","spark_api_secret":"S9"}}"#;
+        let request: CreateRagflowProviderInstanceRequest = serde_json::from_str(&raw).unwrap();
+        assert_eq!(
+            request.extra.get("spark_app_id").map(String::as_str),
+            Some("A1")
+        );
+        assert_eq!(request.extra.len(), 2);
+        let mut extra = std::collections::BTreeMap::new();
+        extra.insert("yiyan_ak".to_string(), "AK".to_string());
+        let instance = TenantModelInstance {
+            tenant_id: "t".into(),
+            provider_id: "p".into(),
+            instance_id: "i".into(),
+            instance_name: "n".into(),
+            api_base: "https://x".into(),
+            api_key: Some("k".into()),
+            region: None,
+            models: Vec::new(),
+            extra,
+        };
+        let json = serde_json::to_value(&instance).unwrap();
+        assert_eq!(json["extra"]["yiyan_ak"], "AK");
+        let empty = TenantModelInstance {
+            tenant_id: "t".into(),
+            provider_id: "p".into(),
+            instance_id: "i".into(),
+            instance_name: "n".into(),
+            api_base: "https://x".into(),
+            api_key: None,
+            region: None,
+            models: Vec::new(),
+            extra: Default::default(),
+        };
+        let json = serde_json::to_string(&empty).unwrap();
+        assert!(!json.contains("extra"));
+    }
+}
 
 /// `GET /api/v1/models/endpoints/check` — probe every configured model endpoint.
 ///

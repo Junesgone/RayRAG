@@ -398,4 +398,180 @@ pub fn reset_for_tests() {
     *global().write().expect("runtime config lock poisoned") = RuntimeConfig::default();
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    fn global_test_guard() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap()
+    }
+
+    #[test]
+    fn init_config_only_sets_known_fields() {
+        let _guard = global_test_guard();
+        reset_for_tests();
+        init_config(&[
+            ("HTTP_PORT", Value::Number(9380.into())),
+            ("WORK_MODE", Value::String("rag".into())),
+            ("NOT_A_FIELD", Value::String("ignored".into())),
+        ]);
+        assert_eq!(get("HTTP_PORT"), Some(Value::Number(9380.into())));
+        assert_eq!(get("WORK_MODE"), Some(Value::String("rag".into())));
+        // Unknown keys are silently dropped (RAGFlow `hasattr` gate).
+        assert_eq!(get("NOT_A_FIELD"), None);
+        assert_eq!(get("DEBUG"), Some(Value::Bool(false)));
+    }
+
+    #[test]
+    fn get_all_returns_only_reloadable_config_attributes() {
+        let _guard = global_test_guard();
+        reset_for_tests();
+        init_config(&[
+            ("DEBUG", Value::Bool(true)),
+            ("JOB_SERVER_HOST", Value::String("job.internal".into())),
+            ("LOAD_CONFIG_MANAGER", Value::Bool(true)),
+        ]);
+        let all = get_all();
+        assert_eq!(all.get("DEBUG"), Some(&Value::Bool(true)));
+        assert_eq!(
+            all.get("JOB_SERVER_HOST"),
+            Some(&Value::String("job.internal".into()))
+        );
+        assert_eq!(all.get("LOAD_CONFIG_MANAGER"), Some(&Value::Bool(true)));
+        // ENV is not part of the reloadable attribute surface.
+        assert!(!all.contains_key("ENV"));
+        assert!(!all.contains_key("__dict__"));
+    }
+
+    #[test]
+    fn env_map_supports_version_seed_and_upsert() {
+        let _guard = global_test_guard();
+        reset_for_tests();
+        init_env("v0.14.0");
+        assert_eq!(get_env("version"), Some("v0.14.0".into()));
+        set_env("region", "cn".into());
+        assert_eq!(get_env("region"), Some("cn".into()));
+        let all = get_all_env();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn service_db_and_config_manager_flags() {
+        let _guard = global_test_guard();
+        reset_for_tests();
+        assert_eq!(get("SERVICE_DB"), None);
+        set_service_db("postgres://snapshot".into());
+        assert_eq!(
+            get("SERVICE_DB"),
+            Some(Value::String("postgres://snapshot".into()))
+        );
+        assert_eq!(get("LOAD_CONFIG_MANAGER"), Some(Value::Bool(false)));
+        load_config_manager();
+        assert_eq!(get("LOAD_CONFIG_MANAGER"), Some(Value::Bool(true)));
+    }
+
+    #[test]
+    fn system_settings_seed_matches_conf_file_shape() {
+        // The embedded seed mirrors the real conf/system_settings.json: 14
+        // rows with the exact names / data types of the shipped file.
+        assert_eq!(
+            SYSTEM_SETTINGS_SEED,
+            &[
+                ("enable_whitelist", "variable", "bool", "true"),
+                ("default_role", "variable", "string", ""),
+                ("mail.server", "variable", "string", ""),
+                ("mail.port", "variable", "integer", ""),
+                ("mail.use_ssl", "variable", "bool", "false"),
+                ("mail.use_tls", "variable", "bool", "false"),
+                ("mail.username", "variable", "string", ""),
+                ("mail.password", "variable", "string", ""),
+                ("mail.timeout", "variable", "integer", "10"),
+                ("mail.default_sender", "variable", "string", ""),
+                (
+                    "sandbox.provider_type",
+                    "variable",
+                    "string",
+                    "self_managed"
+                ),
+                (
+                    "sandbox.self_managed",
+                    "variable",
+                    "json",
+                    r#"{"endpoint": "http://localhost:9385", "timeout": 30, "max_retries": 3, "pool_size": 10}"#
+                ),
+                ("sandbox.aliyun_codeinterpreter", "variable", "json", "{}"),
+                ("sandbox.e2b", "variable", "json", "{}"),
+            ]
+        );
+        assert_eq!(SYSTEM_SETTINGS_UPSTREAM_BYTES, 1_843);
+        assert_eq!(SYSTEM_SETTINGS_UPSTREAM_LINES, 88);
+        assert_eq!(SYSTEM_SETTINGS_UPSTREAM_BLOB.len(), 40);
+        assert_eq!(SYSTEM_SETTINGS_UPSTREAM_SHA256.len(), 64);
+        let records = system_settings_seed_records();
+        assert_eq!(records.len(), 14);
+        assert_eq!(records[0].name, "enable_whitelist");
+        assert_eq!(records[0].data_type, "bool");
+        assert_eq!(records[0].value, "true");
+        assert_eq!(records[9].name, "mail.default_sender");
+        assert_eq!(records[10].name, "sandbox.provider_type");
+        assert_eq!(records[10].value, "self_managed");
+        assert_eq!(records[11].name, "sandbox.self_managed");
+        assert_eq!(records[11].data_type, "json");
+        assert!(records[11].value.contains("localhost:9385"));
+        // All rows carry the "variable" source, like the conf file.
+        assert!(records.iter().all(|r| r.source == "variable"));
+        // Parser round-trips the conf JSON shape.
+        let parsed = parse_system_settings_file(&serde_json::json!({
+            "system_settings": [
+                {"name": "enable_whitelist", "source": "variable", "data_type": "bool", "value": "true"},
+                {"name": "mail.timeout", "source": "variable", "data_type": "integer", "value": "10"}
+            ]
+        }));
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[1].name, "mail.timeout");
+        // Lenient: missing wrapper or malformed entries yield empty / skip.
+        assert!(parse_system_settings_file(&Value::Null).is_empty());
+        assert!(
+            parse_system_settings_file(&serde_json::json!({"system_settings": [42]})).is_empty()
+        );
+    }
+
+    #[test]
+    fn system_settings_seed_plans_inserts_only_missing_names_with_types() {
+        // Pure planner: no global state involved, deterministic.
+        let records = system_settings_seed_records();
+        let (additions, count) = plan_system_settings_seed(&BTreeMap::new(), &records);
+        assert_eq!(count, 14);
+        assert_eq!(additions.len(), 14);
+        // Typed coercion by data_type.
+        assert_eq!(additions.get("enable_whitelist"), Some(&Value::Bool(true)));
+        assert_eq!(
+            additions.get("mail.timeout"),
+            Some(&Value::Number(10.into()))
+        );
+        assert_eq!(
+            additions.get("sandbox.provider_type"),
+            Some(&Value::String("self_managed".into()))
+        );
+        // json-typed rows are parsed objects.
+        assert_eq!(
+            additions.get("sandbox.self_managed"),
+            Some(&serde_json::json!({
+                "endpoint": "http://localhost:9385",
+                "timeout": 30,
+                "max_retries": 3,
+                "pool_size": 10
+            }))
+        );
+        assert_eq!(additions.get("sandbox.e2b"), Some(&serde_json::json!({})));
+        // mail.port has an empty value → stays a string (unparseable integer).
+        assert_eq!(additions.get("mail.port"), Some(&Value::String("".into())));
+        // Existing names are not re-planned (init_table semantics).
+        let (additions2, count2) = plan_system_settings_seed(&additions, &records);
+        assert_eq!(count2, 0);
+        assert!(additions2.is_empty());
+    }
+}

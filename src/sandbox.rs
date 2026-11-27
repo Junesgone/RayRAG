@@ -1018,7 +1018,422 @@ fn analyze_nodejs_security(code: &str) -> Vec<(String, i64)> {
     issues
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
 
+    #[tokio::test]
+    async fn python_executes_main_and_returns_structured_result() {
+        let sandbox = LocalSandbox::default();
+        let code = "def main(name):\n    return {\"greeting\": f\"hello {name}\"}\n";
+        let result = sandbox
+            .execute(
+                code,
+                "python3",
+                &Map::from_iter([("name".into(), json!("世界"))]),
+            )
+            .await
+            .unwrap();
+        eprintln!(
+            "PROBE stdout={:?} stderr={:?}",
+            result.stdout, result.stderr
+        );
+        // wrapper 输出被提取
+        assert!(!result.stdout.contains(RESULT_MARKER_PREFIX));
+        let structured = result.structured.expect("structured result");
+        assert_eq!(structured["present"], json!(true));
+        assert_eq!(structured["value"]["greeting"], json!("hello 世界"));
+    }
+
+    #[tokio::test]
+    async fn python_stdout_stays_visible() {
+        let sandbox = LocalSandbox::default();
+        let code = "def main():\n    print('plain output')\n    return 42\n";
+        let result = sandbox.execute(code, "python", &Map::new()).await.unwrap();
+        assert!(result.stdout.contains("plain output"));
+        assert_eq!(result.structured.unwrap()["value"], json!(42));
+    }
+
+    #[tokio::test]
+    async fn timeout_kills_hanging_script() {
+        let limits = SandboxLimits {
+            timeout_seconds: 2,
+            ..Default::default()
+        };
+        let sandbox = LocalSandbox::new(limits);
+        let code = "def main():\n    import time\n    time.sleep(30)\n    return 1\n";
+        let error = sandbox
+            .execute(code, "python", &Map::new())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("timed out"));
+    }
+
+    #[tokio::test]
+    async fn stderr_captured_on_error() {
+        let sandbox = LocalSandbox::default();
+        let code = "def main():\n    raise ValueError('boom')\n";
+        let result = sandbox.execute(code, "python", &Map::new()).await.unwrap();
+        assert!(result.stderr.contains("boom"));
+    }
+
+    #[tokio::test]
+    async fn unsupported_language_rejected() {
+        let sandbox = LocalSandbox::default();
+        let error = sandbox
+            .execute("code", "ruby", &Map::new())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("Unsupported language"));
+    }
+
+    #[test]
+    fn structured_result_extraction_removes_marker_lines() {
+        let stdout = "hello\n__RAGFLOW_RESULT__:eyJwcmVzZW50Ijp0cnVlLCJ2YWx1ZSI6MX0=\nworld\n";
+        let (cleaned, structured) = extract_structured_result(stdout);
+        assert!(!cleaned.contains(RESULT_MARKER_PREFIX));
+        assert!(cleaned.contains("hello") && cleaned.contains("world"));
+        assert_eq!(structured.unwrap()["value"], json!(1));
+    }
+
+    #[test]
+    fn language_normalization() {
+        assert_eq!(normalize_language("python3.12"), "python");
+        assert_eq!(normalize_language("nodejs"), "javascript");
+        assert_eq!(normalize_language("bash"), "bash");
+    }
+
+    #[test]
+    fn output_size_validation() {
+        assert!(validate_output_size("a", "b", 10).is_ok());
+        assert!(validate_output_size(&"x".repeat(100), "", 10).is_err());
+    }
+
+    // ── 契约层测试（executor_manager 远程契约） ──────────────────────────
+
+    #[test]
+    fn enums_and_exit_codes_match_executor_manager() {
+        // 枚举字符串值（对齐 models/enums.py）
+        assert_eq!(SupportLanguage::Python.as_str(), "python");
+        assert_eq!(SupportLanguage::Nodejs.as_str(), "nodejs");
+        assert_eq!(
+            SupportLanguage::parse("python3"),
+            Some(SupportLanguage::Python)
+        );
+        assert_eq!(
+            SupportLanguage::parse("javascript"),
+            Some(SupportLanguage::Nodejs)
+        );
+        assert_eq!(SupportLanguage::parse("ruby"), None);
+        assert_eq!(ResultStatus::Success.as_str(), "success");
+        assert_eq!(ResultStatus::ProgramError.as_str(), "program_error");
+        assert_eq!(
+            ResultStatus::ResourceLimitExceeded.as_str(),
+            "resource_limit_exceeded"
+        );
+        assert_eq!(
+            ResultStatus::UnauthorizedAccess.as_str(),
+            "unauthorized_access"
+        );
+        assert_eq!(ResultStatus::RuntimeError.as_str(), "runtime_error");
+        assert_eq!(
+            ResultStatus::ProgramRunnerError.as_str(),
+            "program_runner_error"
+        );
+        assert_eq!(
+            ResultStatus::parse("RESOURCE_LIMIT_EXCEEDED"),
+            Some(ResultStatus::ResourceLimitExceeded)
+        );
+        assert_eq!(ResultStatus::parse("bogus"), None);
+        assert_eq!(ResourceLimitType::Time.as_str(), "time");
+        assert_eq!(ResourceLimitType::Memory.as_str(), "memory");
+        assert_eq!(ResourceLimitType::Output.as_str(), "output");
+        assert_eq!(
+            UnauthorizedAccessType::DisallowedSyscall.as_str(),
+            "disallowed_syscall"
+        );
+        assert_eq!(UnauthorizedAccessType::FileAccess.as_str(), "file_access");
+        assert_eq!(
+            UnauthorizedAccessType::NetworkAccess.as_str(),
+            "network_access"
+        );
+        assert_eq!(RuntimeErrorType::Signalled.as_str(), "signalled");
+        assert_eq!(RuntimeErrorType::NonzeroExit.as_str(), "nonzero_exit");
+        // 负值退出码约定（对齐 execution.py / handlers.py / limiter.py）
+        assert_eq!(exit_codes::SUCCESS, 0);
+        assert_eq!(exit_codes::UNSAFE_CODE, -999);
+        assert_eq!(exit_codes::RATE_LIMITED, -429);
+        assert_eq!(exit_codes::TIMEOUT, -124);
+        assert_eq!(exit_codes::OUT_OF_MEMORY, -137);
+        assert_eq!(exit_codes::POOL_BUSY, -10);
+        assert_eq!(exit_codes::INTERNAL_ERROR, -3);
+        assert_eq!(exit_codes::TIMEOUT_AFTER_KILL, -1);
+    }
+
+    #[test]
+    fn classify_execution_failure_matches_executor_manager() {
+        // returncode 124 → resource_limit_exceeded / time
+        let failure = classify_execution_failure(124, "");
+        assert_eq!(failure.status, ResultStatus::ResourceLimitExceeded);
+        assert_eq!(failure.resource_limit_type, Some(ResourceLimitType::Time));
+        assert_eq!(failure.unauthorized_access_type, None);
+        // returncode 137 → resource_limit_exceeded / memory
+        let failure = classify_execution_failure(137, "");
+        assert_eq!(failure.status, ResultStatus::ResourceLimitExceeded);
+        assert_eq!(failure.resource_limit_type, Some(ResourceLimitType::Memory));
+        // "Permission denied" → unauthorized_access / file_access
+        let failure = classify_execution_failure(1, "open('/etc/passwd'): Permission denied");
+        assert_eq!(failure.status, ResultStatus::UnauthorizedAccess);
+        assert_eq!(
+            failure.unauthorized_access_type,
+            Some(UnauthorizedAccessType::FileAccess)
+        );
+        // "Operation not permitted" → unauthorized_access / disallowed_syscall
+        let failure = classify_execution_failure(1, "socket(): Operation not permitted");
+        assert_eq!(
+            failure.unauthorized_access_type,
+            Some(UnauthorizedAccessType::DisallowedSyscall)
+        );
+        // "MemoryError" → resource_limit_exceeded / memory
+        let failure = classify_execution_failure(1, "MemoryError: out of memory");
+        assert_eq!(failure.status, ResultStatus::ResourceLimitExceeded);
+        assert_eq!(failure.resource_limit_type, Some(ResourceLimitType::Memory));
+        // 其他 → program_error / nonzero_exit
+        let failure = classify_execution_failure(2, "Traceback: boom");
+        assert_eq!(failure.status, ResultStatus::ProgramError);
+        assert_eq!(
+            failure.runtime_error_type,
+            Some(RuntimeErrorType::NonzeroExit)
+        );
+    }
+
+    #[test]
+    fn timeout_duration_parsing_and_formatting() {
+        // 对齐 util.py parse_timeout_duration
+        assert_eq!(parse_timeout_duration("90s", 10), 90);
+        assert_eq!(parse_timeout_duration("2m", 10), 120);
+        assert_eq!(parse_timeout_duration("1m30s", 10), 90);
+        assert_eq!(parse_timeout_duration("1M30S", 10), 90);
+        assert_eq!(parse_timeout_duration("bogus", 10), 10);
+        assert_eq!(parse_timeout_duration("", 10), 10);
+        assert_eq!(parse_timeout_duration("0s", 10), 10);
+        // 对齐 util.py format_timeout_duration
+        assert_eq!(format_timeout_duration(59), "59s");
+        assert_eq!(format_timeout_duration(90), "1m30s");
+        assert_eq!(format_timeout_duration(120), "2m");
+        // 对齐 util.py is_valid_memory_limit
+        assert!(is_valid_memory_limit("256m"));
+        assert!(is_valid_memory_limit("1g"));
+        assert!(is_valid_memory_limit("512M"));
+        assert!(!is_valid_memory_limit("0m"));
+        assert!(!is_valid_memory_limit("256"));
+        assert!(!is_valid_memory_limit(""));
+    }
+
+    #[test]
+    fn runtime_env_container_contract() {
+        // 容器池命名（对齐 container.py）
+        assert_eq!(container_pool_name("python", 0), "sandbox_python_0");
+        assert_eq!(container_pool_name("nodejs", 2), "sandbox_nodejs_2");
+        assert_eq!(container_pool_name("javascript", 1), "sandbox_nodejs_1");
+        // python 执行命令：timeout + -I -B（对齐 _build_container_run_args）
+        let args =
+            build_container_run_args("python", "task-1", "sandbox_python_0", 10, "runner.py");
+        assert_eq!(
+            args,
+            [
+                "docker",
+                "exec",
+                "--workdir",
+                "/workspace/task-1",
+                "sandbox_python_0",
+                "timeout",
+                "10",
+                "python",
+                "-I",
+                "-B",
+                "runner.py",
+            ]
+        );
+        // nodejs 执行命令：无 -I -B
+        let args =
+            build_container_run_args("nodejs", "task-1", "sandbox_nodejs_0", 10, "runner.js");
+        assert_eq!(
+            args,
+            [
+                "docker",
+                "exec",
+                "--workdir",
+                "/workspace/task-1",
+                "sandbox_nodejs_0",
+                "timeout",
+                "10",
+                "nodejs",
+                "runner.js",
+            ]
+        );
+        // 容器创建参数（对齐 create_container：runsc/read-only/tmpfs/user/memory/seccomp）
+        let args = build_container_create_args(
+            "sandbox_python_0",
+            "python",
+            "sandbox-base-python:latest",
+            Some("512m"),
+            true,
+        );
+        assert_eq!(args[0], "docker");
+        assert!(args.iter().any(|arg| arg == "--runtime=runsc"));
+        assert!(args.iter().any(|arg| arg == "--read-only"));
+        assert!(args.iter().any(|arg| arg == "--tmpfs"));
+        assert!(
+            args.iter()
+                .any(|arg| arg == "/workspace:rw,exec,size=100M,uid=65534,gid=65534")
+        );
+        assert!(args.iter().any(|arg| arg == "/tmp:rw,exec,size=50M"));
+        assert!(args.iter().any(|arg| arg == "--user"));
+        assert!(args.iter().any(|arg| arg == "nobody"));
+        assert!(args.iter().any(|arg| arg == "--memory"));
+        assert!(args.iter().any(|arg| arg == "512m"));
+        assert!(
+            args.iter()
+                .any(|arg| arg == "seccomp=/app/seccomp-profile-default.json")
+        );
+        assert!(args.iter().any(|arg| arg == "sandbox-base-python:latest"));
+        // 非法内存值回退默认 256m
+        let args =
+            build_container_create_args("sandbox_python_0", "python", "img", Some("oops"), false);
+        assert!(args.iter().any(|arg| arg == "256m"));
+        assert!(!args.iter().any(|arg| arg.contains("seccomp")));
+        // nodejs module.exports 追加（对齐 handlers.py）
+        assert_eq!(
+            append_nodejs_module_export("function main() {}"),
+            "function main() {}\n\nmodule.exports = { main };"
+        );
+        // 基础镜像默认值（对齐 SANDBOX_BASE_*_IMAGE 默认）
+        assert_eq!(
+            sandbox_base_image_from_env("python"),
+            "sandbox-base-python:latest"
+        );
+        assert_eq!(
+            sandbox_base_image_from_env("nodejs"),
+            "sandbox-base-nodejs:latest"
+        );
+    }
+
+    #[test]
+    fn artifact_contract_mime_and_sanitize() {
+        // MIME 映射（对齐 ALLOWED_ARTIFACT_EXTENSIONS）
+        assert_eq!(mime_type_for_artifact("a.png"), Some("image/png"));
+        assert_eq!(mime_type_for_artifact("a.JPG"), Some("image/jpeg"));
+        assert_eq!(mime_type_for_artifact("a.svg"), Some("image/svg+xml"));
+        assert_eq!(mime_type_for_artifact("a.pdf"), Some("application/pdf"));
+        assert_eq!(mime_type_for_artifact("a.csv"), Some("text/csv"));
+        assert_eq!(mime_type_for_artifact("a.json"), Some("application/json"));
+        assert_eq!(mime_type_for_artifact("a.html"), Some("text/html"));
+        assert_eq!(mime_type_for_artifact("a.exe"), None);
+        assert_eq!(mime_type_for_artifact("noext"), None);
+        // 文件名净化（对齐 execution.py：拒绝 /、\、..、点开头）
+        assert!(artifact_name_is_safe("chart.csv"));
+        assert!(!artifact_name_is_safe("../evil.csv"));
+        assert!(!artifact_name_is_safe("a/b.csv"));
+        assert!(!artifact_name_is_safe("a\\b.csv"));
+        assert!(!artifact_name_is_safe(".hidden"));
+        assert!(!artifact_name_is_safe(""));
+        // 常量
+        assert_eq!(MAX_ARTIFACT_COUNT, 10);
+        assert_eq!(MAX_ARTIFACT_SIZE_BYTES, 10 * 1024 * 1024);
+    }
+
+    #[test]
+    fn execution_bundle_builds_runner_and_args() {
+        // python 包布局（对齐 _build_execution_bundle）
+        let bundle = build_execution_bundle(
+            "python",
+            b"def main():\n    return 1\n",
+            &Map::from_iter([("x".into(), json!(1))]),
+        )
+        .unwrap();
+        assert_eq!(bundle.code_name, "main.py");
+        assert_eq!(bundle.runner_name, "runner.py");
+        assert_eq!(bundle.args_name, "args.json");
+        assert_eq!(bundle.args_source, "{\"x\":1}");
+        assert!(bundle.runner_source.contains("from main import main"));
+        assert!(bundle.runner_source.contains("main(**args)"));
+        assert!(bundle.runner_source.contains("__RAGFLOW_RESULT__:"));
+        assert!(bundle.runner_source.contains("artifacts"));
+        // nodejs 包布局
+        let bundle = build_execution_bundle("nodejs", b"function main() {}", &Map::new()).unwrap();
+        assert_eq!(bundle.code_name, "main.js");
+        assert_eq!(bundle.runner_name, "runner.js");
+        assert!(bundle.runner_source.contains("require(mainPath)"));
+        assert!(bundle.runner_source.contains("__RAGFLOW_RESULT__:"));
+        // 不支持的语言 → Err
+        assert!(build_execution_bundle("ruby", b"x", &Map::new()).is_err());
+    }
+
+    #[test]
+    fn security_analysis_flags_dangerous_code() {
+        // python 危险 import（对齐 SecurePythonAnalyzer）
+        let (safe, issues) = analyze_code_security("import os\nx = 1\n", "python");
+        assert!(!safe);
+        assert!(
+            issues
+                .iter()
+                .any(|(description, line)| { description == "Import: os" && *line == 1 })
+        );
+        let (safe, issues) =
+            analyze_code_security("import json\nfrom subprocess import run\n", "python");
+        assert!(!safe);
+        assert!(
+            issues.iter().any(|(description, line)| {
+                description == "From Import: subprocess" && *line == 2
+            })
+        );
+        // python 危险调用 + 属性访问
+        let (safe, issues) =
+            analyze_code_security("def main():\n    return eval('1+1')\n", "python");
+        assert!(!safe);
+        assert!(
+            issues
+                .iter()
+                .any(|(description, line)| { description == "Call: eval" && *line == 2 })
+        );
+        let (safe, _) =
+            analyze_code_security("def main():\n    return os.path.join('a', 'b')\n", "python");
+        assert!(!safe);
+        // 干净代码 → safe
+        let (safe, issues) =
+            analyze_code_security("def main():\n    return {'ok': True}\n", "python");
+        assert!(safe);
+        assert!(issues.is_empty());
+        // nodejs require（对齐 SecureJavaScriptAnalyzer）
+        let (safe, issues) =
+            analyze_code_security("const { exec } = require('child_process');\n", "nodejs");
+        assert!(!safe);
+        assert!(
+            issues
+                .iter()
+                .any(|(description, _)| description == "Require: child_process")
+        );
+        let (safe, issues) = analyze_code_security("process.binding('natives');\n", "nodejs");
+        assert!(!safe);
+        assert!(
+            issues
+                .iter()
+                .any(|(description, _)| description == "Call: process.binding")
+        );
+        let (safe, _) = analyze_code_security("function main() { return 1; }\n", "nodejs");
+        assert!(safe);
+        // 不支持的语言 → unsafe（对齐 analyze_code_security 默认分支）
+        let (safe, _) = analyze_code_security("x", "ruby");
+        assert!(!safe);
+        // issue 渲染（对齐 handlers.py："Line {lineno}: {issue}" 换行连接）
+        let formatted =
+            format_security_issues(&[("Import: os".to_string(), 1), ("Call: eval".to_string(), 3)]);
+        assert_eq!(formatted, "Line 1: Import: os\nLine 3: Call: eval");
+    }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 远程调用契约层（新增，对齐 client.py / providers/self_managed.py +
@@ -1881,8 +2296,381 @@ impl UCloudProviderConfig {
     }
 }
 
+#[cfg(test)]
+mod cloud_provider_tests {
+    use super::*;
 
+    fn map(value: serde_json::Value) -> Map<String, Value> {
+        value.as_object().cloned().unwrap_or_default()
+    }
 
+    #[test]
+    fn tenki_defaults_bounds_and_validation() {
+        let defaults = TenkiProviderConfig::default();
+        assert_eq!(defaults.timeout, 30);
+        assert_eq!(defaults.max_lifetime, 3600);
+        assert_eq!(defaults.max_artifacts, 20);
+        assert_eq!(defaults.max_artifact_bytes, 10 * 1024 * 1024);
+        assert!(!defaults.allow_outbound);
+        assert_eq!(
+            defaults.validate().unwrap_err(),
+            "Tenki API key is required"
+        );
 
+        let mut config = defaults.clone();
+        config.api_key = "tk_123".to_owned();
+        assert!(config.validate().is_ok());
+        config.max_artifacts = 0;
+        assert!(config.validate().is_ok(), "zero artifacts is allowed");
+        config.max_artifacts = -1;
+        assert_eq!(
+            config.validate().unwrap_err(),
+            "max_artifacts must be greater than or equal to 0"
+        );
+        config.max_artifacts = 20;
+        config.timeout = 0;
+        assert_eq!(
+            config.validate().unwrap_err(),
+            "timeout must be greater than 0"
+        );
 
+        let parsed = TenkiProviderConfig::from_config(&map(serde_json::json!({
+            "api_key": " tk ",
+            "timeout": 45,
+            "max_lifetime": 7200,
+            "max_output_bytes": 2048,
+            "max_artifacts": 5,
+            "max_artifact_bytes": 4096,
+            "allow_outbound": true
+        })))
+        .unwrap();
+        assert_eq!(parsed.api_key, "tk");
+        assert_eq!(parsed.timeout, 45);
+        assert!(parsed.allow_outbound);
+        assert!(
+            TenkiProviderConfig::from_config(&map(serde_json::json!({"timeout": "soon"}))).is_err()
+        );
+        assert_eq!(TenkiProviderConfig::normalize_language("Python3"), "python");
+        assert_eq!(
+            TenkiProviderConfig::normalize_language("javascript"),
+            "nodejs"
+        );
+        assert_eq!(TenkiProviderConfig::normalize_language("go"), "go");
+    }
 
+    #[test]
+    fn ucloud_defaults_validation_and_domain() {
+        let defaults = UCloudProviderConfig::default();
+        assert_eq!(defaults.region, "cn-wlcb");
+        assert_eq!(defaults.sandbox_timeout, 300);
+        assert_eq!(defaults.template, "base");
+        assert!(!defaults.allow_internet_access);
+        assert_eq!(defaults.derived_domain(), "cn-wlcb.sandbox.ucloudai.com");
+        assert!(defaults.validate().is_err());
+
+        let mut config = defaults.clone();
+        config.api_key = "uk_1".to_owned();
+        config.domain = " custom.example ".to_owned();
+        assert_eq!(config.derived_domain(), "custom.example");
+        assert!(config.validate().is_ok());
+        config.sandbox_timeout = 0;
+        assert!(config.validate().is_err());
+        config.sandbox_timeout = 300;
+        config.max_artifacts = 0;
+        assert!(config.validate().is_ok());
+
+        let parsed = UCloudProviderConfig::from_config(&map(serde_json::json!({
+            "api_key": "uk_2",
+            "region": "us-ca",
+            "timeout": "soon"
+        })));
+        assert!(parsed.is_err(), "non-integer timeout value must fail");
+        assert_eq!(UCloudProviderConfig::normalize_language("Node"), "nodejs");
+        assert_eq!(
+            UCloudProviderConfig::normalize_language("python3"),
+            "python"
+        );
+    }
+
+    #[test]
+    fn artifact_contract_matches_upstream() {
+        assert_eq!(CLOUD_SANDBOX_ARTIFACT_EXTENSIONS.len(), 8);
+        assert!(CLOUD_SANDBOX_ARTIFACT_EXTENSIONS.contains(&".csv"));
+        assert!(CLOUD_SANDBOX_ARTIFACT_EXTENSIONS.contains(&".svg"));
+        assert_eq!(CLOUD_SANDBOX_MAX_ARTIFACT_DEPTH, 16);
+        assert_eq!(TENKI_SANDBOX_HOME, "/home/tenki");
+        assert_eq!(UCLOUD_SANDBOX_HOME, "/home/user");
+    }
+}
+
+#[cfg(test)]
+mod sandbox_auth_tests {
+    use super::*;
+
+    #[test]
+    fn token_extraction_matches_upstream_formats() {
+        assert_eq!(extract_request_token(Some("Bearer abc"), None), "abc");
+        assert_eq!(
+            extract_request_token(Some("bearer  spaced "), Some("ignored")),
+            "spaced"
+        );
+        assert_eq!(
+            extract_request_token(Some("Basic abc"), Some(" x-token ")),
+            "x-token"
+        );
+        assert_eq!(extract_request_token(None, None), "");
+    }
+
+    #[test]
+    fn constant_time_equality_matches_compare_digest() {
+        assert!(constant_time_eq("secret", "secret"));
+        assert!(!constant_time_eq("secret", "secreu"));
+        assert!(!constant_time_eq("secret", "secret2"));
+        assert!(constant_time_eq("", ""));
+        assert!(!constant_time_eq("", "x"));
+    }
+
+    #[test]
+    fn auth_postures_fail_closed_by_default() {
+        assert_eq!(
+            authentication_posture("", false),
+            SandboxAuthPosture::FailClosed
+        );
+        assert_eq!(
+            authentication_posture(" tok ", false),
+            SandboxAuthPosture::TokenEnforced
+        );
+        assert_eq!(
+            authentication_posture("", true),
+            SandboxAuthPosture::ExplicitlyUnauthenticated
+        );
+
+        let fail_closed = require_api_token_with("", false, None, None).unwrap_err();
+        assert_eq!(fail_closed.status_code, 503);
+        assert!(fail_closed.detail.contains("not configured"));
+
+        let bad = require_api_token_with("secret", false, Some("Bearer wrong"), None).unwrap_err();
+        assert_eq!(bad.status_code, 401);
+        assert!(require_api_token_with("secret", false, Some("Bearer secret"), None).is_ok());
+        assert!(
+            require_api_token_with("secret", false, None, Some("secret")).is_ok(),
+            "X-Sandbox-Token also authenticates"
+        );
+        assert!(
+            require_api_token_with("", true, None, None).is_ok(),
+            "opt-in passes"
+        );
+    }
+
+    #[test]
+    fn preauth_rate_limit_parsing() {
+        assert_eq!(
+            parse_preauth_rate_limit("30/minute").unwrap(),
+            PreAuthRate {
+                amount: 30,
+                window_seconds: 60
+            }
+        );
+        assert_eq!(
+            parse_preauth_rate_limit("2/second").unwrap().window_seconds,
+            1
+        );
+        assert!(parse_preauth_rate_limit("30").is_err());
+        assert!(parse_preauth_rate_limit("0/minute").is_err());
+        assert!(parse_preauth_rate_limit("30/fortnight").is_err());
+    }
+
+    #[test]
+    fn preauth_limiter_slides_per_address() {
+        let limiter = PreAuthRateLimiter::new(PreAuthRate {
+            amount: 2,
+            window_seconds: 5,
+        });
+        assert!(limiter.hit_at("a", 0.0).is_ok());
+        assert!(limiter.hit_at("a", 1.0).is_ok());
+        let limited = limiter.hit_at("a", 2.0).unwrap_err();
+        assert_eq!(limited.detail, "Too many requests, please try again later");
+        // A different address keeps its own window.
+        assert!(limiter.hit_at("b", 2.0).is_ok());
+        // Once the window slides past the old hits, the address is allowed.
+        assert!(limiter.hit_at("a", 6.5).is_ok());
+        limiter.reset();
+        assert!(limiter.hit_at("a", 6.6).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod remote_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// 启动一个一次性 HTTP 测试服务，返回监听端口。
+    async fn serve_once(status_line: &str, body: &str) -> u16 {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let status_line = status_line.to_string();
+        let body = body.to_string();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut buf = [0u8; 8192];
+            let _ = socket.read(&mut buf).await;
+            let response = format!(
+                "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = socket.write_all(response.as_bytes()).await;
+            let _ = socket.shutdown().await;
+        });
+        port
+    }
+
+    #[test]
+    fn remote_language_normalization_matches_provider() {
+        assert_eq!(normalize_remote_language("python"), "python");
+        assert_eq!(normalize_remote_language("python3"), "python");
+        assert_eq!(normalize_remote_language("javascript"), "nodejs");
+        assert_eq!(normalize_remote_language("nodejs"), "nodejs");
+        assert_eq!(normalize_remote_language(""), "python");
+        assert_eq!(normalize_remote_language("ruby"), "ruby");
+    }
+
+    #[test]
+    fn run_payload_base64_encodes_code_and_arguments() {
+        use base64::Engine;
+        let payload = build_run_payload(
+            "def main():\n    return 1\n",
+            "python3",
+            &Map::from_iter([("x".into(), json!(1))]),
+        );
+        assert_eq!(payload["language"].as_str(), Some("python"));
+        assert_eq!(payload["arguments"]["x"].as_i64(), Some(1));
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(payload["code_b64"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(
+            String::from_utf8(decoded).unwrap(),
+            "def main():\n    return 1\n"
+        );
+    }
+
+    #[test]
+    fn remote_response_parses_into_typed_result() {
+        let wire: CodeExecutionResult = serde_json::from_str(
+            r#"{
+                "status": "success", "stdout": "hello", "stderr": "",
+                "exit_code": 0, "detail": null,
+                "time_used_ms": 12.5, "memory_used_kb": 2048.0,
+                "artifacts": [{"name": "chart.png", "mime_type": "image/png", "size": 10, "content_b64": "AAAA"}],
+                "result": {"present": true, "value": {"sum": 103}, "type": "json"}
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(wire.status, "success");
+        assert_eq!(wire.artifacts.len(), 1);
+        assert_eq!(wire.artifacts[0].mime_type, "image/png");
+        let remote = wire.into_remote(0.5);
+        assert_eq!(remote.status, Some(ResultStatus::Success));
+        assert_eq!(remote.exit_code, 0);
+        assert!(remote.stdout.contains("hello"));
+        assert_eq!(remote.time_used_ms, Some(12.5));
+        assert_eq!(remote.memory_used_kb, Some(2048.0));
+        assert!(remote.result_present);
+        assert_eq!(remote.result_type.as_deref(), Some("json"));
+        assert_eq!(
+            remote.result_value.as_ref().unwrap().get("sum"),
+            Some(&json!(103))
+        );
+    }
+
+    #[test]
+    fn handler_failure_results_match_run_code_handler() {
+        // 安全检查分支（对齐 handlers.py：-999 / program_runner_error / "Code is unsafe"）
+        let unsafe_result = unsafe_code_result("Line 1: Import: os");
+        assert_eq!(
+            unsafe_result.status,
+            ResultStatus::ProgramRunnerError.as_str()
+        );
+        assert_eq!(unsafe_result.exit_code, exit_codes::UNSAFE_CODE);
+        assert_eq!(unsafe_result.detail.as_deref(), Some("Code is unsafe"));
+        assert_eq!(unsafe_result.stderr, "Line 1: Import: os");
+        // 未处理异常分支（对齐 handlers.py：-999 / "unhandled_exception"）
+        let exception_result = unhandled_exception_result("boom");
+        assert_eq!(exception_result.exit_code, exit_codes::UNSAFE_CODE);
+        assert_eq!(
+            exception_result.detail.as_deref(),
+            Some("unhandled_exception")
+        );
+        assert_eq!(exception_result.stderr, "boom");
+    }
+
+    #[tokio::test]
+    async fn remote_client_run_roundtrip_over_http() {
+        let body = json!({
+            "status": "success",
+            "stdout": "plain output",
+            "stderr": "",
+            "exit_code": 0,
+            "detail": null,
+            "time_used_ms": 12.5,
+            "memory_used_kb": 2048.0,
+            "artifacts": [],
+            "result": {"present": true, "value": {"greeting": "hello 世界"}, "type": "json"}
+        })
+        .to_string();
+        let port = serve_once("200 OK", &body).await;
+        let client = RemoteSandboxClient::new(RemoteSandboxConfig {
+            endpoint: format!("http://127.0.0.1:{port}"),
+            ..Default::default()
+        });
+        let result = client
+            .run(
+                "def main(name):\n    return {'greeting': f'hello {name}'}\n",
+                "python3",
+                Some(10),
+                &Map::from_iter([("name".into(), json!("世界"))]),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.status, Some(ResultStatus::Success));
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("plain output"));
+        assert_eq!(
+            result.result_value.as_ref().unwrap().get("greeting"),
+            Some(&json!("hello 世界"))
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_client_non_200_returns_http_error() {
+        let port = serve_once("500 Internal Server Error", "boom").await;
+        let client = RemoteSandboxClient::new(RemoteSandboxConfig {
+            endpoint: format!("http://127.0.0.1:{port}"),
+            ..Default::default()
+        });
+        let error = client
+            .run("x", "python", Some(5), &Map::new())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("HTTP 500"));
+        assert!(error.contains("boom"));
+    }
+
+    #[tokio::test]
+    async fn remote_client_health_check_reports_liveness() {
+        let port = serve_once("200 OK", r#"{"status":"ok"}"#).await;
+        let healthy = RemoteSandboxClient::new(RemoteSandboxConfig {
+            endpoint: format!("http://127.0.0.1:{port}"),
+            ..Default::default()
+        });
+        assert!(healthy.health_check().await);
+        let dead = RemoteSandboxClient::new(RemoteSandboxConfig {
+            endpoint: "http://127.0.0.1:1".to_string(),
+            ..Default::default()
+        });
+        assert!(!dead.health_check().await);
+    }
+}

@@ -313,7 +313,7 @@ Entirely in Docker volumes: `rayrag-state` (files and business data), `rayrag-zv
 
 **Q8 — can it handle images and scanned PDFs?**
 Yes, with an OCR / vision model configured (`OCR` tab, or a `VLM` default model). Mainland-China
-options include PaddleOCR, MinerU, SoMark, OpenDataLoader, Docling and OXR, or a local vision model.
+options include the embedded Rust Docling converter (default), PaddleOCR, MinerU, SoMark, OpenDataLoader, a remote Docling service and OXR, or a local vision model.
 
 **Q9 — why is my reranker unavailable?**
 If the GPU is fully occupied by the chat model, the reranker cannot load. Move it to another

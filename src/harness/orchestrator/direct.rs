@@ -163,4 +163,111 @@ pub async fn direct_search(
     json!({"kbinfos": kbinfos.as_json()})
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
 
+    struct MockTools {
+        keywords: Mutex<Result<(String, String), String>>,
+        result: Mutex<Kbinfos>,
+        last_request: Mutex<Option<HybridSearchRequest>>,
+    }
+
+    #[async_trait]
+    impl DirectTools for MockTools {
+        async fn extract_keywords_weighted(
+            &self,
+            _question: &str,
+        ) -> Result<(String, String), String> {
+            self.keywords.lock().unwrap().clone()
+        }
+
+        async fn hybrid_search(&self, request: HybridSearchRequest) -> Result<Kbinfos, String> {
+            *self.last_request.lock().unwrap() = Some(request);
+            Ok(self.result.lock().unwrap().clone())
+        }
+    }
+
+    fn mock(kkeywords: Result<(String, String), String>, result: Kbinfos) -> MockTools {
+        MockTools {
+            keywords: Mutex::new(kkeywords),
+            result: Mutex::new(result),
+            last_request: Mutex::new(None),
+        }
+    }
+
+    #[test]
+    fn merge_dedups_chunks_and_docs() {
+        let mut kbinfos = Kbinfos {
+            chunks: vec![json!({"chunk_id": "c1", "text": "a"})],
+            doc_aggs: vec![json!({"doc_id": "d1"})],
+            pre_summary: None,
+        };
+        let result = Kbinfos {
+            chunks: vec![
+                json!({"chunk_id": "c1", "text": "dup"}),
+                json!({"id": 7, "text": "b"}),
+            ],
+            doc_aggs: vec![json!({"doc_id": "d1"}), json!({"doc_id": "d2"})],
+            pre_summary: None,
+        };
+        merge_kbinfos(&mut kbinfos, &result);
+        assert_eq!(kbinfos.chunks.len(), 2);
+        assert_eq!(kbinfos.chunks[1]["id"], json!(7));
+        assert_eq!(kbinfos.doc_aggs.len(), 2);
+
+        // Anonymous chunks stay distinct;
+        // a second None doc_id is skipped (Python set semantics).
+        let mut kbinfos = Kbinfos::default();
+        let result = Kbinfos {
+            chunks: vec![json!({"text": "x"})],
+            doc_aggs: vec![json!({}), json!({})],
+            pre_summary: None,
+        };
+        merge_kbinfos(&mut kbinfos, &result);
+        assert_eq!(kbinfos.doc_aggs.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn direct_search_paths() {
+        let stats = StatsHandle::new();
+
+        // Success: the weighted query is forwarded, use_compiled set.
+        let tools = mock(
+            Ok((
+                "Alpha, Alpha, Alpha, 1999".to_string(),
+                "Alpha, 1999".to_string(),
+            )),
+            Kbinfos {
+                chunks: vec![json!({"chunk_id": "c1"})],
+                doc_aggs: vec![],
+                pre_summary: None,
+            },
+        );
+        let mut kbinfos = Kbinfos::default();
+        let state = json!({"question": "Who?", "keywords": "Alpha"});
+        let out = direct_search(&state, &tools, &mut kbinfos, &stats).await;
+        assert!(out.get("empty_result").is_none());
+        let request = tools.last_request.lock().unwrap().clone().unwrap();
+        assert_eq!(request.query, "Who?");
+        assert_eq!(request.retrieval_query, "Alpha, Alpha, Alpha, 1999");
+        assert!(request.use_compiled);
+
+        // Keyword extraction failure clears the retrieval query but proceeds.
+        let tools = mock(Err("boom".to_string()), Kbinfos::default());
+        let mut kbinfos = Kbinfos::default();
+        let out = direct_search(&state, &tools, &mut kbinfos, &stats).await;
+        assert_eq!(out["empty_result"], json!(true));
+        let request = tools.last_request.lock().unwrap().clone().unwrap();
+        assert_eq!(request.retrieval_query, "");
+
+        // The phase recorded both calls under "direct".
+        let rows = stats.snapshot();
+        let direct = rows
+            .iter()
+            .find(|(phase, _)| phase == "direct")
+            .expect("direct phase recorded");
+        assert_eq!(direct.1["calls"], json!(0));
+    }
+}

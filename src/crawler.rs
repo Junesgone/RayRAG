@@ -328,4 +328,68 @@ fn compact_whitespace_preserve_newlines(text: &str) -> String {
         .join("\n")
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{Router, routing::get};
 
+    const SAMPLE_HTML: &str = r#"<html><head><title>T</title><style>.x{}</style></head>
+<body><h1>标题</h1><p>一段<b>加粗</b>文本 <a href="https://example.com/link">链接</a></p>
+<pre><code>let x = 1;</code></pre><script>alert(1)</script></body></html>"#;
+
+    #[tokio::test]
+    async fn markdown_mode_converts_headings_links_and_code() {
+        let md = html_to_markdown(SAMPLE_HTML);
+        assert!(md.contains("# 标题"));
+        assert!(md.contains("**加粗**"));
+        assert!(md.contains("[链接](https://example.com/link)"));
+        assert!(md.contains("let x = 1;"));
+        assert!(!md.contains("alert(1)"));
+    }
+
+    #[tokio::test]
+    async fn content_mode_strips_all_tags() {
+        let content = strip_all_tags(SAMPLE_HTML);
+        assert!(content.contains("标题"));
+        assert!(content.contains("加粗"));
+        assert!(!content.contains("<b>"));
+        assert!(!content.contains("alert(1)"));
+    }
+
+    #[tokio::test]
+    async fn clean_html_removes_scripts_and_styles() {
+        let cleaned = clean_html(SAMPLE_HTML);
+        assert!(!cleaned.contains("alert(1)"));
+        assert!(!cleaned.contains(".x{}"));
+        assert!(cleaned.contains("加粗"));
+    }
+
+    #[tokio::test]
+    async fn fetch_rejects_private_loopback_addresses() {
+        // 127.0.0.1 属于私网/回环，应被 SSRF 防护拒绝
+        let client = CrawlerClient::new();
+        let result = client
+            .fetch(&CrawlerRequest {
+                url: "http://127.0.0.1:9/x".into(),
+                extract_type: "markdown".into(),
+                proxy: None,
+            })
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("URL not valid"));
+    }
+
+    #[tokio::test]
+    async fn fetch_rejects_invalid_scheme() {
+        let client = CrawlerClient::new();
+        let result = client
+            .fetch(&CrawlerRequest {
+                url: "file:///etc/passwd".into(),
+                extract_type: "markdown".into(),
+                proxy: None,
+            })
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("URL not valid"));
+    }
+}

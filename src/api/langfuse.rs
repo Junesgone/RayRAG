@@ -283,4 +283,109 @@ pub async fn delete_langfuse_api_key(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn store_persists_per_tenant_and_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir
+            .path()
+            .join("langfuse.json")
+            .to_string_lossy()
+            .into_owned();
+        let store = LangfuseStore::new(&path).unwrap();
+        store
+            .upsert(
+                "tenant-a",
+                "sk-a",
+                "pk-a",
+                "https://cloud.langfuse.com",
+                Some("p-1"),
+                Some("Project 1"),
+            )
+            .unwrap();
+        store
+            .upsert(
+                "tenant-b",
+                "sk-b",
+                "pk-b",
+                "https://lf.example.com",
+                None,
+                None,
+            )
+            .unwrap();
+        assert!(store.get("tenant-a").unwrap().project_id.as_deref() == Some("p-1"));
+        assert!(store.get("tenant-b").unwrap().host == "https://lf.example.com");
+
+        let reopened = LangfuseStore::new(&path).unwrap();
+        assert_eq!(reopened.get("tenant-a").unwrap().secret_key, "sk-a");
+        assert_eq!(reopened.get("tenant-b").unwrap().public_key, "pk-b");
+
+        assert!(reopened.delete("tenant-a").unwrap());
+        assert!(!reopened.delete("tenant-a").unwrap());
+        let reopened = LangfuseStore::new(&path).unwrap();
+        assert!(reopened.get("tenant-a").is_none());
+        assert!(reopened.get("tenant-b").is_some());
+    }
+
+    #[test]
+    fn host_normalization_adds_https_and_rejects_invalid() {
+        assert_eq!(
+            normalize_langfuse_host("https://cloud.langfuse.com/").unwrap(),
+            "https://cloud.langfuse.com"
+        );
+        assert_eq!(
+            normalize_langfuse_host("lf.example.com").unwrap(),
+            "https://lf.example.com"
+        );
+        assert!(normalize_langfuse_host("").is_err());
+        assert!(normalize_langfuse_host("://bad").is_err());
+    }
+
+    #[tokio::test]
+    async fn probe_reads_health_and_first_project() {
+        let app = axum::Router::new()
+            .route(
+                "/api/public/health",
+                axum::routing::get(|| async { (StatusCode::OK, r#"{"status":"ok"}"#) }),
+            )
+            .route(
+                "/api/public/projects",
+                axum::routing::get(|| async {
+                    (
+                        StatusCode::OK,
+                        r#"{"data":[{"id":"p-1","name":"Audit Project"}]}"#,
+                    )
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let (project_id, project_name) =
+            probe_langfuse(&format!("http://{address}"), "pk-audit", "sk-audit")
+                .await
+                .unwrap();
+        server.abort();
+        assert_eq!(project_id.as_deref(), Some("p-1"));
+        assert_eq!(project_name.as_deref(), Some("Audit Project"));
+    }
+
+    #[tokio::test]
+    async fn probe_rejects_invalid_credentials() {
+        let app = axum::Router::new().route(
+            "/api/public/health",
+            axum::routing::get(|| async { StatusCode::UNAUTHORIZED }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let result = probe_langfuse(&format!("http://{address}"), "pk-bad", "sk-bad").await;
+        server.abort();
+        assert!(
+            result.is_err(),
+            "non-2xx health probe must fail closed with an error"
+        );
+    }
+}

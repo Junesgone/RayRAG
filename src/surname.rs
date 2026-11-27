@@ -81,4 +81,55 @@ pub fn is_chinese_surname(name: &str) -> bool {
     false
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn common_single_surnames_match() {
+        for s in ["李", "王", "张", "刘", "陈", "杨", "赵", "黄", "周", "吴"] {
+            assert!(is_chinese_surname(s), "{s} is a surname");
+        }
+    }
+
+    #[test]
+    fn full_names_match_on_first_char() {
+        assert!(is_chinese_surname("李锦澎"));
+        assert!(is_chinese_surname("王小明"));
+        assert!(is_chinese_surname("欧阳娜娜"));
+    }
+
+    #[test]
+    fn compound_surnames_match_bigram() {
+        for s in [
+            "欧阳", "司马", "上官", "诸葛", "慕容", "东方", "尉迟", "公孙",
+        ] {
+            assert!(is_chinese_surname(s), "{s} is a compound surname");
+            assert!(is_chinese_surname(&format!("{s}某")), "{s}某 should match");
+        }
+    }
+
+    #[test]
+    fn non_surnames_do_not_match() {
+        for s in ["啊", "哦", "呗", "哟", "哎", "嘻"] {
+            assert!(!is_chinese_surname(s), "{s} is not a surname");
+        }
+    }
+
+    #[test]
+    fn whitespace_is_trimmed() {
+        assert!(is_chinese_surname(" 李 "));
+        assert!(!is_chinese_surname("  "));
+        assert!(!is_chinese_surname(""));
+    }
+
+    #[test]
+    fn surnames_in_ragflow_set_match() {
+        // Spot-check rare entries from the upstream set (郁/湛/酆/璩/郄)
+        for s in [
+            "郁", "湛", "酆", "璩", "郄", "逯", "訾", "阚", "仉督", "澹台",
+        ] {
+            assert!(is_chinese_surname(s), "{s} should be in the 百家姓 set");
+        }
+    }
+}

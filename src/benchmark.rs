@@ -372,4 +372,165 @@ pub async fn run_retrieval_benchmark(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    /// Build rank-ordered pairs in the given (insertion) order, like the
+    /// Python `run` dict.
+    fn pairs(entries: &[(&str, f64)]) -> ScorePairs {
+        entries
+            .iter()
+            .map(|(doc, score)| (doc.to_string(), *score))
+            .collect()
+    }
+
+    #[test]
+    fn ndcg_mrr_and_map_match_ranx_on_a_small_example() {
+        let qrels = pairs(&[("d1", 1.0), ("d2", 1.0), ("d3", 0.0), ("d4", 1.0)]);
+        // Perfect ordering: d1, d2, d4 relevant at ranks 1..3.
+        let perfect = pairs(&[("d1", 0.9), ("d2", 0.8), ("d4", 0.7), ("d3", 0.1)]);
+        assert!((ndcg_at_k(&qrels, &perfect, 10) - 1.0).abs() < 1e-9);
+        assert!((reciprocal_rank_at_k(&qrels, &perfect, 10) - 1.0).abs() < 1e-9);
+        assert!((average_precision_at_k(&qrels, &perfect, 5) - 1.0).abs() < 1e-9);
+
+        // First relevant document at rank 2: mrr = 0.5, ndcg = dcg/idcg.
+        let run = pairs(&[("d3", 0.9), ("d1", 0.8), ("d2", 0.7), ("d4", 0.1)]);
+        assert!((reciprocal_rank_at_k(&qrels, &run, 10) - 0.5).abs() < 1e-9);
+        // Rank order relevance: d3→0, d1→1, d2→1, d4→1.
+        let dcg =
+            0.0 / 2.0f64.log2() + 1.0 / 3.0f64.log2() + 1.0 / 4.0f64.log2() + 1.0 / 5.0f64.log2();
+        let idcg = 1.0 / 2.0f64.log2() + 1.0 / 3.0f64.log2() + 1.0 / 4.0f64.log2();
+        assert!((ndcg_at_k(&qrels, &run, 10) - dcg / idcg).abs() < 1e-9);
+
+        // No relevant document in the run → zero across the board.
+        let empty = pairs(&[("d9", 0.5)]);
+        assert_eq!(ndcg_at_k(&qrels, &empty, 10), 0.0);
+        assert_eq!(reciprocal_rank_at_k(&qrels, &empty, 10), 0.0);
+        assert_eq!(average_precision_at_k(&qrels, &empty, 5), 0.0);
+    }
+
+    #[test]
+    fn metrics_average_over_queries_like_ranx_evaluate() {
+        let qrels: ScoreTable = [
+            ("q1".to_owned(), pairs(&[("a", 1.0), ("b", 1.0)])),
+            ("q2".to_owned(), pairs(&[("c", 1.0)])),
+        ]
+        .into_iter()
+        .collect();
+        let run: ScoreTable = [
+            ("q1".to_owned(), pairs(&[("a", 0.9), ("b", 0.8)])),
+            // q2's run puts an irrelevant doc at rank 1 (z), c at rank 2.
+            ("q2".to_owned(), pairs(&[("z", 0.9), ("c", 0.7)])),
+        ]
+        .into_iter()
+        .collect();
+        let metrics = BenchmarkMetrics::evaluate(&qrels, &run);
+        assert_eq!(metrics.queries, 2);
+        // q1: ndcg = 1; q2: c at rank 2 → dcg = 1/log2(3), idcg = 1.
+        let expected_ndcg = (1.0 + 1.0 / 3.0f64.log2()) / 2.0;
+        assert!((metrics.ndcg10 - expected_ndcg).abs() < 1e-9);
+        // q1: ap@5 = 1; q2: hit at rank 2 → 1/2 → mean 0.75.
+        assert!((metrics.map5 - 0.75).abs() < 1e-9);
+        // q1: rr = 1; q2: rr = 1/2 → mean 0.75.
+        assert!((metrics.mrr10 - 0.75).abs() < 1e-9);
+    }
+
+    #[test]
+    fn latency_stats_compute_avg_p50_p95_and_max() {
+        let stats = LatencyStats::from_millis(vec![10.0, 20.0, 30.0, 40.0, 50.0]);
+        assert_eq!(stats.count, 5);
+        assert!((stats.avg_ms - 30.0).abs() < 1e-9);
+        assert!((stats.p50_ms - 30.0).abs() < 1e-9);
+        assert!((stats.p95_ms - 50.0).abs() < 1e-9);
+        assert!((stats.max_ms - 50.0).abs() < 1e-9);
+        let empty = LatencyStats::from_millis(vec![]);
+        assert_eq!(empty.count, 0);
+        assert_eq!(empty.avg_ms, 0.0);
+    }
+
+    #[test]
+    fn benchmark_loop_drops_empty_queries_and_scores_the_rest() {
+        struct StubRunner;
+        #[async_trait::async_trait]
+        impl RetrievalRunner for StubRunner {
+            async fn retrieve(&self, query: &str, top_k: usize) -> Vec<RankedChunk> {
+                if query == "q2" {
+                    return vec![];
+                }
+                vec![
+                    RankedChunk {
+                        chunk_id: "a".into(),
+                        similarity: 0.9,
+                    },
+                    RankedChunk {
+                        chunk_id: "b".into(),
+                        similarity: 0.8,
+                    },
+                ]
+                .into_iter()
+                .take(top_k)
+                .collect()
+            }
+        }
+        let qrels: ScoreTable = [
+            ("q1".to_owned(), pairs(&[("a", 1.0), ("b", 1.0)])),
+            ("q2".to_owned(), pairs(&[("c", 1.0)])),
+        ]
+        .into_iter()
+        .collect();
+        let texts: BTreeMap<String, String> = [
+            ("a".to_owned(), "doc a".to_owned()),
+            ("b".to_owned(), "doc b".to_owned()),
+        ]
+        .into_iter()
+        .collect();
+        let report = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(run_retrieval_benchmark(&StubRunner, &qrels, &texts, 30));
+        // q2 was dropped from the run, so only q1 is scored.
+        assert_eq!(report.queries_deleted, 1);
+        assert_eq!(report.metrics.queries, 1);
+        assert!((report.metrics.ndcg10 - 1.0).abs() < 1e-9);
+        assert_eq!(report.rows.len(), 1);
+        let markdown = report.to_markdown();
+        assert!(markdown.starts_with("## Score For Every Query\n"));
+        assert!(markdown.contains("ndcg@10:1"));
+        assert!(markdown.contains("doc a"));
+    }
+
+    #[test]
+    fn dataset_parse_and_layout_validation_match_python() {
+        assert_eq!(
+            BenchmarkDataset::parse("ms_marco_v1.1"),
+            Some(BenchmarkDataset::MsMarcoV11)
+        );
+        assert_eq!(
+            BenchmarkDataset::parse("trivia_qa"),
+            Some(BenchmarkDataset::TriviaQa)
+        );
+        assert_eq!(
+            BenchmarkDataset::parse("miracl"),
+            Some(BenchmarkDataset::Miracl)
+        );
+        assert_eq!(BenchmarkDataset::parse("nonsense"), None);
+        assert_eq!(BenchmarkDataset::MsMarcoV11.name(), "ms_marco_v1.1");
+        assert_eq!(MIRACL_LANGUAGES.len(), 18);
+        assert!(MIRACL_LANGUAGES.contains(&"zh"));
+        assert!(MIRACL_LANGUAGES.contains(&"en"));
+
+        let config = BenchmarkConfig::new(0, "kb", BenchmarkDataset::MsMarcoV11, "/tmp/bench", "");
+        assert!(config.validate_dataset_layout().is_err());
+        let config = BenchmarkConfig::new(
+            100,
+            "kb",
+            BenchmarkDataset::Miracl,
+            "/tmp/does-not-exist",
+            "/tmp/corpus-does-not-exist",
+        );
+        let err = config.validate_dataset_layout().unwrap_err();
+        assert!(err.contains("miracl-v1.0-ar/qrels"), "unexpected: {err}");
+    }
+}

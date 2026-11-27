@@ -137,4 +137,29 @@ pub fn init() -> LogLevelManager {
     manager.with_reload(move |targets| handle.reload(targets).map_err(|error| error.to_string()))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
+    #[test]
+    fn runtime_level_update_is_canonical_and_reloads_before_commit() {
+        let reloads = Arc::new(AtomicUsize::new(0));
+        let observed = reloads.clone();
+        let manager = LogLevelManager::in_memory().with_reload(move |_| {
+            observed.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        });
+
+        assert_eq!(
+            manager.set_level("rayrag::search", "warn").unwrap(),
+            "WARNING"
+        );
+        assert_eq!(manager.levels()["rayrag::search"], "WARNING");
+        assert_eq!(reloads.load(Ordering::SeqCst), 1);
+        assert!(matches!(
+            manager.set_level("rayrag", "verbose"),
+            Err(SetLogLevelError::InvalidLevel)
+        ));
+    }
+}

@@ -2403,8 +2403,852 @@ pub async fn search_nav_tree_descent(
     collected
 }
 
+#[cfg(test)]
+mod dataset_nav_tests {
+    use super::*;
+    use serde_json::json;
+    use std::sync::Mutex;
 
+    #[test]
+    fn ids_are_stable_and_scoped() {
+        assert_eq!(nav_doc_id("d1"), nav_doc_id("d1"));
+        assert_ne!(nav_doc_id("d1"), nav_doc_id("d2"));
+        assert_ne!(nav_cluster_id("kb1", "A"), nav_cluster_id("kb1", "B"));
+        assert_ne!(nav_cluster_id("kb1", "A"), nav_cluster_id("kb2", "A"));
+        assert_eq!(nav_lock_key("kb1"), "dataset_nav:kb1");
+        assert_eq!(index_name("t1"), "ragflow_t1");
+        assert_eq!(vec_field(1024), "q_1024_vec");
+        assert_eq!(COMPILE_KWD, "dataset_nav");
+    }
 
+    #[test]
+    fn root_summary_variants() {
+        assert_eq!(
+            extract_root_summary_from_tree(&json!({"title": " Root "})),
+            "Root"
+        );
+        assert_eq!(
+            extract_root_summary_from_tree(&json!({"summary": "S"})),
+            "S"
+        );
+        assert_eq!(
+            extract_root_summary_from_tree(&json!({"content_with_weight": "C"})),
+            "C"
+        );
+        assert_eq!(extract_root_summary_from_tree(&json!({"title": "  "})), "");
+        assert_eq!(extract_root_summary_from_tree(&json!(null)), "");
+        assert_eq!(extract_root_summary_from_tree(&json!("bare")), "");
+    }
 
+    #[derive(Default)]
+    struct MockStore {
+        rows: Vec<Value>,
+        gets: Mutex<usize>,
+    }
 
+    impl crate::doc_store::DocStore for MockStore {
+        fn db_type(&self) -> &'static str {
+            "memory"
+        }
+        fn health(&self) -> crate::Result<crate::doc_store::HealthStatus> {
+            Ok(crate::doc_store::HealthStatus::green("test"))
+        }
+        fn create_idx(&self, _i: &str, _d: &str, _v: usize) -> crate::Result<()> {
+            Ok(())
+        }
+        fn delete_idx(&self, _i: &str, _d: &str) -> crate::Result<()> {
+            Ok(())
+        }
+        fn index_exist(&self, _i: &str, _d: &str) -> crate::Result<bool> {
+            Ok(true)
+        }
+        fn insert(
+            &self,
+            _rows: &[crate::doc_store::DocRow],
+            _i: &str,
+            _d: &str,
+        ) -> crate::Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+        fn get(
+            &self,
+            _data_id: &str,
+            _i: &str,
+            _d: &[String],
+        ) -> crate::Result<Option<crate::doc_store::DocRow>> {
+            *self.gets.lock().unwrap() += 1;
+            Ok(None)
+        }
+        fn update(
+            &self,
+            _c: &crate::doc_store::FilterCondition,
+            _n: &crate::doc_store::DocRow,
+            _i: &str,
+            _d: &str,
+        ) -> crate::Result<bool> {
+            Ok(false)
+        }
+        fn delete(
+            &self,
+            _c: &crate::doc_store::FilterCondition,
+            _i: &str,
+            _d: &str,
+        ) -> crate::Result<usize> {
+            Ok(0)
+        }
+        fn search(
+            &self,
+            _q: &crate::doc_store::SearchQuery,
+        ) -> crate::Result<crate::doc_store::SearchResponse> {
+            let docs: Vec<crate::doc_store::DocRow> = self
+                .rows
+                .iter()
+                .filter_map(|row| row.as_object().cloned())
+                .collect();
+            Ok(crate::doc_store::SearchResponse {
+                total: docs.len(),
+                docs,
+                ..Default::default()
+            })
+        }
+        fn sql(&self, _s: &str, _f: usize) -> crate::Result<Vec<Value>> {
+            Ok(Vec::new())
+        }
+    }
 
+    #[test]
+    fn store_wrappers_delegate() {
+        let store = MockStore {
+            rows: vec![json!({"id": "r1", "name": "A"})],
+            ..MockStore::default()
+        };
+        let fields = vec!["id".to_string(), "name".to_string()];
+        let rows = store_search(
+            &store,
+            "t1",
+            "kb1",
+            &json!({"compile_kwd": ["dataset_nav"]}),
+            &fields,
+            100,
+        );
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["name"], json!("A"));
+        assert!(store_get(&store, "t1", "kb1", "r1").is_none());
+        assert_eq!(*store.gets.lock().unwrap(), 1, "get was attempted");
+    }
+}
+#[cfg(test)]
+mod dataset_nav_part2_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn vector_and_cosine_math() {
+        assert_eq!(vector_len(Some(&json!([1.0, 2.0]))), 2);
+        assert_eq!(vector_len(None), 0);
+        assert_eq!(vector_len(Some(&json!(5))), 0);
+        let sim = cosine_sim(&[1.0, 0.0], &[1.0, 0.0]);
+        assert!((sim - 1.0).abs() < 1e-9);
+        assert_eq!(cosine_sim(&[1.0], &[1.0, 0.0]), 0.0, "shape mismatch");
+        assert_eq!(cosine_sim(&[0.0, 0.0], &[1.0, 0.0]), 0.0);
+    }
+
+    #[test]
+    fn nav_rows_have_expected_shape() {
+        let row = make_nav_doc_row("kb1", "d1", "Alpha doc", "root", 1, &[0.1, 0.2], "");
+        assert_eq!(row["type_kwd"], json!("nav_doc"));
+        assert_eq!(row["compile_kwd"], json!("dataset_nav"));
+        assert_eq!(row["available_int"], json!(0));
+        assert!(row["name"].as_str().unwrap().starts_with("root_"));
+        assert!(row.get("q_2_vec").is_some());
+        let payload: Value =
+            serde_json::from_str(row["content_with_weight"].as_str().unwrap()).unwrap();
+        assert_eq!(payload["type"], json!("nav_doc"));
+        assert!(payload.get("graph_content").is_none());
+
+        let cluster = make_nav_cluster_row(
+            "kb1",
+            "Topic",
+            "About Topic",
+            "root",
+            0,
+            &["d1".to_string(), "d2".to_string()],
+            &[],
+        );
+        assert_eq!(cluster["type_kwd"], json!("nav_cluster"));
+        assert_eq!(cluster["doc_count_int"], json!(2));
+        assert_eq!(cluster["doc_ids_kwd"], json!(["d1", "d2"]));
+        assert!(
+            cluster.get("q_2_vec").is_none(),
+            "no embedding -> no vec field"
+        );
+    }
+
+    #[test]
+    fn graph_content_replaces_keyword_source() {
+        let row = make_nav_doc_row("kb1", "d1", "summary", "root", 1, &[], "Graph Alpha Beta");
+        let payload: Value =
+            serde_json::from_str(row["content_with_weight"].as_str().unwrap()).unwrap();
+        assert_eq!(payload["graph_content"], json!("Graph Alpha Beta"));
+    }
+
+    #[test]
+    fn keywords_and_entities_are_deduped_and_capped() {
+        let keywords = nav_keywords_limited("Alpha Beta Gamma Delta Epsilon Zeta Eta", 3);
+        assert_eq!(keywords.len(), 3);
+        let entities = nav_entities_limited("New York City and Machine Learning work", 2);
+        assert_eq!(entities.len(), 2);
+        assert!(entities.contains(&"New York City".to_string()));
+    }
+
+    #[test]
+    fn condition_and_scope_matrix() {
+        let row = json!({"doc_id": "d1", "type_kwd": "nav_doc", "kb_id": "kb1"});
+        assert!(matches_condition(
+            &row,
+            &json!({"type_kwd": "nav_doc", "kb_id": "kb9"})
+        ));
+        assert!(!matches_condition(
+            &row,
+            &json!({"type_kwd": "nav_cluster"})
+        ));
+        assert!(
+            matches_condition(&row, &json!({"type_kwd": []})),
+            "empty filter passes"
+        );
+
+        let cluster = json!({"doc_id": "kb1", "doc_ids_kwd": ["d1", "d2"]});
+        let mut allowed = std::collections::HashSet::new();
+        allowed.insert("d1".to_string());
+        assert!(in_nav_scope(&cluster, Some(&allowed)));
+        let mut allowed_other = std::collections::HashSet::new();
+        allowed_other.insert("d9".to_string());
+        assert!(!in_nav_scope(&cluster, Some(&allowed_other)));
+        assert!(in_nav_scope(&row, Some(&allowed)));
+        assert!(!in_nav_scope(&row, Some(&allowed_other)));
+        assert!(in_nav_scope(&row, None), "no scope allows everything");
+    }
+}
+#[cfg(test)]
+mod dataset_nav_part3_tests {
+    use super::*;
+    use async_trait::async_trait;
+    use serde_json::json;
+    use std::sync::Mutex;
+
+    struct MockChat {
+        reply: String,
+    }
+
+    #[async_trait]
+    impl crate::harness::HarnessChat for MockChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            _history: &[Value],
+            _gen_conf: &Value,
+        ) -> std::result::Result<String, String> {
+            Ok(self.reply.clone())
+        }
+        fn max_length(&self) -> usize {
+            4096
+        }
+    }
+
+    #[derive(Default)]
+    struct MockStore {
+        rows: Vec<Value>,
+    }
+
+    impl crate::doc_store::DocStore for MockStore {
+        fn db_type(&self) -> &'static str {
+            "memory"
+        }
+        fn health(&self) -> crate::Result<crate::doc_store::HealthStatus> {
+            Ok(crate::doc_store::HealthStatus::green("test"))
+        }
+        fn create_idx(&self, _i: &str, _d: &str, _v: usize) -> crate::Result<()> {
+            Ok(())
+        }
+        fn delete_idx(&self, _i: &str, _d: &str) -> crate::Result<()> {
+            Ok(())
+        }
+        fn index_exist(&self, _i: &str, _d: &str) -> crate::Result<bool> {
+            Ok(true)
+        }
+        fn insert(
+            &self,
+            _r: &[crate::doc_store::DocRow],
+            _i: &str,
+            _d: &str,
+        ) -> crate::Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+        fn get(
+            &self,
+            _a: &str,
+            _i: &str,
+            _d: &[String],
+        ) -> crate::Result<Option<crate::doc_store::DocRow>> {
+            Ok(None)
+        }
+        fn update(
+            &self,
+            _c: &crate::doc_store::FilterCondition,
+            _n: &crate::doc_store::DocRow,
+            _i: &str,
+            _d: &str,
+        ) -> crate::Result<bool> {
+            Ok(false)
+        }
+        fn delete(
+            &self,
+            _c: &crate::doc_store::FilterCondition,
+            _i: &str,
+            _d: &str,
+        ) -> crate::Result<usize> {
+            Ok(0)
+        }
+        fn search(
+            &self,
+            query: &crate::doc_store::SearchQuery,
+        ) -> crate::Result<crate::doc_store::SearchResponse> {
+            // Honour parent_kwd filters so the descent test can walk children.
+            let parent = query
+                .condition
+                .get("parent_kwd")
+                .and_then(Value::as_array)
+                .and_then(|items| items.first())
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let docs: Vec<crate::doc_store::DocRow> = self
+                .rows
+                .iter()
+                .filter(|row| match &parent {
+                    None => true,
+                    Some(parent) => {
+                        row.get("parent_kwd").and_then(Value::as_str) == Some(parent.as_str())
+                    }
+                })
+                .filter_map(|row| row.as_object().cloned())
+                .collect();
+            Ok(crate::doc_store::SearchResponse {
+                total: docs.len(),
+                docs,
+                ..Default::default()
+            })
+        }
+        fn sql(&self, _s: &str, _f: usize) -> crate::Result<Vec<Value>> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[test]
+    fn title_helpers() {
+        assert_eq!(clean_title("  a   b\n c  "), "a b c");
+        let long = "x".repeat(60);
+        assert_eq!(clean_title(&long).len(), 48);
+        assert_eq!(
+            fallback_title("one two three four five six seven"),
+            "one two three four five six"
+        );
+        assert_eq!(fallback_title("   "), "Cluster");
+        let name = readable_cluster_name("My Title", "seed");
+        assert!(name.starts_with("My Title "), "{name}");
+        assert_eq!(name.len(), "My Title ".len() + 8);
+        assert_eq!(readable_cluster_name("", "seed"), {
+            let digest = xxhash_rust::xxh3::xxh3_64(b"seed");
+            format!("Cluster {:08x}", (digest & 0xffff_ffff) as u32).replace(
+                &format!("{:08x}", (digest & 0xffff_ffff) as u32),
+                &format!("{digest:016x}")[..8],
+            )
+        });
+    }
+
+    #[tokio::test]
+    async fn llm_merge_and_summary_paths() {
+        let chat = MockChat {
+            reply: json!({"merged": "merged text"}).to_string(),
+        };
+        let merged = llm_merge(Some(&chat), "old", "new").await;
+        assert_eq!(merged, "merged text");
+        let no_chat = llm_merge(None, "old", "new").await;
+        assert_eq!(no_chat, "old");
+
+        let summary_chat = MockChat {
+            reply: json!({"name": "Topic Name", "summary": "about things"}).to_string(),
+        };
+        let (name, summary) =
+            llm_create_summary(Some(&summary_chat), &["doc one".to_string()]).await;
+        assert_eq!(name, "Topic Name");
+        assert_eq!(summary, "about things");
+        let (fallback_name, fallback_summary) =
+            llm_create_summary(None, &["doc one".to_string()]).await;
+        assert_eq!(fallback_name, "doc one");
+        assert_eq!(fallback_summary, "doc one");
+    }
+
+    #[test]
+    fn find_best_cluster_descends_children() {
+        let rows = vec![
+            json!({"id": "r-root", "name": "root", "parent_kwd": "", "type_kwd": "nav_cluster", "depth_int": 0, "kb_id": "kb1", "compile_kwd": "dataset_nav", "q_2_vec": [1.0, 0.0]}),
+            json!({"id": "r-childA", "name": "childA", "parent_kwd": "root", "type_kwd": "nav_cluster", "depth_int": 1, "kb_id": "kb1", "compile_kwd": "dataset_nav", "q_2_vec": [1.0, 0.0]}),
+        ];
+        let store = MockStore { rows };
+        let (name, parent, sim) = find_best_cluster(&store, "t1", "kb1", &[1.0, 0.0], 2);
+        assert_eq!(name.as_deref(), Some("childA"));
+        assert_eq!(parent.as_deref(), Some("root"));
+        assert!(sim >= RECURSE_THRESHOLD);
+
+        let empty = MockStore::default();
+        let (name, _, sim) = find_best_cluster(&empty, "t1", "kb1", &[1.0, 0.0], 2);
+        assert!(name.is_none());
+        assert_eq!(sim, 0.0);
+    }
+
+    #[test]
+    fn graph_text_uses_descriptions_without_redundant_prefix() {
+        let graph = json!({
+            "entities": [
+                {"name": "Root", "description": "Root desc\nsecond line"},
+                {"name": "Child", "description": "Child desc"},
+            ],
+            "relations": [{"from": "Root", "to": "Child"}],
+        });
+        let (title, text) = build_nav_graph_text(&graph);
+        assert_eq!(title, "Root desc");
+        assert!(text.starts_with("Root desc\nsecond line\n\n"));
+        assert!(text.contains("Child desc"));
+        assert!(
+            !text.contains("Root: Root desc"),
+            "no redundant name prefix"
+        );
+        let (_, empty) = build_nav_graph_text(&json!(null));
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn store_knn_falls_back_when_filters_ignored() {
+        // The mock ignores conditions; the fallback scan re-checks and sorts.
+        struct IgnoreFilterStore {
+            rows: Mutex<Vec<Value>>,
+        }
+        impl crate::doc_store::DocStore for IgnoreFilterStore {
+            fn db_type(&self) -> &'static str {
+                "memory"
+            }
+            fn health(&self) -> crate::Result<crate::doc_store::HealthStatus> {
+                Ok(crate::doc_store::HealthStatus::green("t"))
+            }
+            fn create_idx(&self, _i: &str, _d: &str, _v: usize) -> crate::Result<()> {
+                Ok(())
+            }
+            fn delete_idx(&self, _i: &str, _d: &str) -> crate::Result<()> {
+                Ok(())
+            }
+            fn index_exist(&self, _i: &str, _d: &str) -> crate::Result<bool> {
+                Ok(true)
+            }
+            fn insert(
+                &self,
+                _r: &[crate::doc_store::DocRow],
+                _i: &str,
+                _d: &str,
+            ) -> crate::Result<Vec<String>> {
+                Ok(Vec::new())
+            }
+            fn get(
+                &self,
+                _a: &str,
+                _i: &str,
+                _d: &[String],
+            ) -> crate::Result<Option<crate::doc_store::DocRow>> {
+                Ok(None)
+            }
+            fn update(
+                &self,
+                _c: &crate::doc_store::FilterCondition,
+                _n: &crate::doc_store::DocRow,
+                _i: &str,
+                _d: &str,
+            ) -> crate::Result<bool> {
+                Ok(false)
+            }
+            fn delete(
+                &self,
+                _c: &crate::doc_store::FilterCondition,
+                _i: &str,
+                _d: &str,
+            ) -> crate::Result<usize> {
+                Ok(0)
+            }
+            fn search(
+                &self,
+                _q: &crate::doc_store::SearchQuery,
+            ) -> crate::Result<crate::doc_store::SearchResponse> {
+                let docs: Vec<crate::doc_store::DocRow> = self
+                    .rows
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|row| row.as_object().cloned())
+                    .collect();
+                Ok(crate::doc_store::SearchResponse {
+                    total: docs.len(),
+                    docs,
+                    ..Default::default()
+                })
+            }
+            fn sql(&self, _s: &str, _f: usize) -> crate::Result<Vec<Value>> {
+                Ok(Vec::new())
+            }
+        }
+        let store = IgnoreFilterStore {
+            rows: Mutex::new(vec![
+                json!({"id": "r-a", "type_kwd": "nav_cluster", "name": "A", "kb_id": "kb1", "compile_kwd": "dataset_nav", "q_2_vec": [1.0, 0.0]}),
+                json!({"id": "r-b", "type_kwd": "nav_doc", "name": "B", "kb_id": "kb1", "compile_kwd": "dataset_nav", "q_2_vec": [0.0, 1.0]}),
+            ]),
+        };
+        let rows = store_knn(
+            &store,
+            "t1",
+            "kb1",
+            &[1.0, 0.0],
+            2,
+            &json!({"type_kwd": ["nav_cluster"]}),
+            1,
+        );
+        assert_eq!(rows.len(), 1, "fallback scan re-checked the filter");
+        assert_eq!(rows[0]["name"], json!("A"));
+    }
+}
+#[cfg(test)]
+mod dataset_nav_part3b_tests {
+    use super::*;
+    use async_trait::async_trait;
+    use serde_json::json;
+    use std::sync::Mutex;
+
+    struct OpenLock;
+
+    impl NavKbLock for OpenLock {
+        fn acquire(&self, _kb_id: &str) -> bool {
+            true
+        }
+        fn release(&self, _kb_id: &str) {}
+    }
+
+    struct MockChat;
+
+    #[async_trait]
+    impl crate::harness::HarnessChat for MockChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            _history: &[Value],
+            _gen_conf: &Value,
+        ) -> std::result::Result<String, String> {
+            Ok(json!({"name": "Topic", "summary": "Merged summary"}).to_string())
+        }
+        fn max_length(&self) -> usize {
+            4096
+        }
+    }
+
+    struct MockEmbed;
+
+    #[async_trait]
+    impl EmbeddingBackend for MockEmbed {
+        async fn encode(&self, texts: &[String]) -> std::result::Result<Vec<Vec<f32>>, String> {
+            Ok(texts.iter().map(|_| vec![1.0, 0.0]).collect())
+        }
+    }
+
+    #[derive(Default)]
+    struct MockStore {
+        rows: Mutex<std::collections::HashMap<String, Value>>,
+        writes: Mutex<Vec<Value>>,
+        deletes: Mutex<Vec<String>>,
+    }
+
+    impl MockStore {
+        fn seed(&self, row: Value) {
+            let id = row
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            self.rows.lock().unwrap().insert(id, row);
+        }
+    }
+
+    impl crate::doc_store::DocStore for MockStore {
+        fn db_type(&self) -> &'static str {
+            "memory"
+        }
+        fn health(&self) -> crate::Result<crate::doc_store::HealthStatus> {
+            Ok(crate::doc_store::HealthStatus::green("test"))
+        }
+        fn create_idx(&self, _i: &str, _d: &str, _v: usize) -> crate::Result<()> {
+            Ok(())
+        }
+        fn delete_idx(&self, _i: &str, _d: &str) -> crate::Result<()> {
+            Ok(())
+        }
+        fn index_exist(&self, _i: &str, _d: &str) -> crate::Result<bool> {
+            Ok(true)
+        }
+        fn insert(
+            &self,
+            rows: &[crate::doc_store::DocRow],
+            _i: &str,
+            _d: &str,
+        ) -> crate::Result<Vec<String>> {
+            for row in rows {
+                let value = Value::Object(row.clone());
+                if let Some(id) = row.get("id").and_then(Value::as_str) {
+                    self.rows
+                        .lock()
+                        .unwrap()
+                        .insert(id.to_string(), value.clone());
+                }
+                self.writes.lock().unwrap().push(value);
+            }
+            Ok(Vec::new())
+        }
+        fn get(
+            &self,
+            data_id: &str,
+            _i: &str,
+            _d: &[String],
+        ) -> crate::Result<Option<crate::doc_store::DocRow>> {
+            Ok(self
+                .rows
+                .lock()
+                .unwrap()
+                .get(data_id)
+                .and_then(|row| row.as_object().cloned()))
+        }
+        fn update(
+            &self,
+            condition: &crate::doc_store::FilterCondition,
+            new_value: &crate::doc_store::DocRow,
+            _i: &str,
+            _d: &str,
+        ) -> crate::Result<bool> {
+            let id = condition.get("id").and_then(Value::as_str).unwrap_or("");
+            let mut rows = self.rows.lock().unwrap();
+            if let Some(row) = rows.get_mut(id) {
+                if let Some(map) = row.as_object_mut() {
+                    for (key, value) in new_value {
+                        map.insert(key.clone(), value.clone());
+                    }
+                }
+                return Ok(true);
+            }
+            Ok(false)
+        }
+        fn delete(
+            &self,
+            condition: &crate::doc_store::FilterCondition,
+            _i: &str,
+            _d: &str,
+        ) -> crate::Result<usize> {
+            let ids = as_str_list(condition.get("id"));
+            let mut removed = 0;
+            for id in ids {
+                if self.rows.lock().unwrap().remove(&id).is_some() {
+                    removed += 1;
+                }
+                self.deletes.lock().unwrap().push(id);
+            }
+            Ok(removed)
+        }
+        fn search(
+            &self,
+            query: &crate::doc_store::SearchQuery,
+        ) -> crate::Result<crate::doc_store::SearchResponse> {
+            let parent = query
+                .condition
+                .get("parent_kwd")
+                .and_then(Value::as_array)
+                .and_then(|items| items.first())
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let docs: Vec<crate::doc_store::DocRow> = self
+                .rows
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|row| match &parent {
+                    None => true,
+                    Some(parent) => {
+                        row.get("parent_kwd").and_then(Value::as_str) == Some(parent.as_str())
+                    }
+                })
+                .filter_map(|row| row.as_object().cloned())
+                .collect();
+            Ok(crate::doc_store::SearchResponse {
+                total: docs.len(),
+                docs,
+                ..Default::default()
+            })
+        }
+        fn sql(&self, _s: &str, _f: usize) -> crate::Result<Vec<Value>> {
+            Ok(Vec::new())
+        }
+    }
+
+    fn cluster_row(name: &str, parent: &str, depth: i64, doc_ids: &[&str]) -> Value {
+        json!({
+            "id": nav_cluster_id("kb1", name),
+            "name": name,
+            "parent_kwd": parent,
+            "depth_int": depth,
+            "type_kwd": "nav_cluster",
+            "kb_id": "kb1",
+            "compile_kwd": "dataset_nav",
+            "doc_ids_kwd": doc_ids,
+            "doc_count_int": doc_ids.len(),
+            "q_2_vec": [1.0, 0.0],
+            "content_with_weight": json!({"type": "nav_cluster", "description": "old desc"}).to_string(),
+        })
+    }
+
+    #[tokio::test]
+    async fn upsert_merges_into_nearest_cluster() {
+        let store = MockStore::default();
+        store.seed(cluster_row("Topic", "root", 0, &[]));
+        upsert_dataset_nav_doc(
+            &store,
+            Some(&MockEmbed),
+            Some(&MockChat),
+            &OpenLock,
+            "t1",
+            "kb1",
+            "d1",
+            &json!("brand new summary"),
+        )
+        .await;
+        let writes = store.writes.lock().unwrap();
+        assert!(
+            writes
+                .iter()
+                .any(|row| row.get("type_kwd").and_then(Value::as_str) == Some("nav_doc")),
+            "nav_doc upserted"
+        );
+        assert!(
+            !store
+                .deletes
+                .lock()
+                .unwrap()
+                .contains(&nav_cluster_id("kb1", "Topic")),
+            "cluster kept"
+        );
+        let doc_row = writes
+            .iter()
+            .find(|row| row.get("type_kwd").and_then(Value::as_str) == Some("nav_doc"))
+            .unwrap();
+        assert_eq!(doc_row["parent_kwd"], json!("Topic"));
+        assert_eq!(doc_row["depth_int"], json!(1));
+    }
+
+    #[tokio::test]
+    async fn upsert_seeds_root_cluster_when_no_similar() {
+        let store = MockStore::default();
+        upsert_dataset_nav_doc(
+            &store,
+            Some(&MockEmbed),
+            Some(&MockChat),
+            &OpenLock,
+            "t1",
+            "kb1",
+            "d9",
+            &json!("fresh doc"),
+        )
+        .await;
+        let writes = store.writes.lock().unwrap();
+        let cluster = writes
+            .iter()
+            .find(|row| row.get("type_kwd").and_then(Value::as_str) == Some("nav_cluster"))
+            .expect("root cluster created");
+        assert_eq!(cluster["parent_kwd"], json!("root"));
+        assert_eq!(cluster["depth_int"], json!(0));
+        assert_eq!(cluster["doc_ids_kwd"], json!(["d9"]));
+        let doc = writes
+            .iter()
+            .find(|row| row.get("type_kwd").and_then(Value::as_str) == Some("nav_doc"))
+            .unwrap();
+        assert_eq!(doc["depth_int"], json!(1));
+    }
+
+    #[tokio::test]
+    async fn remove_updates_parent_and_cleans_empties() {
+        let store = MockStore::default();
+        store.seed(cluster_row("Parent", "root", 0, &["d1"]));
+        store.seed(json!({
+            "id": nav_doc_id("d1"),
+            "name": "Doc One",
+            "parent_kwd": "Parent",
+            "type_kwd": "nav_doc",
+            "kb_id": "kb1",
+            "compile_kwd": "dataset_nav",
+            "doc_id": "d1",
+            "content_with_weight": json!({"type": "nav_doc", "description": "one"}).to_string(),
+        }));
+        remove_dataset_nav_doc(&store, &OpenLock, "t1", "kb1", "d1").await;
+        let deletes = store.deletes.lock().unwrap();
+        assert!(deletes.contains(&nav_doc_id("d1")), "nav_doc removed");
+        assert!(
+            deletes.contains(&nav_cluster_id("kb1", "Parent")),
+            "parent became empty and was removed"
+        );
+    }
+}
+#[cfg(test)]
+mod dataset_nav_part3c_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn text_score_counts_query_term_coverage() {
+        let row = json!({
+            "name": "Topic Node",
+            "content_with_weight": json!({
+                "description": "about paris",
+                "keywords": ["france"],
+                "entities": ["Paris"],
+            }).to_string(),
+        });
+        let score = nav_text_score("paris france", &row);
+        assert!((score - 1.0).abs() < 1e-9, "both terms hit");
+        let half = nav_text_score("paris missingterm", &row);
+        assert!((half - 0.5).abs() < 1e-9);
+        assert_eq!(nav_text_score("   ", &row), 0.0);
+    }
+
+    #[test]
+    fn hybrid_fuse_folds_legs_by_name() {
+        let vec = vec![1.0f32, 0.0];
+        let knn = vec![json!({"name": "A", "q_2_vec": [1.0, 0.0]})];
+        let text = vec![json!({
+            "name": "A",
+            "content_with_weight": json!({"description": "alpha"}).to_string(),
+        })];
+        let fused = hybrid_fuse(&vec, "q_2_vec", "alpha", &knn, &text, 0.5, 5);
+        assert_eq!(fused.len(), 1, "same name collapses into one row");
+        assert!(
+            fused[0]["_score"].as_f64().unwrap() > 0.5 + 0.25,
+            "both legs contributed"
+        );
+        assert!(fused[0]["_text_score"].as_f64().unwrap() > 0.0);
+
+        let knn_only = vec![json!({"name": "B", "q_2_vec": [1.0, 0.0]})];
+        let fused = hybrid_fuse(&vec, "q_2_vec", "zzz", &knn_only, &[], 0.5, 5);
+        assert_eq!(
+            fused[0]["_text_score"],
+            json!(0.0),
+            "pure vector hit records zero text score"
+        );
+    }
+}

@@ -2408,4 +2408,339 @@ pub fn corp_tag(nm: &str) -> Vec<String> {
     Vec::new()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn industry_entity_names_and_ancestors() {
+        // industries.py __main__ example: get_names("1119").
+        let names = industry_names("1119");
+        assert!(!names.is_empty());
+        // First element is the leaf industry itself.
+        assert_eq!(names[0], "牙科及医疗器械");
+        // Ancestors chain upward toward a root ("0" terminates the walk).
+        assert!(names.iter().any(|n| n == "医疗服务"));
+        assert!(names.iter().any(|n| n == "医药"));
+        // The chain terminates at a root entry (parent "0").
+        let last = names.last().unwrap();
+        assert_eq!(last, "医药");
+
+        // Unknown id → empty (Python `if not d: return []`).
+        assert!(industry_names("999999").is_empty());
+
+        // Root industry (parent "0") returns only itself.
+        assert_eq!(industry_names("1"), vec!["IT/通信/电子"]);
+
+        // 人工智能 (1130) is a child of 互联网 (2).
+        let ai = industry_names("1130");
+        assert_eq!(ai, vec!["人工智能", "互联网"]);
+    }
+
+    #[test]
+    fn school_entity_split_and_select() {
+        // split — schools.py:53-65.
+        assert_eq!(split("New York University"), vec!["New York University"]);
+        assert_eq!(split("美国 斯坦福大学"), vec!["美国", "斯坦福大学"]);
+
+        // select by name_cn (schools.csv has 清华大学 etc).
+        let v = select("清华大学").expect("清华 should be in schools.csv");
+        assert_eq!(v["name_cn"], "清华大学");
+        assert!(v["rank"].as_i64().unwrap_or(0) > 0);
+        assert_eq!(v["is_985"], 1);
+
+        // select by name_en (case-insensitive) — Tsinghua's name_en is
+        // empty in schools.csv (its English name lives in rank aliases),
+        // so use a school with a real name_en column instead.
+        let v2 = select("University of East London").expect("en name should match");
+        assert_eq!(v2["name_cn"], "东伦敦大学");
+
+        // Unknown → None.
+        assert!(select("不存在的学校XYZ").is_none());
+        // Tsinghua's English name is not in name_en → None (Python parity).
+        assert!(select("Tsinghua University").is_none());
+    }
+
+    #[test]
+    fn school_entity_is_good_and_table_cache() {
+        // is_good — schools.py:88-92.
+        assert!(is_good("清华大学"));
+        assert!(is_good("中国科技大学"));
+        assert!(!is_good("某职业技术学院"));
+
+        // Cached table select matches free function.
+        let tbl = SchoolTable::new();
+        let v = tbl.select("北京大学").expect("北大 should match");
+        assert_eq!(v["name_cn"], "北京大学");
+    }
+
+    #[test]
+    fn degree_entity_maps_ids_and_names() {
+        assert_eq!(DegreeEntity::get_name("1"), "本科");
+        assert_eq!(DegreeEntity::get_name("2"), "硕士");
+        assert_eq!(DegreeEntity::get_name("3"), "博士");
+        assert_eq!(DegreeEntity::get_name("6"), "MBA");
+        assert_eq!(DegreeEntity::get_name("94"), "EMBA");
+        assert_eq!(DegreeEntity::get_name("999"), "");
+
+        // get_id — degrees.py:40-44 (upper + trim).
+        assert_eq!(DegreeEntity::get_id("本科"), "1");
+        assert_eq!(DegreeEntity::get_id(" 硕士 "), "2");
+        assert_eq!(DegreeEntity::get_id("mba"), "6");
+        assert_eq!(DegreeEntity::get_id("EMBA"), "94");
+        assert_eq!(DegreeEntity::get_id("学士"), "");
+        assert_eq!(DegreeEntity::get_id(""), "");
+    }
+
+    #[test]
+    fn language_detection_and_field_maps() {
+        assert!(is_english("English"));
+        assert!(is_english("en"));
+        assert!(!is_english("Chinese"));
+        assert!(!is_english(""));
+        assert_eq!(get_field_map("Chinese").len(), 32);
+        assert_eq!(get_field_map("English").len(), 32);
+        assert_eq!(get_field_map("Chinese")[0].0, "name_kwd");
+        assert_eq!(get_field_map("English")[0].1, "Name");
+    }
+
+    #[test]
+    fn normalize_unifies_fullwidth_and_whitespace() {
+        assert_eq!(normalize_for_comparison("阿 里 巴 巴"), "阿里巴巴");
+        assert_eq!(normalize_for_comparison("ＡＢＣ"), "abc");
+        assert_eq!(normalize_for_comparison("  张三  "), "张三");
+        assert_eq!(normalize_for_comparison(""), "");
+    }
+
+    #[test]
+    fn date_parsing_handles_multiple_formats() {
+        assert_eq!(parse_date_str("2024.3"), Some((2024, 3)));
+        assert_eq!(parse_date_str("2024-01"), Some((2024, 1)));
+        assert_eq!(parse_date_str("2024/12"), Some((2024, 12)));
+        assert_eq!(parse_date_str("2024年1月"), Some((2024, 1)));
+        assert_eq!(parse_date_str("2024"), Some((2024, 1)));
+        assert_eq!(parse_date_str("2024.13"), Some((2024, 1))); // invalid month → 1
+        assert_eq!(parse_date_str("abc"), None);
+    }
+
+    #[test]
+    fn work_years_calculation() {
+        // 2024.1 → 2026.8 = 31 months → 2.6 years.
+        assert_eq!(calc_single_exp_years("2024.1", "至今"), 2.6);
+        assert_eq!(calc_single_exp_years("2024.1", "2025.1"), 1.0);
+        assert_eq!(calc_single_exp_years("", "2025.1"), 0.0);
+        assert_eq!(calc_single_exp_years("2025.1", "2024.1"), 0.0); // negative
+        let exps = json!([
+            {"start_date": "2024.1", "end_date": "2025.1"},
+            {"start_date": "2023.1", "end_date": "2023.6"},
+        ]);
+        // 1.0 + round(5/12, 1) = 1.0 + 0.4 (Python round semantics).
+        assert_eq!(calculate_work_years(exps.as_array().unwrap()), 1.4);
+    }
+
+    #[test]
+    fn shingling_jaccard_matches_expected() {
+        // Identical → 1.0.
+        assert_eq!(
+            shingling_jaccard("same text here", "same text here", 5),
+            1.0
+        );
+        // Completely different → 0.0.
+        assert_eq!(shingling_jaccard("aaaa", "bbbb", 5), 0.0);
+        // Both empty → 1.0.
+        assert_eq!(shingling_jaccard("", "", 5), 1.0);
+    }
+
+    #[test]
+    fn regex_parses_chinese_resume_basic_fields() {
+        let text = "个人简历\n姓名：张三\n性别：男\n年龄：28岁\n电话：13812345678\n邮箱：zhangsan@example.com\n教育背景：中山大学 本科 计算机科学专业\n工作经验：5年相关经验\n";
+        let resume = parse_with_regex(text, "Chinese");
+        assert_eq!(resume["name_kwd"], "张三");
+        assert_eq!(resume["gender_kwd"], "男");
+        assert_eq!(resume["age_int"], 28);
+        assert_eq!(resume["phone_kwd"], "13812345678");
+        assert_eq!(resume["email_tks"], "zhangsan@example.com");
+        assert_eq!(resume["work_exp_flt"], 5.0);
+        let schools = resume["school_name_tks"].as_array().unwrap();
+        assert!(
+            schools
+                .iter()
+                .any(|s| s.as_str().unwrap().contains("中山大学"))
+        );
+    }
+
+    #[test]
+    fn regex_parses_english_resume_with_name_label() {
+        let text = "Name: John Smith\nPhone: 13812345678\nEmail: john@example.com\nGender: Male\nGraduated 2020 from Stanford University\nMajor: Computer Science\n5 years experience\n";
+        let resume = parse_with_regex(text, "English");
+        assert_eq!(resume["name_kwd"], "John Smith");
+        assert_eq!(resume["gender_kwd"], "Male");
+        assert_eq!(resume["edu_end_int"], 2020);
+        assert_eq!(resume["work_exp_flt"], 5.0);
+        let schools = resume["school_name_tks"].as_array().unwrap();
+        assert!(
+            schools
+                .iter()
+                .any(|s| s.as_str().unwrap().contains("Stanford University"))
+        );
+    }
+
+    #[test]
+    fn postprocess_prunes_hallucinated_fields() {
+        // Name not in source text → cleared.
+        let mut resume = json!({
+            "name_kwd": "不存在的人",
+            "corp_nm_tks": ["幻觉公司"],
+            "school_name_tks": ["假大学"],
+            "gender_kwd": "male",
+            "phone_kwd": "+86 138-1234-5678",
+            "birth_dt": "1990年1月",
+        });
+        let lines = vec!["张三".to_string(), "工作于真实公司".to_string()];
+        postprocess_resume(&mut resume, &lines, "Chinese");
+        assert_eq!(resume["name_kwd"], "");
+        assert_eq!(resume["corp_nm_tks"].as_array().unwrap().len(), 0);
+        assert_eq!(resume["school_name_tks"].as_array().unwrap().len(), 0);
+        assert_eq!(resume["gender_kwd"], "男");
+        assert_eq!(resume["phone_kwd"], "+8613812345678");
+        assert_eq!(resume["birth_dt"], "1990-1");
+    }
+
+    #[test]
+    fn postprocess_keeps_fields_found_in_source() {
+        let mut resume = json!({
+            "name_kwd": "张三",
+            "corp_nm_tks": ["腾讯科技有限公司"],
+            "school_name_tks": ["中山大学"],
+            "position_name_tks": ["工程师"],
+        });
+        let lines = vec![
+            "张三".to_string(),
+            "腾讯科技有限公司".to_string(),
+            "中山大学".to_string(),
+            "工程师".to_string(),
+        ];
+        postprocess_resume(&mut resume, &lines, "Chinese");
+        assert_eq!(resume["name_kwd"], "张三");
+        assert_eq!(resume["corp_nm_tks"].as_array().unwrap().len(), 1);
+        assert_eq!(resume["school_name_tks"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn postprocess_merges_project_descs_into_work() {
+        let mut resume = json!({
+            "name_kwd": "张三",
+            "work_desc_tks": ["负责系统开发"],
+            "project_desc_tks": ["开发了电商平台"],
+            "project_tks": ["电商平台"],
+        });
+        let lines = vec![
+            "张三".to_string(),
+            "负责系统开发".to_string(),
+            "开发了电商平台".to_string(),
+        ];
+        postprocess_resume(&mut resume, &lines, "Chinese");
+        assert_eq!(resume["project_desc_tks"].as_array().unwrap().len(), 0);
+        let work = resume["work_desc_tks"].as_array().unwrap();
+        assert_eq!(work.len(), 2);
+        assert!(work[1].as_str().unwrap().starts_with("[电商平台]"));
+    }
+
+    #[test]
+    fn postprocess_completes_required_fields() {
+        let mut resume = json!({"name_kwd": "张三"});
+        let lines = vec!["张三".to_string()];
+        postprocess_resume(&mut resume, &lines, "Chinese");
+        for field in ["gender_kwd", "phone_kwd"] {
+            assert_eq!(resume[field], "");
+        }
+        // _tks fields complete as empty arrays.
+        for field in [
+            "email_tks",
+            "position_name_tks",
+            "school_name_tks",
+            "major_tks",
+        ] {
+            assert_eq!(resume[field].as_array().unwrap().len(), 0);
+        }
+    }
+
+    #[test]
+    fn build_chunks_groups_basic_info_and_identity() {
+        let resume = json!({
+            "name_kwd": "张三",
+            "phone_kwd": "13812345678",
+            "gender_kwd": "男",
+            "work_exp_flt": 5.0,
+            "school_name_tks": ["中山大学"],
+            "degree_kwd": ["本科"],
+        });
+        let chunks = build_chunk_document("张三.pdf", &resume, "Chinese");
+        assert!(!chunks.is_empty());
+        // First chunk = Basic Info group.
+        let first = &chunks[0];
+        assert!(first.content_with_weight.contains("基本信息"));
+        assert!(first.content_with_weight.contains("姓名/名字: 张三"));
+        // Identity fields redundantly present.
+        assert_eq!(first.fields.get("name_kwd").unwrap(), "张三");
+        // Education group exists.
+        let edu = chunks
+            .iter()
+            .find(|c| c.content_with_weight.contains("教育背景"));
+        assert!(edu.is_some());
+        assert!(edu.unwrap().content_with_weight.contains("中山大学"));
+        // Positions increment logically.
+        for (i, c) in chunks.iter().enumerate() {
+            assert_eq!(c.page_num_int, vec![1]);
+            assert_eq!(c.top_int, vec![i as i64]);
+            assert_eq!(c.position_int, vec![(1, 0, 0, i as i64, i as i64)]);
+        }
+    }
+
+    #[test]
+    fn build_chunks_splits_work_descriptions_per_element() {
+        let resume = json!({
+            "name_kwd": "张三",
+            "work_desc_tks": ["负责A系统", "负责B平台"],
+            "corp_nm_tks": ["腾讯"],
+            "_work_exp_details": [
+                {"company": "腾讯", "start_date": "2020.1", "end_date": "2022.1", "years": 2.0},
+                {"company": "阿里", "start_date": "2022.1", "end_date": "2024.1", "years": 2.0},
+            ],
+        });
+        let chunks = build_chunk_document("张三.pdf", &resume, "Chinese");
+        let work_chunks: Vec<&ResumeChunk> = chunks
+            .iter()
+            .filter(|c| c.content_with_weight.contains("工作职责"))
+            .collect();
+        assert_eq!(work_chunks.len(), 2);
+        assert!(
+            work_chunks[0]
+                .content_with_weight
+                .contains("腾讯 2020.1-2022.1 2年")
+        );
+        assert!(
+            work_chunks[1]
+                .content_with_weight
+                .contains("阿里 2022.1-2024.1 2年")
+        );
+        // Each work chunk carries identity name.
+        assert_eq!(work_chunks[0].fields.get("name_kwd").unwrap(), "张三");
+    }
+
+    #[test]
+    fn end_to_end_regex_path_produces_chunks() {
+        let text = "个人简历\n姓名：李四\n电话：13912345678\n邮箱：lisi@example.com\n教育：华南理工大学 硕士\n工作：5年开发经验\n";
+        let chunks = parse_resume_regex(text, "李四.pdf", "Chinese");
+        assert!(!chunks.is_empty());
+        let all_content = chunks
+            .iter()
+            .map(|c| c.content_with_weight.clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(all_content.contains("李四"));
+        assert!(all_content.contains("13912345678"));
+        // Summary line carries identity.
+        assert!(all_content.contains("[姓名:李四 | 电话:13912345678"));
+    }
+}

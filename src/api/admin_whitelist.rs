@@ -141,4 +141,24 @@ pub async fn set_enabled(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn a_non_admin_is_refused() {
+        let auth = AuthContext {
+            user_id: "u".into(),
+            is_admin: false,
+            token: String::new(),
+        };
+        let response = require_admin(&auth).expect("refused");
+        assert_eq!(response.status(), axum::http::StatusCode::FORBIDDEN);
+        let admin = AuthContext {
+            user_id: "a".into(),
+            is_admin: true,
+            token: String::new(),
+        };
+        assert!(require_admin(&admin).is_none());
+    }
+}

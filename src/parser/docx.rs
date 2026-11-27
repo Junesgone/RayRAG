@@ -967,4 +967,537 @@ fn render_table_html(
     out
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
 
+    fn block(b: &str) -> &'static str {
+        RAGFlowDocxParser::block_type(b)
+    }
+
+    #[test]
+    fn block_type_classifies_dates_numbers_and_text() {
+        assert_eq!(block("2023年"), "Dt");
+        assert_eq!(block("2023/05/12"), "Dt");
+        assert_eq!(block("2023-05"), "Dt");
+        assert_eq!(block("第三季度"), "Dt");
+        assert_eq!(block("2023B"), "DT");
+        assert_eq!(block("1,234.56"), "Nu");
+        assert_eq!(block("ABC123"), "Ca");
+        assert_eq!(block("hello world"), "En");
+        assert_eq!(block("1.5kg"), "NE");
+        // Single uppercase letter hits Ca (before Sg in the pattern list).
+        assert_eq!(block("X"), "Ca");
+        // Long text → Tx; very long → Lx.
+        assert_eq!(block("这是一段比较长的文本内容用于测试类型判断"), "Tx");
+        assert_eq!(
+            block(
+                "这是一段非常长的文本内容用于测试类型判断它包含了很多词汇以便触发长文本分类逻辑的阈值"
+            ),
+            "Lx"
+        );
+        assert_eq!(block("不明"), "Ot");
+    }
+
+    #[test]
+    fn compose_table_with_numeric_rows_uses_headers() {
+        // Header row + two numeric data rows, 3 columns.
+        let df = vec![
+            vec!["项目".to_string(), "数值".to_string(), "备注".to_string()],
+            vec!["A".to_string(), "1".to_string(), "x".to_string()],
+            vec!["B".to_string(), "2".to_string(), "y".to_string()],
+        ];
+        let lines = RAGFlowDocxParser::compose_table_content(&df);
+        // ≤3 columns → single newline-joined string.
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("A"));
+        assert!(lines[0].contains("1"));
+        assert!(lines[0].contains("x"));
+        assert!(lines[0].contains("B"));
+        assert!(lines[0].contains("2"));
+    }
+
+    #[test]
+    fn compose_table_requires_at_least_two_rows() {
+        let df = vec![vec!["h".to_string()]];
+        assert!(RAGFlowDocxParser::compose_table_content(&df).is_empty());
+        let df2: Vec<Vec<String>> = vec![];
+        assert!(RAGFlowDocxParser::compose_table_content(&df2).is_empty());
+    }
+
+    #[test]
+    fn compose_table_four_columns_returns_multiple_lines() {
+        let df = vec![
+            vec![
+                "h1".to_string(),
+                "h2".to_string(),
+                "h3".to_string(),
+                "h4".to_string(),
+            ],
+            vec![
+                "a".to_string(),
+                "b".to_string(),
+                "c".to_string(),
+                "d".to_string(),
+            ],
+            vec![
+                "e".to_string(),
+                "f".to_string(),
+                "g".to_string(),
+                "h".to_string(),
+            ],
+        ];
+        let lines = RAGFlowDocxParser::compose_table_content(&df);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("a"));
+        assert!(lines[1].contains("e"));
+    }
+
+    #[test]
+    fn parse_style_names_maps_style_id_to_name() {
+        let xml = r#"<?xml version="1.0"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:styleId="Heading1">
+    <w:name w:val="heading 1"/>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="Normal">
+    <w:name w:val="Normal"/>
+  </w:style>
+</w:styles>"#;
+        let map = parse_style_names(xml);
+        assert_eq!(map.get("Heading1").map(String::as_str), Some("heading 1"));
+        assert_eq!(map.get("Normal").map(String::as_str), Some("Normal"));
+    }
+
+    #[test]
+    fn docx_xml_validation_accepts_valid_empty_and_escaped_content() {
+        for xml in [
+            "<Relationships/>",
+            "<?xml version=\"1.0\"?><root><!--comment--><text value=\"a&amp;b\">a&lt;b<![CDATA[c<d]]></text></root>",
+            "\u{feff}<root/>\n",
+        ] {
+            validate_docx_xml(xml).unwrap();
+        }
+        for xml in [
+            "",
+            "<root>",
+            "<root></wrong>",
+            "<root/>tail",
+            "<root/><root/>",
+        ] {
+            assert!(validate_docx_xml(xml).is_err(), "{xml}");
+        }
+    }
+
+    #[test]
+    fn parse_document_xml_extracts_paragraphs_and_tables() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Title</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Body text</w:t></w:r></w:p>
+    <w:tbl>
+      <w:tr><w:tc><w:p><w:r><w:t>c1</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>c2</w:t></w:r></w:p></w:tc></w:tr>
+      <w:tr><w:tc><w:p><w:r><w:t>v1</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>v2</w:t></w:r></w:p></w:tc></w:tr>
+    </w:tbl>
+  </w:body>
+</w:document>"#;
+        let styles = parse_style_names(
+            r#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:styleId="Heading1"><w:name w:val="heading 1"/></w:style></w:styles>"#,
+        );
+        let (paragraphs, tables) = parse_document_xml(xml, &styles);
+        assert_eq!(paragraphs.len(), 2);
+        assert_eq!(paragraphs[0].0, "Title");
+        assert_eq!(paragraphs[0].1, "heading 1");
+        assert_eq!(paragraphs[1].0, "Body text");
+        assert_eq!(tables.len(), 1);
+        assert_eq!(tables[0].len(), 2);
+        assert_eq!(tables[0][0], vec!["c1", "c2"]);
+        assert_eq!(tables[0][1], vec!["v1", "v2"]);
+    }
+
+    #[test]
+    fn page_break_increments_page_counter() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:r><w:t>Page one</w:t></w:r></w:p>
+    <w:p><w:r><w:t>break</w:t><w:lastRenderedPageBreak/><w:t>after</w:t></w:r></w:p>
+  </w:body>
+</w:document>"#;
+        let styles = HashMap::new();
+        let (paragraphs, _) = parse_document_xml(xml, &styles);
+        assert_eq!(paragraphs.len(), 2);
+        assert_eq!(paragraphs[0].2, 0);
+        assert_eq!(paragraphs[1].2, 1); // page advanced by lastRenderedPageBreak
+    }
+
+    #[test]
+    fn docx_parser_parse_trait_joins_content() {
+        let data = build_minimal_docx();
+        let parser = DocxParser::new();
+        let doc = parser.parse("test.docx", &data).unwrap();
+        assert!(doc.content.contains("Hello"));
+        assert_eq!(
+            doc.mime_type,
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        );
+    }
+
+    #[test]
+    fn preview_html_renders_docx_blocks_and_escapes_text() {
+        let data = build_minimal_docx();
+        let (html, truncated) = RAGFlowDocxParser::new().preview_html(&data, 100).unwrap();
+        assert!(!truncated);
+        assert!(html.contains("<p class='docx-block'>Hello</p>"));
+        assert!(html.contains("<p class='docx-block'>World</p>"));
+        assert!(!html.contains("<script>"));
+    }
+
+    #[test]
+    fn extract_images_resolves_blip_embeds_through_rels() {
+        // `get_picture` — docx_parser.py:33-70: `<a:blip r:embed="rId5"/>`
+        // → word/_rels/document.xml.rels rId5 → word/media/image1.png bytes.
+        let mut buf = Vec::new();
+        {
+            let mut zw = zip::ZipWriter::new(Cursor::new(&mut buf));
+            let doc = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+            xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+            xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+            xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
+  <w:body>
+    <w:p><w:r><w:t>Text with a picture</w:t></w:r></w:p>
+    <w:p><w:r><w:drawing><pic:pic><a:blip r:embed="rId5"/></pic:pic></w:drawing></w:r></w:p>
+  </w:body>
+</w:document>"#;
+            zw.start_file(
+                "word/document.xml",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            zw.write_all(doc.as_bytes()).unwrap();
+
+            let rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/>
+  <Relationship Id="rId6" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image2.png"/>
+</Relationships>"#;
+            zw.start_file(
+                "word/_rels/document.xml.rels",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            zw.write_all(rels.as_bytes()).unwrap();
+
+            zw.start_file(
+                "word/media/image1.png",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            zw.write_all(&[0x89, b'P', b'N', b'G', 1, 2, 3]).unwrap();
+            // image2 is referenced by rels but never blipped → not extracted.
+            zw.finish().unwrap();
+        }
+
+        let images = extract_images(&buf).unwrap();
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].0, "image1.png");
+        assert_eq!(images[0].1, vec![0x89, b'P', b'N', b'G', 1, 2, 3]);
+
+        // parse() surfaces the count as metadata.
+        let doc = DocxParser::new().parse("pic.docx", &buf).unwrap();
+        assert_eq!(
+            doc.metadata.get("image_count").map(String::as_str),
+            Some("1")
+        );
+    }
+
+    /// Build a minimal valid DOCX (document.xml + styles.xml + [Content_Types].xml).
+    fn build_docx_with_header_footer() -> Vec<u8> {
+        let mut buf = Vec::new();
+        {
+            let mut zw = zip::ZipWriter::new(Cursor::new(&mut buf));
+            let ct = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+  <Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>
+  <Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>
+</Types>"#;
+            zw.start_file(
+                "[Content_Types].xml",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            zw.write_all(ct.as_bytes()).unwrap();
+
+            let rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>"#;
+            zw.start_file("_rels/.rels", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zw.write_all(rels.as_bytes()).unwrap();
+
+            let doc = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <w:body>
+    <w:p><w:r><w:t>Body text</w:t></w:r></w:p>
+    <w:sectPr>
+      <w:headerReference w:type="default" r:id="rIdHeader1"/>
+      <w:footerReference w:type="default" r:id="rIdFooter1"/>
+    </w:sectPr>
+  </w:body>
+</w:document>"#;
+            zw.start_file(
+                "word/document.xml",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            zw.write_all(doc.as_bytes()).unwrap();
+
+            let doc_rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rIdHeader1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>
+  <Relationship Id="rIdFooter1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>
+</Relationships>"#;
+            zw.start_file(
+                "word/_rels/document.xml.rels",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            zw.write_all(doc_rels.as_bytes()).unwrap();
+
+            let header = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:p><w:r><w:t>Confidential header</w:t></w:r></w:p>
+</w:hdr>"#;
+            zw.start_file("word/header1.xml", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zw.write_all(header.as_bytes()).unwrap();
+
+            let footer = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:p><w:r><w:t>Page footer</w:t></w:r></w:p>
+</w:ftr>"#;
+            zw.start_file("word/footer1.xml", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zw.write_all(footer.as_bytes()).unwrap();
+
+            let styles = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>"#;
+            zw.start_file("word/styles.xml", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zw.write_all(styles.as_bytes()).unwrap();
+            zw.finish().unwrap();
+        }
+        buf
+    }
+
+    fn build_minimal_docx() -> Vec<u8> {
+        let mut buf = Vec::new();
+        {
+            let mut zw = zip::ZipWriter::new(Cursor::new(&mut buf));
+            let ct = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+</Types>"#;
+            zw.start_file(
+                "[Content_Types].xml",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            zw.write_all(ct.as_bytes()).unwrap();
+
+            let rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>"#;
+            zw.start_file("_rels/.rels", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zw.write_all(rels.as_bytes()).unwrap();
+
+            let doc = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:r><w:t>Hello</w:t></w:r></w:p>
+    <w:p><w:r><w:t>World</w:t></w:r></w:p>
+  </w:body>
+</w:document>"#;
+            zw.start_file(
+                "word/document.xml",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            zw.write_all(doc.as_bytes()).unwrap();
+
+            // docx-rs requires the document-level relationship part even when
+            // the document has no header/footer/image relationships.
+            let doc_rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>"#;
+            zw.start_file(
+                "word/_rels/document.xml.rels",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            zw.write_all(doc_rels.as_bytes()).unwrap();
+
+            let styles = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/> "#;
+            zw.start_file("word/styles.xml", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zw.write_all(styles.as_bytes()).unwrap();
+            zw.finish().unwrap();
+        }
+        buf
+    }
+
+    fn build_docx_with_image() -> Vec<u8> {
+        let mut buf = Vec::new();
+        {
+            let mut zw = zip::ZipWriter::new(Cursor::new(&mut buf));
+            let ct = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Default Extension="png" ContentType="image/png"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+</Types>"#;
+            zw.start_file(
+                "[Content_Types].xml",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            zw.write_all(ct.as_bytes()).unwrap();
+
+            let rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>"#;
+            zw.start_file("_rels/.rels", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zw.write_all(rels.as_bytes()).unwrap();
+
+            let doc = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+  xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+  xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+  xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
+  <w:body>
+    <w:p><w:r><w:t>Before image</w:t></w:r></w:p>
+    <w:p><w:r><w:drawing>
+      <wp:inline distT="0" distB="0" distL="0" distR="0">
+        <wp:extent cx="1000000" cy="1000000"/>
+        <wp:docPr id="1" name="Picture 1"/>
+        <a:graphic>
+          <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+            <pic:pic>
+              <pic:nvPicPr><pic:cNvPr id="1" name="pixel.png"/><pic:cNvPicPr/></pic:nvPicPr>
+              <pic:blipFill><a:blip r:embed="rIdImg"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>
+              <pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000000" cy="1000000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>
+            </pic:pic>
+          </a:graphicData>
+        </a:graphic>
+      </wp:inline>
+    </w:drawing></w:r></w:p>
+    <w:p><w:r><w:t>After image</w:t></w:r></w:p>
+  </w:body>
+</w:document>"#;
+            zw.start_file(
+                "word/document.xml",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            zw.write_all(doc.as_bytes()).unwrap();
+
+            let doc_rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rIdImg" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/>
+</Relationships>"#;
+            zw.start_file(
+                "word/_rels/document.xml.rels",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            zw.write_all(doc_rels.as_bytes()).unwrap();
+
+            let styles = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>"#;
+            zw.start_file("word/styles.xml", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zw.write_all(styles.as_bytes()).unwrap();
+
+            let png = BASE64
+                .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
+                .unwrap();
+            zw.start_file(
+                "word/media/image1.png",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            zw.write_all(&png).unwrap();
+            zw.finish().unwrap();
+        }
+        buf
+    }
+
+    #[test]
+    fn preview_html_renders_underline_strike_and_alignment() {
+        let docx = docx_rs::Docx::new().add_paragraph(
+            docx_rs::Paragraph::new()
+                .align(docx_rs::AlignmentType::Center)
+                .add_run(docx_rs::Run::new().add_text("under").underline("single"))
+                .add_run(docx_rs::Run::new().add_text("strike").strike()),
+        );
+        let mut cursor = std::io::Cursor::new(Vec::new());
+        docx.build().pack(&mut cursor).unwrap();
+        let buf = cursor.into_inner();
+        let (html, truncated) = RAGFlowDocxParser::new().preview_html(&buf, 100).unwrap();
+        assert!(!truncated);
+        assert!(
+            html.contains("<p class='docx-block' style='text-align:center'>"),
+            "{html}"
+        );
+        assert!(html.contains("<u>under</u>"), "{html}");
+        assert!(html.contains("<s>strike</s>"), "{html}");
+    }
+
+    #[test]
+    fn preview_html_embeds_inline_images_as_data_uris() {
+        let data = build_docx_with_image();
+        let (html, truncated) = RAGFlowDocxParser::new().preview_html(&data, 100).unwrap();
+        assert!(!truncated);
+        assert!(html.contains("Before image"), "{html}");
+        assert!(html.contains("After image"), "{html}");
+        assert!(html.contains("class='docx-inline-image'"), "{html}");
+        assert!(html.contains("src='data:image/png;base64,"), "{html}");
+        assert!(html.contains("alt='image1.png'"), "{html}");
+        assert!(!html.contains("rIdImg"), "{html}");
+    }
+
+    #[test]
+    fn preview_html_renders_header_and_footer() {
+        let data = build_docx_with_header_footer();
+        let (html, truncated) = RAGFlowDocxParser::new().preview_html(&data, 100).unwrap();
+        assert!(!truncated);
+        assert!(html.contains("<header class='docx-header'>"), "{html}");
+        assert!(html.contains("Confidential header"), "{html}");
+        assert!(html.contains("<footer class='docx-footer'>"), "{html}");
+        assert!(html.contains("Page footer"), "{html}");
+        assert!(html.contains("Body text"), "{html}");
+        assert!(
+            html.find("Confidential header").unwrap() < html.find("Body text").unwrap(),
+            "{html}"
+        );
+        assert!(
+            html.find("Body text").unwrap() < html.find("Page footer").unwrap(),
+            "{html}"
+        );
+    }
+}

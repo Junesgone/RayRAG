@@ -132,4 +132,20 @@ pub fn message_fit_in(mut messages: Vec<Value>, max_length: usize) -> (usize, Ve
     (total, messages)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn form_and_fit_messages() {
+        let messages = form_message("sys", "hello world");
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"], json!("system"));
+        assert_eq!(messages[1]["content"], json!("hello world"));
+
+        let long = "word ".repeat(400);
+        let (fitted_tokens, fitted) = message_fit_in(form_message("sys", &long), 50);
+        assert!(fitted_tokens <= 50);
+        assert!(fitted[1]["content"].as_str().unwrap().len() < long.len());
+    }
+}

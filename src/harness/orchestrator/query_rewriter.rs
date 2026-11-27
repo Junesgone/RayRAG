@@ -152,4 +152,83 @@ pub async fn rewrite_gap_to_query(
     parse_rewrite_queries(&raw)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
 
+    struct MockChat {
+        reply: Result<String, String>,
+    }
+
+    #[async_trait]
+    impl HarnessChat for MockChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            _history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            self.reply.clone()
+        }
+
+        fn max_length(&self) -> usize {
+            4096
+        }
+    }
+
+    #[test]
+    fn rendering_mirrors_upstream_layout() {
+        let rendered = render_rewrite_prompt(
+            "Who ran the longest?",
+            &[
+                ("finale runtimes".to_string(), "MASH Cheers".to_string()),
+                ("".to_string(), "".to_string()),
+            ],
+            &[json!("M*A*S*H"), json!(""), json!(42)],
+            "round 1: tried X",
+        );
+        assert!(rendered.contains("Original user question:\nWho ran the longest?"));
+        assert!(rendered.contains("- M*A*S*H"));
+        assert!(rendered.contains("- 42"));
+        assert!(!rendered.contains("}} after"));
+        assert!(rendered.contains("- what: finale runtimes; hint: MASH Cheers\n- what: ; hint: "));
+        assert!(rendered.contains("round 1: tried X"));
+        assert!(!rendered.contains("{{ question }}"));
+    }
+
+    #[test]
+    fn parsing_handles_objects_strings_and_dedup() {
+        let raw = "<think>x</think>```json\n{\"queries\": [{\"query\": \"alpha final\"}, {\"question\": \"beta run\"}, \"alpha final\", {\"query\": \"  \"}]}\n```";
+        let queries = parse_rewrite_queries(raw);
+        assert_eq!(queries.len(), 2);
+        assert_eq!(queries[0]["query"], json!("alpha final"));
+        assert_eq!(queries[1]["query"], json!("beta run"));
+        assert!(parse_rewrite_queries("not json").is_empty());
+    }
+
+    #[tokio::test]
+    async fn rewrite_flow_paths() {
+        let stats = StatsHandle::new();
+        let gaps = vec![("what".to_string(), "hint".to_string())];
+
+        // No chat model → empty.
+        let out = rewrite_gap_to_query(None, "q", &gaps, &[], "", &stats).await;
+        assert!(out.is_empty());
+        // No gaps → empty.
+        let chat = MockChat {
+            reply: Ok("{\"queries\": [{\"query\": \"x\"}]}".to_string()),
+        };
+        let out = rewrite_gap_to_query(Some(&chat), "q", &[], &[], "", &stats).await;
+        assert!(out.is_empty());
+        // Success path.
+        let out = rewrite_gap_to_query(Some(&chat), "q", &gaps, &[], "", &stats).await;
+        assert_eq!(out, vec![json!({"query": "x"})]);
+        // Chat failure → empty.
+        let failing = MockChat {
+            reply: Err("boom".to_string()),
+        };
+        let out = rewrite_gap_to_query(Some(&failing), "q", &gaps, &[], "", &stats).await;
+        assert!(out.is_empty());
+    }
+}

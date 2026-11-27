@@ -310,4 +310,187 @@ fn finite_number(value: f64) -> Result<Number> {
     Number::from_f64(value).ok_or_else(|| anyhow::anyhow!("embedding contains a non-finite value"))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::{
+        ES_CHUNK_MAPPING_UPSTREAM_BLOB, ES_CHUNK_MAPPING_UPSTREAM_BYTES,
+        ES_CHUNK_MAPPING_UPSTREAM_LINES, ES_CHUNK_MAPPING_UPSTREAM_SHA256,
+        OPENSEARCH_CHUNK_MAPPING_UPSTREAM_BLOB, OPENSEARCH_CHUNK_MAPPING_UPSTREAM_BYTES,
+        OPENSEARCH_CHUNK_MAPPING_UPSTREAM_LINES, OPENSEARCH_CHUNK_MAPPING_UPSTREAM_SHA256,
+    };
+    use std::collections::HashMap;
 
+    #[test]
+    fn fixed_mapping_shapes_preserve_every_engine_difference() {
+        let es = fixed_search_mapping(SearchMappingFlavor::Elasticsearch);
+        let os = fixed_search_mapping(SearchMappingFlavor::OpenSearch);
+        assert_eq!(es["mappings"]["date_detection"], "true");
+        assert_eq!(os["mappings"]["date_detection"], "true");
+        assert_eq!(es["mappings"]["properties"]["lat_lon"]["store"], "true");
+        assert_eq!(
+            es["mappings"]["dynamic_templates"]
+                .as_array()
+                .unwrap()
+                .len(),
+            19
+        );
+        assert_eq!(
+            os["mappings"]["dynamic_templates"]
+                .as_array()
+                .unwrap()
+                .len(),
+            24
+        );
+        assert_eq!(es["settings"]["index"]["number_of_shards"], 2);
+        assert_eq!(
+            es["settings"]["similarity"]["scripted_sim"]["script"]["source"],
+            SEARCH_CHUNK_SCRIPTED_SIMILARITY
+        );
+        assert_eq!(os["settings"]["index"]["knn"], true);
+        assert_eq!(
+            os["settings"]["index"]["similarity"]["scripted_sim"]["script"]["source"],
+            SEARCH_CHUNK_SCRIPTED_SIMILARITY
+        );
+        assert_eq!(
+            es["mappings"]["dynamic_templates"][0]["int"]["mapping"]["store"],
+            "true"
+        );
+        assert_eq!(
+            es["mappings"]["dynamic_templates"][4]["numeric"]["mapping"]["store"],
+            true
+        );
+        assert_eq!(
+            es["mappings"]["dynamic_templates"][10]["object"]["mapping"]["dynamic"],
+            "true"
+        );
+        assert_eq!(
+            es["mappings"]["dynamic_templates"][11]["string"]["mapping"]["index"],
+            "false"
+        );
+        assert_eq!(
+            es["mappings"]["dynamic_templates"][7]["kwd"]["match"],
+            ES_CHUNK_KEYWORD_PATTERN
+        );
+        assert_eq!(
+            os["mappings"]["dynamic_templates"][7]["kwd"]["match"],
+            crate::settings::OPENSEARCH_CHUNK_KEYWORD_PATTERN
+        );
+        assert_eq!(
+            es["mappings"]["dynamic_templates"][14]["dense_vector"]["mapping"]["dims"],
+            512
+        );
+        assert_eq!(
+            es["mappings"]["dynamic_templates"][17]["dense_vector"]["mapping"]["dims"],
+            1536
+        );
+        assert_eq!(
+            os["mappings"]["dynamic_templates"][14]["knn_vector"]["mapping"]["space_type"],
+            "cosinesimil"
+        );
+        assert_eq!(
+            os["mappings"]["dynamic_templates"][22]["knn_vector"]["mapping"]["dimension"],
+            10240
+        );
+
+        assert_eq!(ES_CHUNK_MAPPING_UPSTREAM_BLOB.len(), 40);
+        assert_eq!(ES_CHUNK_MAPPING_UPSTREAM_SHA256.len(), 64);
+        assert_eq!(ES_CHUNK_MAPPING_UPSTREAM_BYTES, 4_453);
+        assert_eq!(ES_CHUNK_MAPPING_UPSTREAM_LINES, 212);
+        assert_eq!(OPENSEARCH_CHUNK_MAPPING_UPSTREAM_BLOB.len(), 40);
+        assert_eq!(OPENSEARCH_CHUNK_MAPPING_UPSTREAM_SHA256.len(), 64);
+        assert_eq!(OPENSEARCH_CHUNK_MAPPING_UPSTREAM_BYTES, 5_766);
+        assert_eq!(OPENSEARCH_CHUNK_MAPPING_UPSTREAM_LINES, 268);
+    }
+
+    #[test]
+    fn fixed_checkout_mapping_values_match_when_source_is_available() {
+        let Ok(root) = std::env::var("RAGFLOW_SOURCE_DIR") else {
+            return;
+        };
+        for (file, flavor) in [
+            ("mapping.json", SearchMappingFlavor::Elasticsearch),
+            ("os_mapping.json", SearchMappingFlavor::OpenSearch),
+        ] {
+            let path = std::path::Path::new(&root).join("conf").join(file);
+            let source: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            assert_eq!(fixed_search_mapping(flavor), source, "{}", path.display());
+        }
+    }
+
+    #[test]
+    fn field_classifiers_do_not_mix_native_or_skill_dimensions() {
+        assert_eq!(
+            search_field_kind(SearchMappingFlavor::Elasticsearch, "id"),
+            FieldKind::Keyword
+        );
+        assert_eq!(
+            search_field_kind(SearchMappingFlavor::OpenSearch, "id"),
+            FieldKind::Text
+        );
+        assert_eq!(
+            search_field_kind(SearchMappingFlavor::Elasticsearch, "q_512_vec"),
+            FieldKind::DenseVector(512)
+        );
+        assert_eq!(
+            search_field_kind(SearchMappingFlavor::Elasticsearch, "q_2048_vec"),
+            FieldKind::Text
+        );
+        assert_eq!(
+            search_field_kind(SearchMappingFlavor::OpenSearch, "q_2048_vec"),
+            FieldKind::DenseVector(2048)
+        );
+        assert_eq!(
+            search_field_kind(SearchMappingFlavor::OpenSearch, "q_3072_vec"),
+            FieldKind::Text
+        );
+        assert_eq!(
+            search_field_kind(SearchMappingFlavor::Elasticsearch, "lat_lon"),
+            FieldKind::GeoPoint
+        );
+    }
+
+    #[test]
+    fn runtime_projection_types_metadata_and_keeps_non_native_vectors_in_replacement() {
+        let chunk = IndexedChunk {
+            id: "chunk-1".into(),
+            doc_name: "guide.md".into(),
+            content: "rust search".into(),
+            embedding: vec![0.25; 384],
+            token_count: 2,
+            position: 0,
+            metadata: HashMap::from([
+                ("kb_id".into(), "kb-1".into()),
+                ("available_int".into(), "1".into()),
+                ("position_int".into(), "[[1,2,3,4,5]]".into()),
+                ("tag_kwd".into(), "[\"rust\",\"search\"]".into()),
+                ("tag_feas".into(), "{\"rust\":0.75}".into()),
+                ("lat_lon".into(), "[120.1,30.2]".into()),
+            ]),
+        };
+        let projected = project_chunk_document(SearchMappingFlavor::Elasticsearch, &chunk).unwrap();
+        assert_eq!(projected["available_int"], 1);
+        assert_eq!(projected["position_int"], json!([[1, 2, 3, 4, 5]]));
+        assert_eq!(projected["tag_kwd"], json!(["rust", "search"]));
+        assert_eq!(projected["tag_feas"], json!({"rust": 0.75}));
+        assert_eq!(projected["lat_lon"], json!([120.1, 30.2]));
+        assert_eq!(projected["content_with_weight"], "rust search");
+        assert!(!projected.contains_key("q_384_vec"));
+        validate_replacement_snapshot(&[chunk]).unwrap();
+    }
+
+    #[test]
+    fn runtime_projection_rejects_invalid_typed_metadata() {
+        let chunk = IndexedChunk {
+            id: "chunk-1".into(),
+            doc_name: String::new(),
+            content: String::new(),
+            embedding: Vec::new(),
+            token_count: 0,
+            position: 0,
+            metadata: HashMap::from([("available_int".into(), "yes".into())]),
+        };
+        let error = validate_replacement_snapshot(&[chunk]).unwrap_err();
+        assert!(error.to_string().contains("available_int"));
+    }
+}

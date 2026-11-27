@@ -355,4 +355,167 @@ impl Parse for EpubParser {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::chunk::estimate_tokens;
+    use std::io::Write;
 
+    /// Build a minimal EPUB in memory with the given chapter (name, html).
+    fn build_epub(chapters: &[(&str, &str)], with_container: bool) -> Vec<u8> {
+        let mut buf = Vec::new();
+        {
+            let mut zw = zip::ZipWriter::new(Cursor::new(&mut buf));
+            if with_container {
+                let container = r#"<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>"#;
+                zw.start_file(
+                    "META-INF/container.xml",
+                    zip::write::SimpleFileOptions::default(),
+                )
+                .unwrap();
+                zw.write_all(container.as_bytes()).unwrap();
+
+                let mut manifest = String::new();
+                let mut spine = String::new();
+                for (i, (name, _)) in chapters.iter().enumerate() {
+                    manifest.push_str(&format!(
+                        r#"<item id="c{i}" href="{name}" media-type="application/xhtml+xml"/>"#
+                    ));
+                    spine.push_str(&format!(r#"<itemref idref="c{i}"/>"#));
+                }
+                let opf = format!(
+                    r#"<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <manifest>{manifest}</manifest>
+  <spine>{spine}</spine>
+</package>"#
+                );
+                zw.start_file(
+                    "OEBPS/content.opf",
+                    zip::write::SimpleFileOptions::default(),
+                )
+                .unwrap();
+                zw.write_all(opf.as_bytes()).unwrap();
+            }
+            for (name, html) in chapters {
+                zw.start_file(
+                    format!("OEBPS/{name}"),
+                    zip::write::SimpleFileOptions::default(),
+                )
+                .unwrap();
+                zw.write_all(html.as_bytes()).unwrap();
+            }
+            zw.finish().unwrap();
+        }
+        buf
+    }
+
+    #[test]
+    fn parses_chapters_in_spine_order() {
+        let epub = build_epub(
+            &[
+                (
+                    "c1.xhtml",
+                    "<html><body><h1>First</h1><p>Alpha</p></body></html>",
+                ),
+                (
+                    "c2.xhtml",
+                    "<html><body><h1>Second</h1><p>Beta</p></body></html>",
+                ),
+            ],
+            true,
+        );
+        let parser = RAGFlowEpubParser::new();
+        let sections = parser.parse_binary(&epub, 512).unwrap();
+        let joined = sections.join("\n");
+        assert!(joined.contains("First"));
+        assert!(joined.contains("Alpha"));
+        assert!(joined.contains("Second"));
+        assert!(joined.contains("Beta"));
+    }
+
+    #[test]
+    fn falls_back_to_sorted_xhtml_without_container() {
+        let epub = build_epub(
+            &[
+                ("b.xhtml", "<html><body><p>B</p></body></html>"),
+                ("a.xhtml", "<html><body><p>A</p></body></html>"),
+            ],
+            false,
+        );
+        let parser = RAGFlowEpubParser::new();
+        let sections = parser.parse_binary(&epub, 512).unwrap();
+        let joined = sections.join("\n");
+        assert!(joined.contains("A"));
+        assert!(joined.contains("B"));
+    }
+
+    #[test]
+    fn skips_non_xhtml_media_types_in_spine() {
+        let mut buf = Vec::new();
+        {
+            let mut zw = zip::ZipWriter::new(Cursor::new(&mut buf));
+            let container = r#"<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles><rootfile full-path="content.opf" media-type="application/oebps-package+xml"/></rootfiles>
+</container>"#;
+            zw.start_file(
+                "META-INF/container.xml",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            zw.write_all(container.as_bytes()).unwrap();
+            let opf = r#"<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <manifest>
+    <item id="c" href="c.xhtml" media-type="application/xhtml+xml"/>
+    <item id="img" href="pic.png" media-type="image/png"/>
+  </manifest>
+  <spine><itemref idref="img"/><itemref idref="c"/></spine>
+</package>"#;
+            zw.start_file("content.opf", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zw.write_all(opf.as_bytes()).unwrap();
+            zw.start_file("c.xhtml", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zw.write_all(b"<html><body><p>Only</p></body></html>")
+                .unwrap();
+            zw.finish().unwrap();
+        }
+        let parser = RAGFlowEpubParser::new();
+        let sections = parser.parse_binary(&buf, 512).unwrap();
+        let joined = sections.join("\n");
+        assert!(joined.contains("Only"));
+        // Image item excluded from spine.
+        assert!(!joined.contains("pic.png"));
+    }
+
+    #[test]
+    fn empty_binary_errors() {
+        let parser = RAGFlowEpubParser::new();
+        assert!(parser.parse_binary(&[], 512).is_err());
+    }
+
+    #[test]
+    fn epub_parser_parse_trait_joins_sections() {
+        let epub = build_epub(
+            &[("c1.xhtml", "<html><body><p>Hello</p></body></html>")],
+            true,
+        );
+        let parser = EpubParser::new();
+        let doc = parser.parse("book.epub", &epub).unwrap();
+        assert!(doc.content.contains("Hello"));
+        assert_eq!(doc.mime_type, "application/epub+zip");
+    }
+
+    #[test]
+    fn estimate_tokens_proxy_compiles_and_runs() {
+        // Sanity: the same proxy used by html_parser delegation.
+        assert!(estimate_tokens("hello world") > 0);
+    }
+}

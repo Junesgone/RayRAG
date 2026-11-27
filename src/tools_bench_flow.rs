@@ -476,4 +476,46 @@ impl Default for MultiModalRegistry {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn test_tool_registry() {
+        let reg = ToolRegistry::new();
+        assert_eq!(reg.tools().len(), 2);
+        assert!(
+            reg.execute("calculate", serde_json::json!({"expression":"1+1"}))
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn test_flow_topological() {
+        let engine = FlowEngine::new();
+        let order = engine.topological_order();
+        assert!(order.len() == 4);
+        let ids: Vec<&str> = order.iter().map(|n| n.id.as_str()).collect();
+        assert!(
+            ids.iter().position(|&x| x == "parser").unwrap()
+                < ids.iter().position(|&x| x == "chunker").unwrap()
+        );
+    }
+
+    #[test]
+    fn test_community_detection() {
+        let detector = CommunityDetector::new(0.0);
+        let relations = vec![("A".into(), "B".into(), 1.0), ("B".into(), "C".into(), 1.0)];
+        let communities = detector.detect(&relations);
+        assert!(!communities.is_empty());
+    }
+
+    #[test]
+    fn test_benchmark() {
+        let mut bench = RetrievalBenchmark::new();
+        bench.add_query("q1");
+        bench.add_judgment("q1", "doc1", 2);
+        let metrics = bench.evaluate(|_q| vec![("doc1".into(), 0.9), ("doc2".into(), 0.5)]);
+        assert!(metrics.mrr > 0.0);
+    }
+}

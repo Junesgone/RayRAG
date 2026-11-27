@@ -1407,6 +1407,259 @@ impl DocStorePool {
     }
 }
 
+#[cfg(test)]
+mod tests {
 
+    #[test]
+    fn a_condition_value_that_is_an_array_means_any_of_them() {
+        let mut row = DocRow::new();
+        row.insert(
+            "knowledge_graph_kwd".to_string(),
+            serde_json::json!("entity"),
+        );
+        row.insert("doc_id".to_string(), serde_json::json!("doc-1"));
+        row.insert(
+            "doc_ids_kwd".to_string(),
+            serde_json::json!(["doc-1", "doc-2"]),
+        );
 
+        // The shape the structure-graph code passes, which strict equality could never match.
+        let mut condition = FilterCondition::new();
+        condition.insert(
+            "knowledge_graph_kwd".to_string(),
+            serde_json::json!(["entity", "relation"]),
+        );
+        assert!(condition_matches(&row, &condition));
 
+        // A scalar keeps exact equality, including "not equal".
+        let mut scalar = FilterCondition::new();
+        scalar.insert("doc_id".to_string(), serde_json::json!("doc-1"));
+        assert!(condition_matches(&row, &scalar));
+        scalar.insert("doc_id".to_string(), serde_json::json!("doc-2"));
+        assert!(!condition_matches(&row, &scalar));
+
+        // A multi-valued field matches when it shares any value, and not otherwise.
+        let mut shared = FilterCondition::new();
+        shared.insert("doc_ids_kwd".to_string(), serde_json::json!(["doc-2"]));
+        assert!(condition_matches(&row, &shared));
+        shared.insert("doc_ids_kwd".to_string(), serde_json::json!("doc-2"));
+        assert!(
+            !condition_matches(&row, &shared),
+            "a scalar must equal the array, not be inside it"
+        );
+
+        // Every condition must hold.
+        let mut both = FilterCondition::new();
+        both.insert(
+            "knowledge_graph_kwd".to_string(),
+            serde_json::json!(["entity", "relation"]),
+        );
+        both.insert("doc_id".to_string(), serde_json::json!("other"));
+        assert!(!condition_matches(&row, &both));
+
+        // A missing field never matches a wanted value.
+        let mut missing = FilterCondition::new();
+        missing.insert("absent".to_string(), serde_json::json!(["x"]));
+        assert!(!condition_matches(&row, &missing));
+    }
+    use super::*;
+
+    fn row(id: &str, content: &str) -> DocRow {
+        let mut row = Map::new();
+        row.insert("id".into(), json!(id));
+        row.insert("content".into(), json!(content));
+        row
+    }
+
+    fn text_query(terms: &str) -> SearchQuery {
+        SearchQuery {
+            match_expressions: vec![MatchExpr::text(&["content"], terms, 10)],
+            limit: 10,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn memory_doc_store_insert_search_delete() {
+        let store = MemoryDocStore::new();
+        let ids = store
+            .insert(
+                &[
+                    row("c1", "RayRAG is a RAG engine written in Rust."),
+                    row("c2", "Vector search over embedded chunks."),
+                    row("c3", "RayRAG highlights matches with em tags."),
+                ],
+                "idx1",
+                "kb1",
+            )
+            .unwrap();
+        assert_eq!(ids, vec!["c1", "c2", "c3"]);
+
+        // Dataset isolation: only kb1 rows are visible.
+        let mut query = text_query("rayrag");
+        query.dataset_ids = vec!["kb1".into()];
+        let res = store.search(&query).unwrap();
+        assert_eq!(res.total, 2);
+        assert_eq!(res.docs[0]["id"], json!("c1")); // more term hits -> first
+
+        let mut query = text_query("rayrag");
+        query.dataset_ids = vec!["kb2".into()];
+        assert_eq!(store.search(&query).unwrap().total, 0);
+
+        // Index bookkeeping.
+        store.create_idx("idx1", "kb1", 384).unwrap();
+        assert!(store.index_exist("idx1", "kb1").unwrap());
+        store.delete_idx("idx1", "kb1").unwrap();
+        assert!(!store.index_exist("idx1", "kb1").unwrap());
+
+        // Delete by conjunctive condition.
+        let mut condition = Map::new();
+        condition.insert("id".into(), json!("c2"));
+        assert_eq!(store.delete(&condition, "idx1", "kb1").unwrap(), 1);
+        assert_eq!(store.len(), 2);
+    }
+
+    #[test]
+    fn memory_doc_store_update_and_get() {
+        let store = MemoryDocStore::new();
+        store
+            .insert(&[row("c1", "original")], "idx1", "kb1")
+            .unwrap();
+
+        let mut condition = Map::new();
+        condition.insert("id".into(), json!("c1"));
+        let mut update = Map::new();
+        update.insert("content".into(), json!("updated"));
+        assert!(store.update(&condition, &update, "idx1", "kb1").unwrap());
+        assert_eq!(
+            store.get("c1", "idx1", &["kb1".into()]).unwrap().unwrap()["content"],
+            json!("updated")
+        );
+
+        // Non-matching condition -> false, no change.
+        let mut missed = Map::new();
+        missed.insert("id".into(), json!("nope"));
+        assert!(!store.update(&missed, &update, "idx1", "kb1").unwrap());
+
+        // Dataset-scoped get.
+        assert!(
+            store
+                .get("c1", "idx1", &["other".into()])
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn search_response_helpers_match_doc_store_base() {
+        let store = MemoryDocStore::new();
+        let res = SearchResponse {
+            total: 2,
+            docs: vec![
+                row("c1", "Rust is a systems language."),
+                row("c2", "Nothing relevant here."),
+            ],
+            aggregations: HashMap::new(),
+        };
+
+        assert_eq!(store.get_total(&res), 2);
+        assert_eq!(store.get_doc_ids(&res), vec!["c1", "c2"]);
+
+        let fields = store.get_fields(&res, &["content".into()]);
+        assert_eq!(
+            fields["c1"]["content"],
+            json!("Rust is a systems language.")
+        );
+
+        let highlights = store.get_highlight(&res, &["rust".into()], "content");
+        assert_eq!(highlights.len(), 1);
+        assert!(highlights["c1"].contains("<em>Rust</em>"));
+
+        let mut tagged = res;
+        tagged.docs[0].insert("category".into(), json!("tech"));
+        tagged.docs[1].insert("category".into(), json!("other"));
+        let mut third = row("c3", "Another Rust chunk.");
+        third.insert("category".into(), json!("tech"));
+        tagged.docs.push(third);
+        let aggregation = store.get_aggregation(&tagged, "category");
+        assert_eq!(
+            aggregation,
+            vec![("tech".to_string(), 2), ("other".to_string(), 1)]
+        );
+    }
+
+    #[test]
+    fn doc_store_pool_memory_backend_acquire_and_refresh() {
+        let pool = DocStorePool::memory();
+        assert_eq!(pool.backend_name(), "memory");
+        let conn = pool.get_conn().unwrap();
+        assert_eq!(conn.db_type(), "memory");
+        conn.insert(&[row("c1", "pooled row")], "idx1", "kb1")
+            .unwrap();
+
+        // Same shared connection is returned on repeated acquire.
+        let again = pool.get_conn().unwrap();
+        assert!(Arc::ptr_eq(&conn, &again));
+        assert_eq!(
+            again.get("c1", "idx1", &["kb1".into()]).unwrap().is_some(),
+            true
+        );
+
+        // refresh_conn keeps a healthy connection untouched.
+        let refreshed = pool.refresh_conn().unwrap();
+        assert_eq!(
+            refreshed
+                .get("c1", "idx1", &["kb1".into()])
+                .unwrap()
+                .is_some(),
+            true
+        );
+    }
+}
+
+#[cfg(test)]
+mod off_thread_doc_store_tests {
+    use super::*;
+
+    /// Reading through the adapter works from inside a tokio task — the case that panics when
+    /// a synchronous backend is called directly on a worker.
+    #[tokio::test]
+    async fn off_thread_store_is_usable_from_an_async_task() {
+        let pool = Arc::new(DocStorePool::memory());
+        let store = OffThreadDocStore::new(pool);
+        let rows: Vec<DocRow> = vec![
+            serde_json::json!({"id": "row-1", "kb_id": "kb-1"})
+                .as_object()
+                .cloned()
+                .unwrap(),
+        ];
+        store.insert(&rows, "idx", "kb-1").unwrap();
+        let found = store.get("row-1", "idx", &["kb-1".to_string()]).unwrap();
+        assert!(
+            found.is_some(),
+            "the row written through the adapter is readable"
+        );
+        assert_eq!(store.db_type(), "off-thread");
+    }
+
+    /// A search round-trips as well, so the engines' read paths are covered too.
+    #[tokio::test]
+    async fn off_thread_store_answers_searches() {
+        let pool = Arc::new(DocStorePool::memory());
+        let store = OffThreadDocStore::new(pool);
+        let rows: Vec<DocRow> = vec![
+            serde_json::json!({"id": "row-2", "kb_id": "kb-2"})
+                .as_object()
+                .cloned()
+                .unwrap(),
+        ];
+        store.insert(&rows, "idx", "kb-2").unwrap();
+        let query = SearchQuery {
+            index_names: vec!["idx".to_string()],
+            dataset_ids: vec!["kb-2".to_string()],
+            ..Default::default()
+        };
+        let response = store.search(&query).unwrap();
+        assert_eq!(store.get_doc_ids(&response), vec!["row-2".to_string()]);
+    }
+}

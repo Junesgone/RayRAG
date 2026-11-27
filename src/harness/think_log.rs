@@ -77,4 +77,33 @@ impl ThinkLogSink {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn filter_and_framing_mirror_upstream() {
+        assert!(is_think_log(
+            "rag.advanced_rag.tools",
+            "[Hybrid search] done"
+        ));
+        assert!(is_think_log("rag.llm.chat_model", "  [Tool loop] turn 1"));
+        assert!(!is_think_log("rag.llm.chat_model", "plain line"));
+        assert!(!is_think_log("rag.utils", "[Hybrid search] done"));
+        assert!(!is_think_log("rag.advanced_rag", ""));
+        assert_eq!(format_think_line(" [A] x "), "<br>[A] x");
+
+        let sink = ThinkLogSink::new();
+        assert!(!sink.forward("rag.advanced_rag.x", "[A] before"));
+        let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+        let seen_clone = seen.clone();
+        sink.set(Some(Arc::new(move |line: String| {
+            seen_clone.lock().unwrap().push(line);
+        })));
+        assert!(sink.forward("rag.advanced_rag.x", "[A] now"));
+        assert!(!sink.forward("rag.advanced_rag.x", "no tag"));
+        assert_eq!(seen.lock().unwrap().as_slice(), ["<br>[A] now"]);
+        sink.reset();
+        assert!(!sink.forward("rag.advanced_rag.x", "[A] after"));
+    }
+}

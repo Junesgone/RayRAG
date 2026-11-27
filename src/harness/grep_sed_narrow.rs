@@ -461,4 +461,92 @@ pub fn grep_sed_narrow(
     )
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn escape_terms_respect_cjk_and_short_tokens() {
+        assert_eq!(escape_term("  \"Alpha\"  "), r"\bAlpha\b");
+        assert_eq!(escape_term("ab"), "ab");
+        assert_eq!(escape_term("天津"), "天津");
+        assert_eq!(escape_term("  "), "");
+    }
+
+    #[test]
+    fn exec_expands_lines_with_context() {
+        let content = "line one filler filler filler\nline two has Target here\nline three filler filler\nline four filler filler";
+        let patterns = terms_to_patterns(&["Target".to_string()]);
+        let (narrowed, matched) = exec_on_text(content, &patterns, 1, 1, 1200);
+        assert!(matched);
+        assert!(narrowed.contains("line one"));
+        assert!(narrowed.contains("line three"));
+        assert!(!narrowed.contains("line four"));
+    }
+
+    #[test]
+    fn no_hit_keeps_fact_dense_sentences() {
+        let content = "Nothing here matters at all. The population was 4,523 in 1999. More filler without signals.";
+        let patterns = terms_to_patterns(&["zzz".to_string()]);
+        let (narrowed, matched) = exec_on_text(content, &patterns, 0, 0, 1200);
+        assert!(!matched);
+        assert!(narrowed.contains("4,523"));
+    }
+
+    #[test]
+    fn narrow_by_terms_matches_and_keeps_original_on_miss() {
+        let chunks = vec![
+            json!({"content_with_weight": "The film was nominated for awards in 1999 by critics everywhere. It also won other prizes at several ceremonies that year."}),
+            json!({"content_with_weight": "unrelated filler text about something else entirely that keeps going and going with no numbers or names at all, just plain words repeated to exceed the minimum narrow threshold, and then some more words to be safe about the length requirement. Plus one final clause to close it out."}),
+        ];
+        let (kept, stats) = narrow_by_terms(
+            &chunks,
+            &["nominated".to_string()],
+            None,
+            None,
+            None,
+            "nominated",
+            1200,
+            16000,
+        );
+        assert_eq!(kept.len(), 2);
+        assert_eq!(stats["matched"], json!(true));
+
+        // Primary terms miss -> fallback terms are tried mechanically.
+        let (kept, stats) = narrow_by_terms(
+            &chunks,
+            &["zzz".to_string()],
+            Some(&["critics".to_string()]),
+            None,
+            None,
+            "critics",
+            1200,
+            16000,
+        );
+        assert_eq!(stats["matched"], json!(true));
+        assert_eq!(kept.len(), 2);
+
+        // Everything misses, no fallback -> originals untouched, matched=false.
+        let (kept, stats) = narrow_by_terms(
+            &chunks[1..2].to_vec(),
+            &["zzz".to_string()],
+            None,
+            None,
+            None,
+            "",
+            1200,
+            16000,
+        );
+        assert_eq!(stats["matched"], json!(false));
+        assert_eq!(kept.len(), 1);
+    }
+
+    #[test]
+    fn fallback_terms_split_and_filter() {
+        let terms = split_fallback_terms(&["What is the capital of France, Paris?".to_string()]);
+        // Terms are whole comma/sentence parts (multi-word phrases stay whole).
+        assert!(terms.iter().any(|term| term.contains("capital")));
+        assert!(terms.contains(&"Paris".to_string()));
+        assert!(!terms.iter().any(|term| term.eq_ignore_ascii_case("what")));
+    }
+}

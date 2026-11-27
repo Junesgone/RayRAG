@@ -640,4 +640,322 @@ pub fn split_slumber_level(text: &str, delimiters: &[&str]) -> Vec<String> {
     merged
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
 
+    #[test]
+    fn markdown_table_separator_and_blocks() {
+        assert!(is_markdown_table_separator("|---|---|"));
+        assert!(is_markdown_table_separator(" | :---: | --- | "));
+        assert!(!is_markdown_table_separator("|--|--|"));
+        assert!(!is_markdown_table_separator("| a | b |"));
+
+        let text =
+            "intro line\n| a | b |\n| --- | --- |\n| 1 | 2 |\n```rust\nfn main() {}\n```\noutro\n";
+        let blocks = split_markdown_blocks(text);
+        assert_eq!(blocks.len(), 4);
+        assert_eq!(blocks[0], ("intro line\n".to_owned(), None));
+        assert_eq!(blocks[1].1, Some("table"));
+        assert!(blocks[1].0.contains("| 1 | 2 |"));
+        assert_eq!(blocks[2].1, Some("fenced_code"));
+        assert!(blocks[2].0.contains("fn main"));
+        assert_eq!(blocks[3], ("outro\n".to_owned(), None));
+
+        // Unclosed fence swallows the remainder.
+        let open = "```\ncode\nmore\n";
+        let blocks = split_markdown_blocks(open);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].1, Some("fenced_code"));
+    }
+
+    #[test]
+    fn atomic_json_records_mirror_upstream() {
+        let plain = serde_json::json!({"text": "hello"});
+        assert!(!is_atomic_json_record(&plain));
+        assert!(is_atomic_json_record(
+            &serde_json::json!({"doc_type_kwd": " Table ", "text": "x"})
+        ));
+        assert!(is_atomic_json_record(
+            &serde_json::json!({"layout_type": "figure"})
+        ));
+        assert!(is_atomic_json_record(
+            &serde_json::json!({"text": "x", "bbox": {"x0": 0}})
+        ));
+        assert!(is_atomic_json_record(
+            &serde_json::json!({"text": "x", "img_id": "img-1"})
+        ));
+        assert!(is_atomic_json_record(&serde_json::json!({
+            "text": "| a |\n| --- |\n| 1 |"
+        })));
+        assert!(is_atomic_json_record(
+            &serde_json::json!({"text": "<table style=x>"})
+        ));
+        assert!(is_atomic_json_record(
+            &serde_json::json!({"text": "```py\nprint(1)\n```"})
+        ));
+        // Falsy id-style fields do not make a record atomic.
+        assert!(!is_atomic_json_record(
+            &serde_json::json!({"text": "x", "img_id": "", "bbox": []})
+        ));
+    }
+
+    #[test]
+    fn merge_small_text_chunks_respects_coarse_floor() {
+        let chunks = vec![
+            serde_json::json!({"text": "first"}),
+            serde_json::json!({"text": "second"}),
+        ];
+        assert_eq!(merge_small_text_chunks(chunks.clone(), 128).len(), 2);
+
+        let merged = merge_small_text_chunks(chunks, 512);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0]["text"], serde_json::json!("first\n\nsecond"));
+
+        // An atomic record flushes the pending merge and stays intact.
+        let chunks = vec![
+            serde_json::json!({"text": "first"}),
+            serde_json::json!({"doc_type_kwd": "table", "text": "| a |"}),
+            serde_json::json!({"text": "third"}),
+        ];
+        let merged = merge_small_text_chunks(chunks, 512);
+        assert_eq!(merged.len(), 3);
+        assert_eq!(merged[1]["doc_type_kwd"], serde_json::json!("table"));
+    }
+
+    #[test]
+    fn normalize_upstream_chunks_branches() {
+        // chunks passthrough fills text from content_with_weight.
+        let upstream = serde_json::json!({
+            "output_format": "chunks",
+            "chunks": [{"content_with_weight": "body", "id": "c1"}]
+        });
+        let chunks = normalize_upstream_chunks(&upstream, false, None);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0]["text"], serde_json::json!("body"));
+
+        // json records split at the token target unless atomic.
+        let upstream = serde_json::json!({
+            "output_format": "json",
+            "json": [
+                {"text": "first sentence. second sentence."},
+                {"doc_type_kwd": "table", "text": "| a |\n| --- |"}
+            ]
+        });
+        let chunks = normalize_upstream_chunks(&upstream, true, Some(2));
+        assert!(chunks.len() >= 2);
+        assert!(
+            chunks
+                .iter()
+                .any(|chunk| chunk["doc_type_kwd"] == serde_json::json!("table"))
+        );
+
+        // Markdown keeps tables atomic and chunks ordinary text.
+        let upstream = serde_json::json!({
+            "output_format": "markdown",
+            "markdown": "para one\n\npara two\n"
+        });
+        let chunks = normalize_upstream_chunks(&upstream, true, Some(1024));
+        assert!(!chunks.is_empty());
+        assert!(chunks.iter().all(|chunk| chunk.get("text").is_some()));
+        let passthrough = normalize_upstream_chunks(&upstream, false, None);
+        assert_eq!(passthrough.len(), 1);
+        assert_eq!(
+            passthrough[0]["text"],
+            serde_json::json!("para one\n\npara two\n")
+        );
+
+        // Unknown format yields nothing.
+        let upstream = serde_json::json!({"output_format": "pdf"});
+        assert!(normalize_upstream_chunks(&upstream, true, None).is_empty());
+    }
+
+    #[test]
+    fn slumber_candidates_levels_and_fallback() {
+        assert!(slumber_candidates("", 0, None).is_empty());
+        // A boundary only counts once the accumulated part reaches 24
+        // characters, so both paragraphs here are long enough to split.
+        let paragraphs = "paragraph one text is long enough\n\nparagraph two text is long enough";
+        let parts = slumber_candidates(paragraphs, 0, Some(1024));
+        assert_eq!(parts.len(), 2);
+        assert!(parts[0].ends_with("\n\n"));
+
+        // Text below the minimum with a single delimiter stays whole.
+        let tiny = "para one\n\npara two";
+        assert_eq!(slumber_candidates(tiny, 0, Some(1024)).len(), 1);
+        // Single split at the paragraph level falls back to sentences.
+        let single = "Sentence one is long enough. Sentence two is long enough.";
+        let parts = slumber_candidates(single, 0, Some(1024));
+        assert!(parts.len() >= 2);
+        assert!(parts[0].contains(". "));
+    }
+
+    #[test]
+    fn compiler_param_check_prefers_singular_and_normalizes() {
+        let mut param = CompilerParam::default();
+        assert_eq!(
+            param.check(),
+            Err(CompilerParam::GROUP_EMPTY_MESSAGE.to_owned())
+        );
+
+        let mut param = CompilerParam {
+            compilation_template_group_id: "g1".to_owned(),
+            compilation_template_group_ids: vec!["old".to_owned()],
+        };
+        assert_eq!(param.check(), Ok(()));
+        assert_eq!(param.compilation_template_group_ids, vec!["g1".to_owned()]);
+
+        let mut param = CompilerParam {
+            compilation_template_group_id: String::new(),
+            compilation_template_group_ids: vec!["g2".to_owned(), "g3".to_owned()],
+        };
+        assert_eq!(param.check(), Ok(()));
+        assert_eq!(
+            param.compilation_template_group_ids,
+            vec!["g2".to_owned(), "g3".to_owned()]
+        );
+
+        // Upstream list-truthiness quirk: a single blank string entry still
+        // passes check_empty because the list itself is non-empty.
+        let mut param = CompilerParam {
+            compilation_template_group_id: String::new(),
+            compilation_template_group_ids: vec![String::new()],
+        };
+        assert_eq!(param.check(), Ok(()));
+        assert_eq!(param.compilation_template_group_ids, vec![String::new()]);
+
+        // Serde keeps the upstream key names and tolerates missing keys.
+        let parsed: CompilerParam = serde_json::from_value(serde_json::json!({
+            "compilation_template_group_id": "g9"
+        }))
+        .unwrap();
+        assert_eq!(parsed.compilation_template_group_id, "g9");
+        assert!(parsed.compilation_template_group_ids.is_empty());
+    }
+
+    #[test]
+    fn compile_language_falls_back_to_english() {
+        assert_eq!(compile_language(None, None, None), "English");
+        assert_eq!(compile_language(Some(" Chinese "), None, None), "Chinese");
+        assert_eq!(
+            compile_language(Some("  "), Some("Japanese"), None),
+            "Japanese"
+        );
+        assert_eq!(compile_language(None, Some(""), Some("Korean")), "Korean");
+        let (progress, message) = compile_progress(None, "start");
+        assert_eq!((progress, message.as_str()), (0.0, "start"));
+        let (progress, _) = compile_progress(Some(0.05), "x");
+        assert!((progress - 0.05).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn split_slumber_level_mirrors_upstream() {
+        assert!(split_slumber_level("", &["。"]).is_empty());
+        assert_eq!(
+            split_slumber_level("short", &["。"]),
+            vec!["short".to_owned()]
+        );
+        assert_eq!(
+            split_slumber_level("abcdef", &[]),
+            vec!["abcdef".to_owned()]
+        );
+
+        // Two parts, each at least 24 characters, split and keep the
+        // delimiter on the preceding fragment.
+        let long = format!("{}。{}。", "a".repeat(24), "b".repeat(24));
+        let parts = split_slumber_level(&long, &["。"]);
+        assert_eq!(parts.len(), 2);
+        assert!(parts[0].ends_with('。'));
+
+        // A short trailing fragment merges into the previous part.
+        let tail = format!("{}。短。", "a".repeat(24));
+        assert_eq!(split_slumber_level(&tail, &["。"]).len(), 1);
+
+        // Regex metacharacter delimiters are literal.
+        let piped = format!("{}|{}|", "c".repeat(24), "d".repeat(24));
+        assert_eq!(split_slumber_level(&piped, &["|"]).len(), 2);
+    }
+
+    #[test]
+    fn deserializes_aliased_payload_and_round_trips() {
+        let payload = json!({
+            "_created_time": 1.5,
+            "_elapsed_time": 2.5,
+            "name": "doc.md",
+            "file": {"id": "f1"},
+            "chunks": [{"text": "a"}],
+            "output_format": "markdown",
+            "json": [{"text": "a"}],
+            "markdown": "# a",
+            "text": "a",
+            "html": "<p>a</p>"
+        });
+        let parsed: CompilerFromUpstream = serde_json::from_value(payload.clone()).unwrap();
+        assert_eq!(parsed.created_time, Some(1.5));
+        assert_eq!(parsed.elapsed_time, Some(2.5));
+        assert_eq!(parsed.name, "doc.md");
+        assert_eq!(parsed.output_format, Some(CompilerOutputFormat::Markdown));
+        assert_eq!(parsed.json_result.as_ref().unwrap().len(), 1);
+        assert_eq!(parsed.markdown_result.as_deref(), Some("# a"));
+        assert_eq!(parsed.text_result.as_deref(), Some("a"));
+        assert_eq!(parsed.html_result.as_deref(), Some("<p>a</p>"));
+        // Round-trip keeps the field names serializable (alias output is
+        // upstream-only; serialization uses the canonical names).
+        let encoded = serde_json::to_value(&parsed).unwrap();
+        assert_eq!(encoded["created_time"], json!(1.5));
+        assert_eq!(encoded["name"], json!("doc.md"));
+    }
+
+    #[test]
+    fn accepts_canonical_field_names_too() {
+        let parsed: CompilerFromUpstream = serde_json::from_value(json!({
+            "created_time": 1.0,
+            "elapsed_time": 2.0,
+            "name": "n",
+            "json_result": [{"x": 1}],
+            "markdown_result": "m",
+            "text_result": "t",
+            "html_result": "h",
+            "output_format": "chunks"
+        }))
+        .unwrap();
+        assert_eq!(parsed.output_format, Some(CompilerOutputFormat::Chunks));
+        assert_eq!(parsed.json_result.as_ref().unwrap()[0]["x"], json!(1));
+    }
+
+    #[test]
+    fn rejects_unknown_fields_and_bad_formats() {
+        let unknown = serde_json::from_value::<CompilerFromUpstream>(json!({
+            "name": "n",
+            "extra": 1
+        }));
+        assert!(unknown.is_err(), "extra=forbid parity");
+        let bad_format = serde_json::from_value::<CompilerFromUpstream>(json!({
+            "name": "n",
+            "output_format": "pdf"
+        }));
+        assert!(bad_format.is_err());
+        let nullish = serde_json::from_value::<CompilerFromUpstream>(json!({
+            "name": "n",
+            "output_format": null
+        }))
+        .unwrap();
+        assert!(nullish.output_format.is_none());
+        // All five upstream formats parse.
+        for (name, expected) in [
+            ("json", CompilerOutputFormat::Json),
+            ("markdown", CompilerOutputFormat::Markdown),
+            ("text", CompilerOutputFormat::Text),
+            ("html", CompilerOutputFormat::Html),
+            ("chunks", CompilerOutputFormat::Chunks),
+        ] {
+            let parsed: CompilerFromUpstream = serde_json::from_value(json!({
+                "name": "n",
+                "output_format": name
+            }))
+            .unwrap();
+            assert_eq!(parsed.output_format, Some(expected));
+        }
+    }
+}

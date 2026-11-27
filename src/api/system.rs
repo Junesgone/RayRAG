@@ -1437,4 +1437,156 @@ pub struct CommitQuery {
     pub limit: Option<usize>,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::parse_related_questions;
+    use super::plan_llm_models;
+    use super::validate_nickname;
+    use crate::api::tenant_models::ModelCapability;
 
+    fn provider(id: &str, name: &str) -> crate::api::features::Provider {
+        crate::api::features::Provider {
+            id: id.into(),
+            name: name.into(),
+            api_base: "http://127.0.0.1:8080/v1".into(),
+            models: vec![],
+            enabled: true,
+            api_key: None,
+        }
+    }
+
+    #[test]
+    fn nickname_validation_matches_the_fixed_contract() {
+        assert_eq!(validate_nickname("  Ray Rag 2.0 ").unwrap(), "Ray Rag 2.0");
+        assert_eq!(validate_nickname("O'Brien-2").unwrap(), "O'Brien-2");
+        assert!(validate_nickname("").is_err());
+        assert!(validate_nickname(&"x".repeat(101)).is_err());
+        assert!(validate_nickname("bad/name!").is_err());
+    }
+
+    fn instance(
+        tenant: &str,
+        provider_id: &str,
+        instance_id: &str,
+        instance_name: &str,
+        models: Vec<crate::api::tenant_models::TenantModelSpec>,
+    ) -> crate::api::tenant_models::TenantModelInstance {
+        crate::api::tenant_models::TenantModelInstance {
+            tenant_id: tenant.into(),
+            provider_id: provider_id.into(),
+            instance_id: instance_id.into(),
+            instance_name: instance_name.into(),
+            api_base: "http://127.0.0.1:8080/v1".into(),
+            api_key: None,
+            region: None,
+            models,
+            extra: Default::default(),
+        }
+    }
+
+    fn spec(
+        name: &str,
+        types: &[ModelCapability],
+        enabled: bool,
+    ) -> crate::api::tenant_models::TenantModelSpec {
+        crate::api::tenant_models::TenantModelSpec {
+            name: name.into(),
+            model_types: types.to_vec(),
+            max_tokens: Some(8192),
+            enabled,
+            is_tools: false,
+            ocr_config: None,
+        }
+    }
+
+    #[test]
+    fn related_question_parser_matches_ragflow_numbered_line_contract() {
+        assert_eq!(
+            parse_related_questions(
+                "Here are suggestions:\n1. First question?\n\n02. Second question?\n- ignored\n3.no space\n4.   "
+            ),
+            vec!["First question?", "Second question?"]
+        );
+        assert!(parse_related_questions("No numbered questions").is_empty());
+    }
+
+    #[test]
+    fn llm_models_plan_expands_real_factory_catalog_with_rank_order() {
+        let providers = vec![provider("oa", "OpenAI"), provider("ds", "DeepSeek")];
+        let instances = vec![
+            instance(
+                "tenant-a",
+                "oa",
+                "i1",
+                "default",
+                vec![spec("chat-dummy", &[ModelCapability::Chat], true)],
+            ),
+            instance(
+                "tenant-a",
+                "ds",
+                "i2",
+                "default",
+                vec![spec("deep-chat-dummy", &[ModelCapability::Chat], true)],
+            ),
+        ];
+        let models = plan_llm_models(&providers, &instances, &[]);
+        assert!(!models.is_empty());
+        // Factory fallback: OpenAI's catalog is exposed per tenant instance
+        // (gpt-5.5 is the first chat row of the embedded catalog).
+        assert!(
+            models
+                .iter()
+                .any(|model| model.name == "gpt-5.5" && model.model_type == ModelCapability::Chat)
+        );
+        assert!(
+            models
+                .iter()
+                .any(|model| model.selector == "gpt-5.5@default@OpenAI")
+        );
+        // Manual-only models still surface.
+        assert!(models.iter().any(|model| model.name == "chat-dummy"));
+        // Ranking: OpenAI (rank 999) sorts before DeepSeek.
+        let first_openai = models
+            .iter()
+            .position(|model| model.provider == "OpenAI")
+            .unwrap();
+        let first_deepseek = models
+            .iter()
+            .position(|model| model.provider == "DeepSeek")
+            .unwrap();
+        assert!(first_openai < first_deepseek);
+    }
+
+    #[test]
+    fn llm_models_plan_keeps_image2text_side_of_ocr_rows_and_never_emits_ocr() {
+        let providers = vec![provider("tq", "Tongyi-Qianwen")];
+        let instances = vec![instance(
+            "tenant-a",
+            "tq",
+            "i1",
+            "default",
+            vec![spec("chat-dummy", &[ModelCapability::Chat], true)],
+        )];
+        let models = plan_llm_models(&providers, &instances, &[]);
+        // The ocr-tagged factory rows surface their image2text side, while
+        // ocr-only capabilities now have an explicit ModelConfig type.
+        assert!(models.iter().any(|model| {
+            model.name == "qwen-vl-ocr-2025-11-20"
+                && model.model_type == ModelCapability::ImageToText
+        }));
+        // Every emitted entry carries a representable capability, including
+        // the explicit OCR type surfaced by the fixed factory catalog.
+        for model in &models {
+            assert!(matches!(
+                model.model_type,
+                ModelCapability::Chat
+                    | ModelCapability::Embedding
+                    | ModelCapability::Rerank
+                    | ModelCapability::ImageToText
+                    | ModelCapability::SpeechToText
+                    | ModelCapability::TextToSpeech
+                    | ModelCapability::Ocr
+            ));
+        }
+    }
+}

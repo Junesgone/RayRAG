@@ -43,7 +43,14 @@ impl GraphStore {
         })
     }
 
-    
+    #[cfg(test)]
+    pub fn in_memory() -> Self {
+        Self {
+            artifacts: RwLock::new(GraphArtifacts::default()),
+            file_path: String::new(),
+            save_lock: Mutex::new(()),
+        }
+    }
 
     pub fn build_checkpoint(
         doc_id: &str,
@@ -137,4 +144,91 @@ fn rebuild_kb_graph(artifacts: &mut GraphArtifacts, kb_id: &str) {
     artifacts.kb_graphs.insert(kb_id.into(), merged);
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    fn chunk(id: &str, doc_id: &str, kb_id: &str, content: &str) -> IndexedChunk {
+        IndexedChunk {
+            id: id.into(),
+            doc_name: format!("{doc_id}.txt"),
+            content: content.into(),
+            embedding: vec![1.0, 0.0],
+            token_count: 4,
+            position: 0,
+            metadata: HashMap::from([
+                ("doc_id".into(), doc_id.into()),
+                ("kb_id".into(), kb_id.into()),
+            ]),
+        }
+    }
+
+    #[test]
+    fn document_replacement_rebuilds_only_its_kb_graph() {
+        let store = GraphStore::in_memory();
+        let first = GraphStore::build_checkpoint(
+            "doc-a",
+            "kb-a",
+            "hash-a",
+            "light",
+            &[],
+            &[chunk("a", "doc-a", "kb-a", "John Smith uses Rust")],
+        );
+        let second = GraphStore::build_checkpoint(
+            "doc-b",
+            "kb-b",
+            "hash-b",
+            "light",
+            &[],
+            &[chunk("b", "doc-b", "kb-b", "Google Inc uses Docker")],
+        );
+        store.replace_document("doc-a", Some(first)).unwrap();
+        store.replace_document("doc-b", Some(second)).unwrap();
+        assert!(
+            !store
+                .context_for_query(&["kb-a".into()], "John Smith")
+                .is_empty()
+        );
+        assert!(
+            store
+                .context_for_query(&["kb-a".into()], "Google Inc")
+                .is_empty()
+        );
+
+        store.replace_document("doc-a", None).unwrap();
+        assert!(
+            store
+                .context_for_query(&["kb-a".into()], "John Smith")
+                .is_empty()
+        );
+        assert!(
+            !store
+                .context_for_query(&["kb-b".into()], "Google Inc")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn failed_persistence_keeps_previous_graph_snapshot() {
+        let root = std::env::temp_dir().join(format!("rayrag-graph-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("graphrag.json");
+        let store = GraphStore::new(path.to_str().unwrap()).unwrap();
+        let checkpoint = GraphStore::build_checkpoint(
+            "doc-a",
+            "kb-a",
+            "hash-a",
+            "light",
+            &[],
+            &[chunk("a", "doc-a", "kb-a", "John Smith uses Rust")],
+        );
+        store.replace_document("doc-a", Some(checkpoint)).unwrap();
+        let before = store.snapshot();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+
+        assert!(store.replace_document("doc-a", None).is_err());
+        assert_eq!(store.snapshot().checkpoints.len(), before.checkpoints.len());
+        std::fs::remove_dir_all(root).ok();
+    }
+}

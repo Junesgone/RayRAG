@@ -849,12 +849,529 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+#[cfg(test)]
+mod create_seed_tests {
+    use super::*;
 
+    /// Upstream `Knowledgebase.language` is a top-level column defaulting to the
+    /// process locale, updated through `KnowledgebaseService.update_by_id`, and
+    /// bounded by `max_length=32`.
+    #[test]
+    fn language_column_defaults_updates_and_survives_a_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("kb.json");
+        let store = KbStore::new(path.to_str().unwrap()).unwrap();
+        let kb = store.create_for("owner-a", "lang-kb", "").unwrap();
+        assert_eq!(kb.language, default_language());
+        assert!(
+            store
+                .set_language(&kb.id, "  Japanese  ")
+                .unwrap()
+                .is_some(),
+            "the stored value is trimmed like every other identity field"
+        );
+        assert_eq!(store.get(&kb.id).unwrap().language, "Japanese");
+        assert!(store.set_language(&kb.id, "   ").is_err());
+        assert!(store.set_language(&kb.id, &"x".repeat(33)).is_err());
+        assert_eq!(
+            store.get(&kb.id).unwrap().language,
+            "Japanese",
+            "a rejected update leaves the column untouched"
+        );
+        let reloaded = KbStore::new(path.to_str().unwrap()).unwrap();
+        assert_eq!(reloaded.get(&kb.id).unwrap().language, "Japanese");
+    }
 
+    /// Records written before the column existed must keep loading (upstream adds
+    /// the column with its default during migration).
+    #[test]
+    fn legacy_records_without_a_language_load_with_the_column_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("kb.json");
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!([{
+                "id": "legacy-kb",
+                "name": "Legacy",
+                "description": "",
+                "owner_id": "owner-a",
+                "permission": "me",
+                "chunk_count": 0,
+                "doc_count": 0,
+                "embd_id": "default",
+                "parser_config": "{}",
+                "created_at": 1,
+                "updated_at": 1
+            }]))
+            .unwrap(),
+        )
+        .unwrap();
+        let store = KbStore::new(path.to_str().unwrap()).unwrap();
+        let kb = store.get("legacy-kb").expect("legacy record loads");
+        assert_eq!(kb.language, default_language());
+    }
 
+    #[test]
+    fn create_for_with_parser_config_seeds_custom_parser_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = KbStore::new(dir.path().join("kb.json").to_str().unwrap()).unwrap();
+        let kb = store
+            .create_for_with_parser_config(
+                "owner-a",
+                "seed-kb",
+                "",
+                "private",
+                "default",
+                r#"{"chunk_method":"paper","parse_type":"Built-in"}"#,
+            )
+            .unwrap();
+        assert_eq!(
+            kb.parser_config,
+            r#"{"chunk_method":"paper","parse_type":"Built-in"}"#
+        );
+    }
 
+    #[test]
+    fn create_for_with_config_keeps_default_seed() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = KbStore::new(dir.path().join("kb.json").to_str().unwrap()).unwrap();
+        let kb = store
+            .create_for_with_config("owner-b", "default-kb", "", "private", "default")
+            .unwrap();
+        assert!(kb.parser_config.contains("chunk_token_num"));
+        assert!(kb.parser_config.contains("2048"));
+    }
+}
 
+#[cfg(test)]
+mod connector_link_tests {
+    use super::*;
 
+    fn links(pairs: &[(&str, &str)]) -> Vec<ConnectorLink> {
+        pairs
+            .iter()
+            .map(|(id, auto_parse)| ConnectorLink {
+                id: (*id).into(),
+                auto_parse: (*auto_parse).into(),
+            })
+            .collect()
+    }
 
+    /// The dataset’s linked data sources persist on the row and survive a
+    /// restart; unknown ids are a no-op instead of an error (the handler has
+    /// already resolved the dataset it manages).
+    #[test]
+    fn connectors_persist_and_survive_a_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("kb.json");
+        let store = KbStore::new(path.to_str().unwrap()).unwrap();
+        let kb = store.create_for("owner-a", "linked-kb", "").unwrap();
+        assert!(kb.connectors.is_empty(), "new rows start with no links");
+        let updated = store
+            .set_connectors(&kb.id, links(&[("src-a", "0"), ("src-b", "1")]))
+            .unwrap()
+            .expect("the row exists");
+        assert_eq!(updated.connectors, links(&[("src-a", "0"), ("src-b", "1")]));
 
+        let reloaded = KbStore::new(path.to_str().unwrap()).unwrap();
+        assert_eq!(
+            reloaded.get(&kb.id).unwrap().connectors,
+            links(&[("src-a", "0"), ("src-b", "1")]),
+            "the links are stored on the knowledge base row, not in memory only"
+        );
+        assert!(
+            store
+                .set_connectors("missing-kb", links(&[("src-a", "1")]))
+                .unwrap()
+                .is_none(),
+            "a missing row answers None like the other setters"
+        );
+    }
 
+    /// Reordering the same links must not rewrite the record (nor bump
+    /// updated_at): the Configuration form may re-render the array in a
+    /// different order after every load.
+    #[test]
+    fn reordering_the_same_links_does_not_touch_updated_at() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = KbStore::new(dir.path().join("kb.json").to_str().unwrap()).unwrap();
+        let kb = store.create_for("owner-a", "noop-kb", "").unwrap();
+        store
+            .set_connectors(&kb.id, links(&[("src-a", "0"), ("src-b", "1")]))
+            .unwrap();
+        let before = store.get(&kb.id).unwrap().updated_at;
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let same = store
+            .set_connectors(&kb.id, links(&[("src-b", "1"), ("src-a", "0")]))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            same.updated_at, before,
+            "a reordered no-op must not persist"
+        );
+        assert_eq!(same.connectors, links(&[("src-a", "0"), ("src-b", "1")]));
+    }
+
+    /// Rows written before the column existed load with an empty link list:
+    /// upstream keeps Connector2Kb in a separate table, so an old dataset
+    /// simply has no links and must not fail to deserialize.
+    #[test]
+    fn legacy_records_without_connectors_load_with_no_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("kb.json");
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!([{
+                "id": "legacy-kb",
+                "name": "Legacy",
+                "description": "",
+                "owner_id": "owner-a",
+                "permission": "me",
+                "chunk_count": 0,
+                "doc_count": 0,
+                "embd_id": "default",
+                "parser_config": "{}",
+                "created_at": 1,
+                "updated_at": 1
+            }]))
+            .unwrap(),
+        )
+        .unwrap();
+        let store = KbStore::new(path.to_str().unwrap()).unwrap();
+        let kb = store.get("legacy-kb").expect("legacy record loads");
+        assert!(kb.connectors.is_empty());
+    }
+
+    /// The auto_parse switch defaults to "1" (auto-parse) when a stored row
+    /// predates the field, matching the upstream column default.
+    #[test]
+    fn stored_links_without_auto_parse_default_to_parsing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("kb.json");
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!([{
+                "id": "partial-kb",
+                "name": "Partial",
+                "description": "",
+                "chunk_count": 0,
+                "doc_count": 0,
+                "embd_id": "default",
+                "parser_config": "{}",
+                "created_at": 1,
+                "updated_at": 1,
+                "connectors": [{"id": "src-a"}]
+            }]))
+            .unwrap(),
+        )
+        .unwrap();
+        let store = KbStore::new(path.to_str().unwrap()).unwrap();
+        let kb = store.get("partial-kb").expect("record loads");
+        assert_eq!(kb.connectors.len(), 1);
+        assert_eq!(kb.connectors[0].auto_parse, default_auto_parse());
+    }
+}
+
+#[cfg(test)]
+mod identity_update_tests {
+    use super::*;
+
+    #[test]
+    fn update_identity_persists_tags_and_avatar() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = KbStore::new(dir.path().join("kb.json").to_str().unwrap()).unwrap();
+        let kb = store
+            .create_for_with_config("o", "n", "", "private", "default")
+            .unwrap();
+        let updated = store
+            .update_identity(
+                &kb.id,
+                None,
+                None,
+                Some("tag1, tag2"),
+                Some("data:image/png;base64,AA=="),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.tag_sets, "tag1, tag2");
+        assert!(updated.avatar.starts_with("data:image/png"));
+        // reload from disk
+        let reloaded = store.get(&kb.id).unwrap();
+        assert_eq!(reloaded.tag_sets, "tag1, tag2");
+        assert!(reloaded.avatar.starts_with("data:image/png"));
+    }
+
+    #[test]
+    fn update_name_description_still_works_via_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = KbStore::new(dir.path().join("kb.json").to_str().unwrap()).unwrap();
+        let kb = store
+            .create_for_with_config("o", "old", "", "private", "default")
+            .unwrap();
+        let updated = store
+            .update_name_description(&kb.id, Some("new"), Some("desc"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.name, "new");
+        assert_eq!(updated.description, "desc");
+    }
+}
+
+#[cfg(test)]
+mod prompt_config_tests {
+    use super::*;
+
+    #[test]
+    fn prompt_config_defaults_empty_and_persists_via_update_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = KbStore::new(dir.path().join("kb.json").to_str().unwrap()).unwrap();
+        let kb = store
+            .create_for_with_config("owner", "kb", "", "private", "default")
+            .unwrap();
+        assert_eq!(kb.prompt_config, serde_json::json!({}));
+
+        let updated = store
+            .update_config(
+                &kb.id,
+                None,
+                None,
+                None,
+                Some(&serde_json::json!({"cross_languages": ["en", "ja"], "keyword": true})),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            updated.prompt_config,
+            serde_json::json!({"cross_languages": ["en", "ja"], "keyword": true})
+        );
+
+        // Reload from disk — prompt_config must survive persistence.
+        let reloaded = KbStore::new(dir.path().join("kb.json").to_str().unwrap()).unwrap();
+        let persisted = reloaded.get(&kb.id).unwrap();
+        assert_eq!(
+            persisted.prompt_config,
+            serde_json::json!({"cross_languages": ["en", "ja"], "keyword": true})
+        );
+        std::fs::remove_dir_all(dir.path()).ok();
+    }
+
+    #[test]
+    fn prompt_config_update_does_not_touch_other_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = KbStore::new(dir.path().join("kb.json").to_str().unwrap()).unwrap();
+        let kb = store
+            .create_for_with_config("owner", "kb", "desc", "private", "default")
+            .unwrap();
+        let updated = store
+            .update_config(
+                &kb.id,
+                None,
+                None,
+                None,
+                Some(&serde_json::json!({"keyword": true})),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.name, "kb");
+        assert_eq!(updated.description, "desc");
+        assert_eq!(updated.embd_id, "default");
+        std::fs::remove_dir_all(dir.path()).ok();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tenant_invitation_is_unique_persistent_accepted_and_revocable() {
+        let root = std::env::temp_dir().join(format!("rayrag-tenant-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("tenants.json");
+        let store = TenantStore::new(path.to_str().unwrap()).unwrap();
+        assert!(store.is_member("owner", "owner"));
+        assert!(store.can_manage("owner", "owner"));
+        assert!(store.invite_member("owner", "member", "owner").unwrap());
+        assert!(!store.invite_member("owner", "member", "owner").unwrap());
+        assert!(!store.is_member("owner", "member"));
+        assert_eq!(store.role("owner", "member"), Some(TenantRole::Invite));
+        assert_eq!(store.list_members("owner").len(), 1);
+        drop(store);
+
+        let reloaded = TenantStore::new(path.to_str().unwrap()).unwrap();
+        assert!(!reloaded.is_member("owner", "member"));
+        assert!(reloaded.accept_invitation("owner", "member").unwrap());
+        assert!(reloaded.is_member("owner", "member"));
+        assert!(!reloaded.can_manage("owner", "member"));
+        assert!(
+            reloaded
+                .update_role("owner", "member", TenantRole::Admin)
+                .unwrap()
+        );
+        assert!(reloaded.can_manage("owner", "member"));
+        assert!(reloaded.remove_member("owner", "member").unwrap());
+        assert!(!reloaded.is_member("owner", "member"));
+        assert!(reloaded.remove_member("owner", "owner").is_err());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn legacy_member_roles_load_as_normal_members() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-tenant-legacy-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("tenants.json");
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!([
+                { "tenant_id": "owner", "user_id": "member", "role": "member" },
+                { "tenant_id": "owner", "user_id": "user", "role": "user" }
+            ]))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let store = TenantStore::new(path.to_str().unwrap()).unwrap();
+        assert_eq!(store.role("owner", "member"), Some(TenantRole::Normal));
+        assert_eq!(store.role("owner", "user"), Some(TenantRole::Normal));
+        assert!(store.is_member("owner", "member"));
+        assert!(store.is_member("owner", "user"));
+        let tenants = store.list_for_user("member");
+        assert!(
+            tenants
+                .iter()
+                .any(|entry| { entry.tenant_id == "owner" && entry.role == TenantRole::Normal })
+        );
+        assert!(
+            tenants
+                .iter()
+                .any(|entry| { entry.tenant_id == "member" && entry.role == TenantRole::Owner })
+        );
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn tenant_persistence_failure_rolls_back_memory() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-tenant-rollback-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("tenants.json");
+        let store = TenantStore::new(path.to_str().unwrap()).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+
+        assert!(store.invite_member("owner", "member", "owner").is_err());
+        assert!(!store.is_member("owner", "member"));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn old_kb_json_private_is_normalised_to_me() {
+        let root = std::env::temp_dir().join(format!("rayrag-kb-old-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("kbs.json");
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!([{
+                "id": "legacy",
+                "name": "Legacy",
+                "description": "",
+                "owner_id": "owner",
+                "chunk_count": 0,
+                "doc_count": 0,
+                "embd_id": "",
+                "parser_config": "{}",
+                "created_at": 1,
+                "updated_at": 1
+            }]))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let store = KbStore::new(path.to_str().unwrap()).unwrap();
+        // Legacy rows stored `private`; the store normalises them to the
+        // upstream `me` spelling on load.
+        assert_eq!(store.get("legacy").unwrap().permission, "me");
+        assert!(!store.can_read("legacy", "member", false, |_, _| true));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn team_kb_members_can_read_but_not_manage() {
+        let root = std::env::temp_dir().join(format!("rayrag-kb-acl-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("kbs.json");
+        let store = KbStore::new(path.to_str().unwrap()).unwrap();
+        let kb = store
+            .create_for_with_permission("owner", "Team", "", "team")
+            .unwrap();
+
+        assert!(store.can_read(&kb.id, "member", false, |tenant, user| {
+            tenant == "owner" && user == "member"
+        }));
+        assert!(!store.can_manage(&kb.id, "member", false));
+        assert!(store.update_permission(&kb.id, "public").is_err());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn failed_persistence_rolls_back_kb_mutations() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-kb-rollback-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("kbs.json");
+        let store = KbStore::new(path.to_str().unwrap()).unwrap();
+        let kb = store.create_for("owner-1", "KB", "").unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+
+        assert!(store.update_counts(&kb.id, 5, 1).is_err());
+        let unchanged = store.get(&kb.id).unwrap();
+        assert_eq!(unchanged.chunk_count, 0);
+        assert_eq!(unchanged.doc_count, 0);
+
+        assert!(store.delete(&kb.id).is_err());
+        assert!(store.get(&kb.id).is_some());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn embedding_selector_is_created_and_updated_atomically() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-kb-embedding-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("kbs.json");
+        let store = KbStore::new(path.to_str().unwrap()).unwrap();
+        let kb = store
+            .create_for_with_config(
+                "owner",
+                "Configured",
+                "",
+                "private",
+                "local/primary/embed-a",
+            )
+            .unwrap();
+        assert_eq!(kb.embd_id, "local/primary/embed-a");
+
+        let updated = store
+            .update_config(
+                &kb.id,
+                Some("team"),
+                Some("local/primary/embed-b"),
+                None,
+                None,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.permission, "team");
+        assert_eq!(updated.embd_id, "local/primary/embed-b");
+
+        drop(store);
+        let restored = KbStore::new(path.to_str().unwrap()).unwrap();
+        assert_eq!(
+            restored.get(&kb.id).unwrap().embd_id,
+            "local/primary/embed-b"
+        );
+        std::fs::remove_dir_all(root).ok();
+    }
+}

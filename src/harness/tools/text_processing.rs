@@ -552,4 +552,87 @@ pub fn narrow_or_keep(chunks: &[Value], keywords: &str, _label: &str) -> Vec<Val
     chunks.to_vec()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
 
+    #[test]
+    fn splits_sentences_with_guards_and_atomic_blocks() {
+        let sentences = split_sentences("First one. Second 3.14 stays. Third!");
+        assert_eq!(sentences.len(), 3);
+        assert_eq!(sentences[1], " Second 3.14 stays.");
+
+        let table = "intro. <table><tr><td>a</td></tr><tr><td>b</td></tr></table> outro.";
+        let sentences = split_sentences(table);
+        assert_eq!(sentences.len(), 3);
+        assert!(sentences[1].starts_with("<table>"));
+
+        let markdown = "before\n| a | b |\n| --- | --- |\n| 1 | 2 |\nafter";
+        let sentences = split_sentences(markdown);
+        assert!(
+            sentences
+                .iter()
+                .any(|sentence| sentence.contains("| 1 | 2 |"))
+        );
+        assert_eq!(sentences.len(), 3);
+    }
+
+    #[test]
+    fn stems_and_matches_inflections() {
+        assert_eq!(stem("nominations"), "nomin");
+        assert_eq!(stem("nominated"), "nomin");
+        assert_eq!(stem("company"), "compani");
+        let (verbatim, stemmed) = keyword_forms(&["nominations".to_string()]);
+        assert!(verbatim.is_empty());
+        assert_eq!(stemmed, vec![vec!["nomin".to_string()]]);
+        assert!(sentence_matches(
+            "was nominated three times",
+            &sentence_stems("was nominated three times"),
+            &verbatim,
+            &stemmed
+        ));
+        // Identifiers stay verbatim.
+        let (verbatim, stemmed) = keyword_forms(&["1344259".to_string()]);
+        assert_eq!(verbatim, vec!["1344259".to_string()]);
+        assert!(stemmed.is_empty());
+    }
+
+    #[test]
+    fn narrows_and_highlights() {
+        let content = "Unrelated opening sentence. The film was nominated three times. It won two awards. Random closing noise.";
+        let narrowed = narrow_content(content, &["nominations".to_string()]).expect("matched");
+        assert!(narrowed.starts_with("..."));
+        assert!(narrowed.contains("*nominated*"));
+        assert!(!narrow_content("nothing relevant here", &["zzz".to_string()]).is_some());
+
+        let table = "| rank | city |\n| --- | --- |\n| 1 | Tokyo |\n| 2 | Lima |";
+        let whole = narrow_content(table, &["tokyo".to_string()]).unwrap();
+        assert!(whole.contains("Lima"), "tables stay whole");
+
+        let chunks = vec![
+            json!({"content_with_weight": content}),
+            json!({"content_with_weight": "no keywords"}),
+        ];
+        let kept = narrow_by_keywords(&chunks, "nominations, awards, ceremony");
+        assert_eq!(kept.len(), 1);
+        assert!(
+            kept[0]["content_with_weight"]
+                .as_str()
+                .unwrap()
+                .contains('*')
+        );
+
+        // Keep-original fallback when nothing matches.
+        let kept = narrow_or_keep(&chunks, "zzz", "test");
+        assert_eq!(kept.len(), 2);
+    }
+
+    #[test]
+    fn compacts_and_flags_fact_dense() {
+        assert_eq!(compact_keywords("a, b a c", 10), "a b c");
+        assert!(is_fact_dense_sentence("The population was 4,523 in 1999."));
+        assert!(is_fact_dense_sentence("Atlanta Braves won."));
+        assert!(!is_fact_dense_sentence("they went home quietly"));
+    }
+}

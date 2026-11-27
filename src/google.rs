@@ -194,4 +194,161 @@ async fn read_bounded_body(response: reqwest::Response) -> Result<Vec<u8>> {
     Ok(body)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{Json, Router, extract::State, http::Uri, routing::get};
+    use serde_json::json;
+    use std::sync::{Arc, Mutex};
 
+    #[derive(Clone, Default)]
+    struct Recorded(Arc<Mutex<Vec<Uri>>>);
+
+    async fn serpapi(State(recorded): State<Recorded>, uri: Uri) -> Json<Value> {
+        recorded.0.lock().unwrap().push(uri);
+        Json(json!({
+            "organic_results": [{
+                "title": "RAGFlow",
+                "link": "https://ragflow.io",
+                "snippet": "Open source RAG engine",
+                "extra": "preserved"
+            }]
+        }))
+    }
+
+    async fn programmable(State(recorded): State<Recorded>, uri: Uri) -> Json<Value> {
+        recorded.0.lock().unwrap().push(uri);
+        Json(json!({
+            "items": [
+                {"title": "RAGFlow", "link": "https://ragflow.io", "snippet": "RAG engine"},
+                {"title": "Missing scalar fields"},
+                {"title": null, "link": null, "snippet": null}
+            ]
+        }))
+    }
+
+    async fn mock_server(recorded: Recorded) -> (String, tokio::task::JoinHandle<()>) {
+        let app = Router::new()
+            .route("/search", get(serpapi))
+            .route("/customsearch/v1", get(programmable))
+            .with_state(recorded);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{address}"), handle)
+    }
+
+    fn query_params(uri: &Uri) -> std::collections::HashMap<String, String> {
+        reqwest::Url::parse(&format!("http://localhost{uri}"))
+            .unwrap()
+            .query_pairs()
+            .map(|(key, value)| (key.into_owned(), value.into_owned()))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn serpapi_matches_pinned_sdk_query_and_preserves_organic_rows() {
+        let recorded = Recorded::default();
+        let (base, server) = mock_server(recorded.clone()).await;
+        let client = GoogleClient::new_with_endpoints(
+            &format!("{base}/search"),
+            &format!("{base}/customsearch/v1"),
+        )
+        .unwrap();
+        let results = client
+            .search(
+                "secret",
+                &GoogleSearchRequest {
+                    query: "rust rag".into(),
+                    country: "us".into(),
+                    language: "en".into(),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(results[0]["extra"], "preserved");
+        let calls = recorded.0.lock().unwrap();
+        let params = query_params(&calls[0]);
+        assert_eq!(params["api_key"], "secret");
+        assert_eq!(params["engine"], "google");
+        assert_eq!(params["q"], "rust rag");
+        assert_eq!(params["google_domain"], "google.com");
+        assert_eq!(params["gl"], "us");
+        assert_eq!(params["hl"], "en");
+        assert_eq!(params["source"], "python");
+        assert_eq!(params["output"], "json");
+        assert!(!params.contains_key("start"));
+        assert!(!params.contains_key("num"));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn programmable_search_defaults_clamps_and_decodes_go_shape() {
+        let recorded = Recorded::default();
+        let (base, server) = mock_server(recorded.clone()).await;
+        let client = GoogleClient::new_with_endpoints(
+            &format!("{base}/search"),
+            &format!("{base}/customsearch/v1"),
+        )
+        .unwrap();
+        for (max_results, want_num) in [(0, "5"), (50, "10"), (3, "3")] {
+            let results = client
+                .programmable_search(&GoogleProgrammableSearchRequest {
+                    api_key: "KEY".into(),
+                    cx: "CXID".into(),
+                    query: "x y".into(),
+                    max_results,
+                })
+                .await
+                .unwrap();
+            assert_eq!(results.len(), 3);
+            assert_eq!(results[0].title, "RAGFlow");
+            assert_eq!(results[1].link, "");
+            assert_eq!(results[2].title, "");
+            let calls = recorded.0.lock().unwrap();
+            let params = query_params(calls.last().unwrap());
+            assert_eq!(params["key"], "KEY");
+            assert_eq!(params["cx"], "CXID");
+            assert_eq!(params["q"], "x y");
+            assert_eq!(params["num"], want_num);
+        }
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn programmable_search_requires_query_key_and_cx() {
+        let client = GoogleClient::default();
+        let mut request = GoogleProgrammableSearchRequest {
+            api_key: String::new(),
+            cx: String::new(),
+            query: "x".into(),
+            max_results: 5,
+        };
+        let error = client.programmable_search(&request).await.unwrap_err();
+        assert!(error.to_string().contains("api_key and cx"));
+        request.api_key = "K".into();
+        request.cx = "C".into();
+        request.query.clear();
+        let error = client.programmable_search(&request).await.unwrap_err();
+        assert!(error.to_string().contains("query is required"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a live SerpApi account and SERPAPI_API_KEY"]
+    async fn live_google_search() {
+        let api_key = std::env::var("SERPAPI_API_KEY")
+            .expect("SERPAPI_API_KEY must be set for the live Google test");
+        let results = GoogleClient::default()
+            .search(
+                &api_key,
+                &GoogleSearchRequest {
+                    query: "RAGFlow".into(),
+                    country: "us".into(),
+                    language: "en".into(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(!results.is_empty());
+    }
+}

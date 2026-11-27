@@ -3679,4 +3679,382 @@ Use concise, information-dense sentences.
 Do not use bullet lists or structured fields in this mode.
 "#;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn test_prompt_render() {
+        let tmpl = PromptLibrary::rag_qa();
+        let mut vars = HashMap::new();
+        vars.insert("context", "Rust is fast.");
+        vars.insert("question", "What is Rust?");
+        let result = tmpl.render(&vars);
+        assert!(result.contains("Rust is fast"));
+        assert!(result.contains("What is Rust?"));
+        assert!(!result.contains("{context}"));
+    }
+
+    #[test]
+    fn test_prompt_list() {
+        let names = PromptLibrary::list();
+        assert!(names.len() >= 8);
+        assert!(PromptLibrary::get("rag_qa").is_some());
+        assert!(PromptLibrary::get("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_graphrag_prompts() {
+        // Graph entity extraction renders placeholders.
+        let mut vars = HashMap::new();
+        vars.insert("entity_types", "person, organization");
+        vars.insert("input_text", "Alice works at Acme.");
+        vars.insert("tuple_delimiter", "<|>");
+        vars.insert("record_delimiter", "##");
+        vars.insert("completion_delimiter", "<|COMPLETE|>");
+        let out = PromptLibrary::graph_entity_extraction().render(&vars);
+        assert!(out.contains("Alice works at Acme."));
+        assert!(!out.contains("{input_text}"));
+
+        // Community summary has literal JSON braces and entity_df placeholder.
+        let mut vars2 = HashMap::new();
+        vars2.insert("entity_df", "1,ACME,ACME is a company");
+        vars2.insert("relation_df", "2,ACME,ALICE,employs");
+        let out2 = PromptLibrary::graph_community_summary().render(&vars2);
+        assert!(out2.contains("\"title\": <report_title>"));
+        assert!(out2.contains("1,ACME,ACME is a company"));
+        assert!(!out2.contains("{entity_df}"));
+
+        // Question proposal / keyword extraction use {topn}/{content}.
+        let mut vars3 = HashMap::new();
+        vars3.insert("topn", "5");
+        vars3.insert("content", "Rust is a systems language.");
+        let out3 = PromptLibrary::question_proposal().render(&vars3);
+        assert!(out3.contains("Propose 5 questions"));
+        assert!(!out3.contains("{topn}"));
+
+        // All new templates are registered in get()/list().
+        for name in [
+            "graph_entity_extraction",
+            "graph_community_summary",
+            "entity_extraction",
+            "keywords_extraction",
+            "minirag_query2kwd",
+            "entity_resolution",
+            "mind_map_extraction",
+            "lightrag_response",
+            "question_proposal",
+            "keyword_extraction",
+        ] {
+            assert!(
+                PromptLibrary::get(name).is_some(),
+                "missing template: {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_lightrag_defaults_registered() {
+        // Constants mirror rag/graphrag/light/graph_prompt.py PROMPTS defaults.
+        assert_eq!(
+            PromptLibrary::lightrag_default_language().content(),
+            "English"
+        );
+        assert_eq!(
+            PromptLibrary::lightrag_default_tuple_delimiter().content(),
+            "<|>"
+        );
+        assert_eq!(
+            PromptLibrary::lightrag_default_record_delimiter().content(),
+            "##"
+        );
+        assert_eq!(
+            PromptLibrary::lightrag_default_completion_delimiter().content(),
+            "<|COMPLETE|>"
+        );
+        assert_eq!(
+            PromptLibrary::lightrag_default_user_prompt().content(),
+            "n/a"
+        );
+        assert_eq!(
+            PromptLibrary::lightrag_fail_response().content(),
+            "Sorry, I'm not able to provide an answer to that question.[no-context]"
+        );
+        assert_eq!(
+            LIGHTRAG_DEFAULT_ENTITY_TYPES,
+            ["organization", "person", "geo", "event", "category"]
+        );
+        let types_tmpl = PromptLibrary::lightrag_default_entity_types();
+        let types = types_tmpl.content();
+        assert!(types.contains("organization") && types.contains("category"));
+        assert!(!types.contains('['));
+
+        // Every new entry is resolvable via get() and listed by list().
+        let listed = PromptLibrary::list();
+        for name in [
+            "lightrag_fail_response",
+            "lightrag_default_language",
+            "lightrag_default_tuple_delimiter",
+            "lightrag_default_record_delimiter",
+            "lightrag_default_completion_delimiter",
+            "lightrag_default_entity_types",
+            "lightrag_default_user_prompt",
+        ] {
+            assert!(
+                PromptLibrary::get(name).is_some(),
+                "missing template: {name}"
+            );
+            assert!(listed.contains(&name), "not listed: {name}");
+        }
+    }
+
+    #[test]
+    fn test_ragflow_qa_prompts_registered() {
+        // Every RAGFlow QA-stage port is resolvable via get() and listed by list().
+        let listed = PromptLibrary::list();
+        for name in [
+            "citation_prompt",
+            "citation_plus",
+            "full_question",
+            "multi_queries_gen",
+            "next_step",
+            "reflect",
+            "rank_memory",
+            "content_tagging_prompt",
+            "cross_languages_sys",
+            "cross_languages_user",
+            "analyze_task_system",
+            "analyze_task_user",
+            "ask_summary",
+            "assign_toc_levels",
+            "keyword_prompt",
+            "question_prompt",
+            "meta_data",
+            "meta_filter",
+        ] {
+            assert!(
+                PromptLibrary::get(name).is_some(),
+                "missing template: {name}"
+            );
+            assert!(listed.contains(&name), "not listed: {name}");
+        }
+    }
+
+    #[test]
+    fn test_ragflow_prompt_render() {
+        // citation_plus: sources/example substituted, no Jinja leftovers.
+        let mut v1 = HashMap::new();
+        v1.insert("sources", "ID: 1\nContent: Rust is fast.");
+        v1.insert("example", "Example answer with [ID:1].");
+        let out1 = PromptLibrary::citation_plus().render(&v1);
+        assert!(out1.contains("ID: 1"));
+        assert!(!out1.contains("{{"));
+        assert!(!out1.contains("{{ sources }}"));
+
+        // full_question: conversation + relative-date variables.
+        let mut v2 = HashMap::new();
+        v2.insert(
+            "conversation",
+            "USER: What is the capital of France?\nASSISTANT: Paris.",
+        );
+        v2.insert("today", "2026-08-05");
+        v2.insert("yesterday", "2026-08-04");
+        v2.insert("tomorrow", "2026-08-06");
+        v2.insert("language", "");
+        let out2 = PromptLibrary::full_question().render(&v2);
+        assert!(out2.contains("Paris."));
+        assert!(out2.contains("2026-08-05"));
+        assert!(!out2.contains("{{ conversation }}"));
+
+        // multi_queries_gen: all four variables render.
+        let mut v3 = HashMap::new();
+        v3.insert("original_query", "rust borrow checker");
+        v3.insert("original_question", "How does the borrow checker work?");
+        v3.insert("retrieved_docs", "[1] Borrow checker docs");
+        v3.insert("missing_info", "lifetime elision rules");
+        let out3 = PromptLibrary::multi_queries_gen().render(&v3);
+        assert!(out3.contains("borrow checker"));
+        assert!(out3.contains("lifetime elision rules"));
+        assert!(!out3.contains("{{ original_query }}"));
+
+        // content_tagging: topn/all_tags/examples placeholders.
+        let mut v4 = HashMap::new();
+        v4.insert("topn", "3");
+        v4.insert("all_tags", "tech, business, tutorial");
+        v4.insert(
+            "examples",
+            "# Examples 0\n### Text Content\nExample text\n\nOutput:\n{\"tech\": 9}",
+        );
+        v4.insert("content", "Rust systems programming.");
+        let out4 = PromptLibrary::content_tagging_prompt().render(&v4);
+        assert!(out4.contains("tech, business, tutorial"));
+        assert!(out4.contains("Rust systems programming."));
+        assert!(!out4.contains("{{ topn }}"));
+
+        // meta_filter: date + metadata keys + constraints render; JSON schema braces survive.
+        let mut v5 = HashMap::new();
+        v5.insert("current_date", "2026-08-05");
+        v5.insert("metadata_keys", "color, listing_date");
+        v5.insert("user_question", "上市日期七月份的新品");
+        v5.insert("constraints", "");
+        let out5 = PromptLibrary::meta_filter().render(&v5);
+        assert!(out5.contains("2026-08-05"));
+        assert!(out5.contains("\"type\": \"object\""));
+        assert!(!out5.contains("{{ current_date }}"));
+    }
+
+    #[test]
+    fn test_ragflow_verbatim_content() {
+        // Verbatim RAGFlow originals: citation rules + Chinese text preserved.
+        let citation = PromptLibrary::citation_prompt();
+        assert!(citation.content().contains("[ID:i] [ID:j]"));
+        assert!(
+            citation
+                .content()
+                .contains("Maximum 4 citations per sentence")
+        );
+
+        let cross = PromptLibrary::cross_languages_sys();
+        assert!(cross.content().contains("你好世界")); // zh example kept verbatim
+
+        let ask = PromptLibrary::ask_summary();
+        assert!(
+            ask.content()
+                .contains("Sorry, no relevant information provided")
+        );
+        assert!(ask.content().contains("Miss R"));
+
+        let meta = PromptLibrary::meta_data();
+        assert!(meta.content().contains("Zero-Hallucination"));
+        assert!(meta.content().contains("{schema}")); // placeholder form kept for render()
+
+        let kw = PromptLibrary::keyword_prompt();
+        assert!(kw.content().contains("top {topn}"));
+
+        let qp = PromptLibrary::question_prompt();
+        assert!(qp.content().contains("Propose {topn} questions"));
+    }
+
+    #[test]
+    fn test_ragflow_remaining_prompts_registered() {
+        // Every remaining rag/prompts port (related_question, resume series,
+        // structured output, sufficiency check, memory/tool summaries, TOC
+        // pipeline, vision) is resolvable via get() and listed by list().
+        let listed = PromptLibrary::list();
+        for name in [
+            "related_question",
+            "resume_system",
+            "resume_system_en",
+            "resume_basic_info",
+            "resume_basic_info_en",
+            "resume_education",
+            "resume_education_en",
+            "resume_project_exp",
+            "resume_project_exp_en",
+            "resume_work_exp",
+            "resume_work_exp_en",
+            "structured_output",
+            "sufficiency_check",
+            "summary4memory",
+            "tool_call_summary",
+            "toc_detection",
+            "toc_extraction",
+            "toc_extraction_continue",
+            "toc_from_text_system",
+            "toc_from_text_user",
+            "toc_index",
+            "toc_relevance_system",
+            "toc_relevance_user",
+            "vision_llm_describe",
+            "vision_llm_figure_describe",
+            "vision_llm_figure_describe_with_context",
+        ] {
+            assert!(
+                PromptLibrary::get(name).is_some(),
+                "missing template: {name}"
+            );
+            assert!(listed.contains(&name), "not listed: {name}");
+        }
+    }
+
+    #[test]
+    fn test_ragflow_remaining_prompt_render() {
+        // resume_basic_info (zh): indexed_text substitutes; JSON schema braces survive.
+        let mut v1 = HashMap::new();
+        v1.insert("indexed_text", "[1]: 张三 男 28岁\n[2]: 电话 13800138000");
+        let out1 = PromptLibrary::resume_basic_info().render(&v1);
+        assert!(out1.contains("张三"));
+        assert!(out1.contains("\"name_kwd\""));
+        assert!(out1.contains("只返回 JSON"));
+        assert!(!out1.contains("{indexed_text}"));
+
+        // resume_education_en: same variable, English instructions.
+        let mut v2 = HashMap::new();
+        v2.insert("indexed_text", "[1]: Stanford University, CS");
+        let out2 = PromptLibrary::resume_education_en().render(&v2);
+        assert!(out2.contains("Stanford University"));
+        assert!(out2.contains("Return JSON only"));
+
+        // related_question: original RAGFlow wording (5-10 questions), no placeholders left.
+        let out3 = PromptLibrary::related_question().content().to_string();
+        assert!(out3.contains("5-10 related questions"));
+        assert!(out3.contains("electric vehicles"));
+
+        // toc_relevance_user: toc_json + query render; no Jinja leftovers.
+        let mut v4 = HashMap::new();
+        v4.insert("toc_json", "[{\"level\": 1, \"title\": \"Intro\"}]");
+        v4.insert("query", "What is entropy?");
+        let out4 = PromptLibrary::toc_relevance_user().render(&v4);
+        assert!(out4.contains("Intro"));
+        assert!(out4.contains("What is entropy?"));
+        assert!(!out4.contains("{{ toc_json }}"));
+
+        // structured_output: schema placeholder renders.
+        let mut v5 = HashMap::new();
+        v5.insert("schema", "{\"type\": \"object\"}");
+        let out5 = PromptLibrary::structured_output().render(&v5);
+        assert!(out5.contains("{\"type\": \"object\"}"));
+        assert!(!out5.contains("{schema}"));
+
+        // vision_llm_describe: flattened page divider uses {page}.
+        let mut v6 = HashMap::new();
+        v6.insert("page", "3");
+        let out6 = PromptLibrary::vision_llm_describe().render(&v6);
+        assert!(out6.contains("--- Page 3 ---"));
+        assert!(!out6.contains("{% if page %}"));
+    }
+
+    #[test]
+    fn test_ragflow_remaining_prompt_verbatim() {
+        // Bilingual resume prompts keep their original Chinese/English markers.
+        let sys_zh = PromptLibrary::resume_system();
+        assert!(sys_zh.content().contains("专业的简历分析助手"));
+        let sys_en = PromptLibrary::resume_system_en();
+        assert!(
+            sys_en
+                .content()
+                .contains("professional resume analysis assistant")
+        );
+        // resume_work_exp (zh) keeps the stop-heading list.
+        let work_zh = PromptLibrary::resume_work_exp();
+        assert!(work_zh.content().contains("个人评价"));
+        assert!(work_zh.content().contains("desc_lines"));
+        // toc_from_text_system keeps the heading-numbering regexes verbatim.
+        let toc_fts = PromptLibrary::toc_from_text_system();
+        assert!(
+            toc_fts
+                .content()
+                .contains("第[一二三四五六七八九十百]+(篇|章|节|条)")
+        );
+        // summary4memory keeps the response template.
+        let s4m = PromptLibrary::summary4memory();
+        assert!(
+            s4m.content()
+                .contains("[Status] + [Key Outcome] + [Critical Constraints]")
+        );
+        // sufficiency_check keeps the JSON output keys.
+        let suff = PromptLibrary::sufficiency_check();
+        assert!(suff.content().contains("is_sufficient"));
+        assert!(suff.content().contains("missing_information"));
+    }
+}

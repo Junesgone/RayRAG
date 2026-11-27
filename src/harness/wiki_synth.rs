@@ -100,4 +100,77 @@ impl WikiSynthHost {
     }
 }
 
+#[cfg(test)]
+mod wiki_synth_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+    use crate::harness::knowlege_wiki::persist_reduce;
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
 
+    struct SequentialChat {
+        replies: Mutex<VecDeque<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessChat for SequentialChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            _history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            Ok(self.replies.lock().unwrap().pop_front().unwrap_or_default())
+        }
+
+        fn max_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    #[tokio::test]
+    async fn host_wires_plan_and_refine_end_to_end() {
+        let store = Arc::new(MemoryDocStore::new());
+        persist_reduce(
+            store.as_ref(),
+            "t1",
+            "kb1",
+            &serde_json::json!({
+                "entities": [{"name": "Alpha", "type": "entity", "mention_count": 5, "chunk_ids": ["c1"]}],
+                "concepts": [],
+                "claims": [],
+                "relations": [],
+                "topics": ["t"]
+            }),
+            "H1",
+            &[],
+        );
+        let chat = Arc::new(SequentialChat {
+            replies: Mutex::new(
+                [
+                    r#"{"pages": [{"action": "CREATE", "slug": "entity/alpha", "title": "Alpha", "page_type": "entity", "topic": "alpha", "entity_names": ["Alpha"], "priority": 1}]}"#,
+                    "TOPIC: alpha\n# Body\n\nGrounded text.",
+                ]
+                .iter()
+                .map(|reply| (*reply).to_string())
+                .collect(),
+            ),
+        });
+        let host = WikiSynthHost::new(store.clone(), chat.clone());
+        let plan = host
+            .wiki_plan_from_reduction("t1", "kb1")
+            .await
+            .expect("plan");
+        assert_eq!(plan["pages"].as_array().unwrap().len(), 1);
+        let pages = host
+            .wiki_refine_from_plan("t1", "kb1", "Example body")
+            .await
+            .expect("refine");
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0]["slug"], serde_json::json!("entity/alpha"));
+        // Old-mode REFINE persists resume drafts (searchable wiki_page rows are written by the task handler, matching upstream).
+        let drafts =
+            crate::harness::knowlege_wiki::wiki_load_refine_resume(store.as_ref(), "t1", "kb1");
+        assert!(drafts.contains_key("entity/alpha"));
+    }
+}

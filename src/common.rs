@@ -1778,7 +1778,19 @@ pub mod cmd_timeout {
         }
     }
 
-    
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn default_is_two_hours_and_capped() {
+            assert_eq!(DEFAULT_SECS, 7200);
+            let d = duration();
+            assert!(d <= std::time::Duration::from_secs(7200));
+            assert!(d >= std::time::Duration::from_secs(1));
+            let _client = http_client();
+        }
+    }
 }
 
 /// `common/versions.py` — RAGFlow version resolution.
@@ -1802,6 +1814,554 @@ pub mod versions {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use constants::{LLMType, ParserType, RetCode, StatusEnum, TaskStatus};
 
+    #[test]
+    fn ret_code_and_status_constants_match_ragflow() {
+        assert_eq!(RetCode::Success.as_i32(), 0);
+        assert_eq!(RetCode::ArgumentError.as_i32(), 101);
+        assert_eq!(RetCode::PermissionError.as_i32(), 108);
+        assert_eq!(RetCode::Unauthorized.as_i32(), 401);
+        assert_eq!(RetCode::NotFound.as_i32(), 404);
+        assert_eq!(RetCode::from_i32(409), Some(RetCode::Conflict));
+        assert_eq!(RetCode::from_i32(999), None);
+        assert!(RetCode::Success.is_ok());
+        assert!(!RetCode::DataError.is_ok());
 
+        assert_eq!(TaskStatus::Unstart.as_str(), "0");
+        assert_eq!(TaskStatus::Schedule.as_str(), "5");
+        assert_eq!(TaskStatus::from_str("3"), Some(TaskStatus::Done));
+        assert_eq!(TaskStatus::from_str("9"), None);
+        assert!(TaskStatus::valid("2"));
+        assert!(!TaskStatus::valid("x"));
+        assert_eq!(TaskStatus::values(), ["0", "1", "2", "3", "4", "5"]);
 
+        assert_eq!(StatusEnum::Valid.as_str(), "1");
+        assert_eq!(StatusEnum::from_str("0"), Some(StatusEnum::Invalid));
+
+        assert_eq!(ParserType::Kg.as_str(), "knowledge_graph");
+        assert_eq!(ParserType::from_str("naive"), Some(ParserType::Naive));
+        assert!(ParserType::valid("table"));
+        assert!(!ParserType::valid("bogus"));
+
+        assert_eq!(LLMType::Rerank.as_str(), "rerank");
+        assert_eq!(LLMType::from_str("embedding"), Some(LLMType::Embedding));
+
+        assert_eq!(constants::FileSource::Local.as_str(), "");
+        assert_eq!(constants::FileSource::Github.as_str(), "github");
+        assert_eq!(
+            constants::FileSource::from_str("postgresql"),
+            Some(constants::FileSource::Postgresql)
+        );
+
+        assert_eq!(constants::PipelineTaskType::GraphRag.as_str(), "GraphRAG");
+        assert_eq!(constants::PipelineTaskType::Artifact.as_str(), "Artifact");
+        assert_eq!(constants::PipelineTaskType::Skill.as_lower_str(), "skill");
+        assert_eq!(
+            constants::PipelineTaskType::from_str("Skill"),
+            Some(constants::PipelineTaskType::Skill)
+        );
+        assert_eq!(
+            constants::VALID_PIPELINE_TASK_TYPES,
+            [
+                constants::PipelineTaskType::Parse,
+                constants::PipelineTaskType::Download,
+                constants::PipelineTaskType::Raptor,
+                constants::PipelineTaskType::GraphRag,
+                constants::PipelineTaskType::Mindmap,
+                constants::PipelineTaskType::Artifact,
+                constants::PipelineTaskType::Skill,
+            ]
+        );
+        assert!(
+            !constants::VALID_PIPELINE_TASK_TYPES.contains(&constants::PipelineTaskType::Memory)
+        );
+        assert_eq!(constants::Storage::Minio.as_i32(), 1);
+        assert!(constants::memory_type::contains(
+            constants::memory_type::RAW | constants::memory_type::SEMANTIC,
+            constants::memory_type::RAW
+        ));
+
+        assert_eq!(constants::NAME_LENGTH_LIMIT, 1024);
+        assert_eq!(constants::DATASET_NAME_LIMIT, 128);
+        assert_eq!(constants::MEMORY_SIZE_LIMIT, 10 * 1024 * 1024);
+        assert_eq!(constants::MAXIMUM_PAGE_NUMBER, 100_000);
+        assert_eq!(constants::MAXIMUM_TASK_PAGE_NUMBER, 100_000_000);
+        assert_eq!(constants::API_VERSION, "v1");
+    }
+
+    #[test]
+    fn string_utils_clean_spaces_markdown_and_emptiness() {
+        // Python docstring examples.
+        assert_eq!(string_utils::remove_redundant_spaces("( test"), "(test");
+        assert_eq!(string_utils::remove_redundant_spaces("world !"), "world!");
+        // Verified against the Python reference: consecutive spaces are
+        // collapsed because `[^a-z0-9.,)>]` also matches a space.
+        assert_eq!(
+            string_utils::remove_redundant_spaces("hello  world"),
+            "hello world"
+        );
+
+        assert_eq!(
+            string_utils::clean_markdown_block("```markdown\nhello\n```"),
+            "hello"
+        );
+        assert_eq!(
+            string_utils::clean_markdown_block("```markdown\nhello"),
+            "hello"
+        );
+        assert_eq!(
+            string_utils::clean_markdown_block("  ```python\ncode\n```  "),
+            "```python\ncode"
+        );
+
+        assert!(string_utils::is_content_empty(""));
+        assert!(string_utils::is_content_empty("   \n\t "));
+        assert!(!string_utils::is_content_empty(" x "));
+    }
+
+    #[test]
+    fn text_and_float_utils_normalize_like_python() {
+        // Arabic digits -> ASCII.
+        assert_eq!(text_utils::normalize_arabic_digits("١٢٣"), "123");
+        assert_eq!(text_utils::normalize_arabic_digits("۴۵۶"), "456");
+        assert_eq!(text_utils::normalize_arabic_digits("abc123"), "abc123");
+        // No presentation forms -> unchanged; with forms -> NFKC.
+        assert_eq!(
+            text_utils::normalize_arabic_presentation_forms("plain"),
+            "plain"
+        );
+        assert_eq!(
+            text_utils::normalize_arabic_presentation_forms("\u{FB50}"),
+            "\u{0671}"
+        );
+
+        assert_eq!(float_utils::get_float(None), f64::NEG_INFINITY);
+        assert_eq!(float_utils::get_float(Some("3.14")), 3.14);
+        assert_eq!(float_utils::get_float(Some("invalid")), f64::NEG_INFINITY);
+        assert_eq!(float_utils::get_float(Some("42")), 42.0);
+
+        assert_eq!(float_utils::normalize_overlapped_percent("0.5"), 50);
+        assert_eq!(float_utils::normalize_overlapped_percent("50"), 50);
+        assert_eq!(float_utils::normalize_overlapped_percent("150"), 90);
+        assert_eq!(float_utils::normalize_overlapped_percent("-5"), 0);
+        assert_eq!(float_utils::normalize_overlapped_percent("abc"), 0);
+        assert_eq!(float_utils::normalize_overlapped_percent("0.005"), 0);
+    }
+
+    #[test]
+    fn time_utils_roundtrip_and_iso_conversion() {
+        use time_utils::DEFAULT_TIME_FORMAT;
+
+        // Parse local -> format local: exact round trip.
+        let ts = time_utils::date_string_to_timestamp("2024-01-01 00:00:00", DEFAULT_TIME_FORMAT)
+            .unwrap();
+        assert_eq!(
+            time_utils::timestamp_to_date(ts, DEFAULT_TIME_FORMAT),
+            "2024-01-01 00:00:00"
+        );
+
+        // ms epoch sanity: 1704067200000 == 2024-01-01T00:00:00Z.
+        assert!(time_utils::current_timestamp() > 1_700_000_000_000);
+
+        // ISO-8601 with Z -> UTC wall clock.
+        assert_eq!(
+            time_utils::format_iso_8601_to_ymd_hms("2024-01-01T12:00:00Z"),
+            "2024-01-01 12:00:00"
+        );
+        // Offset is preserved as wall clock (Python fromisoformat semantics).
+        assert_eq!(
+            time_utils::format_iso_8601_to_ymd_hms("2024-01-01T12:00:00+08:00"),
+            "2024-01-01 12:00:00"
+        );
+        // Naive datetime and date-only inputs.
+        assert_eq!(
+            time_utils::format_iso_8601_to_ymd_hms("2024-01-01T08:30:00"),
+            "2024-01-01 08:30:00"
+        );
+        assert_eq!(
+            time_utils::format_iso_8601_to_ymd_hms("2024-01-01"),
+            "2024-01-01 00:00:00"
+        );
+        // Unparseable input returned unchanged.
+        assert_eq!(
+            time_utils::format_iso_8601_to_ymd_hms("not-a-date"),
+            "not-a-date"
+        );
+    }
+
+    #[test]
+    fn crypto_utils_aes_roundtrip_and_plaintext_passthrough() {
+        let crypto = crypto_utils::CryptoUtil::new("aes-256-cbc", "test_key_123456").unwrap();
+        let plaintext = b"Hello, RAGFlow! This is a test for encryption.";
+
+        let encrypted = crypto.encrypt(plaintext).unwrap();
+        // Wire format: magic + iv + ciphertext.
+        assert!(encrypted.starts_with(crypto_utils::ENCRYPTED_MAGIC));
+        let padded_len = plaintext.len() + (16 - plaintext.len() % 16);
+        assert_eq!(encrypted.len(), 4 + 16 + padded_len);
+        // Two encryptions use different random IVs.
+        let encrypted2 = crypto.encrypt(plaintext).unwrap();
+        assert_ne!(encrypted, encrypted2);
+
+        assert_eq!(crypto.decrypt(&encrypted).unwrap(), plaintext);
+        assert_eq!(crypto.decrypt(&encrypted2).unwrap(), plaintext);
+
+        // aes-128-cbc also round-trips.
+        let crypto128 = crypto_utils::CryptoUtil::new("aes-128-cbc", "test_key_123456").unwrap();
+        let enc128 = crypto128.encrypt(plaintext).unwrap();
+        assert_eq!(crypto128.decrypt(&enc128).unwrap(), plaintext);
+
+        // Non-encrypted input passes through unchanged (Python behaviour).
+        assert_eq!(crypto.decrypt(plaintext).unwrap(), plaintext);
+
+        // SM4 is TODO -> unsupported.
+        assert!(matches!(
+            crypto_utils::CryptoUtil::new("sm4-cbc", "key"),
+            Err(crypto_utils::CryptoError::UnsupportedAlgorithm(_))
+        ));
+        assert!(matches!(
+            crypto_utils::CryptoUtil::new("des-cbc", "key"),
+            Err(crypto_utils::CryptoError::UnsupportedAlgorithm(_))
+        ));
+    }
+
+    #[test]
+    fn ssrf_guard_blocks_private_and_allows_public() {
+        use ssrf_guard::{SsrfError, assert_url_is_safe};
+
+        // Public IPs pass and return (hostname, ip).
+        let (host, ip) = assert_url_is_safe("https://8.8.8.8/x").unwrap();
+        assert_eq!(host, "8.8.8.8");
+        assert_eq!(ip, "8.8.8.8");
+        let (host, ip) = assert_url_is_safe("http://1.1.1.1").unwrap();
+        assert_eq!(host, "1.1.1.1");
+        assert_eq!(ip, "1.1.1.1");
+
+        // Private / special ranges are rejected.
+        for url in [
+            "http://127.0.0.1/",
+            "http://10.0.0.5/",
+            "http://172.16.0.1/",
+            "http://192.168.1.1/",
+            "http://169.254.1.1/",
+            "http://100.64.0.1/",
+            "http://192.0.2.1/",
+            "http://198.18.0.1/",
+            "http://203.0.113.9/",
+            "http://224.0.0.1/",
+            "http://240.0.0.1/",
+            "http://[::1]/",
+            "http://[::ffff:127.0.0.1]/",
+            "http://[fc00::1]/",
+            "http://[fe80::1]/",
+        ] {
+            assert!(
+                matches!(assert_url_is_safe(url), Err(SsrfError::NonPublicAddress(_))),
+                "expected {url} to be blocked"
+            );
+        }
+
+        // Scheme + host validation.
+        assert!(matches!(
+            assert_url_is_safe("ftp://8.8.8.8/"),
+            Err(SsrfError::DisallowedScheme(_))
+        ));
+        assert!(matches!(
+            assert_url_is_safe("file:///etc/passwd"),
+            Err(SsrfError::DisallowedScheme(_))
+        ));
+        assert!(matches!(
+            assert_url_is_safe("http:///nohost"),
+            Err(SsrfError::MissingHost)
+        ));
+    }
+
+    /// The raw host/port guard used by the database component: literals, bracketed IPv6,
+    /// empty hosts and non-public names are all decided without a network round trip.
+    #[test]
+    fn host_guard_rejects_non_public_hosts() {
+        use ssrf_guard::{SsrfError, assert_host_is_safe};
+
+        assert!(matches!(
+            assert_host_is_safe(""),
+            Err(SsrfError::MissingHost)
+        ));
+        assert!(matches!(
+            assert_host_is_safe("   "),
+            Err(SsrfError::MissingHost)
+        ));
+        for host in [
+            "127.0.0.1",
+            "10.1.2.3",
+            "192.168.1.1",
+            "172.16.0.1",
+            "169.254.1.1",
+            "::1",
+            "[::1]",
+            "[fe80::1]",
+            "0.0.0.0",
+        ] {
+            assert!(
+                matches!(
+                    assert_host_is_safe(host),
+                    Err(SsrfError::NonPublicAddress(_))
+                ),
+                "{host} must be rejected"
+            );
+        }
+        // A public literal passes and answers the address it checked.
+        assert_eq!(
+            assert_host_is_safe("8.8.8.8").unwrap(),
+            "8.8.8.8".to_string()
+        );
+        assert_eq!(
+            assert_host_is_safe("[2001:4860:4860::8888]").unwrap(),
+            "2001:4860:4860::8888".to_string()
+        );
+    }
+
+    #[test]
+    fn validation_and_misc_utils_match_handler_semantics() {
+        use validation::{ValidationErrorKind, parse_bool_field, parse_u32_field, required_str};
+
+        assert_eq!(required_str("name", Some("kb-1")).unwrap(), "kb-1");
+        assert_eq!(
+            required_str("name", None).unwrap_err().kind,
+            ValidationErrorKind::MissingField
+        );
+        assert_eq!(
+            required_str("name", Some("  ")).unwrap_err().kind,
+            ValidationErrorKind::EmptyValue
+        );
+
+        assert_eq!(parse_u32_field("page", Some("42")).unwrap(), 42);
+        assert!(matches!(
+            parse_u32_field("page", Some("abc")).unwrap_err().kind,
+            ValidationErrorKind::WrongType("integer")
+        ));
+        assert_eq!(parse_bool_field("flag", Some("true")).unwrap(), true);
+        assert!(matches!(
+            parse_bool_field("flag", Some("yes")).unwrap_err().kind,
+            ValidationErrorKind::WrongType("boolean")
+        ));
+
+        // api/constants limits.
+        assert!(validation::validate_dataset_name("my dataset").is_ok());
+        assert_eq!(
+            validation::validate_dataset_name(&"a".repeat(129))
+                .unwrap_err()
+                .kind,
+            ValidationErrorKind::TooLong { max: 128 }
+        );
+        assert!(validation::validate_filename("report.pdf").is_ok());
+        assert!(validation::validate_name("x", "y").is_ok());
+
+        // misc utils
+        assert_eq!(misc_utils::get_uuid().len(), 32);
+        assert!(
+            misc_utils::get_uuid()
+                .chars()
+                .all(|c| c.is_ascii_hexdigit())
+        );
+        assert_eq!(misc_utils::convert_bytes(0), "0 B");
+        assert_eq!(misc_utils::convert_bytes(1024), "1.00 KB");
+        assert_eq!(misc_utils::convert_bytes(10 * 1024), "10.0 KB");
+        assert_eq!(misc_utils::convert_bytes(100 * 1024 * 1024), "100 MB");
+        // hash_str2int is deterministic and in range.
+        let h1 = misc_utils::hash_str2int("RAGFlow 知识库", misc_utils::DEFAULT_HASH_MOD);
+        let h2 = misc_utils::hash_str2int("RAGFlow 知识库", misc_utils::DEFAULT_HASH_MOD);
+        assert_eq!(h1, h2);
+        assert!(h1 < misc_utils::DEFAULT_HASH_MOD);
+
+        // run-once helper executes the closure exactly once.
+        let once = misc_utils::Once::new();
+        let value = once.get_or_init(|| 42);
+        assert_eq!(*value, 42);
+        assert_eq!(*once.get_or_init(|| 99), 42);
+    }
+
+    #[test]
+    fn parser_config_and_query_helpers_behave_like_python() {
+        assert_eq!(
+            parser_config_utils::normalize_layout_recognizer("pdf@mineru"),
+            ("MinerU".to_string(), Some("pdf".to_string()))
+        );
+        assert_eq!(
+            parser_config_utils::normalize_layout_recognizer("xxx@opendataloader"),
+            ("OpenDataLoader".to_string(), Some("xxx".to_string()))
+        );
+        assert_eq!(
+            parser_config_utils::normalize_layout_recognizer("DeepDOC"),
+            ("DeepDOC".to_string(), None)
+        );
+
+        assert!(query_base::is_chinese("今天天气怎么样"));
+        assert!(!query_base::is_chinese(
+            "this is a long english sentence with many words here"
+        ));
+        assert_eq!(query_base::sub_special_char("a:b'c"), "a\\:bc");
+        assert_eq!(
+            query_base::add_space_between_eng_zh("hello世界"),
+            "hello 世界"
+        );
+        assert_eq!(
+            query_base::add_space_between_eng_zh("世界hello"),
+            "世界 hello"
+        );
+        assert_eq!(
+            query_base::add_space_between_eng_zh("abc123中文"),
+            "abc123 中文"
+        );
+
+        // versions: unset -> unknown (no VERSION file / env in tests).
+        // SAFETY: single-threaded test; only this test reads the variable.
+        unsafe { std::env::remove_var("RAGFLOW_VERSION") };
+        assert_eq!(versions::get_ragflow_version(), "unknown");
+    }
+}
+
+#[cfg(test)]
+mod cmd_timeout_tests {
+    use super::cmd_timeout;
+    use axum::{Router, body::Body, http::StatusCode, response::Response, routing::get};
+
+    /// Plain body of `size` bytes.
+    async fn fixed() -> Vec<u8> {
+        vec![b'x'; 4096]
+    }
+
+    /// Chunked stream that never declares a length and keeps sending: the reader must
+    /// stop at the limit instead of following the peer into memory exhaustion.
+    async fn endless() -> Response {
+        let chunks = futures_util::stream::unfold(0usize, |sent| async move {
+            if sent > 64 {
+                return None;
+            }
+            Some((Ok::<_, std::io::Error>(vec![b'y'; 1024]), sent + 1))
+        });
+        Response::builder()
+            .status(StatusCode::OK)
+            .body(Body::from_stream(chunks))
+            .unwrap()
+    }
+
+    async fn serve() -> String {
+        let app = Router::new()
+            .route("/fixed", get(fixed))
+            .route("/endless", get(endless));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        format!("http://{address}")
+    }
+
+    #[tokio::test]
+    async fn bounded_reads_stop_at_the_limit_instead_of_following_the_peer() {
+        let base = serve().await;
+        let client = reqwest::Client::new();
+
+        // Under the limit: the bytes arrive intact.
+        let response = client.get(format!("{base}/fixed")).send().await.unwrap();
+        let body = cmd_timeout::read_body_limited(response, 8192, "test")
+            .await
+            .unwrap();
+        assert_eq!(body.len(), 4096);
+
+        // A declared length above the limit is rejected before anything is buffered.
+        let response = client.get(format!("{base}/fixed")).send().await.unwrap();
+        let error = cmd_timeout::read_body_limited(response, 1024, "test")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("exceeds"), "{error}");
+
+        // A streamed body without a length is stopped by the running total.
+        let response = client.get(format!("{base}/endless")).send().await.unwrap();
+        let error = cmd_timeout::read_body_limited(response, 4096, "test")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("exceeds"), "{error}");
+
+        // The JSON helper reports a bounded, non-JSON body instead of panicking.
+        let response = client.get(format!("{base}/fixed")).send().await.unwrap();
+        let error = cmd_timeout::read_json_limited::<serde_json::Value>(response, 8192, "test")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("not JSON"), "{error}");
+    }
+
+    /// Local OpenAI-API-Compatible endpoints are exempt from the remote-model
+    /// timeout so a slow llama.cpp/Ollama/vLLM box on the LAN can finish.
+    #[test]
+    fn local_model_endpoints_skip_the_remote_model_timeout() {
+        for endpoint in [
+            "http://127.0.0.1:8080/v1",
+            "http://localhost:11434/v1",
+            "http://192.168.3.20:8080/v1",
+            "http://10.0.0.5:8000/v1",
+            "http://gpu-box:8000/v1",
+            "https://nas.local:8443/v1",
+        ] {
+            assert!(
+                cmd_timeout::is_local_model_endpoint(endpoint),
+                "{endpoint} should be local"
+            );
+            assert_eq!(
+                cmd_timeout::model_timeout_for(endpoint),
+                None,
+                "{endpoint} must not enforce a total timeout"
+            );
+        }
+        for endpoint in [
+            "https://api.openai.com/v1",
+            "https://api.deepseek.com/v1",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "",
+        ] {
+            assert!(
+                !cmd_timeout::is_local_model_endpoint(endpoint),
+                "{endpoint} must keep the remote timeout"
+            );
+        }
+        assert!(cmd_timeout::model_timeout_for("https://api.openai.com/v1").is_some());
+    }
+
+    #[tokio::test]
+    async fn local_model_clients_allow_slow_tls_connection_setup() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("https://{}/v1", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            // Keep the TLS handshake open beyond the remote connection budget.
+            tokio::time::sleep(std::time::Duration::from_millis(10_500)).await;
+            drop(socket);
+        });
+        let error = cmd_timeout::model_client_for(&endpoint)
+            .get(&endpoint)
+            .send()
+            .await
+            .unwrap_err();
+        server.await.unwrap();
+        assert!(
+            !error.is_timeout(),
+            "local TLS setup was cut short: {error}"
+        );
+    }
+
+    #[test]
+    fn model_timeout_is_shorter_than_the_command_budget() {
+        // The model timeout is the interactive bound; the command budget stays the
+        // outer ceiling. Both are clamped, so a bad env value cannot disable them.
+        assert!(cmd_timeout::model_seconds() <= 1800);
+        assert!(cmd_timeout::seconds() <= cmd_timeout::DEFAULT_SECS);
+        assert!(cmd_timeout::body_limit_bytes() >= 1024);
+    }
+}

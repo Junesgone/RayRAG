@@ -199,7 +199,8 @@ impl SystemSettingsStore {
     fn refresh_runtime_mirror(&self) {
         #[cfg(not(test))]
         crate::api::runtime_config::replace_system_settings(self.settings.read().unwrap().values());
-        
+        #[cfg(test)]
+        let _ = &self.settings;
     }
 }
 
@@ -478,4 +479,126 @@ fn variable_error(message: &str) -> Response {
         .into_response()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn seeds_exact_conf_rows_and_persists_updates() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("system_settings.json");
+        let store = SystemSettingsStore::new(path.to_str().unwrap()).unwrap();
+        assert_eq!(store.list().len(), 14);
+        assert_eq!(
+            store.raw_value("sandbox.provider_type").as_deref(),
+            Some("self_managed")
+        );
+        assert_eq!(store.typed_value("mail.timeout"), Some(Value::from(10)));
+        store.set("mail.timeout", "45").unwrap();
+        drop(store);
+
+        let reopened = SystemSettingsStore::new(path.to_str().unwrap()).unwrap();
+        assert_eq!(reopened.raw_value("mail.timeout").as_deref(), Some("45"));
+        assert_eq!(reopened.list().len(), 14);
+    }
+
+    #[test]
+    fn exact_lookup_wins_and_prefix_lookup_is_sorted() {
+        let store = SystemSettingsStore::in_memory();
+        let exact = store.find("mail.server");
+        assert_eq!(exact.len(), 1);
+        assert_eq!(exact[0].name, "mail.server");
+        let prefix = store.find("mail.");
+        assert_eq!(prefix.len(), 8);
+        assert!(prefix.windows(2).all(|pair| pair[0].name < pair[1].name));
+    }
+
+    #[test]
+    fn validates_existing_types_and_infers_new_names() {
+        let store = SystemSettingsStore::in_memory();
+        assert!(store.set("enable_whitelist", "yes").is_err());
+        assert!(store.set("mail.timeout", "1.5").is_err());
+        assert!(store.set("sandbox.custom", "not-json").is_err());
+        let setting = store.set("feature.enabled", "true").unwrap();
+        assert_eq!(setting.data_type, "bool");
+        assert_eq!(setting.value, "true");
+    }
+
+    #[test]
+    fn public_rows_redact_secrets_and_sentinel_preserves_them() {
+        let store = SystemSettingsStore::in_memory();
+        store.set("mail.password", "smtp-secret").unwrap();
+        assert_eq!(store.find("mail.password")[0].value, REDACTED);
+        store.set("mail.password", REDACTED).unwrap();
+        assert_eq!(
+            store.raw_value("mail.password").as_deref(),
+            Some("smtp-secret")
+        );
+
+        store
+            .set(
+                "sandbox.self_managed",
+                r#"{"endpoint":"http://sandbox:9385","password":"hidden"}"#,
+            )
+            .unwrap();
+        let public: Value =
+            serde_json::from_str(&store.find("sandbox.self_managed")[0].value).unwrap();
+        assert_eq!(public["password"], REDACTED);
+        store
+            .set("sandbox.self_managed", &public.to_string())
+            .unwrap();
+        assert_eq!(
+            store.typed_value("sandbox.self_managed").unwrap()["password"],
+            "hidden"
+        );
+    }
+
+    #[test]
+    fn failed_persistence_keeps_memory_unchanged() {
+        let root = tempfile::tempdir().unwrap();
+        let store =
+            SystemSettingsStore::new(root.path().join("settings.json").to_str().unwrap()).unwrap();
+        std::fs::remove_file(root.path().join("settings.json")).unwrap();
+        std::fs::create_dir(root.path().join("settings.json")).unwrap();
+        assert!(store.set("mail.timeout", "99").is_err());
+        assert_eq!(store.raw_value("mail.timeout").as_deref(), Some("10"));
+    }
+
+    #[test]
+    fn snapshot_rejects_duplicate_names() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("settings.json");
+        let row = SystemSetting {
+            name: "x".into(),
+            source: "variable".into(),
+            data_type: "string".into(),
+            value: "a".into(),
+            create_time: 0,
+            update_time: 0,
+        };
+        let bytes = serde_json::to_vec(&SystemSettingsSnapshot {
+            system_settings: vec![row.clone(), row],
+        })
+        .unwrap();
+        std::fs::write(&path, bytes).unwrap();
+        let error = SystemSettingsStore::new(path.to_str().unwrap())
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("Duplicate system setting"));
+    }
+
+    #[test]
+    fn snapshot_requires_the_fixed_wrapper() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("settings.json");
+        std::fs::write(&path, br#"{"variables":[]}"#).unwrap();
+        let error = SystemSettingsStore::new(path.to_str().unwrap())
+            .err()
+            .unwrap();
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to parse system settings")
+        );
+    }
+}

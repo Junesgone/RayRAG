@@ -224,6 +224,10 @@ impl DataSourceRecord {
 /// fields the existing connector dispatch reads (GitLab URL/target/token and
 /// the include flags), while keeping the full dot-path map in `extra`.
 fn apply_config_mapping(record: &mut DataSourceRecord, config: &serde_json::Value) {
+    // Replace the previous `config.*` snapshot instead of merging into it: a
+    // field the form omitted (or the user cleared) must not survive from an
+    // earlier edit and silently keep steering the connector.
+    record.extra.retain(|key, _| !key.starts_with("config."));
     let map = flatten_config(config, "config");
     for (key, value) in map {
         if key == "config.sync_deleted_files" {
@@ -1092,6 +1096,7 @@ pub(crate) async fn perform_sync(
                 Ok(crate::connectors::SyncBatch {
                     docs,
                     failures: Vec::new(),
+                    skipped: Vec::new(),
                     source_keys,
                     // The legacy GitLab connector does not expose a complete
                     // listing contract, so never prune from it.
@@ -1157,6 +1162,10 @@ pub(crate) async fn perform_sync(
     let docs = batch.docs;
     let total_docs = docs.len() + skipped_unchanged;
     let mut connector_failures = batch.failures;
+    // Files the connector refused before download (unsupported extension,
+    // oversized, images disabled). RAGFlow logs these as warnings; keep them
+    // in the same visible "unsupported" bucket as binary documents.
+    let mut skipped_unsupported: Vec<String> = batch.skipped;
 
     // Optional ingestion into a knowledge base: ?kb_id=<dataset id>.
     // Each connector doc is written as a text file and routed through the
@@ -1174,7 +1183,18 @@ pub(crate) async fn perform_sync(
             .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
         for doc in &docs {
             let doc_id = uuid::Uuid::new_v4().to_string();
-            let ext = connector_doc_extension(doc);
+            let Some(ext) = connector_storage_extension(doc) else {
+                let declared = if doc.extension.trim().is_empty() {
+                    "no suffix"
+                } else {
+                    doc.extension.trim()
+                };
+                skipped_unsupported.push(format!(
+                    "{} ({declared}, binary content; convert it to PDF/DOCX/TXT or exclude it)",
+                    doc.semantic_identifier
+                ));
+                continue;
+            };
             let file_name = format!("{doc_id}{ext}");
             let path = upload_dir.join(&file_name);
             // Binary sources (PDF/Office/images) must be persisted byte-for-byte;
@@ -1333,21 +1353,58 @@ pub(crate) async fn perform_sync(
         )
         .collect();
     let kb_name = kb_id.and_then(|kb| state.kbs.get(kb).map(|kb| kb.name.clone()));
+    let truncated_note = if truncated_listing {
+        "; listing truncated by max_items or the batch byte budget (deleted-file pruning skipped)"
+    } else {
+        ""
+    };
+    let unsupported_note = if skipped_unsupported.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "; skipped {} unsupported file(s): {}",
+            skipped_unsupported.len(),
+            skipped_unsupported
+                .iter()
+                .take(5)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("; ")
+        )
+    };
+    let parse_note = if ingested > 0 {
+        "; parsing continues in the background, open the dataset to see per-document results"
+    } else {
+        ""
+    };
+    let failed = skipped.len() + connector_failures.len();
+    let mut detail = String::new();
+    for failure in connector_failures.iter().take(10) {
+        detail.push_str(failure);
+        detail.push('\n');
+    }
+    for unsupported in skipped_unsupported.iter().take(10) {
+        detail.push_str("unsupported: ");
+        detail.push_str(unsupported);
+        detail.push('\n');
+    }
+    let detail = (!detail.trim().is_empty()).then(|| detail.trim().to_string());
     let _ = store.append_sync_log(
         id,
         &record,
         "DONE",
         "sync",
         &format!(
-            "Synced {} docs (ingested {ingested}, unchanged {unchanged}, skipped {}, removed {removed})",
+            "Synced {} docs (ingested {ingested}, unchanged {unchanged}, skipped {}, unsupported {}, removed {removed}){truncated_note}{unsupported_note}{parse_note}",
             total_docs,
-            skipped.len()
+            skipped.len(),
+            skipped_unsupported.len(),
         ),
         Some(ingested as u64),
         Some(total_docs as u64),
         Some(removed as u64),
-        Some(connector_failures.len() as u64),
-        None,
+        Some(failed as u64),
+        detail,
         kb_id,
         kb_name.as_deref(),
         Some(trigger),
@@ -1355,7 +1412,17 @@ pub(crate) async fn perform_sync(
     let _ = store.set_status(id, "schedule");
     Ok(serde_json::json!({
         "code": 0,
-        "data": { "count": total_docs, "ingested": ingested, "unchanged": unchanged, "removed": removed, "skipped": skipped, "failures": connector_failures, "preview": preview }
+        "data": {
+            "count": total_docs,
+            "ingested": ingested,
+            "unchanged": unchanged,
+            "removed": removed,
+            "skipped": skipped,
+            "unsupported": skipped_unsupported,
+            "failures": connector_failures,
+            "truncated": truncated_listing,
+            "preview": preview
+        }
     }))
 }
 
@@ -1418,7 +1485,7 @@ pub async fn connect_data_source(
             &id,
             &record,
             "FAIL",
-            "sync",
+            "connect",
             &format!("connect failed: {error:#}"),
             None,
             None,
@@ -1442,7 +1509,7 @@ pub async fn connect_data_source(
         &id,
         &record,
         "DONE",
-        "sync",
+        "connect",
         "Connection verified",
         None,
         None,
@@ -1600,23 +1667,102 @@ fn connector_doc_extension(doc: &crate::data_source::ConnectorDoc) -> String {
     if !doc.extension.is_empty() {
         return doc.extension.clone();
     }
-    let bytes = doc.bytes();
-    if bytes.starts_with(b"%PDF-") {
-        return ".pdf".into();
-    }
-    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
-        return ".png".into();
-    }
-    if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
-        return ".jpg".into();
-    }
-    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
-        return ".gif".into();
-    }
-    if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
-        return ".webp".into();
+    if let Some(extension) = sniff_binary_extension(doc.bytes()) {
+        return extension.into();
     }
     ".md".into()
+}
+
+/// Binary signatures we can recognise without trusting the remote suffix.
+fn sniff_binary_extension(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"%PDF-") {
+        return Some(".pdf");
+    }
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Some(".png");
+    }
+    if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        return Some(".jpg");
+    }
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        return Some(".gif");
+    }
+    if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return Some(".webp");
+    }
+    if bytes.starts_with(b"II*\0") || bytes.starts_with(b"MM\0*") {
+        return Some(".tiff");
+    }
+    if bytes.starts_with(b"BM") {
+        return Some(".bmp");
+    }
+    if bytes.starts_with(b"RIFF") && bytes.len() >= 12 && &bytes[8..12] == b"WAVE" {
+        return Some(".wav");
+    }
+    if bytes.starts_with(b"OggS") {
+        return Some(".ogg");
+    }
+    if bytes.starts_with(b"fLaC") {
+        return Some(".flac");
+    }
+    if bytes.starts_with(b"ID3") {
+        return Some(".mp3");
+    }
+    None
+}
+
+/// True when a sample looks like UTF-8 text rather than an opaque binary.
+/// NUL bytes are the strongest binary signal; a truncated multi-byte character
+/// at the sample boundary is tolerated.
+fn looks_like_text(bytes: &[u8]) -> bool {
+    if bytes.is_empty() {
+        return true;
+    }
+    // Container/executable signatures that do not necessarily contain a NUL
+    // in their first bytes. Treating an OLE `.doc`, ZIP/Office archive or
+    // executable as UTF-8 text would hand the parser a corrupted `.md`.
+    const BINARY_MAGIC: &[&[u8]] = &[
+        b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1", // OLE2 (.doc/.xls/.ppt)
+        b"PK\x03\x04",                       // ZIP (.docx/.xlsx/.pptx/.epub)
+        b"PK\x05\x06",                       // empty ZIP
+        b"\x1F\x8B",                         // gzip
+        b"7z\xBC\xAF\x27\x1C",               // 7z
+        b"Rar!\x1A\x07",                     // RAR
+        b"\x7FELF",                          // ELF executable
+        b"MZ",                               // PE executable
+        b"\xCA\xFE\xBA\xBE",                 // Mach-O / Java class
+    ];
+    if BINARY_MAGIC.iter().any(|magic| bytes.starts_with(magic)) {
+        return false;
+    }
+    let sample = &bytes[..bytes.len().min(64 * 1024)];
+    if sample.contains(&0) {
+        return false;
+    }
+    let lossy = String::from_utf8_lossy(sample);
+    let replacements = lossy.chars().filter(|ch| *ch == '\u{fffd}').count();
+    replacements * 100 <= sample.len().max(1)
+}
+
+/// Extension used when writing the connector document for the parser. A known
+/// suffix wins; otherwise magic, then text sniffing decide. `None` means the
+/// file cannot be parsed and should be reported instead of ingested as a
+/// bogus `.md` document (for example an extensionless NIfTI `.sample` file).
+fn connector_storage_extension(doc: &crate::data_source::ConnectorDoc) -> Option<String> {
+    let declared = doc.extension.trim();
+    if !declared.is_empty() {
+        let probe = format!("probe{declared}");
+        if crate::parser::mime_from_extension(&probe).is_some() {
+            return Some(declared.to_string());
+        }
+    }
+    if let Some(extension) = sniff_binary_extension(doc.bytes()) {
+        return Some(extension.to_string());
+    }
+    if looks_like_text(doc.bytes()) {
+        return Some(".md".into());
+    }
+    None
 }
 
 /// Source folder used for document identity and UI location. Connector docs
@@ -1637,4 +1783,616 @@ fn connector_source_parent(doc: &crate::data_source::ConnectorDoc) -> Option<Str
 
 // ---- tests ----
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    fn refresh_record(created_at: &str, refresh_freq: Option<u64>) -> DataSourceRecord {
+        DataSourceRecord {
+            id: "refresh-test".into(),
+            name: "refresh".into(),
+            kind: "webdav".into(),
+            url: "http://127.0.0.1".into(),
+            token: String::new(),
+            target: String::new(),
+            include_issues: false,
+            include_merge_requests: false,
+            max_items: 10,
+            created_at: created_at.into(),
+            connected: true,
+            sync_deleted_files: false,
+            prune_freq: None,
+            refresh_freq,
+            timeout_secs: None,
+            status: "schedule".into(),
+            extra: HashMap::new(),
+            sync_logs: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn legacy_fifty_file_cap_is_migrated_to_effectively_unlimited() {
+        assert_eq!(default_max_items(), DEFAULT_DATA_SOURCE_MAX_ITEMS);
+        let dir = std::env::temp_dir().join(format!("rayrag-ds-cap-{}", uuid::Uuid::new_v4()));
+        let store = DataSourceStore::new(dir.to_str().unwrap()).unwrap();
+        let mut record = refresh_record("2026-11-20T23:00:00Z", Some(5));
+        record.id = "legacy-cap".into();
+        record.max_items = 50;
+        store.insert(record.clone()).unwrap();
+        let reloaded = DataSourceStore::new(dir.to_str().unwrap()).unwrap();
+        assert_eq!(
+            reloaded.get("legacy-cap").unwrap().max_items,
+            DEFAULT_DATA_SOURCE_MAX_ITEMS
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn refresh_schedule_honours_the_interval_and_disabled_values() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-21T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        assert!(refresh_due(
+            &refresh_record("2026-11-20T23:00:00Z", Some(5)),
+            now
+        ));
+        assert!(!refresh_due(
+            &refresh_record("2026-11-20T23:58:00Z", Some(5)),
+            now
+        ));
+        assert!(!refresh_due(
+            &refresh_record("2026-11-20T23:00:00Z", None),
+            now
+        ));
+        assert!(!refresh_due(
+            &refresh_record("2026-11-20T23:00:00Z", Some(0)),
+            now
+        ));
+        let mut record = refresh_record("2026-11-20T20:00:00Z", Some(5));
+        record.sync_logs.push(DataSourceSyncLog {
+            status: "DONE".into(),
+            time_started: Some("2026-11-20T23:59:00Z".into()),
+            ..Default::default()
+        });
+        assert!(
+            !refresh_due(&record, now),
+            "a recent log delays the refresh"
+        );
+    }
+
+    #[test]
+    fn status_normalization_accepts_upstream_wire_forms() {
+        assert_eq!(
+            normalize_status(&serde_json::json!("cancel")).as_deref(),
+            Some("cancel")
+        );
+        assert_eq!(
+            normalize_status(&serde_json::json!("SCHEDULE")).as_deref(),
+            Some("schedule")
+        );
+        assert_eq!(
+            normalize_status(&serde_json::json!(2)).as_deref(),
+            Some("cancel")
+        );
+        assert_eq!(
+            normalize_status(&serde_json::json!("5")).as_deref(),
+            Some("schedule")
+        );
+        assert!(normalize_status(&serde_json::json!("bogus")).is_none());
+        assert!(normalize_status(&serde_json::json!(99)).is_none());
+    }
+
+    #[test]
+    fn config_flatten_and_unflatten_roundtrip_nested_credentials() {
+        let config = serde_json::json!({
+            "credentials": {"client_id": "cid", "client_secret": "secret"},
+            "batch_size": 2,
+            "include_mrs": true,
+            "empty": null,
+            "server_ids": ["a", "b"],
+        });
+        let flat = flatten_config(&config, "config");
+        assert_eq!(flat.get("config.credentials.client_id").unwrap(), "cid");
+        assert_eq!(flat.get("config.batch_size").unwrap(), "2");
+        assert_eq!(flat.get("config.include_mrs").unwrap(), "true");
+        assert_eq!(flat.get("config.server_ids").unwrap(), "[\"a\",\"b\"]");
+        assert!(!flat.contains_key("config.empty"));
+
+        let rebuilt = unflatten_config(&flat);
+        assert_eq!(
+            rebuilt["config"]["credentials"]["client_id"],
+            serde_json::json!("cid")
+        );
+        assert_eq!(rebuilt["config"]["batch_size"], serde_json::json!("2"));
+    }
+
+    #[test]
+    fn config_mapping_folds_gitlab_fields_onto_the_flat_record() {
+        let mut record = DataSourceRecord {
+            id: "g1".into(),
+            name: "gitlab".into(),
+            kind: "gitlab".into(),
+            url: String::new(),
+            token: String::new(),
+            target: String::new(),
+            include_issues: false,
+            include_merge_requests: false,
+            max_items: 5,
+            created_at: String::new(),
+            connected: false,
+            sync_deleted_files: false,
+            prune_freq: None,
+            refresh_freq: None,
+            timeout_secs: None,
+            status: "unstart".into(),
+            extra: HashMap::new(),
+            sync_logs: Vec::new(),
+        };
+        record
+            .extra
+            .insert("config.max_file_size_mb".into(), "5".into());
+        apply_config_mapping(
+            &mut record,
+            &serde_json::json!({
+                "project_owner": "owner",
+                "project_name": "repo",
+                "gitlab_url": "https://gitlab.example.com",
+                "include_mrs": true,
+                "include_issues": true,
+                "credentials": {"gitlab_access_token": "tok"},
+                "sync_deleted_files": true,
+            }),
+        );
+        assert!(
+            !record.extra.contains_key("config.max_file_size_mb"),
+            "a field omitted from the new config must not survive the update"
+        );
+        assert_eq!(record.url, "https://gitlab.example.com");
+        assert_eq!(record.target, "owner/repo");
+        assert_eq!(record.token, "tok");
+        assert!(record.include_merge_requests);
+        assert!(record.include_issues);
+        assert!(record.sync_deleted_files);
+        assert_eq!(
+            record.extra.get("config.project_owner").map(String::as_str),
+            Some("owner")
+        );
+        assert!(!record.extra.contains_key("config.sync_deleted_files"));
+    }
+
+    #[test]
+    fn store_roundtrip_and_redaction() {
+        let dir = std::env::temp_dir().join(format!("rayrag-ds-test-{}", uuid::Uuid::new_v4()));
+        let store = DataSourceStore::new(dir.to_str().unwrap()).unwrap();
+        let record = DataSourceRecord {
+            id: "1".into(),
+            name: "gitlab-main".into(),
+            kind: "gitlab".into(),
+            url: "https://gitlab.com".into(),
+            token: "secret-token".into(),
+            target: "1".into(),
+            include_issues: true,
+            include_merge_requests: false,
+            max_items: 10,
+            created_at: "2026-01-01T00:00:00Z".into(),
+            connected: false,
+            sync_deleted_files: false,
+            prune_freq: None,
+            refresh_freq: None,
+            timeout_secs: None,
+            status: "unstart".into(),
+            extra: HashMap::new(),
+            sync_logs: Vec::new(),
+        };
+        store.insert(record).unwrap();
+        let redacted = store.list();
+        assert_eq!(redacted.len(), 1);
+        assert_eq!(redacted[0]["token"], "***");
+        assert_eq!(store.get("1").unwrap().token, "secret-token");
+        assert!(store.remove("1").unwrap());
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn reload_after_restart() {
+        let dir = std::env::temp_dir().join(format!("rayrag-ds-test-{}", uuid::Uuid::new_v4()));
+        {
+            let store = DataSourceStore::new(dir.to_str().unwrap()).unwrap();
+            store
+                .insert(DataSourceRecord {
+                    id: "2".into(),
+                    name: "n".into(),
+                    kind: "gitlab".into(),
+                    url: "https://gitlab.com".into(),
+                    token: "t".into(),
+                    target: "2".into(),
+                    include_issues: false,
+                    include_merge_requests: false,
+                    max_items: 5,
+                    created_at: "2026-01-01T00:00:00Z".into(),
+                    connected: false,
+                    sync_deleted_files: false,
+                    prune_freq: None,
+                    refresh_freq: None,
+                    timeout_secs: None,
+                    status: "unstart".into(),
+                    extra: HashMap::new(),
+                    sync_logs: Vec::new(),
+                })
+                .unwrap();
+        }
+        let store = DataSourceStore::new(dir.to_str().unwrap()).unwrap();
+        assert_eq!(store.list().len(), 1);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// Every two-field credential the schema collects has to become the one string its connector expects, or a
+    /// schema-driven save stores an empty token and the source silently never connects.
+    #[test]
+    fn config_mapping_joins_each_username_password_pair() {
+        let mapped = |config: serde_json::Value| {
+            let mut record = DataSourceRecord {
+                id: "t".into(),
+                name: "t".into(),
+                kind: "webdav".into(),
+                url: String::new(),
+                token: String::new(),
+                target: String::new(),
+                include_issues: false,
+                include_merge_requests: false,
+                max_items: 5,
+                created_at: "2026-01-01T00:00:00Z".into(),
+                connected: false,
+                sync_deleted_files: false,
+                prune_freq: None,
+                refresh_freq: None,
+                timeout_secs: None,
+                status: "unstart".into(),
+                extra: Default::default(),
+                sync_logs: Vec::new(),
+            };
+            apply_config_mapping(&mut record, &config);
+            record.token
+        };
+        for (user_key, secret_key, user, secret, expected) in [
+            ("username", "password", "alice", "secret", "alice:secret"),
+            (
+                "aws_access_key_id",
+                "aws_secret_access_key",
+                "AKIA",
+                "shh",
+                "AKIA:shh",
+            ),
+            (
+                "confluence_username",
+                "confluence_access_token",
+                "me@example.com",
+                "tok",
+                "me@example.com:tok",
+            ),
+            ("account_name", "account_key", "acct", "key", "acct:key"),
+        ] {
+            let config =
+                serde_json::json!({ "credentials": { user_key: user, secret_key: secret } });
+            assert_eq!(
+                mapped(config),
+                expected,
+                "{user_key}/{secret_key} must be joined as {expected}"
+            );
+        }
+        // Half a pair is not a credential: the single-key list gets its chance instead of a fabricated "user:".
+        let half =
+            serde_json::json!({ "credentials": { "username": "alice", "token": "explicit" } });
+        assert_eq!(mapped(half), "explicit");
+        let neither = serde_json::json!({ "credentials": { "username": "alice" } });
+        assert_eq!(mapped(neither), "");
+    }
+
+    #[test]
+    fn flat_create_names_the_missing_field_for_kinds_that_need_one() {
+        assert_eq!(
+            deferred_validation_fields("s3"),
+            &["url", "token", "target"]
+        );
+        assert_eq!(
+            deferred_validation_fields("confluence"),
+            &["url", "target", "token"]
+        );
+        // Kinds that validate in their constructor need no entry here.
+        assert!(deferred_validation_fields("rss").is_empty());
+        assert!(deferred_validation_fields("notion").is_empty());
+    }
+
+    /// Pins the measurement the API's split relies on: exactly these kinds accept an empty configuration when
+    /// built. If a connector loses or gains constructor validation this fails, and the table above must be
+    /// revisited — the alternative is a record that only fails at sync time.
+    #[test]
+    fn only_the_listed_kinds_skip_constructor_validation() {
+        let mut lax: Vec<&str> = Vec::new();
+        let mut unbuildable: Vec<&str> = Vec::new();
+        for info in crate::connectors::ConnectorRegistry::kinds() {
+            let options = crate::data_source::SourceOptions {
+                url: String::new(),
+                token: String::new(),
+                target: String::new(),
+                include_issues: false,
+                include_merge_requests: false,
+                max_items: 50,
+                extra: Default::default(),
+            };
+            match crate::connectors::ConnectorRegistry::create(info.kind, options) {
+                Ok(_) => lax.push(info.kind),
+                // "unsupported connector kind" means there is no connector, not that the configuration is
+                // incomplete; counting it as strict made the earlier measurement wrong.
+                Err(error) if error.to_string().contains("unsupported connector kind") => {
+                    unbuildable.push(info.kind)
+                }
+                Err(_) => {}
+            }
+        }
+        lax.sort_unstable();
+        unbuildable.sort_unstable();
+        assert_eq!(
+            unbuildable,
+            vec![
+                "gitlab",
+                "gmail",
+                "google_drive",
+                "notion",
+                "tencent_docs",
+                "wechat_docs"
+            ],
+            "the set of advertised kinds without a connector changed; the create path refuses these on purpose, \
+             so the count and the user-facing message must be revisited"
+        );
+        assert_eq!(
+            lax,
+            vec![
+                "azure_blob",
+                "confluence",
+                "feishu",
+                "gcs",
+                "oracle",
+                "r2",
+                "s3",
+                "webdav"
+            ],
+            "the set of connectors that accept an empty configuration changed: \
+             deferred_validation_fields must be updated to match"
+        );
+    }
+
+    #[test]
+    #[test]
+    fn registry_dispatch_accepts_all_supported_kinds() {
+        // create_data_source's kind gate mirrors the connector registry.
+        for kind in [
+            "gitlab",
+            "azure_blob",
+            "local",
+            "webdav",
+            "feishu",
+            "confluence",
+            "r2",
+            "dingtalk_ai_table",
+            "postgresql",
+            "rss",
+        ] {
+            assert!(is_supported_kind(kind), "kind {kind} should be supported");
+        }
+        assert!(!is_supported_kind("nope"));
+        assert!(supported_kinds().contains("feishu"));
+    }
+
+    #[test]
+    fn record_roundtrip_preserves_connected_flag() {
+        let record = DataSourceRecord {
+            id: "c1".into(),
+            name: "feishu-main".into(),
+            kind: "feishu".into(),
+            url: "https://open.feishu.cn".into(),
+            token: "app:secret".into(),
+            target: String::new(),
+            include_issues: false,
+            include_merge_requests: false,
+            max_items: 10,
+            created_at: "2026-01-01T00:00:00Z".into(),
+            connected: true,
+            sync_deleted_files: false,
+            prune_freq: None,
+            refresh_freq: None,
+            timeout_secs: None,
+            status: "unstart".into(),
+            extra: HashMap::new(),
+            sync_logs: Vec::new(),
+        };
+        let json = serde_json::to_string(&record).unwrap();
+        let back: DataSourceRecord = serde_json::from_str(&json).unwrap();
+        assert!(back.connected);
+        let redacted = back.redacted();
+        assert_eq!(redacted["connected"], true);
+    }
+
+    #[test]
+    fn sync_log_row_carries_ragflow_column_set_and_counts() {
+        let dir = std::env::temp_dir().join(format!("rayrag-ds-log-{}", uuid::Uuid::new_v4()));
+        let store = DataSourceStore::new(dir.to_str().unwrap()).unwrap();
+        let record = DataSourceRecord {
+            id: "1".into(),
+            name: "gitlab-main".into(),
+            kind: "gitlab".into(),
+            url: "https://gitlab.com".into(),
+            token: "t".into(),
+            target: "1".into(),
+            include_issues: false,
+            include_merge_requests: false,
+            max_items: 10,
+            created_at: "2026-01-01T00:00:00Z".into(),
+            connected: true,
+            sync_deleted_files: true,
+            prune_freq: Some(60),
+            refresh_freq: Some(30),
+            timeout_secs: None,
+            status: "done".into(),
+            extra: HashMap::new(),
+            sync_logs: Vec::new(),
+        };
+        store.insert(record.clone()).unwrap();
+        store
+            .append_sync_log(
+                "1",
+                &record,
+                "DONE",
+                "sync",
+                "Synced 3 docs (ingested 2, skipped 1)",
+                Some(2),
+                Some(3),
+                None,
+                Some(1),
+                None,
+                Some("kb1"),
+                Some("Finance"),
+                None,
+            )
+            .unwrap();
+        store
+            .append_sync_log(
+                "1",
+                &record,
+                "FAIL",
+                "sync",
+                "boom",
+                None,
+                None,
+                None,
+                Some(1),
+                Some("boom".into()),
+                Some("kb1"),
+                Some("Finance"),
+                None,
+            )
+            .unwrap();
+        let record = store.get("1").unwrap();
+        assert_eq!(record.sync_logs.len(), 2);
+        let latest = &record.sync_logs[0];
+        assert_eq!(latest.status, "FAIL");
+        assert_eq!(latest.task_type, "sync");
+        assert_eq!(latest.kb_id, "kb1");
+        assert_eq!(latest.kb_name, "Finance");
+        assert_eq!(latest.error_msg.as_deref(), Some("boom"));
+        assert_eq!(latest.refresh_freq, Some(30));
+        assert_eq!(latest.prune_freq, Some(60));
+        assert!(latest.time_started.is_some());
+        let done = &record.sync_logs[1];
+        assert_eq!(done.status, "DONE");
+        assert_eq!(done.new_docs_indexed, Some(2));
+        assert_eq!(done.total_docs_indexed, Some(3));
+        assert_eq!(done.docs_removed_from_index, None);
+        assert_eq!(done.error_count, Some(1));
+        let json = serde_json::to_value(&latest).unwrap();
+        assert!(json.get("docs_removed_from_index").is_some());
+        assert!(json.get("trigger").is_none());
+        assert!(json.get("time_started").is_some());
+        assert!(json.get("error_count").is_some());
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    fn connector_doc_for_extension(
+        raw: &[u8],
+        extension: &str,
+    ) -> crate::data_source::ConnectorDoc {
+        crate::data_source::ConnectorDoc {
+            id: "webdav:/x".into(),
+            blob: String::from_utf8_lossy(raw).to_string(),
+            raw_bytes: Some(raw.to_vec()),
+            source: crate::data_source::DocumentSource::WebDav,
+            semantic_identifier: "x".into(),
+            extension: extension.into(),
+            doc_updated_at: String::new(),
+            size_bytes: raw.len(),
+            metadata: Default::default(),
+        }
+    }
+
+    #[test]
+    fn connector_source_parent_uses_the_remote_folder_not_the_file() {
+        let mut doc = crate::data_source::ConnectorDoc {
+            id: "webdav:/files/sub/b.pdf".into(),
+            blob: String::new(),
+            raw_bytes: Some(Vec::new()),
+            source: crate::data_source::DocumentSource::WebDav,
+            semantic_identifier: "b.pdf".into(),
+            extension: ".pdf".into(),
+            doc_updated_at: String::new(),
+            size_bytes: 0,
+            metadata: Default::default(),
+        };
+        doc.metadata
+            .insert("path".into(), "/files/sub/b.pdf".into());
+        assert_eq!(connector_source_parent(&doc).as_deref(), Some("files/sub"));
+        doc.metadata.insert("path".into(), "/b.pdf".into());
+        assert_eq!(connector_source_parent(&doc), None);
+        doc.metadata.remove("path");
+        doc.metadata.insert("key".into(), "bucket/a/b.txt".into());
+        assert_eq!(connector_source_parent(&doc).as_deref(), Some("bucket/a"));
+    }
+
+    #[test]
+    fn connector_doc_extension_sniffs_binary_magic_and_keeps_explicit_suffix() {
+        assert_eq!(
+            connector_doc_extension(&connector_doc_for_extension(b"%PDF-1.7\n...", "")),
+            ".pdf"
+        );
+        assert_eq!(
+            connector_doc_extension(&connector_doc_for_extension(b"\x89PNG\r\n\x1a\n....", "")),
+            ".png"
+        );
+        assert_eq!(
+            connector_doc_extension(&connector_doc_for_extension(b"plain text", "")),
+            ".md"
+        );
+        assert_eq!(
+            connector_doc_extension(&connector_doc_for_extension(b"%PDF-1.7", ".data")),
+            ".data",
+            "an explicit remote extension wins"
+        );
+    }
+
+    #[test]
+    fn connector_storage_extension_reports_unparseable_binary_instead_of_faking_markdown() {
+        assert_eq!(
+            connector_storage_extension(&connector_doc_for_extension(b"%PDF-1.7", "")),
+            Some(".pdf".into())
+        );
+        assert_eq!(
+            connector_storage_extension(&connector_doc_for_extension(b"hello world", "")),
+            Some(".md".into())
+        );
+        assert_eq!(
+            connector_storage_extension(&connector_doc_for_extension(
+                b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1legacy",
+                ".doc"
+            )),
+            None,
+            "a legacy .doc must not be stored as text"
+        );
+        assert_eq!(
+            connector_storage_extension(&connector_doc_for_extension(&[0, 1, 2, 3, 4], "")),
+            None,
+            "opaque binary without a suffix is not a Markdown document"
+        );
+        assert_eq!(
+            connector_storage_extension(&connector_doc_for_extension(b"PK\x03\x04zip", "")),
+            None,
+            "a ZIP container without a suffix cannot be guessed safely"
+        );
+    }
+
+    #[test]
+    fn looks_like_text_rejects_known_binary_containers() {
+        assert!(looks_like_text(b"plain UTF-8 text\n"));
+        assert!(!looks_like_text(b"\x7FELF\x02\x01\x01"));
+        assert!(!looks_like_text(b"PK\x03\x04"));
+        assert!(!looks_like_text(&[0x61, 0x00, 0x62]));
+    }
+}

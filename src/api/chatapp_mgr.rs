@@ -527,4 +527,97 @@ pub async fn chatbot_completions(
         .into_response()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn store_roundtrip_rename_remove() {
+        let dir = std::env::temp_dir().join(format!("rayrag-chatapp-{}", uuid::Uuid::new_v4()));
+        let store = ChatAppStore::new(dir.to_str().unwrap()).unwrap();
+        let app = ChatApp {
+            id: "a1".into(),
+            name: "客服助手".into(),
+            description: "FAQ bot".into(),
+            icon: "🤖".into(),
+            tenant_id: "t1".into(),
+            kb_ids: vec!["kb1".into()],
+            llm_id: None,
+            llm_setting: None,
+            prompt_config: None,
+            rerank_id: None,
+            top_k: None,
+            created_at: 1,
+        };
+        store.insert(app).unwrap();
+        let store = ChatAppStore::new(dir.to_str().unwrap()).unwrap();
+        assert_eq!(store.list().len(), 1);
+        assert_eq!(store.get("a1").unwrap().name, "客服助手");
+        assert!(store.rename("a1", "新名字").unwrap().is_some());
+        let store = ChatAppStore::new(dir.to_str().unwrap()).unwrap();
+        assert_eq!(store.get("a1").unwrap().name, "新名字");
+        assert!(store.remove("a1").unwrap().is_some());
+        let store = ChatAppStore::new(dir.to_str().unwrap()).unwrap();
+        assert!(store.list().is_empty());
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn legacy_map_snapshots_remain_readable_after_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("chat_apps.json");
+        std::fs::write(&path, r#"{"a1":{"id":"a1","name":"Legacy"}}"#).unwrap();
+        let store = ChatAppStore::new(dir.path().to_str().unwrap()).unwrap();
+        assert_eq!(store.get("a1").unwrap().name, "Legacy");
+        store.rename("a1", "Updated").unwrap();
+        let json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert!(json.is_array());
+        let reopened = ChatAppStore::new(dir.path().to_str().unwrap()).unwrap();
+        assert_eq!(reopened.get("a1").unwrap().name, "Updated");
+    }
+
+    #[test]
+    fn persistence_failure_does_not_publish_chat_app_mutations() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ChatAppStore::new(dir.path().to_str().unwrap()).unwrap();
+        let app: ChatApp = serde_json::from_str(r#"{"id":"a1","name":"Original"}"#).unwrap();
+        store.insert(app.clone()).unwrap();
+        let path = std::path::Path::new(&store.metadata_path);
+        std::fs::remove_file(path).unwrap();
+        std::fs::create_dir(path).unwrap();
+        let mut second = app;
+        second.id = "a2".into();
+        let error = store.insert(second.clone()).unwrap_err().to_string();
+        assert!(error.contains("Check state storage permissions"), "{error}");
+        assert!(store.get("a2").is_none());
+        assert!(store.rename("a1", "Rejected").is_err());
+        assert_eq!(store.get("a1").unwrap().name, "Original");
+        assert!(store.remove("a1").is_err());
+        assert!(store.get("a1").is_some());
+        std::fs::remove_dir(path).unwrap();
+        store.insert(second).unwrap();
+        let reopened = ChatAppStore::new(dir.path().to_str().unwrap()).unwrap();
+        assert_eq!(reopened.list().len(), 2);
+        assert_eq!(reopened.get("a1").unwrap().name, "Original");
+    }
+
+    #[test]
+    fn update_request_name_only_keeps_rename_semantics() {
+        let req: UpdateChatAppRequest = serde_json::from_str(r#"{"name":"新名"}"#).unwrap();
+        assert_eq!(req.name.as_deref(), Some("新名"));
+        assert!(req.kb_ids.is_none());
+        assert!(req.prompt_config.is_none());
+    }
+
+    #[test]
+    fn update_request_accepts_prompt_config_and_llm_setting() {
+        let req: UpdateChatAppRequest = serde_json::from_str(
+            r#"{"prompt_config":{"system":"你是客服","quote":true},"llm_setting":{"temperature":0.3},"llm_id":null}"#,
+        )
+        .unwrap();
+        assert_eq!(req.prompt_config.unwrap()["quote"], serde_json::json!(true));
+        assert!(req.llm_id.is_none()); // null coalesces to None (serde default)
+        assert!(req.llm_setting.is_some());
+    }
+}

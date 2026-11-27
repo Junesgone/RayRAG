@@ -101,4 +101,76 @@ pub fn resolve_pdf_layout(parser_config_layout: Option<&str>) -> String {
     layout_recognizer_name(parser_config_layout.map(|s| s.to_string()))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn join_nonempty_sections_filters_blanks() {
+        let sections = vec![
+            "a".to_string(),
+            "".to_string(),
+            "  ".to_string(),
+            "b".to_string(),
+        ];
+        assert_eq!(join_nonempty_sections(&sections), "a\nb");
+    }
+
+    #[test]
+    fn join_nonempty_sections_keeps_order() {
+        let sections = vec!["第一段".to_string(), "第二段".to_string()];
+        assert_eq!(join_nonempty_sections(&sections), "第一段\n第二段");
+    }
+
+    #[test]
+    fn one_chunk_strips_extension_from_title() {
+        let c = one_chunk("paper.txt", "内容一\n内容二");
+        assert_eq!(c.docnm_kwd, "paper.txt");
+        assert_eq!(c.title_tks, vec!["paper".to_string()]);
+        assert_eq!(c.content_with_weight, "内容一\n内容二");
+        assert_eq!(
+            c.content_ltks,
+            vec!["内容一".to_string(), "内容二".to_string()]
+        );
+    }
+
+    #[test]
+    fn one_chunk_no_extension_keeps_filename() {
+        let c = one_chunk("README", "hello world");
+        assert_eq!(c.title_tks, vec!["README".to_string()]);
+        assert_eq!(
+            c.content_ltks,
+            vec!["hello".to_string(), "world".to_string()]
+        );
+    }
+
+    #[test]
+    fn flatten_pdf_tables_appends_nonempty_rows() {
+        let sections = vec!["正文".to_string()];
+        let tables = vec![
+            (None, vec![]),
+            (Some("".to_string()), vec![]),
+            (
+                Some("表头 | 数值".to_string()),
+                vec![("1".to_string(), "x".to_string())],
+            ),
+        ];
+        let out = flatten_pdf_tables(sections, tables);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[1], "表头 | 数值");
+    }
+
+    #[test]
+    fn parse_one_text_supports_txt_md_family() {
+        let c = parse_one_text("doc.md", "行1\n\n行3\n").unwrap();
+        assert_eq!(c.content_with_weight, "行1\n行3");
+        assert!(parse_one_text("doc.pdf", "x").is_err());
+    }
+
+    #[test]
+    fn resolve_pdf_layout_defaults_to_deepdoc() {
+        assert_eq!(resolve_pdf_layout(None), "docling");
+        assert_eq!(resolve_pdf_layout(Some("DeepDOC")), "deepdoc");
+        assert_eq!(resolve_pdf_layout(Some("false")), "Plain Text");
+    }
+}

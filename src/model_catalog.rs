@@ -721,4 +721,238 @@ fn directory_object(payload: &str) -> Option<&str> {
     None
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    /// A miniature of the real page: the RSC chunks carry a `directory` object whose
+    /// providers hold a `models` map.
+    fn sample_page() -> String {
+        page_with_directory(serde_json::json!({
+            "deepseek": {
+                "id": "deepseek",
+                "name": "DeepSeek",
+                "website": "https://deepseek.com",
+                "apiBaseUrl": "https://api.deepseek.com/v1",
+                "models": {
+                    "deepseek-chat": {
+                        "id": "deepseek-chat",
+                        "name": "DeepSeek-Chat",
+                        "features": {"attachment": false, "reasoning": false, "tool_call": true, "structured_output": true},
+                        "pricing": {"input": 0.27, "output": 1.1},
+                        "limit": {"context": 128000},
+                        "modalities": {"input": ["text"], "output": ["text"]}
+                    },
+                    "deepseek-vl2": {
+                        "id": "deepseek-vl2",
+                        "name": "deepseek-vl2",
+                        "features": {"attachment": true, "reasoning": false, "tool_call": false, "structured_output": false},
+                        "pricing": {"input": 0.1, "output": 0.2},
+                        "limit": {"context": 32000},
+                        "modalities": {"input": ["text", "image"], "output": ["text"]}
+                    }
+                }
+            }
+        }))
+    }
+
+    /// Wrap a `directory` object in the RSC payload a Next.js page streams.
+    fn page_with_directory(directory: serde_json::Value) -> String {
+        let payload = format!(
+            "1:null\n2:[\"$\",\"main\",null,{{\"children\":[\"$\",\"$L1\",null,{{\"directory\":{directory}}}]}}]\n"
+        );
+        let escaped = serde_json::to_string(&payload).unwrap();
+        format!(
+            "<!DOCTYPE html><html><body><script>self.__next_f.push([1,{escaped}])</script></body></html>"
+        )
+    }
+
+    #[test]
+    fn parses_providers_models_capabilities_and_pricing() {
+        let catalog = ModelCatalog::parse_page(&sample_page()).unwrap();
+        assert_eq!(catalog.provider_count(), 1);
+        assert_eq!(catalog.model_count(), 2);
+        let provider = &catalog.providers[0];
+        assert_eq!(provider.name, "DeepSeek");
+        assert_eq!(provider.api_base_url, "https://api.deepseek.com/v1");
+        let chat = provider
+            .models
+            .iter()
+            .find(|model| model.name == "DeepSeek-Chat")
+            .unwrap();
+        assert_eq!(chat.context, Some(128_000));
+        assert!(chat.tool_call);
+        assert_eq!(chat.input_price, Some(0.27));
+        assert_eq!(chat.suggested_model_types(), vec!["chat"]);
+        assert!(chat.summary().contains("context 128000"));
+        assert!(chat.summary().contains("tool calls"));
+
+        let vision = provider
+            .models
+            .iter()
+            .find(|model| model.name == "deepseek-vl2")
+            .unwrap();
+        assert!(vision.accepts_images());
+        assert_eq!(vision.suggested_model_types(), vec!["chat", "image2text"]);
+    }
+
+    #[test]
+    fn lookup_prefers_the_provider_matching_the_base_url() {
+        let catalog = ModelCatalog::parse_page(&sample_page()).unwrap();
+        // Same name offered by a matching and a non-matching provider would be ranked
+        // by the base URL; here the single provider must still be found by host.
+        assert_eq!(
+            catalog
+                .provider_for_base_url("https://api.deepseek.com/v1/chat")
+                .map(|provider| provider.id.as_str()),
+            Some("deepseek")
+        );
+        assert!(
+            catalog
+                .provider_for_base_url("https://example.invalid/v1")
+                .is_none()
+        );
+
+        let hits = catalog.lookup(Some("https://api.deepseek.com/v1"), "deepseek-chat");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].model.name, "DeepSeek-Chat");
+
+        // Forgiving matching: case and partial names both work.
+        assert_eq!(
+            catalog
+                .lookup(None, "DEEPSEEK-VL2")
+                .first()
+                .map(|hit| hit.model.name.clone()),
+            Some("deepseek-vl2".to_string())
+        );
+        assert!(
+            !catalog
+                .lookup(None, "gpt-4o")
+                .iter()
+                .any(|hit| hit.model.name.contains("deepseek"))
+        );
+        assert!(catalog.lookup(None, "").is_empty());
+    }
+
+    #[test]
+    fn a_known_endpoint_offers_its_own_models_when_the_name_does_not_match() {
+        let catalog = ModelCatalog::parse_page(&page_with_directory(serde_json::json!({
+            "deepseek": {
+                "id": "deepseek",
+                "name": "DeepSeek",
+                "apiBaseUrl": "https://api.deepseek.com/v1",
+                "models": {"deepseek-chat": {"id": "deepseek-chat", "name": "deepseek-chat"}}
+            },
+            "gateway": {
+                "id": "gateway",
+                "name": "Gateway",
+                "apiBaseUrl": "https://gateway.example.com/v1",
+                "models": {
+                    "gateway-a": {"id": "gateway-a", "name": "gateway-a"},
+                    "gateway-b": {"id": "gateway-b", "name": "gateway-b", "limit": {"context": 200000}},
+                    "deepseek-mini": {"id": "deepseek-mini", "name": "deepseek-mini"}
+                }
+            }
+        })))
+        .unwrap();
+        // `deepseek-chat` is DeepSeek's, but the dialog is configuring Gateway. The
+        // endpoint being configured answers first — starting with the closest name it
+        // serves, a near miss of what was typed — and the other endpoint's exact match
+        // follows, so a careless click cannot apply the wrong provider's numbers.
+        let hits = catalog.lookup(Some("https://gateway.example.com/v1"), "deepseek-chat");
+        let order: Vec<&str> = hits.iter().map(|hit| hit.model.name.as_str()).collect();
+        assert_eq!(
+            order,
+            vec!["deepseek-mini", "gateway-a", "gateway-b", "deepseek-chat"]
+        );
+        assert_eq!(hits[0].provider.id, "gateway");
+        assert_eq!(hits[3].provider.id, "deepseek");
+
+        // When the endpoint's own model does match, nothing extra is appended.
+        let hits = catalog.lookup(Some("https://gateway.example.com/v1"), "gateway-a");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].model.name, "gateway-a");
+
+        // No endpoint at all means no fallback either: only the name matches.
+        let hits = catalog.lookup(None, "gateway-a");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].model.name, "gateway-a");
+    }
+
+    #[test]
+    fn a_page_without_the_expected_shape_fails_loudly() {
+        let error = ModelCatalog::parse_page("<html><body>nothing here</body></html>")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("RSC payload"), "{error}");
+
+        // Payload present but no directory: the failure names what was missing.
+        let payload = "1:[\"$\",\"main\",null,{}]";
+        let escaped = serde_json::to_string(payload).unwrap();
+        let page = format!("<script>self.__next_f.push([1,{escaped}])</script>");
+        let error = ModelCatalog::parse_page(&page).unwrap_err().to_string();
+        assert!(error.contains("directory"), "{error}");
+    }
+
+    #[test]
+    fn host_extraction_ignores_scheme_path_port_and_userinfo() {
+        assert_eq!(
+            host_of("https://api.deepseek.com/v1").as_deref(),
+            Some("api.deepseek.com")
+        );
+        assert_eq!(
+            host_of("http://API.Example.com:8080/x").as_deref(),
+            Some("api.example.com")
+        );
+        assert_eq!(host_of("user:pw@host.tld/v1").as_deref(), Some("host.tld"));
+        assert_eq!(host_of("   "), None);
+    }
+
+    #[test]
+    fn a_saved_copy_round_trips_and_only_a_fetched_one_is_fresh() {
+        let directory = std::env::temp_dir().join(format!(
+            "rayrag-model-catalog-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        // cache_path deliberately points at the directory above the web root,
+        // so create a static/ child first; otherwise the write-temp path escapes
+        // to the shared global temp directory and parallel test users collide on
+        // /tmp/model_catalog.json.tmp.
+        let static_dir = directory.join("static");
+        std::fs::create_dir_all(&static_dir).unwrap();
+        let path = cache_path(static_dir.to_str().unwrap());
+        assert_eq!(path.file_name().unwrap(), CACHE_FILE);
+        assert!(
+            path.parent()
+                .is_some_and(|parent| parent.ends_with("..") || parent.exists())
+        );
+
+        let mut catalog = ModelCatalog::parse_page(&sample_page()).unwrap();
+        // A parsed copy has never been fetched, so it is never "fresh": the first
+        // lookup after a restart must be allowed to refresh it.
+        assert!(!catalog.is_fresh(now_ms()));
+        catalog.fetched_at = now_ms();
+        assert!(catalog.is_fresh(now_ms()));
+        assert!(!catalog.is_fresh(catalog.fetched_at + CATALOG_TTL_MS + 1));
+
+        catalog.save_to(&path).unwrap();
+        // No stray temporary file is left behind by the rename.
+        assert!(!path.with_extension("json.tmp").exists());
+        let restored = ModelCatalog::load_from(&path).unwrap();
+        assert_eq!(restored.provider_count(), 1);
+        assert_eq!(restored.model_count(), 2);
+        assert_eq!(restored.fetched_at, catalog.fetched_at);
+        assert_eq!(
+            restored.providers[0].models[0].name,
+            catalog.providers[0].models[0].name
+        );
+
+        // A file that is not a catalogue is rejected with its path named.
+        let broken = directory.join("broken.json");
+        std::fs::write(&broken, "{not json").unwrap();
+        let error = ModelCatalog::load_from(&broken).unwrap_err().to_string();
+        assert!(error.contains("broken.json"), "{error}");
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+}

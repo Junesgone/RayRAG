@@ -379,4 +379,123 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn every_character_in_the_alphabet_can_be_drawn() {
+        assert_eq!(ALPHABET.len(), 36);
+        for byte in ALPHABET {
+            let character = *byte as char;
+            let rows = glyph(character).unwrap_or_else(|| panic!("no glyph for {character}"));
+            assert_eq!(rows.len(), 7);
+            for row in rows {
+                assert_eq!(
+                    row.len(),
+                    5,
+                    "{character} row {row:?} is not five cells wide"
+                );
+                assert!(row.chars().all(|cell| cell == '0' || cell == '1'));
+            }
+            // A blank glyph would render nothing and leave the answer unreadable.
+            let ink: usize = rows
+                .iter()
+                .map(|row| row.chars().filter(|cell| *cell == '1').count())
+                .sum();
+            assert!(ink >= 8, "{character} has only {ink} ink cells");
+        }
+        // Lower case is drawn as the upper-case glyph, and unknown characters are refused.
+        assert!(glyph('a').is_some());
+        assert!(glyph('-').is_none());
+        assert!(glyph('中').is_none());
+    }
+
+    #[test]
+    fn the_image_is_a_real_png_of_the_expected_size() {
+        let png = render_png("A7K2").unwrap();
+        // PNG signature, so this is not a placeholder string pretending to be an image.
+        assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n", "not a PNG");
+        let decoded = image::load_from_memory(&png).unwrap().to_rgb8();
+        assert_eq!(decoded.dimensions(), (IMAGE_WIDTH, IMAGE_HEIGHT));
+        // The glyphs put ink on the canvas, and the canvas is not one flat colour.
+        let distinct: std::collections::HashSet<[u8; 3]> = decoded
+            .pixels()
+            .map(|pixel| [pixel[0], pixel[1], pixel[2]])
+            .collect();
+        assert!(
+            distinct.len() > 20,
+            "only {} distinct colours",
+            distinct.len()
+        );
+        assert!(
+            decoded
+                .pixels()
+                .any(|pixel| pixel[0] < 100 && pixel[2] < 140),
+            "no dark ink was drawn"
+        );
+        // The noise is seeded from the answer, so one answer always draws one picture.
+        assert_eq!(png, render_png("A7K2").unwrap());
+        assert_ne!(png, render_png("A7K3").unwrap());
+        assert!(render_png("").is_err());
+        // A code that cannot be drawn is an error, not a blank image.
+        assert!(render_png("A-").is_err());
+    }
+
+    #[test]
+    fn an_answer_is_case_insensitive_single_use_and_short_lived() {
+        let store = CaptchaStore::new();
+        let issued = store.issue_at("Admin@Example.com", "abcd", 1_000);
+        assert_eq!(issued, "ABCD", "answers are stored upper case");
+        assert!(
+            store.has_pending_at("admin@example.com", 1_500),
+            "addresses match case-insensitively"
+        );
+        // A wrong answer leaves the question standing.
+        assert!(!store.verify_at("admin@example.com", "ZZZZ", 2_000));
+        assert!(store.has_pending_at("admin@example.com", 2_100));
+        // The right answer, in any case, with surrounding spaces, is accepted once.
+        assert!(store.verify_at("admin@example.com", " abcd ", 3_000));
+        assert!(
+            !store.verify_at("admin@example.com", "abcd", 3_001),
+            "a used answer is spent"
+        );
+        assert!(!store.has_pending_at("admin@example.com", 3_100));
+        // Another address never inherits the answer.
+        store.issue_at("someone@example.com", "WXYZ", 1_000);
+        assert!(!store.verify_at("other@example.com", "WXYZ", 1_100));
+        // And the answer expires on time, not later.
+        assert!(store.has_pending_at(
+            "someone@example.com",
+            1_000 + CAPTCHA_TTL_SECONDS * 1000 - 1
+        ));
+        assert!(!store.verify_at(
+            "someone@example.com",
+            "WXYZ",
+            1_000 + CAPTCHA_TTL_SECONDS * 1000
+        ));
+        // The wall-clock helpers agree with the explicit-clock ones for a fresh question.
+        let fresh = CaptchaStore::new();
+        fresh.issue("now@example.com");
+        assert!(fresh.has_pending("NOW@example.com"));
+        assert!(!fresh.has_pending("nobody@example.com"));
+    }
+
+    #[test]
+    fn generated_answers_use_the_alphabet_and_the_documented_length() {
+        for _ in 0..50 {
+            let code = generate();
+            assert_eq!(code.chars().count(), CAPTCHA_LENGTH);
+            assert!(
+                code.chars()
+                    .all(|character| ALPHABET.contains(&(character as u8)))
+            );
+        }
+        // Two answers in a row are not the same picture of the same text.
+        let answers: std::collections::HashSet<String> = (0..20).map(|_| generate()).collect();
+        assert!(
+            answers.len() > 1,
+            "the generator returned one value twenty times"
+        );
+    }
+}

@@ -160,4 +160,98 @@ impl Embedder for OpenAIEmbedder {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn flattens_standard_openai_embedding() {
+        let value = serde_json::json!([0.1, 0.2, 0.3]);
+        assert_eq!(flatten_embedding(&value), Some(vec![0.1, 0.2, 0.3]));
+    }
+
+    #[test]
+    fn flattens_llama_cpp_nested_embedding() {
+        let value = serde_json::json!([[0.1, 0.2, 0.3]]);
+        assert_eq!(flatten_embedding(&value), Some(vec![0.1, 0.2, 0.3]));
+    }
+
+    #[test]
+    fn rejects_non_array_embedding() {
+        assert_eq!(flatten_embedding(&serde_json::json!("nope")), None);
+        assert_eq!(flatten_embedding(&serde_json::json!(42)), None);
+        assert_eq!(flatten_embedding(&serde_json::json!([[[]]])), None);
+        assert_eq!(flatten_embedding(&serde_json::json!([1, "bad"])), None);
+        assert_eq!(flatten_embedding(&serde_json::json!([1e100])), None);
+        assert_eq!(flatten_embedding(&serde_json::json!([])), None);
+    }
+
+    #[test]
+    fn parses_standard_openai_response_shape() {
+        let body = serde_json::json!({
+            "object": "list",
+            "data": [
+                {"embedding": [3.0, 4.0], "index": 1},
+                {"embedding": [1.0, 2.0], "index": 0}
+            ]
+        });
+        let parsed = parse_embeddings(&body, 2).unwrap();
+        assert_eq!(parsed, vec![vec![1.0, 2.0], vec![3.0, 4.0]]);
+    }
+
+    #[test]
+    fn rejects_ambiguous_indices_and_malformed_batches() {
+        use serde_json::json;
+        let good = json!({"index": 0, "embedding": [1.0, 2.0]});
+        for (item, expected) in [
+            (json!({"index": 0, "embedding": [1, 2]}), "duplicate index"),
+            (json!({"index": 2, "embedding": [1, 2]}), "out of range"),
+            (json!({"embedding": [1, 2]}), "invalid index"),
+            (json!({"index": null, "embedding": [1, 2]}), "invalid index"),
+            (
+                json!({"index": 1, "embedding": [1, "x"]}),
+                "invalid or empty vector",
+            ),
+            (
+                json!({"index": 1, "embedding": [1]}),
+                "inconsistent vector dimensions",
+            ),
+        ] {
+            let error = parse_embeddings(&json!([good, item]), 2).unwrap_err();
+            assert!(error.to_string().contains(expected), "{error}");
+        }
+        assert!(parse_embeddings(&json!([good]), 2).is_err());
+    }
+
+    #[tokio::test]
+    async fn http_errors_keep_status_and_configuration_guidance_without_provider_body() {
+        use axum::{Router, http::StatusCode, routing::post};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let app = Router::new().route(
+            "/embeddings",
+            post(|| async { (StatusCode::UNAUTHORIZED, "private diagnostic body") }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let result = OpenAIEmbedder::new(&base, "test-key", "test-model")
+            .embed(&["text"])
+            .await;
+        server.abort();
+        let error = result.unwrap_err().to_string();
+        assert!(
+            error.contains("401") && error.contains("API URL, API key and model"),
+            "{error}"
+        );
+        assert!(!error.contains("private diagnostic body"), "{error}");
+    }
+
+    #[test]
+    fn parses_llama_cpp_bare_array_shape() {
+        let body = serde_json::json!([
+            {"embedding": [[1.0, 2.0]]},
+            {"embedding": [[3.0, 4.0]]}
+        ]);
+        let parsed = parse_embeddings(&body, 2).unwrap();
+        assert_eq!(parsed, vec![vec![1.0, 2.0], vec![3.0, 4.0]]);
+    }
+}

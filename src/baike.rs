@@ -171,4 +171,31 @@ impl BaikeProvider for BaikeClient {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn strips_html_from_baike_description() {
+        assert_eq!(
+            strip_html("<b>中山市</b>是中国广东省下辖的地级市。"),
+            "中山市是中国广东省下辖的地级市。"
+        );
+        assert_eq!(strip_html("<p>a &amp; b</p>"), "a &amp; b");
+        assert_eq!(strip_html("no tags"), "no tags");
+    }
+
+    #[tokio::test]
+    async fn lemma_card_parses_zhang_san_example() {
+        // Deterministic parse of a fixture-shaped payload without network.
+        let json = r#"{"title":"中山市","url":"https://baike.baidu.com/item/%E4%B8%AD%E5%B1%B1%E5%B8%82","description":"<b>中山市</b>，古称香山，是广东省下辖的地级市。"}"#;
+        let value: Value = serde_json::from_str(json).unwrap();
+        let title = value.get("title").and_then(Value::as_str).unwrap();
+        let description = value.get("description").and_then(Value::as_str).unwrap();
+        assert_eq!(title, "中山市");
+        assert_eq!(
+            strip_html(description),
+            "中山市，古称香山，是广东省下辖的地级市。"
+        );
+    }
+}

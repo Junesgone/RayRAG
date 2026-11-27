@@ -190,4 +190,83 @@ pub fn searxng_results_to_tool_rows(results: &[SearxngResult]) -> Vec<Value> {
         .collect()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn rows_are_ragflow_shaped() {
+        let rows = searxng_results_to_tool_rows(&[SearxngResult {
+            title: "t".into(),
+            link: "https://l".into(),
+            snippet: "s".into(),
+            engine: "google".into(),
+            score: 1.0,
+            category: "general".into(),
+        }]);
+        assert_eq!(rows[0]["title"], "t");
+        assert_eq!(rows[0]["link"], "https://l");
+        assert_eq!(rows[0]["snippet"], "s");
+        assert_eq!(rows[0]["engine"], "google");
+    }
+
+    #[test]
+    fn parse_results_extracts_rows() {
+        let payload = serde_json::json!({
+            "results": [
+                {"title": "a", "url": "https://a", "content": "ca", "engine": "bing", "score": 0.9, "category": "general"},
+                {"title": "b", "url": "https://b", "content": "cb"},
+                {"title": "", "url": ""}
+            ]
+        });
+        let results = SearxngClient::parse_results(&payload).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].title, "a");
+        assert_eq!(results[0].engine, "bing");
+        assert_eq!(results[0].score, 0.9);
+    }
+
+    #[test]
+    fn parse_results_rejects_missing_array() {
+        let error = SearxngClient::parse_results(&serde_json::json!({"foo": 1})).unwrap_err();
+        assert!(error.to_string().contains("results"));
+    }
+
+    #[tokio::test]
+    async fn missing_url_or_query_is_rejected() {
+        let client = SearxngClient::default();
+        let error = client
+            .search(&SearxngRequest {
+                query: "q".into(),
+                searxng_url: "".into(),
+                top_n: 5,
+            })
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("instance URL"));
+        let error = client
+            .search(&SearxngRequest {
+                query: "".into(),
+                searxng_url: "http://localhost:4000".into(),
+                top_n: 5,
+            })
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("query"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a live SearXNG instance (SEARXNG_URL)"]
+    async fn live_searxng_search() {
+        let url = std::env::var("SEARXNG_URL").expect("SEARXNG_URL must be set");
+        let results = SearxngClient::default()
+            .search(&SearxngRequest {
+                query: "RAGFlow".into(),
+                searxng_url: url,
+                top_n: 5,
+            })
+            .await
+            .unwrap();
+        assert!(!results.is_empty());
+    }
+}

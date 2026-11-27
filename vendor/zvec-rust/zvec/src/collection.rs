@@ -928,4 +928,35 @@ unsafe fn collect_group_results(
     groups
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn collect_docs_handles_null_pointer() {
+        let docs = unsafe { collect_docs(ptr::null_mut(), 0) };
+        assert!(docs.is_empty());
+    }
+
+    #[test]
+    fn collect_group_results_handles_null_pointer() {
+        let groups = unsafe { collect_group_results(ptr::null_mut(), 0) };
+        assert!(groups.is_empty());
+    }
+
+    #[test]
+    fn collect_group_results_null_array_wins_over_a_nonzero_count() {
+        // The engine reports "no groups" as a null array and can leave a stale
+        // count next to it; the null must win instead of being dereferenced.
+        let groups = unsafe { collect_group_results(ptr::null_mut(), 99) };
+        assert!(groups.is_empty());
+    }
+
+    #[test]
+    fn collect_docs_handles_zero_count() {
+        // Even with a non-null pointer, zero count should return empty
+        let mut fake: *mut zvec_rust_sys::zvec_doc_t = ptr::null_mut();
+        let docs = unsafe { collect_docs(&mut fake as *mut _, 0) };
+        assert!(docs.is_empty());
+    }
+}

@@ -57,4 +57,51 @@ pub fn append_api_path(url: &str, endpoint: &str) -> String {
     parsed.to_string()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn ensure_v1_matches_upstream_docstring_examples() {
+        assert_eq!(
+            ensure_v1("https://api.example.com"),
+            "https://api.example.com/v1"
+        );
+        assert_eq!(
+            ensure_v1("https://api.example.com/v1"),
+            "https://api.example.com/v1"
+        );
+        assert_eq!(
+            ensure_v1("https://api.example.com/v2/chat"),
+            "https://api.example.com/v2/chat"
+        );
+        assert_eq!(
+            ensure_v1("https://api.example.com/api/v3"),
+            "https://api.example.com/api/v3"
+        );
+        assert_eq!(
+            ensure_v1("https://generativelanguage.googleapis.com/v1beta/openai/"),
+            "https://generativelanguage.googleapis.com/v1beta/openai/"
+        );
+        assert_eq!(ensure_v1("https://x.com/"), "https://x.com/v1");
+        assert_eq!(ensure_v1(""), "");
+        assert_eq!(ensure_v1("not a url"), "not a url");
+    }
+
+    #[test]
+    fn append_api_path_appends_once_and_preserves_base() {
+        assert_eq!(
+            append_api_path("http://host/api", "rerank"),
+            "http://host/api/rerank"
+        );
+        assert_eq!(
+            append_api_path("http://host/api/rerank", "rerank"),
+            "http://host/api/rerank"
+        );
+        assert_eq!(
+            append_api_path("http://host/v1", "/embeddings/"),
+            "http://host/v1/embeddings"
+        );
+        assert_eq!(append_api_path("", "x"), "");
+    }
+}

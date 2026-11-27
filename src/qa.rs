@@ -350,4 +350,106 @@ pub fn qa_doc_fields(
     m
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn rm_prefix_strips_common_prefixes() {
+        assert_eq!(rm_prefix("问题：水产怎么养"), "水产怎么养");
+        assert_eq!(rm_prefix("Q: What is pH?"), "What is pH?");
+        assert_eq!(rm_prefix("Answer: 42"), "42");
+        assert_eq!(rm_prefix("  answer： 直接回答"), "直接回答");
+        assert_eq!(rm_prefix("普通文本"), "普通文本");
+    }
+
+    #[test]
+    fn be_adoc_builds_weighted_content() {
+        let (content, ltks) = be_adoc("水质", "保持pH中性", false);
+        assert_eq!(content, "问题：水质\t回答：保持pH中性");
+        assert_eq!(ltks, vec!["水质".to_string()]);
+        let (content_en, _) = be_adoc("water", "keep pH neutral", true);
+        assert_eq!(content_en, "Question: water\tAnswer: keep pH neutral");
+    }
+
+    #[test]
+    fn detect_delimiter_prefers_tab_on_ties() {
+        assert_eq!(detect_delimiter("a\tb\nc\td\n"), '\t');
+        assert_eq!(detect_delimiter("a,b\nc,d\n"), ',');
+        // tie → tab
+        assert_eq!(detect_delimiter("a\tb\nc,d\n"), '\t');
+    }
+
+    #[test]
+    fn parse_qa_text_handles_continuations_and_fails() {
+        let text = "问题1\t答案1\n问题2\t答案2\n续行1\n续行2\n问题3\t答案3\n坏行";
+        let (pairs, fails) = parse_qa_text(text, '\t');
+        assert_eq!(pairs.len(), 3);
+        // 问题2's answer absorbs the two continuation lines
+        assert!(pairs[1].answer.contains("续行1"));
+        assert!(pairs[1].answer.contains("续行2"));
+        // trailing bad line after an open question becomes its answer (RAGFlow semantics)
+        assert!(fails.is_empty(), "no fail while question open: {fails:?}");
+        assert!(pairs[2].answer.contains("坏行"));
+    }
+
+    #[test]
+    fn parse_qa_text_fails_without_open_question() {
+        let text = "坏行1\n坏行2\n问题1\t答案1\n";
+        let (pairs, fails) = parse_qa_text(text, '\t');
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(fails, vec![1, 2]);
+    }
+
+    #[test]
+    fn parse_qa_csv_handles_quoted_fields() {
+        let text = "\"Q1\",\"A, with comma\"\nQ2,A2\n";
+        let (pairs, fails) = parse_qa_csv(text, ',');
+        assert!(fails.is_empty());
+        assert_eq!(pairs.len(), 2);
+        assert_eq!(pairs[0].question, "Q1");
+        assert_eq!(pairs[0].answer, "A, with comma");
+    }
+
+    #[test]
+    fn md_question_level_parses_headings() {
+        assert_eq!(
+            md_question_level("## 水质管理"),
+            (2, "水质管理".to_string())
+        );
+        assert_eq!(md_question_level("# 一、概述"), (1, "一、概述".to_string()));
+        assert_eq!(md_question_level("####### too deep"), (0, String::new()));
+        assert_eq!(md_question_level("plain text"), (0, String::new()));
+    }
+
+    #[test]
+    fn parse_qa_markdown_builds_question_stack() {
+        let md = "# 概述\n这是概述内容\n## 水质\n水质怎么测\n## 投喂\n投喂量多少\n正文第二行\n";
+        let pairs = parse_qa_markdown(md);
+        assert_eq!(pairs.len(), 3);
+        assert_eq!(pairs[0].question, "概述");
+        assert!(pairs[0].answer.contains("这是概述内容"));
+        assert_eq!(pairs[1].question, "概述\n水质");
+        assert!(pairs[1].answer.contains("水质怎么测"));
+        assert_eq!(pairs[2].question, "概述\n投喂");
+        assert!(pairs[2].answer.contains("投喂量多少"));
+        assert!(pairs[2].answer.contains("正文第二行"));
+    }
+
+    #[test]
+    fn parse_qa_markdown_skips_code_fences() {
+        let md = "# Q\n```\n# not a question\n```\nanswer text\n";
+        let pairs = parse_qa_markdown(md);
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].question, "Q");
+        assert!(pairs[0].answer.contains("# not a question"));
+    }
+
+    #[test]
+    fn parse_qa_file_dispatch_rejects_unsupported() {
+        assert!(parse_qa_file("data.pdf", "x").is_err());
+        let out = parse_qa_file("qa.txt", "q1\ta1\nq2\ta2\n").unwrap();
+        assert_eq!(out.len(), 2);
+        assert!(out[0].0.starts_with("问题：q1"));
+    }
+}

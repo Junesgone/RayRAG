@@ -180,4 +180,82 @@ impl EmailConfig {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
 
+    fn sample_config() -> EmailConfig {
+        EmailConfig {
+            smtp_server: "smtp.example.com".into(),
+            smtp_port: 587,
+            email: "sender@example.com".into(),
+            smtp_username: "sender@example.com".into(),
+            password: "secret".into(),
+            sender_name: "测试发送者".into(),
+        }
+    }
+
+    #[test]
+    fn rejects_missing_config() {
+        let client = EmailClient;
+        let result = client.send(
+            &EmailConfig::default(),
+            &EmailRequest {
+                to_email: "a@b.com".into(),
+                ..Default::default()
+            },
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("SMTP server"));
+    }
+
+    #[test]
+    fn rejects_missing_recipient() {
+        let client = EmailClient;
+        let result = client.send(&sample_config(), &EmailRequest::default());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("to_email"));
+    }
+
+    #[test]
+    fn connection_failure_is_classified_as_transport_error() {
+        // 127.0.0.1:1 不可达 → 连接类错误
+        let client = EmailClient;
+        let config = EmailConfig {
+            smtp_server: "127.0.0.1".into(),
+            smtp_port: 1,
+            ..sample_config()
+        };
+        let (success, message) = client
+            .send(
+                &config,
+                &EmailRequest {
+                    to_email: "a@b.com".into(),
+                    subject: "hello".into(),
+                    content: "body".into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(!success, "unexpected success");
+        assert!(
+            message.contains("SMTP error") || message.contains("Failed to connect"),
+            "unexpected message: {message}"
+        );
+    }
+
+    #[test]
+    fn config_from_params_and_env_prefers_params() {
+        let params = serde_json::Map::from_iter([
+            ("smtp_server".into(), json!("smtp.param.com")),
+            ("email".into(), json!("p@param.com")),
+        ]);
+        unsafe { std::env::set_var("EMAIL_SMTP_SERVER", "smtp.env.com") };
+        let config = EmailConfig::from_params_and_env(&params);
+        assert_eq!(config.smtp_server, "smtp.param.com");
+        assert_eq!(config.smtp_port, 465);
+        assert_eq!(config.email, "p@param.com");
+        unsafe { std::env::remove_var("EMAIL_SMTP_SERVER") };
+    }
+}

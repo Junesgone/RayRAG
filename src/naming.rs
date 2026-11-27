@@ -46,4 +46,20 @@ fn split_counter(stem: &str) -> (&str, Option<usize>) {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn increments_existing_counter_before_extension() {
+        let existing = ["report.pdf", "report(1).pdf", "report(2).pdf"];
+        assert_eq!(
+            duplicate_name("report.pdf", |name| existing.contains(&name)).unwrap(),
+            "report(3).pdf"
+        );
+        assert_eq!(
+            duplicate_name("report(1).pdf", |name| existing.contains(&name)).unwrap(),
+            "report(3).pdf"
+        );
+    }
+}

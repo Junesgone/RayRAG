@@ -1567,4 +1567,509 @@ pub fn search_model_aliases(query: &str, limit: usize) -> Vec<&'static AllModelE
     seen.into_values().collect()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[tokio::test]
+    async fn capability_verification_probes_chat_embedding_and_rerank() {
+        use axum::routing::post;
+        let app = axum::Router::new()
+            .route(
+                "/v1/chat/completions",
+                post(|| async {
+                    axum::Json(serde_json::json!({
+                        "choices": [{ "message": { "content": "Hi" } }]
+                    }))
+                }),
+            )
+            .route(
+                "/v1/embeddings",
+                post(|| async {
+                    axum::Json(serde_json::json!({
+                        "data": [{ "embedding": [0.1, 0.2] }]
+                    }))
+                }),
+            )
+            .route(
+                "/v1/rerank",
+                post(|| async {
+                    axum::Json(serde_json::json!({
+                        "results": [{ "index": 0, "relevance_score": 0.9 }]
+                    }))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        verify_provider_capabilities(
+            "openai",
+            "OpenAI",
+            &format!("http://{address}/v1"),
+            None,
+            &[
+                ("gpt-audit".to_string(), vec![ModelCapability::Chat]),
+                ("emb-audit".to_string(), vec![ModelCapability::Embedding]),
+                ("rer-audit".to_string(), vec![ModelCapability::Rerank]),
+            ],
+        )
+        .await
+        .unwrap();
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn capability_verification_fails_closed_on_chat_4xx() {
+        let app = axum::Router::new().route(
+            "/v1/chat/completions",
+            axum::routing::post(|| async { axum::http::StatusCode::UNAUTHORIZED }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let result = verify_provider_capabilities(
+            "openai",
+            "OpenAI",
+            &format!("http://{address}/v1"),
+            None,
+            &[("gpt-audit".to_string(), vec![ModelCapability::Chat])],
+        )
+        .await;
+        server.abort();
+        assert!(result.is_err(), "non-2xx chat probe must fail closed");
+    }
+
+    #[test]
+    fn provider_key_normalization_matches_ragflow_json_credentials() {
+        assert_eq!(
+            normalize_provider_api_key(
+                "replicate",
+                "Replicate",
+                Some(r#"{"api_key":"r8_test","extra":true}"#)
+            )
+            .as_deref(),
+            Some("r8_test")
+        );
+        assert_eq!(
+            normalize_provider_api_key(
+                "volcengine",
+                "VolcEngine",
+                Some(r#"{"ark_api_key":"ark_test"}"#)
+            )
+            .as_deref(),
+            Some("ark_test")
+        );
+        assert_eq!(
+            normalize_provider_api_key("openrouter", "OpenRouter", Some("plain-key")).as_deref(),
+            Some("plain-key")
+        );
+        assert_eq!(
+            normalize_provider_api_key(
+                "new-api",
+                "New API",
+                Some(r#"{"not_api_key":"preserved"}"#)
+            )
+            .as_deref(),
+            Some(r#"{"not_api_key":"preserved"}"#)
+        );
+        assert_eq!(
+            normalize_provider_api_key("replicate", "Replicate", Some(r#"{"api_key":null}"#)),
+            None
+        );
+    }
+
+    #[test]
+    fn api_key_deserializer_accepts_string_object_and_null_only() {
+        #[derive(Deserialize)]
+        struct Secret {
+            #[serde(default, deserialize_with = "deserialize_optional_api_key")]
+            api_key: Option<String>,
+        }
+
+        assert_eq!(
+            serde_json::from_str::<Secret>(r#"{"api_key":"plain"}"#)
+                .unwrap()
+                .api_key
+                .as_deref(),
+            Some("plain")
+        );
+        assert_eq!(
+            serde_json::from_str::<Secret>(r#"{"api_key":{"api_key":"nested"}}"#)
+                .unwrap()
+                .api_key
+                .as_deref(),
+            Some(r#"{"api_key":"nested"}"#)
+        );
+        assert!(
+            serde_json::from_str::<Secret>(r#"{"api_key":42}"#).is_err(),
+            "numeric credentials must not be silently stringified"
+        );
+        assert_eq!(
+            serde_json::from_str::<Secret>(r#"{"api_key":null}"#)
+                .unwrap()
+                .api_key,
+            None
+        );
+    }
+
+    #[test]
+    fn inference_base_adds_v1_only_for_origin_based_local_providers() {
+        assert_eq!(
+            normalize_inference_base("ollama", "Ollama", "http://127.0.0.1:11434/"),
+            "http://127.0.0.1:11434/v1"
+        );
+        assert_eq!(
+            normalize_inference_base("vllm", "VLLM", "http://127.0.0.1:8000/custom"),
+            "http://127.0.0.1:8000/custom"
+        );
+        assert_eq!(
+            normalize_inference_base("openrouter", "OpenRouter", "https://openrouter.ai/api/v1/"),
+            "https://openrouter.ai/api/v1"
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_connection_probe_is_read_only_and_requires_success_json() {
+        use axum::{Json, Router, http::HeaderMap, routing::get};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = Router::new().route(
+            "/v1/models",
+            get(|headers: HeaderMap| async move {
+                assert_eq!(
+                    headers
+                        .get(reqwest::header::AUTHORIZATION)
+                        .and_then(|value| value.to_str().ok()),
+                    Some("Bearer probe-key")
+                );
+                Json(serde_json::json!({ "data": [{ "id": "probe-model" }] }))
+            }),
+        );
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        verify_provider_connection(
+            "openai",
+            "OpenAI",
+            &format!("http://{address}/v1"),
+            Some("probe-key"),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[test]
+    fn openai_compatible_inference_covers_all_ragflow_hints() {
+        let raw = serde_json::json!({
+            "data": [
+                {"id": "Qwen3-Embedding-4B", "max_model_len": 32768},
+                {"id": "mxbai-rerank-large-v2"},
+                {"id": "Qwen2.5-VL-7B", "context_length": 16384},
+                {"id": "whisper-large-v3"},
+                {"id": "kokoro-tts"}
+            ]
+        });
+        let models = parse_openai_compatible_models(&raw);
+        assert_eq!(models[0].model_types, vec![ModelCapability::Embedding]);
+        assert_eq!(models[0].max_tokens, 32768);
+        assert_eq!(models[1].model_types, vec![ModelCapability::Rerank]);
+        assert_eq!(
+            models[2].model_types,
+            vec![ModelCapability::Chat, ModelCapability::ImageToText]
+        );
+        assert_eq!(models[3].model_types, vec![ModelCapability::SpeechToText]);
+        assert_eq!(models[4].model_types, vec![ModelCapability::TextToSpeech]);
+    }
+
+    #[test]
+    fn openrouter_uses_modalities_features_and_provider_limits() {
+        let raw = serde_json::json!({
+            "data": [{
+                "id": "vendor/multimodal",
+                "architecture": {
+                    "input_modalities": ["text", "image", "audio"],
+                    "output_modalities": ["text"]
+                },
+                "supported_parameters": ["tools", "reasoning"],
+                "top_provider": {"max_completion_tokens": 65536}
+            }]
+        });
+        let models = parse_openrouter_models(&raw);
+        assert_eq!(
+            models[0].model_types,
+            vec![
+                ModelCapability::Chat,
+                ModelCapability::ImageToText,
+                ModelCapability::SpeechToText
+            ]
+        );
+        assert_eq!(models[0].features, vec!["is_tools", "thinking"]);
+        assert_eq!(models[0].max_tokens, 65536);
+    }
+
+    #[test]
+    fn volcengine_filters_shutdown_and_derives_modalities() {
+        let raw = serde_json::json!({
+            "data": [
+                {"id": "gone", "status": "Shutdown", "domain": "Embedding"},
+                {
+                    "id": "doubao-vl",
+                    "status": "Running",
+                    "modalities": {
+                        "input_modalities": ["image"],
+                        "output_modalities": ["text"]
+                    },
+                    "features": {"tools": {"function_calling": true}},
+                    "token_limits": {
+                        "max_reasoning_token_length": 1,
+                        "max_input_token_length": 131072
+                    }
+                }
+            ]
+        });
+        let models = parse_volcengine_models(&raw);
+        assert_eq!(models.len(), 1);
+        assert_eq!(
+            models[0].model_types,
+            vec![ModelCapability::Chat, ModelCapability::ImageToText]
+        );
+        assert_eq!(models[0].features, vec!["is_tools", "thinking"]);
+        assert_eq!(models[0].status.as_deref(), Some("Running"));
+    }
+
+    #[test]
+    fn ollama_and_localai_details_keep_their_distinct_names_and_context_keys() {
+        let ollama = serde_json::json!({
+            "capabilities": ["completion", "vision", "tools"],
+            "details": {"family": "qwen2"},
+            "model_info": {"qwen2.context_length": 32768}
+        });
+        let local = serde_json::json!({
+            "capabilities": ["embedding"],
+            "model_info": {"general.context_length": 4096}
+        });
+        let ollama = parse_ollama_detail("qwen2.5:7b", &ollama, false).unwrap();
+        let local = parse_ollama_detail("bge-m3:latest", &local, true).unwrap();
+        assert_eq!(ollama.name, "qwen2.5:7b");
+        assert_eq!(ollama.max_tokens, 32768);
+        assert_eq!(local.name, "bge-m3");
+        assert_eq!(local.model_types, vec![ModelCapability::Embedding]);
+    }
+
+    #[test]
+    fn model_urls_match_provider_specific_discovery_contracts() {
+        assert_eq!(
+            model_list_url(
+                ProviderDialect::OpenAiCompatible,
+                "http://localhost:8000/custom/v1/chat"
+            )
+            .unwrap()
+            .as_str(),
+            "http://localhost:8000/custom/v1/models"
+        );
+        assert_eq!(
+            model_list_url(ProviderDialect::OpenRouter, "https://openrouter.ai/api/v1")
+                .unwrap()
+                .as_str(),
+            "https://openrouter.ai/api/v1/models?output_modalities=all"
+        );
+        assert_eq!(
+            model_list_url(
+                ProviderDialect::VolcEngine,
+                "https://ark.cn-beijing.volces.com/api/v3"
+            )
+            .unwrap()
+            .as_str(),
+            "https://ark.cn-beijing.volces.com/api/v3/models"
+        );
+    }
+
+    #[test]
+    fn seeded_provider_catalog_covers_all_ragflow_fixtures() {
+        let catalog = provider_model_catalog();
+        // All 61 RAGFlow conf/models fixtures parse into catalog entries
+        // (20 baseline + 40 added 2026-08-06 from the live v0.26.2 container,
+        // plus deerapi added 2026-08-13 from llm_factories.json).
+        assert_eq!(catalog.len(), 61);
+        let total_models: usize = catalog.iter().map(|p| p.models.len()).sum();
+        assert!(
+            total_models > 500,
+            "expected 500+ seeded models, got {total_models}"
+        );
+        // Multi-region URL maps survive (aliyun: default/singapore/us).
+        let aliyun = catalog.iter().find(|p| p.factory == "aliyun").unwrap();
+        assert!(aliyun.url.contains_key("singapore"));
+        assert!(aliyun.url.contains_key("us"));
+        assert!(aliyun.url_suffix.contains_key("rerank"));
+        // Heterogeneous fixtures parse leniently (baidu "Name", huggingface "url-suffix").
+        let baidu = catalog.iter().find(|p| p.factory == "baidu").unwrap();
+        assert_eq!(baidu.name, "Baidu");
+        assert!(!baidu.models.is_empty());
+        let hf = catalog.iter().find(|p| p.factory == "huggingface").unwrap();
+        assert_eq!(hf.name, "HuggingFace");
+        assert_eq!(hf.models.len(), 1);
+        // Dynamic providers carry an empty static list.
+        assert!(
+            catalog
+                .iter()
+                .find(|p| p.factory == "ollama")
+                .unwrap()
+                .models
+                .is_empty()
+        );
+        // list_models_for resolves by factory key; vision/asr normalize onto RayRAG names.
+        assert_eq!(list_models_for("deepseek").len(), 3);
+        let moonshot = list_models_for("moonshot");
+        assert!(
+            moonshot
+                .iter()
+                .any(|m| m.model_types.contains(&"image2text".to_string()))
+        );
+        assert!(moonshot.iter().any(|m| m.thinking));
+        // Provider id/name resolution maps aliases onto fixtures.
+        assert_eq!(
+            resolve_model_factory("zhipu-ai", "Zhipu AI").as_deref(),
+            Some("zhipu-ai")
+        );
+        assert_eq!(
+            resolve_model_factory("qwen", "Aliyun").as_deref(),
+            Some("aliyun")
+        );
+        assert_eq!(
+            resolve_model_factory("volcengine", "VolcEngine").as_deref(),
+            Some("volcengine")
+        );
+        assert_eq!(resolve_model_factory("unknown", "Nope").as_deref(), None);
+    }
+
+    #[test]
+    fn conf_models_catalog_covers_newest_ragflow_models() {
+        // Spot-check models added in recent RAGFlow conf/models catalogs —
+        // regression guard: when conf/models/*.json grows, the embedded
+        // fixtures must be refreshed (they are currently verbatim copies).
+        let catalog = provider_model_catalog();
+        let has = |factory: &str, model: &str| {
+            catalog
+                .iter()
+                .find(|p| p.factory == factory)
+                .is_some_and(|p| p.models.iter().any(|m| m.name == model))
+        };
+        assert!(has("openai", "gpt-5.2-pro"));
+        assert!(has("openai", "gpt-5.2"));
+        assert!(has("openai", "whisper-1"));
+        assert!(has("openai", "tts-1"));
+        assert!(has("deepseek", "deepseek-flash"));
+        assert!(has("deepseek", "deepseek-v4-flash"));
+        assert!(has("deepseek", "deepseek-v4-pro"));
+        assert!(has("zhipu-ai", "glm-5"));
+        assert!(has("zhipu-ai", "glm-5-turbo"));
+        assert!(has("zhipu-ai", "embedding-3"));
+        assert!(has("zhipu-ai", "glm-asr-2512"));
+        assert!(has("zhipu-ai", "glm-tts"));
+        assert!(has("zhipu-ai", "glm-ocr"));
+        assert!(has("zhipu-ai", "rerank"));
+        assert!(has("moonshot", "kimi-k2.6"));
+        assert!(has("minimax", "minimax-m2.7"));
+        assert!(has("xai", "grok-4"));
+        assert!(has("volcengine", "doubao-seed-2-0-pro-260215"));
+        assert!(has("volcengine", "doubao-embedding-vision-251215"));
+        assert!(has("aliyun", "qwen-flash"));
+        assert!(has("aliyun", "text-embedding-v4"));
+        assert!(has("baidu", "ernie-5.0"));
+        assert!(has("cohere", "rerank-v4.0-pro"));
+        assert!(has("cohere", "embed-v4.0"));
+        assert!(has("gitee", "BAAI/bge-m3"));
+        assert!(has("nvidia", "nvidia/nv-embedqa-mistral-7b-v2"));
+        assert!(has("huggingface", "openai/gpt-oss-120b:fastest"));
+        assert!(has("deerapi", "gpt-5-chat-latest"));
+        // The nvidia catalog is the largest fixture (46 models).
+        let nvidia = catalog.iter().find(|p| p.factory == "nvidia").unwrap();
+        assert!(nvidia.models.len() >= 46);
+    }
+
+    #[test]
+    fn factory_llm_infos_maps_factory_to_endpoint_and_models() {
+        let infos = factory_llm_infos();
+        assert_eq!(infos.len(), 61);
+        // Most factories carry a default endpoint (fixture url or preset);
+        // self-hosted engines (ollama/vllm/lmstudio/localai/...) legitimately
+        // resolve to empty until the user configures them.
+        assert!(
+            infos.iter().filter(|info| !info.url.is_empty()).count() >= 50,
+            "expected 50+ factories to resolve a default endpoint"
+        );
+        // OpenAI: chat models are tools-capable, embeddings are not.
+        let openai = infos.iter().find(|info| info.name == "OpenAI").unwrap();
+        let gpt = openai
+            .llm
+            .iter()
+            .find(|m| m.llm_name == "gpt-5.2-pro")
+            .unwrap();
+        assert_eq!(gpt.model_type, "chat");
+        assert!(gpt.is_tools);
+        assert_eq!(gpt.max_tokens, 400000);
+        let embedding = openai
+            .llm
+            .iter()
+            .find(|m| m.llm_name == "text-embedding-3-large")
+            .unwrap();
+        assert_eq!(embedding.model_type, "embedding");
+        assert!(!embedding.is_tools);
+        // Zhipu keeps a rerank row with an empty max_tokens default (8192).
+        let zhipu = infos.iter().find(|info| info.name == "ZHIPU-AI").unwrap();
+        let rerank = zhipu.llm.iter().find(|m| m.llm_name == "rerank").unwrap();
+        assert_eq!(rerank.model_type, "rerank");
+        assert_eq!(rerank.max_tokens, 8192);
+        // Endpoints come from the fixture url.default.
+        assert_eq!(
+            factory_endpoint("deepseek").as_deref(),
+            Some("https://api.deepseek.com")
+        );
+        assert_eq!(
+            factory_endpoint("openai").as_deref(),
+            Some("https://api.openai.com/v1")
+        );
+        // Summary rows are (factory, endpoint, model count).
+        let summary = factory_mapping_summary();
+        assert_eq!(summary.len(), 61);
+        let (name, url, count) = summary.iter().find(|(n, _, _)| n == "Nvidia").unwrap();
+        assert_eq!(url, "https://integrate.api.nvidia.com/v1");
+        assert!(*count >= 46);
+        // The DeerAPI relay resolves to its public OpenAI-compatible base.
+        let (_, deer_url, deer_count) = summary.iter().find(|(n, _, _)| n == "DeerAPI").unwrap();
+        assert_eq!(deer_url, "https://api.deerapi.com/v1");
+        assert!(*deer_count >= 37);
+    }
+    #[test]
+    fn all_models_alias_index_resolves_names_and_aliases() {
+        // Case-insensitive name resolution.
+        let entry = resolve_model_alias("gpt-4o").expect("gpt-4o is in all_models.json");
+        assert_eq!(entry.name, "gpt-4o");
+        assert!(entry.model_types.iter().any(|t| t == "chat"));
+        // Case-insensitive.
+        assert_eq!(
+            resolve_model_alias("GPT-4O").map(|e| &e.name),
+            Some(&"gpt-4o".to_string())
+        );
+        // Unknown alias resolves to nothing.
+        assert!(resolve_model_alias("definitely-not-a-real-model-xyz").is_none());
+    }
+
+    #[test]
+    fn all_models_search_finds_substrings_and_respects_limit() {
+        let hits = search_model_aliases("deepseek", 10);
+        assert!(!hits.is_empty(), "deepseek models must be searchable");
+        assert!(hits.iter().all(|entry| {
+            std::iter::once(&entry.name)
+                .chain(entry.alias.iter())
+                .any(|a| a.to_lowercase().contains("deepseek"))
+        }));
+        assert!(hits.len() <= 10);
+        // Empty query short-circuits.
+        assert!(search_model_aliases("", 10).is_empty());
+        // Limit is honored.
+        assert!(search_model_aliases("gpt", 3).len() <= 3);
+    }
+}

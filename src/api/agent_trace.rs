@@ -378,4 +378,137 @@ pub async fn agent_bot_logs(
     trace_response(state.agent_traces.get(&shared_id, &message_id))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::{WorkflowEventObserver, WorkflowLifecycleEvent};
 
+    fn new_store() -> Arc<AgentTraceStore> {
+        Arc::new(AgentTraceStore::in_memory())
+    }
+
+    #[test]
+    fn trace_key_matches_the_upstream_redis_key() {
+        assert_eq!(trace_key("agent-1", "msg-1"), "agent-1-msg-1-logs");
+    }
+
+    #[test]
+    fn collector_groups_events_per_component_and_persists_progressively() {
+        let store = new_store();
+        let collector =
+            AgentTraceCollector::new(store.clone(), "agent-1", Some("msg-1".to_string()), None);
+        collector.emit(WorkflowLifecycleEvent {
+            event: "node_started",
+            data: serde_json::json!({"component_id": "begin", "component_name": "Begin"}),
+        });
+        collector.emit(WorkflowLifecycleEvent {
+            event: "node_finished",
+            data: serde_json::json!({
+                "component_id": "begin",
+                "component_name": "Begin",
+                "elapsed_time": 0.5,
+                "created_at": 1_700_086_400.0
+            }),
+        });
+        // A second sample for the same component extends its trace, like
+        // upstream's repeated pipeline callbacks.
+        collector.emit(WorkflowLifecycleEvent {
+            event: "node_finished",
+            data: serde_json::json!({
+                "component_id": "begin",
+                "component_name": "Begin",
+                "elapsed_time": 0.25,
+                "created_at": 1_700_086_401.0
+            }),
+        });
+        collector.emit(WorkflowLifecycleEvent {
+            event: "node_started",
+            data: serde_json::json!({"component_id": "retrieval", "component_name": "Retrieval"}),
+        });
+        collector.emit(WorkflowLifecycleEvent {
+            event: "node_finished",
+            data: serde_json::json!({
+                "component_id": "retrieval",
+                "component_name": "Retrieval",
+                "elapsed_time": 1.5,
+                "created_at": 1_700_086_402.0
+            }),
+        });
+        // The store already answers while the run is streaming.
+        let mid = store.get("agent-1", "msg-1").expect("trace persisted");
+        assert_eq!(mid.len(), 2);
+        assert_eq!(mid[0].component_id, "begin");
+        assert_eq!(mid[0].trace.len(), 2);
+        assert_eq!(mid[0].trace[0]["elapsed_time"], 0.5);
+        assert_eq!(mid[0].trace[0]["message"], "Begin");
+        assert_eq!(mid[0].trace[0]["progress"], 1.0);
+        assert_eq!(mid[1].component_id, "retrieval");
+        assert_eq!(mid[1].trace.len(), 1);
+
+        // A failure is recorded as the sample's message.
+        collector.emit(WorkflowLifecycleEvent {
+            event: "node_finished",
+            data: serde_json::json!({
+                "component_id": "retrieval",
+                "component_name": "Retrieval",
+                "error": "boom",
+                "elapsed_time": 0.1,
+                "created_at": 1_700_086_403.0
+            }),
+        });
+        let trace = store.get("agent-1", "msg-1").unwrap();
+        assert_eq!(trace[1].trace[1]["message"], "boom");
+
+        // `tool_use_callback` records in the node outputs join the same trace
+        // array (`tool-timeline-item.tsx` reads the entries carrying tool_name).
+        collector.emit(WorkflowLifecycleEvent {
+            event: "node_finished",
+            data: serde_json::json!({
+                "component_id": "retrieval",
+                "component_name": "Retrieval",
+                "elapsed_time": 0.3,
+                "created_at": 1_700_086_405.0,
+                "outputs": {
+                    "tool_trace": [{
+                        "path": "retrieval-->google",
+                        "tool_name": "google",
+                        "arguments": {"q": "rust"},
+                        "result": "ok",
+                        "elapsed_time": 0.42
+                    }]
+                }
+            }),
+        });
+        let trace = store.get("agent-1", "msg-1").unwrap();
+        let retrieval = trace
+            .iter()
+            .find(|component| component.component_id == "retrieval")
+            .unwrap();
+        let tool = retrieval
+            .trace
+            .iter()
+            .find(|entry| entry.get("tool_name").is_some())
+            .expect("tool record merged");
+        assert_eq!(tool["tool_name"], "google");
+        assert_eq!(tool["arguments"]["q"], "rust");
+        assert_eq!(tool["result"], "ok");
+        assert_eq!(tool["elapsed_time"], 0.42);
+
+        // Non-streaming runs publish once the assistant message id is known.
+        let late_store = new_store();
+        let late: AgentTraceCollector<'_> =
+            AgentTraceCollector::new(late_store.clone(), "agent-2", None, None);
+        late.emit(WorkflowLifecycleEvent {
+            event: "node_finished",
+            data: serde_json::json!({
+                "component_id": "begin",
+                "component_name": "Begin",
+                "elapsed_time": 0.2,
+                "created_at": 1_700_086_404.0
+            }),
+        });
+        assert!(late_store.get("agent-2", "msg-2").is_none());
+        late.finish("msg-2").unwrap();
+        assert_eq!(late_store.get("agent-2", "msg-2").unwrap().len(), 1);
+    }
+}

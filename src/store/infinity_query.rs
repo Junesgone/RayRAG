@@ -884,4 +884,410 @@ pub fn is_pushdown_supported(filters: &[MetadataFilter]) -> bool {
         .all(|filter| SUPPORTED_OPERATORS.contains(&filter.op.as_str()) && !filter.key.is_empty())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
 
+    fn condition(entries: &[(&str, Value)]) -> FilterCondition {
+        entries
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), value.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn matching_field_resolution_follows_the_python_alias_contract() {
+        assert_eq!(
+            convert_matching_field("docnm_kwd"),
+            "docnm@ft_docnm_rag_coarse"
+        );
+        assert_eq!(
+            convert_matching_field("title_tks"),
+            "docnm@ft_docnm_rag_coarse"
+        );
+        assert_eq!(
+            convert_matching_field("title_sm_tks"),
+            "docnm@ft_docnm_rag_fine"
+        );
+        assert_eq!(
+            convert_matching_field("important_kwd"),
+            "important_keywords@ft_important_keywords_rag_coarse"
+        );
+        assert_eq!(
+            convert_matching_field("important_tks"),
+            "important_keywords@ft_important_keywords_rag_fine"
+        );
+        assert_eq!(
+            convert_matching_field("question_kwd"),
+            "questions@ft_questions_rag_coarse"
+        );
+        assert_eq!(
+            convert_matching_field("question_tks"),
+            "questions@ft_questions_rag_fine"
+        );
+        assert_eq!(
+            convert_matching_field("content_with_weight"),
+            "content@ft_content_rag_coarse"
+        );
+        assert_eq!(
+            convert_matching_field("content_ltks"),
+            "content@ft_content_rag_coarse"
+        );
+        assert_eq!(
+            convert_matching_field("content_sm_ltks"),
+            "content@ft_content_rag_fine"
+        );
+        assert_eq!(
+            convert_matching_field("authors_tks"),
+            "authors@ft_authors_rag_coarse"
+        );
+        assert_eq!(
+            convert_matching_field("authors_sm_tks"),
+            "authors@ft_authors_rag_fine"
+        );
+        assert_eq!(
+            convert_matching_field("tag_kwd"),
+            "tag_kwd@ft_tag_kwd_whitespace__"
+        );
+        // Unknown fields pass through untouched, like Python.
+        assert_eq!(convert_matching_field("entities_kwd"), "entities_kwd");
+    }
+
+    #[test]
+    fn matching_field_keeps_weight_suffixes() {
+        assert_eq!(
+            convert_matching_field("content_ltks^2"),
+            "content@ft_content_rag_coarse^2"
+        );
+        assert_eq!(
+            convert_matching_field("title_sm_tks^0.5"),
+            "docnm@ft_docnm_rag_fine^0.5"
+        );
+    }
+
+    #[test]
+    fn analyzer_names_come_from_the_mapping_contract() {
+        assert_eq!(analyzer_for_alias("docnm_kwd"), Some("rag-coarse"));
+        assert_eq!(analyzer_for_alias("title_sm_tks"), Some("rag-fine"));
+        assert_eq!(analyzer_for_alias("important_tks"), Some("rag-fine"));
+        assert_eq!(analyzer_for_alias("question_kwd"), Some("rag-coarse"));
+        assert_eq!(analyzer_for_alias("unknown_field"), None);
+    }
+
+    #[test]
+    fn select_field_conversion_appends_important_kwd_empty_count() {
+        assert_eq!(
+            convert_select_fields(&[
+                "docnm_kwd".into(),
+                "title_tks".into(),
+                "important_kwd".into(),
+                "question_tks".into(),
+            ]),
+            vec![
+                "docnm",
+                "important_keywords",
+                "questions",
+                "important_kwd_empty_count"
+            ]
+        );
+        // Without important_kwd the companion column is not added.
+        assert_eq!(
+            convert_select_fields(&["content_ltks".into(), "content_sm_ltks".into()]),
+            vec!["content"]
+        );
+    }
+
+    #[test]
+    fn fulltext_and_secondary_index_selection_matches_the_fixed_contract() {
+        let fulltext = fulltext_indexes();
+        assert_eq!(fulltext.len(), 45);
+        assert!(fulltext.iter().any(|index| index == "ft_docnm_rag_coarse"));
+        assert!(fulltext.iter().any(|index| index == "ft_docnm_rag_fine"));
+        assert!(
+            fulltext
+                .iter()
+                .any(|index| index == "ft_tag_kwd_whitespace__")
+        );
+        assert!(
+            fulltext
+                .iter()
+                .any(|index| index == "ft_tag_feas_rankfeatures")
+        );
+        assert_eq!(
+            secondary_indexes(),
+            vec!["sec_kb_id".to_owned(), "sec_available_int".to_owned()]
+        );
+    }
+
+    #[test]
+    fn condition_builder_handles_every_python_branch() {
+        // available_int 0/1 (other values dropped), falsy skipped, strings
+        // escaped, lists become IN, numbers render bare, keyword fields
+        // become filter_fulltext with the converted matching field.
+        let filters = condition(&[
+            ("available_int", json!(1)),
+            ("doc_id", json!("doc-1")),
+            ("kb_id", json!(["kb-a", "kb-b"])),
+            ("weight_int", json!(0)),
+            ("tag_kwd", json!(["rust", "search"])),
+            ("doc_type_kwd", json!("article")),
+            ("knowledge_graph_kwd", json!(["entity", "graph"])),
+        ]);
+        let rendered = equivalent_condition_to_str(&filters).unwrap();
+        assert!(rendered.contains("available_int=1"));
+        assert!(rendered.contains("doc_id='doc-1'"));
+        assert!(rendered.contains("kb_id IN ('kb-a', 'kb-b')"));
+        assert!(!rendered.contains("weight_int"));
+        assert!(rendered.contains(
+            "(filter_fulltext('tag_kwd@ft_tag_kwd_whitespace__', 'rust') or filter_fulltext('tag_kwd@ft_tag_kwd_whitespace__', 'search'))"
+        ));
+        // doc_type_kwd is keyword-like but NOT in the Python alias rewrite
+        // list, so `convert_matching_field` leaves it bare.
+        assert!(rendered.contains("filter_fulltext('doc_type_kwd', 'article')"));
+        // knowledge_graph_kwd is exempt from keyword handling → list IN.
+        assert!(rendered.contains("knowledge_graph_kwd IN ('entity', 'graph')"));
+    }
+
+    #[test]
+    fn condition_builder_escapes_quotes_and_handles_must_not_exists() {
+        // docnm_kwd is exempt from keyword handling → plain string equality.
+        let filters = condition(&[
+            ("docnm_kwd", json!("it's")),
+            ("must_not", json!({"exists": "source_id"})),
+        ]);
+        let rendered = equivalent_condition_to_str(&filters).unwrap();
+        assert!(rendered.contains("docnm_kwd='it''s'"));
+        assert!(rendered.contains("NOT ( source_id!='' )"));
+    }
+
+    #[test]
+    fn condition_builder_existence_checks_use_schema_defaults() {
+        // Faithful Python branch order: a string "exists" value hits the
+        // string-equality branch BEFORE the exists() helper, so the chunk
+        // connector renders it as a literal equality. The exists() filter is
+        // only reachable through the `must_not` dict path.
+        let by_pagerank = condition(&[("exists", json!("pagerank_fea"))]);
+        assert_eq!(
+            equivalent_condition_to_str(&by_pagerank).unwrap(),
+            "exists='pagerank_fea'"
+        );
+        // pagerank_fea defaults to 0 (falsy) → quoted empty default.
+        let must_not_pagerank = condition(&[("must_not", json!({"exists": "pagerank_fea"}))]);
+        assert_eq!(
+            equivalent_condition_to_str(&must_not_pagerank).unwrap(),
+            "NOT ( pagerank_fea!='' )"
+        );
+        // available_int defaults to 1 → non-empty default.
+        let must_not_available = condition(&[("must_not", json!({"exists": "available_int"}))]);
+        assert_eq!(
+            equivalent_condition_to_str(&must_not_available).unwrap(),
+            "NOT ( available_int!='1' )"
+        );
+        // Unknown columns raise exactly like Python's assert.
+        let unknown = condition(&[("must_not", json!({"exists": "not_a_column"}))]);
+        assert!(equivalent_condition_to_str(&unknown).is_err());
+        // The physical _id column is rejected.
+        let forbidden = condition(&[("_id", json!("x"))]);
+        assert!(equivalent_condition_to_str(&forbidden).is_err());
+    }
+
+    #[test]
+    fn empty_condition_renders_tautology() {
+        assert_eq!(equivalent_condition_to_str(&condition(&[])).unwrap(), "1=1");
+    }
+
+    #[test]
+    fn generic_sort_matches_infinity_order_by_semantics() {
+        let row = |id: &str, rank: i64| {
+            let mut map = DocRow::new();
+            map.insert("id".into(), json!(id));
+            map.insert("rank_int".into(), json!(rank));
+            map
+        };
+        let mut rows = vec![row("b", 2), row("a", 1), row("c", 3)];
+        sort_rows(&mut rows, &OrderByExpr::default().asc("rank_int"));
+        let ids: Vec<&str> = rows.iter().map(|row| row["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, vec!["a", "b", "c"]);
+
+        sort_rows(&mut rows, &OrderByExpr::default().desc("rank_int"));
+        let ids: Vec<&str> = rows.iter().map(|row| row["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, vec!["c", "b", "a"]);
+    }
+
+    #[test]
+    fn tag_aggregation_splits_tag_kwd_on_hash_delimiters() {
+        let rows = vec![
+            {
+                let mut map = DocRow::new();
+                map.insert("tag_kwd".into(), json!("rust###search"));
+                map
+            },
+            {
+                let mut map = DocRow::new();
+                map.insert("tag_kwd".into(), json!("rust,search"));
+                map
+            },
+            {
+                let mut map = DocRow::new();
+                map.insert("tag_kwd".into(), json!(["rust", "infinity"]));
+                map
+            },
+        ];
+        let aggregated = tag_aggregation(&rows, "tag_kwd");
+        assert_eq!(aggregated[0], ("rust".to_owned(), 3));
+        assert_eq!(aggregated[1], ("search".to_owned(), 2));
+        assert_eq!(aggregated[2], ("infinity".to_owned(), 1));
+    }
+
+    #[test]
+    fn tag_aggregation_ignores_empty_and_missing_values() {
+        let rows = vec![
+            {
+                let mut map = DocRow::new();
+                map.insert("tag_kwd".into(), json!(""));
+                map
+            },
+            {
+                let mut map = DocRow::new();
+                map.insert("tag_kwd".into(), json!("a"));
+                map
+            },
+        ];
+        assert_eq!(tag_aggregation(&rows, "tag_kwd"), vec![("a".to_owned(), 1)]);
+        assert!(tag_aggregation(&rows, "missing").is_empty());
+    }
+
+    #[test]
+    fn metadata_filter_translator_matches_python_output() {
+        let clause = |op: &str, key: &str, value: Value| MetadataFilter {
+            op: op.into(),
+            key: key.into(),
+            value,
+        };
+        assert_eq!(
+            translate_metadata_filter(&clause("empty", "author", Value::Null)).unwrap(),
+            "JSON_EXTRACT_STRING(meta_fields, '$.author') = '\"\"'"
+        );
+        assert_eq!(
+            translate_metadata_filter(&clause("not empty", "author", Value::Null)).unwrap(),
+            "JSON_EXTRACT_STRING(meta_fields, '$.author') != '\"\"'"
+        );
+        assert_eq!(
+            translate_metadata_filter(&clause("=", "author", json!("Alice"))).unwrap(),
+            "JSON_CONTAINS(meta_fields, '$.author', '\"Alice\"')"
+        );
+        assert_eq!(
+            translate_metadata_filter(&clause("=", "year", json!(2024))).unwrap(),
+            "JSON_CONTAINS(meta_fields, '$.year', 2024)"
+        );
+        assert_eq!(
+            translate_metadata_filter(&clause(">", "year", json!("2024"))).unwrap(),
+            "JSON_EXTRACT_DOUBLE(meta_fields, '$.year') > 2024"
+        );
+        assert_eq!(
+            translate_metadata_filter(&clause(">", "author", json!("a"))).unwrap(),
+            "JSON_EXTRACT_STRING(meta_fields, '$.author') > 'a'"
+        );
+        assert_eq!(
+            translate_metadata_filter(&clause("contains", "tags", json!("rust"))).unwrap(),
+            "JSON_CONTAINS(meta_fields, '$.tags', '\"rust\"')"
+        );
+        assert_eq!(
+            translate_metadata_filter(&clause("start with", "name", json!("ru"))).unwrap(),
+            "JSON_EXTRACT_STRING(meta_fields, '$.name') LIKE 'ru%'"
+        );
+        assert_eq!(
+            translate_metadata_filter(&clause("end with", "name", json!("st"))).unwrap(),
+            "JSON_EXTRACT_STRING(meta_fields, '$.name') LIKE '%st'"
+        );
+    }
+
+    #[test]
+    fn metadata_filter_in_and_not_in_partition_strings_and_numbers() {
+        let clause = |op: &str, value: Value| MetadataFilter {
+            op: op.into(),
+            key: "year".into(),
+            value,
+        };
+        assert_eq!(
+            translate_metadata_filter(&clause("in", json!(["2024", "2025"]))).unwrap(),
+            "((JSON_CONTAINS(meta_fields, '$.year', 2024) OR JSON_CONTAINS(meta_fields, '$.year', 2025)))"
+        );
+        assert_eq!(
+            translate_metadata_filter(&clause("in", json!(["a", "b"]))).unwrap(),
+            "((JSON_CONTAINS(meta_fields, '$.year', '\"a\"') OR JSON_CONTAINS(meta_fields, '$.year', '\"b\"')))"
+        );
+        assert_eq!(
+            translate_metadata_filter(&clause("not in", json!(["a", "b"]))).unwrap(),
+            "((NOT JSON_CONTAINS(meta_fields, '$.year', '\"a\"') AND NOT JSON_CONTAINS(meta_fields, '$.year', '\"b\"')))"
+        );
+    }
+
+    #[test]
+    fn metadata_filter_rejects_unknown_operators_and_bad_keys() {
+        let bad_op = MetadataFilter {
+            op: "matches".into(),
+            key: "author".into(),
+            value: Value::Null,
+        };
+        assert!(translate_metadata_filter(&bad_op).is_err());
+        let bad_key = MetadataFilter {
+            op: "=".into(),
+            key: "bad key!".into(),
+            value: json!("x"),
+        };
+        assert!(translate_metadata_filter(&bad_key).is_err());
+        assert!(!is_pushdown_supported(&[bad_op.clone()]));
+    }
+
+    #[test]
+    fn infinity_filter_builder_joins_with_requested_logic() {
+        let clause = |op: &str, key: &str, value: Value| MetadataFilter {
+            op: op.into(),
+            key: key.into(),
+            value,
+        };
+        let filters = vec![
+            clause("=", "author", json!("Alice")),
+            clause(">", "year", json!(2020)),
+        ];
+        assert_eq!(
+            build_infinity_filter(&filters, "and").unwrap(),
+            "(JSON_CONTAINS(meta_fields, '$.author', '\"Alice\"') AND JSON_EXTRACT_DOUBLE(meta_fields, '$.year') > 2020)"
+        );
+        assert_eq!(
+            build_infinity_filter(&filters, "or").unwrap(),
+            "(JSON_CONTAINS(meta_fields, '$.author', '\"Alice\"') OR JSON_EXTRACT_DOUBLE(meta_fields, '$.year') > 2020)"
+        );
+        assert_eq!(build_infinity_filter(&[], "and").unwrap(), "1=1");
+        assert!(build_infinity_filter(&filters, "xor").is_err());
+    }
+
+    #[test]
+    fn metadata_membership_values_are_lowercased_and_trimmed() {
+        // Python `_csv_or_list` normalises string members to lower().strip().
+        let clause = MetadataFilter {
+            op: "in".into(),
+            key: "tags".into(),
+            value: json!(" Rust , Go "),
+        };
+        assert_eq!(
+            translate_metadata_filter(&clause).unwrap(),
+            "((JSON_CONTAINS(meta_fields, '$.tags', '\"rust\"') OR JSON_CONTAINS(meta_fields, '$.tags', '\"go\"')))"
+        );
+    }
+
+    #[test]
+    fn like_wildcards_are_escaped_for_start_and_end_with() {
+        let clause = MetadataFilter {
+            op: "start with".into(),
+            key: "name".into(),
+            value: json!("100%_real"),
+        };
+        assert_eq!(
+            translate_metadata_filter(&clause).unwrap(),
+            "JSON_EXTRACT_STRING(meta_fields, '$.name') LIKE '100\\%\\_real%'"
+        );
+    }
+}

@@ -273,4 +273,134 @@ pub fn io_backend_description() -> String {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn config_builder_defaults() {
+        let builder = ConfigBuilder::new();
+        assert_eq!(builder.memory_limit, 0);
+        assert_eq!(builder.num_threads, 0);
+        assert!(!builder.enable_console_log);
+    }
+
+    #[test]
+    fn config_builder_chaining() {
+        let builder = ConfigBuilder::new()
+            .memory_limit(1024)
+            .num_threads(4)
+            .enable_console_log(true)
+            .build();
+        assert_eq!(builder.memory_limit, 1024);
+        assert_eq!(builder.num_threads, 4);
+        assert!(builder.enable_console_log);
+    }
+
+    #[test]
+    fn config_builder_default_trait() {
+        let builder = ConfigBuilder::default();
+        assert_eq!(builder.memory_limit, 0);
+        assert_eq!(builder.num_threads, 0);
+        assert!(!builder.enable_console_log);
+    }
+
+    #[test]
+    fn config_builder_memory_limit_setter() {
+        let builder = ConfigBuilder::new().memory_limit(2048);
+        assert_eq!(builder.memory_limit, 2048);
+    }
+
+    #[test]
+    fn config_builder_num_threads_setter() {
+        let builder = ConfigBuilder::new().num_threads(8);
+        assert_eq!(builder.num_threads, 8);
+    }
+
+    #[test]
+    fn config_builder_enable_console_log_setter() {
+        let builder = ConfigBuilder::new().enable_console_log(true);
+        assert!(builder.enable_console_log);
+    }
+
+    #[test]
+    fn config_builder_build_returns_self() {
+        let builder = ConfigBuilder::new()
+            .memory_limit(4096)
+            .num_threads(2)
+            .enable_console_log(true)
+            .build();
+        assert_eq!(builder.memory_limit, 4096);
+        assert_eq!(builder.num_threads, 2);
+        assert!(builder.enable_console_log);
+    }
+
+    #[test]
+    fn config_builder_overwrite_values() {
+        let builder = ConfigBuilder::new()
+            .memory_limit(1024)
+            .memory_limit(2048)
+            .num_threads(4)
+            .num_threads(8)
+            .enable_console_log(false)
+            .enable_console_log(true);
+        assert_eq!(builder.memory_limit, 2048);
+        assert_eq!(builder.num_threads, 8);
+        assert!(builder.enable_console_log);
+    }
+
+    #[test]
+    fn config_builder_zero_values() {
+        let builder = ConfigBuilder::new().memory_limit(0).num_threads(0);
+        assert_eq!(builder.memory_limit, 0);
+        assert_eq!(builder.num_threads, 0);
+    }
+
+    #[test]
+    fn config_builder_large_memory_limit() {
+        let builder = ConfigBuilder::new().memory_limit(u64::MAX);
+        assert_eq!(builder.memory_limit, u64::MAX);
+    }
+
+    #[test]
+    fn config_builder_fts_ratio() {
+        let builder = ConfigBuilder::new();
+        assert_eq!(builder.fts_brute_force_by_keys_ratio, None);
+
+        let builder = ConfigBuilder::new().fts_brute_force_by_keys_ratio(0.5);
+        assert_eq!(builder.fts_brute_force_by_keys_ratio, Some(0.5));
+    }
+
+    #[test]
+    fn io_backend_type_name_maps_every_code() {
+        use zvec_rust_sys::{
+            ZVEC_IO_BACKEND_TYPE_IO_URING, ZVEC_IO_BACKEND_TYPE_LIBAIO, ZVEC_IO_BACKEND_TYPE_PREAD,
+            ZVEC_IO_BACKEND_TYPE_WINDOWS_OVERLAPPED,
+        };
+
+        assert_eq!(io_backend_type_name(ZVEC_IO_BACKEND_TYPE_PREAD), "pread");
+        assert_eq!(io_backend_type_name(ZVEC_IO_BACKEND_TYPE_LIBAIO), "libaio");
+        assert_eq!(
+            io_backend_type_name(ZVEC_IO_BACKEND_TYPE_IO_URING),
+            "io_uring"
+        );
+        assert_eq!(
+            io_backend_type_name(ZVEC_IO_BACKEND_TYPE_WINDOWS_OVERLAPPED),
+            "windows_overlapped"
+        );
+        assert_eq!(io_backend_type_name(u32::MAX), "unknown");
+    }
+
+    #[test]
+    fn io_backend_introspection_reports_the_active_backend() {
+        let backend = io_backend_type();
+        let name = io_backend_type_name(backend);
+        assert!(
+            ["pread", "libaio", "io_uring", "windows_overlapped"].contains(&name.as_str()),
+            "unexpected io backend {} (code {})",
+            name,
+            backend
+        );
+        assert!(!io_backend_description().is_empty());
+    }
+}

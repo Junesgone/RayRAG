@@ -138,4 +138,86 @@ impl TuShareClient {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{Json, Router, routing::post};
 
+    fn sample_response() -> Json<Value> {
+        Json(json!({
+            "code": 0,
+            "msg": "",
+            "data": {
+                "fields": ["content", "datetime"],
+                "items": [
+                    ["央行今日开展5000亿元逆回购操作", "2026-08-04 09:00:00"],
+                    ["贵州茅台发布半年报", "2026-08-04 08:30:00"],
+                ]
+            }
+        }))
+    }
+
+    #[tokio::test]
+    async fn news_filters_by_keyword_and_renders_markdown() {
+        let app = Router::new().route("/", post(|_: Json<Value>| async { sample_response() }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = TuShareClient {
+            http: reqwest::Client::builder()
+                .timeout(crate::common::cmd_timeout::duration())
+                .build()
+                .unwrap(),
+        };
+        // 客户端直连 mock：通过重写端点的内部方法
+        let output = client
+            .news_at(
+                &TuShareRequest {
+                    token: "test-token".into(),
+                    src: "eastmoney".into(),
+                    start_date: "2026-08-01 00:00:00".into(),
+                    end_date: "2026-08-05 00:00:00".into(),
+                    keyword: "茅台".into(),
+                },
+                &format!("http://{addr}/"),
+            )
+            .await
+            .unwrap();
+        assert!(output.contains("贵州茅台发布半年报"));
+        assert!(!output.contains("央行"));
+        assert!(output.starts_with("| index | content |"));
+    }
+
+    #[tokio::test]
+    async fn rejects_missing_token() {
+        let client = TuShareClient::default();
+        let result = client
+            .news(&TuShareRequest {
+                token: "".into(),
+                src: "eastmoney".into(),
+                start_date: "2026-08-01 00:00:00".into(),
+                end_date: "2026-08-05 00:00:00".into(),
+                keyword: "".into(),
+            })
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("token"));
+    }
+
+    #[tokio::test]
+    async fn rejects_invalid_source() {
+        let client = TuShareClient::default();
+        let result = client
+            .news(&TuShareRequest {
+                token: "t".into(),
+                src: "not-a-source".into(),
+                start_date: "2026-08-01 00:00:00".into(),
+                end_date: "2026-08-05 00:00:00".into(),
+                keyword: "".into(),
+            })
+            .await;
+        assert!(result.is_err());
+    }
+}

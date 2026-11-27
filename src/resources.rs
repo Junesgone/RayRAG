@@ -138,4 +138,109 @@ fn load_string_map(path: &Path) -> Result<HashMap<String, String>> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    /// Write a scratch `rag/res`-style directory with small resource files.
+    fn scratch_resources() -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let res = dir.path().join("res");
+        std::fs::create_dir_all(&res).expect("create res dir");
+        std::fs::write(
+            res.join("ner.json"),
+            r#"{"贵州茅台":"stock","腾讯控股":"stock","北京":"loca"}"#,
+        )
+        .expect("write ner.json");
+        // Single-direction file on purpose: value→key mirroring is the
+        // loader's job, matching the shipped bidirectional synonym.json.
+        std::fs::write(
+            res.join("synonym.json"),
+            r#"{"阿为特":"873693","卓兆点胶":"873726"}"#,
+        )
+        .expect("write synonym.json");
+        (dir, res)
+    }
+
+    #[test]
+    fn load_parses_ner_and_mirrors_synonyms() {
+        let (_keep, res) = scratch_resources();
+        let resources = DeepDocResources::load(&res).expect("load resources");
+
+        assert_eq!(resources.ner_category("贵州茅台"), Some("stock"));
+        assert_eq!(resources.ner_category("北京"), Some("loca"));
+        assert_eq!(resources.ner_category("未知术语"), None);
+        assert!(resources.is_ner("腾讯控股"));
+        assert!(!resources.is_ner("腾讯"));
+
+        // Direct key lookup...
+        assert_eq!(resources.synonym("阿为特"), Some("873693"));
+        // ...and the mirrored reverse direction.
+        assert_eq!(resources.synonym("873693"), Some("阿为特"));
+        assert_eq!(resources.synonym("873726"), Some("卓兆点胶"));
+        assert_eq!(resources.synonym("missing"), None);
+
+        let (ner, synonym) = resources.into_parts();
+        assert_eq!(ner.len(), 3);
+        assert_eq!(synonym.len(), 4); // 2 entries + 2 mirrored
+    }
+
+    #[test]
+    fn missing_and_malformed_files_degrades_to_empty_tables() {
+        let dir = tempfile::tempdir().expect("tempdir");
+
+        // No files at all → empty tables, not an error.
+        let empty = DeepDocResources::load(dir.path()).expect("empty dir loads");
+        assert!(empty.ner_map().is_empty());
+        assert!(empty.synonym_map().is_empty());
+
+        // Malformed JSON → empty table for that file, others still load.
+        std::fs::write(dir.path().join("ner.json"), "{not json").expect("write bad ner");
+        std::fs::write(dir.path().join("synonym.json"), r#"{"a":"b"}"#)
+            .expect("write good synonym");
+        let degraded = DeepDocResources::load(dir.path()).expect("degraded load");
+        assert!(degraded.ner_map().is_empty());
+        assert_eq!(degraded.synonym("a"), Some("b"));
+    }
+
+    #[test]
+    fn from_env_returns_none_when_res_dir_missing() {
+        // Point at a directory that does not exist → None (optional
+        // enrichment skipped), never an error.
+        let bogus = std::env::temp_dir().join(format!("rayrag-res-none-{}", std::process::id()));
+        unsafe {
+            std::env::set_var(RAYRAG_RES_PATH_ENV, &bogus);
+        }
+        let result = DeepDocResources::from_env().expect("from_env never errors");
+        unsafe {
+            std::env::remove_var(RAYRAG_RES_PATH_ENV);
+        }
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn resolve_res_dir_prefers_rayrag_env_over_ragflow_env() {
+        unsafe {
+            std::env::set_var(RAYRAG_RES_PATH_ENV, "/tmp/rayrag-res");
+            std::env::set_var(RAGFLOW_RES_PATH_ENV, "/tmp/ragflow-res");
+        }
+        let resolved = resolve_res_dir();
+        unsafe {
+            std::env::remove_var(RAYRAG_RES_PATH_ENV);
+            std::env::remove_var(RAGFLOW_RES_PATH_ENV);
+        }
+        assert_eq!(resolved, PathBuf::from("/tmp/rayrag-res"));
+
+        unsafe {
+            std::env::set_var(RAGFLOW_RES_PATH_ENV, "/tmp/ragflow-res");
+        }
+        let resolved = resolve_res_dir();
+        unsafe {
+            std::env::remove_var(RAGFLOW_RES_PATH_ENV);
+        }
+        assert_eq!(resolved, PathBuf::from("/tmp/ragflow-res"));
+
+        // Neither set → the default relative directory.
+        assert_eq!(resolve_res_dir(), PathBuf::from(DEFAULT_RES_DIR));
+    }
+}

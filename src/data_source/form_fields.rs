@@ -348,6 +348,714 @@ pub fn source_info_for_ui() -> serde_json::Value {
     serde_json::to_value(source_info()).expect("source info manifest is serializable")
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn embedded_schema_covers_all_upstream_sources_with_valid_paths() {
+        let parsed: HashMap<String, Vec<FormFieldSpec>> =
+            serde_json::from_str(SCHEMA_JSON).expect("schema parses");
+        // Upstream's fixed source list, plus the mainland-China connectors this project adds (Feishu,
+        // DingTalk, Tencent Docs, WeChat Docs, Yuque). The count is a canary that a source disappeared; the
+        // real coverage property is asserted in `ui_schema_coverage_tests` below, which checks every kind the
+        // registry can build against the cards the page renders.
+        // Every connector the registry can build must have a form schema, except the ones the page reaches
+        // through a dedicated control rather than a card. The converse (no card without a connector) is
+        // asserted in `ui_schema_coverage_tests` below.
+        let dedicated_control = ["local"];
+        let uncovered: Vec<&str> = crate::connectors::ConnectorRegistry::kinds()
+            .iter()
+            .map(|info| info.kind)
+            .filter(|kind| !dedicated_control.contains(kind))
+            .filter(|kind| {
+                !parsed
+                    .keys()
+                    .any(|key| crate::api::data_source_mgr::normalize_kind(key) == *kind)
+            })
+            .collect();
+        assert!(
+            uncovered.is_empty(),
+            "these connectors have no form schema, so the page cannot create them: {uncovered:?}"
+        );
+        for (source, fields) in &parsed {
+            assert!(!fields.is_empty(), "{source} has fields");
+            for field in fields {
+                // `Custom` entries are informational panels drawn in place, not inputs:
+                // upstream names them `filter.*` because they are not part of the config.
+                if field.field_type == "Custom" {
+                    assert!(
+                        field.name.starts_with("filter."),
+                        "{source} panel {} must use the filter.* prefix",
+                        field.name
+                    );
+                    assert!(
+                        field.panel_en.is_some(),
+                        "{source} panel {} must carry its text",
+                        field.name
+                    );
+                    continue;
+                }
+                assert!(
+                    field.name.starts_with("config."),
+                    "{source} field {} must be a config dot-path",
+                    field.name
+                );
+                for condition in &field.show_when {
+                    assert!(
+                        condition.field.starts_with("config."),
+                        "{source} show_when must reference a config path"
+                    );
+                }
+                if matches!(field.field_type.as_str(), "Select" | "Segmented")
+                    && !(source == "S3" && field.name == "config.credentials.region")
+                {
+                    assert!(
+                        !field.options.is_empty(),
+                        "{source}.{} has select options",
+                        field.name
+                    );
+                }
+            }
+        }
+    }
 
+    #[test]
+    fn gitlab_schema_keeps_the_fixed_seven_fields() {
+        let fields = fields_for("gitlab");
+        assert_eq!(fields.len(), 7);
+        let names: Vec<&str> = fields.iter().map(|field| field.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "config.project_owner",
+                "config.project_name",
+                "config.credentials.gitlab_access_token",
+                "config.gitlab_url",
+                "config.include_mrs",
+                "config.include_issues",
+                "config.include_code_files",
+            ]
+        );
+        for field in fields.iter().take(4) {
+            assert!(field.required, "{} is required", field.name);
+        }
+    }
 
+    #[test]
+    fn unknown_source_has_no_fields() {
+        assert!(fields_for("not-a-source").is_empty());
+    }
+
+    #[test]
+    fn s3_region_options_inherit_the_bedrock_region_list() {
+        let fields = fields_for("s3");
+        let region = fields
+            .iter()
+            .find(|field| field.name == "config.credentials.region")
+            .expect("S3 has a region field");
+        assert_eq!(region.options.len(), AWS_REGIONS.len());
+        assert_eq!(region.options[0].value, "us-east-2");
+    }
+
+    fn find(source: &str, name: &str) -> FormFieldSpec {
+        fields_for(source)
+            .into_iter()
+            .find(|field| field.name == name)
+            .unwrap_or_else(|| panic!("{source} has {name}"))
+    }
+
+    fn values(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn s3_access_key_fields_use_the_or_condition() {
+        // Upstream: authMode === 'access_key' || bucketType === 's3_compatible'
+        let field = find("s3", "config.credentials.aws_access_key_id");
+        assert!(field.visible(&values(&[
+            ("config.credentials.authentication_method", "access_key"),
+            ("config.bucket_type", "s3"),
+        ])));
+        // s3_compatible bucket shows the keys even without access_key auth.
+        assert!(field.visible(&values(&[
+            ("config.credentials.authentication_method", "iam_role"),
+            ("config.bucket_type", "s3_compatible"),
+        ])));
+        // Neither condition holds: hidden.
+        assert!(!field.visible(&values(&[
+            ("config.credentials.authentication_method", "iam_role"),
+            ("config.bucket_type", "s3"),
+        ])));
+    }
+
+    #[test]
+    fn s3_role_arn_uses_the_and_condition() {
+        // Upstream: authMode === 'iam_role' && bucketType === 's3'
+        let field = find("s3", "config.credentials.aws_role_arn");
+        assert!(field.visible(&values(&[
+            ("config.credentials.authentication_method", "iam_role"),
+            ("config.bucket_type", "s3"),
+        ])));
+        assert!(!field.visible(&values(&[
+            ("config.credentials.authentication_method", "access_key"),
+            ("config.bucket_type", "s3"),
+        ])));
+        assert!(!field.visible(&values(&[
+            ("config.credentials.authentication_method", "iam_role"),
+            ("config.bucket_type", "s3_compatible"),
+        ])));
+    }
+
+    #[test]
+    fn jira_cloud_server_conditionals_match_upstream() {
+        // `is_cloud !== false` → cloud fields; `=== false` → server fields.
+        let email = find("jira", "config.credentials.jira_user_email");
+        let token = find("jira", "config.credentials.jira_api_token");
+        let scoped = find("jira", "config.scoped_token");
+        let username = find("jira", "config.credentials.jira_username");
+        let password = find("jira", "config.credentials.jira_password");
+        for field in [&email, &token, &scoped] {
+            assert!(field.visible(&values(&[("config.is_cloud", "true")])));
+            assert!(field.visible(&values(&[])), "absent is_cloud is cloud");
+            assert!(!field.visible(&values(&[("config.is_cloud", "false")])));
+        }
+        for field in [&username, &password] {
+            assert!(!field.visible(&values(&[("config.is_cloud", "true")])));
+            assert!(field.visible(&values(&[("config.is_cloud", "false")])));
+        }
+    }
+
+    #[test]
+    fn jira_tag_fields_and_defaults_match_upstream() {
+        let labels = find("jira", "config.labels_to_skip");
+        assert_eq!(labels.field_type, "Tag");
+        let blacklist = find("jira", "config.comment_email_blacklist");
+        assert_eq!(blacklist.field_type, "Tag");
+        assert_eq!(
+            find("jira", "config.include_comments")
+                .default_value
+                .as_deref(),
+            Some("true")
+        );
+        assert_eq!(
+            find("jira", "config.include_attachments")
+                .default_value
+                .as_deref(),
+            Some("false")
+        );
+        assert_eq!(
+            find("jira", "config.is_cloud").default_value.as_deref(),
+            Some("true")
+        );
+    }
+
+    /// Upstream's connector constants validate across fields, not only per input. These
+    /// are the SeaFile rules, whose messages come from `setting.seafileValidation*`.
+    #[test]
+    fn seafile_cross_field_rules_follow_the_sync_scope() {
+        use serde_json::json;
+        let account_without_token = json!({"sync_scope": "account"});
+        let failures = validate_config("SEAFILE", &account_without_token);
+        assert_eq!(
+            failures,
+            vec![(
+                "config.credentials.seafile_token".to_string(),
+                "Account API Token is required for Entire Account scope".to_string()
+            )]
+        );
+        // Same scope, token present: nothing to report.
+        assert!(
+            validate_config(
+                "SEAFILE",
+                &json!({"sync_scope": "account", "credentials": {"seafile_token": "t"}})
+            )
+            .is_empty()
+        );
+        // `library` accepts either token, but needs the library id.
+        let library = json!({"sync_scope": "library"});
+        let failures = validate_config("SEAFILE", &library);
+        assert_eq!(failures.len(), 2, "{failures:?}");
+        assert_eq!(
+            failures[0].1,
+            "Provide either an Account API Token or a Library Token"
+        );
+        assert_eq!(
+            failures[1],
+            (
+                "config.repo_id".to_string(),
+                "Library ID is required".to_string()
+            )
+        );
+        // The library token alone satisfies the token rule.
+        let failures = validate_config(
+            "SEAFILE",
+            &json!({"sync_scope": "library", "credentials": {"repo_token": "r"},
+                    "repo_id": "7a9e"}),
+        );
+        assert!(failures.is_empty(), "{failures:?}");
+        // `directory` additionally needs the path.
+        let failures = validate_config(
+            "SEAFILE",
+            &json!({"sync_scope": "directory", "credentials": {"repo_token": "r"}, "repo_id": "x"}),
+        );
+        assert_eq!(
+            failures,
+            vec![(
+                "config.sync_path".to_string(),
+                "Directory Path is required".to_string()
+            )]
+        );
+        // A configuration with no scope at all behaves like the upstream default
+        // (`account`), which is what the segmented control starts on.
+        let failures = validate_config("SEAFILE", &json!({}));
+        assert_eq!(failures.len(), 1, "{failures:?}");
+        assert!(failures[0].1.contains("Entire Account"));
+    }
+
+    /// S3, Confluence, Bitbucket and Jira carry rules of their own; each is checked here
+    /// with the condition that turns it on and the value that satisfies it.
+    #[test]
+    fn the_companion_connectors_validate_their_conditional_fields() {
+        use serde_json::json;
+        // S3: an access key needs a region; s3_compatible needs both key halves.
+        // s3_compatible with an access key: the key halves are required, the region is
+        // not (upstream only demands it for `bucket_type === 's3'`).
+        let failures = validate_config(
+            "S3",
+            &json!({"bucket_name": "b", "bucket_type": "s3_compatible",
+                    "credentials": {"authentication_method": "access_key"}}),
+        );
+        let messages: Vec<&str> = failures
+            .iter()
+            .map(|(_, message)| message.as_str())
+            .collect();
+        assert!(
+            !messages.contains(&"Region is required when using access key"),
+            "the region rule must not fire for s3_compatible: {messages:?}"
+        );
+        // Plain S3 with a key present does need the region.
+        let failures = validate_config(
+            "S3",
+            &json!({"bucket_name": "b", "bucket_type": "s3",
+                    "credentials": {"authentication_method": "access_key",
+                                    "aws_access_key_id": "AKIA"}}),
+        );
+        let messages: Vec<&str> = failures
+            .iter()
+            .map(|(_, message)| message.as_str())
+            .collect();
+        assert!(
+            messages.contains(&"Region is required when using access key"),
+            "{messages:?}"
+        );
+        // Only the secret half is missing here, and that is what the rule says.
+        assert!(
+            messages.contains(&"\"AWS Secret Access Key\" is required"),
+            "{messages:?}"
+        );
+        assert!(
+            !messages.contains(&"AWS Access Key ID is required"),
+            "a filled access key id must satisfy its own rule: {messages:?}"
+        );
+        // The IAM role branch names the field it wants (upstream's message says
+        // "AWS Secret Access Key", a copy-paste RayRAG does not reproduce).
+        let failures = validate_config(
+            "S3",
+            &json!({"bucket_name": "b", "bucket_type": "s3",
+                    "credentials": {"authentication_method": "iam_role"}}),
+        );
+        assert_eq!(failures.len(), 1, "{failures:?}");
+        assert_eq!(failures[0].0, "config.credentials.aws_role_arn");
+        assert!(failures[0].1.contains("Role ARN"));
+        // The default (plain s3, no credentials) needs nothing beyond the bucket — and an
+        // untouched Mode control behaves the same, because upstream reads
+        // `config.bucket_type || 's3'`.
+        assert!(
+            validate_config("S3", &json!({"bucket_name": "b", "bucket_type": "s3"})).is_empty()
+        );
+        assert!(
+            validate_config("S3", &json!({"bucket_name": "b"})).is_empty(),
+            "an unset bucket_type must behave as plain s3"
+        );
+        // …but a key without a region is still refused for plain S3.
+        assert_eq!(
+            validate_config(
+                "S3",
+                &json!({"bucket_name": "b", "credentials": {"aws_access_key_id": "AKIA",
+                                                            "aws_secret_access_key": "s"}})
+            )
+            .iter()
+            .map(|(_, message)| message.as_str())
+            .collect::<Vec<_>>(),
+            vec!["Region is required when using access key"]
+        );
+
+        // Confluence and Bitbucket follow their index mode.
+        assert_eq!(
+            validate_config("CONFLUENCE", &json!({"index_mode": "page"}))[0].1,
+            "Page ID is required"
+        );
+        assert_eq!(
+            validate_config("CONFLUENCE", &json!({"index_mode": "space"}))[0].1,
+            "Space Key is required"
+        );
+        assert_eq!(
+            validate_config("BITBUCKET", &json!({"index_mode": "repositories"}))[0].1,
+            "Repository Slugs is required"
+        );
+        assert_eq!(
+            validate_config("BITBUCKET", &json!({"index_mode": "projects"}))[0].1,
+            "Projects is required"
+        );
+
+        // Jira: cloud uses email + API token, server uses username + password.
+        let cloud = validate_config("JIRA", &json!({"is_cloud": true}));
+        let messages: Vec<&str> = cloud.iter().map(|(_, message)| message.as_str()).collect();
+        assert!(
+            messages.contains(&"Jira User Email is required"),
+            "{messages:?}"
+        );
+        assert!(
+            messages.contains(&"Jira API Token is required"),
+            "{messages:?}"
+        );
+        assert!(
+            !messages.iter().any(|message| message.contains("Password")),
+            "{messages:?}"
+        );
+        let server = validate_config("JIRA", &json!({"is_cloud": false}));
+        let messages: Vec<&str> = server.iter().map(|(_, message)| message.as_str()).collect();
+        assert!(
+            messages.contains(&"Jira Username is required"),
+            "{messages:?}"
+        );
+        assert!(
+            messages.contains(&"Jira Password is required"),
+            "{messages:?}"
+        );
+    }
+
+    /// The informational panels upstream renders with `render()` travel as schema data:
+    /// the page draws them, and they follow the same conditions as the fields around them.
+    /// Every tooltip an upstream connector declares must reach the dialog, and the S3
+    /// region selector must accept a region the embedded list does not know.
+    #[test]
+    fn connector_tooltips_and_the_custom_region_selector_match_upstream() {
+        let seafile = fields_for("SEAFILE");
+        for name in [
+            "config.seafile_url",
+            "config.sync_scope",
+            "config.credentials.seafile_token",
+            "config.credentials.repo_token",
+            "config.repo_id",
+            "config.sync_path",
+            "config.include_shared",
+            "config.batch_size",
+        ] {
+            let field = seafile
+                .iter()
+                .find(|field| field.name == name)
+                .unwrap_or_else(|| panic!("{name} missing"));
+            assert!(
+                field
+                    .tooltip_en
+                    .as_deref()
+                    .is_some_and(|text| !text.is_empty()),
+                "{name} must carry its upstream tooltip"
+            );
+        }
+        // The two SeaFile panels' explanatory sentences live in the tooltips too.
+        assert!(
+            seafile
+                .iter()
+                .find(|field| field.name == "config.repo_id")
+                .and_then(|field| field.tooltip_en.as_deref())
+                .is_some_and(|text| text.contains("browser address bar"))
+        );
+        let s3 = fields_for("S3");
+        for name in [
+            "config.prefix",
+            "config.credentials.aws_role_arn",
+            "config.credentials.addressing_style",
+            "config.credentials.endpoint_url",
+        ] {
+            let field = s3.iter().find(|field| field.name == name).unwrap();
+            assert!(
+                field
+                    .tooltip_en
+                    .as_deref()
+                    .is_some_and(|text| !text.is_empty()),
+                "{name} must carry its upstream tooltip"
+            );
+        }
+        let region = s3
+            .iter()
+            .find(|field| field.name == "config.credentials.region")
+            .unwrap();
+        assert!(
+            region.allow_custom,
+            "the region selector accepts a value outside the embedded AWS list"
+        );
+        assert_eq!(region.options.len(), AWS_REGIONS.len());
+        // Only that one field opts in.
+        for field in &s3 {
+            if field.name != "config.credentials.region" {
+                assert!(
+                    !field.allow_custom,
+                    "{} must stay a plain select",
+                    field.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn informational_panels_are_ordered_and_conditional() {
+        let seafile = fields_for("SEAFILE");
+        let names: Vec<&str> = seafile.iter().map(|field| field.name.as_str()).collect();
+        let account_panel = names
+            .iter()
+            .position(|name| *name == "filter.account-tip")
+            .unwrap();
+        let token_panel = names
+            .iter()
+            .position(|name| *name == "filter.token-tip")
+            .unwrap();
+        let token = names
+            .iter()
+            .position(|name| *name == "config.credentials.seafile_token")
+            .unwrap();
+        let repo_token = names
+            .iter()
+            .position(|name| *name == "config.credentials.repo_token")
+            .unwrap();
+        assert!(
+            account_panel < token,
+            "the account panel precedes the account token"
+        );
+        assert!(
+            token_panel < repo_token,
+            "the token panel precedes the library token"
+        );
+
+        let panel = &seafile[account_panel];
+        assert_eq!(panel.field_type, "Custom");
+        assert!(panel.panel_en.is_some());
+        assert!(panel.visible(&values(&[("config.sync_scope", "account")])));
+        assert!(!panel.visible(&values(&[("config.sync_scope", "library")])));
+        let panel = &seafile[token_panel];
+        assert!(panel.visible(&values(&[("config.sync_scope", "library")])));
+        assert!(panel.visible(&values(&[("config.sync_scope", "directory")])));
+        assert!(!panel.visible(&values(&[("config.sync_scope", "account")])));
+        assert!(
+            panel
+                .panel_en
+                .as_deref()
+                .is_some_and(|text| text.contains("Library Token"))
+        );
+
+        // The other three panels follow their own switches.
+        let s3_panel = fields_for("S3")
+            .into_iter()
+            .find(|field| field.name == "filter.tip")
+            .unwrap();
+        assert!(s3_panel.visible(&values(&[
+            ("config.credentials.authentication_method", "assume_role"),
+            ("config.bucket_type", "s3"),
+        ])));
+        assert!(!s3_panel.visible(&values(&[
+            ("config.credentials.authentication_method", "access_key"),
+            ("config.bucket_type", "s3"),
+        ])));
+        let confluence_panel = fields_for("CONFLUENCE")
+            .into_iter()
+            .find(|field| field.name == "filter.tip")
+            .unwrap();
+        assert!(confluence_panel.visible(&values(&[("config.index_mode", "everything")])));
+        let bitbucket_panel = fields_for("BITBUCKET")
+            .into_iter()
+            .find(|field| field.name == "filter.tip")
+            .unwrap();
+        assert!(bitbucket_panel.visible(&values(&[("config.index_mode", "workspace")])));
+        assert!(
+            bitbucket_panel
+                .panel_en
+                .as_deref()
+                .is_some_and(|text| text.contains("all repositories"))
+        );
+    }
+
+    #[test]
+    fn seafile_token_is_visible_in_every_sync_scope() {
+        let token = find("seafile", "config.credentials.seafile_token");
+        for scope in ["account", "library", "directory"] {
+            assert!(
+                token.visible(&values(&[("config.sync_scope", scope)])),
+                "token visible for {scope}"
+            );
+        }
+        assert_eq!(
+            find("seafile", "config.include_shared")
+                .default_value
+                .as_deref(),
+            Some("true")
+        );
+    }
+
+    #[test]
+    fn show_when_predicates_are_or_ed() {
+        let mut values = HashMap::new();
+        values.insert("config.auth_mode".to_string(), "account_key".to_string());
+        let fields = fields_for("azure_blob");
+        let account_name = fields
+            .iter()
+            .find(|field| field.name == "config.credentials.account_name")
+            .unwrap();
+        assert!(account_name.visible(&values));
+        values.insert("config.auth_mode".to_string(), "sas_token".to_string());
+        assert!(!account_name.visible(&values));
+    }
+
+    #[test]
+    fn source_info_manifest_covers_every_card_the_page_renders() {
+        let parsed: HashMap<String, SourceInfo> =
+            serde_json::from_str(SOURCE_INFO_JSON).expect("info manifest parses");
+        // Coverage, not a frozen count: the manifest is the cards the page renders, so every connector the
+        // registry can build must appear here (except those with a dedicated control). The number 35 that used
+        // to sit here hid exactly that — five connectors were added to the schema and this manifest was not.
+        let via_other_control = ["local", "webdav", "blob", "azure_blob"];
+        let registry = crate::connectors::ConnectorRegistry::kinds();
+        // Compare through the same normalisation the request path uses: the cards spell some services the way
+        // their users do (`google_cloud_storage`, `oci_storage`) while the registry names them `gcs`/`oracle`.
+        let cards: std::collections::HashSet<String> = parsed
+            .keys()
+            .map(|key| crate::api::data_source_mgr::normalize_kind(key))
+            .collect();
+        let missing: Vec<&str> = registry
+            .iter()
+            .map(|info| info.kind)
+            .filter(|kind| !via_other_control.contains(kind))
+            .filter(|kind| !cards.contains(*kind))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "these connectors have no card entry, so the page cannot render them: {missing:?}"
+        );
+        for (key, info) in &parsed {
+            assert!(!info.name.is_empty(), "{key} has a display name");
+            assert!(
+                info.icon.ends_with(".svg") || info.icon.chars().count() <= 4,
+                "{key} icon is a static asset or emoji fallback"
+            );
+        }
+        let s3 = source_info_for("S3").expect("S3 entry present");
+        assert_eq!(s3.name, "S3");
+        assert_eq!(s3.icon, "assets/svg/data-source/s3.svg");
+        assert!(s3.description.contains("AWS S3"));
+        assert!(source_info_for("not-a-source").is_none());
+    }
+    #[test]
+    fn onedrive_tenant_id_field_carries_upstream_tooltip() {
+        let field = find("onedrive", "config.credentials.tenant_id");
+        assert!(
+            field
+                .tooltip_en
+                .as_deref()
+                .unwrap_or("")
+                .contains("tenant ID"),
+            "tooltip_en merged from upstream locale: {:?}",
+            field.tooltip_en
+        );
+        assert!(
+            field.tooltip_zh.is_some(),
+            "zh tooltip present for CN users"
+        );
+    }
+}
+
+#[cfg(test)]
+mod ui_schema_coverage_tests {
+    use super::schema_for_ui;
+    use crate::api::data_source_mgr::{is_supported_kind, normalize_kind};
+
+    /// Every connector the registry can build must be reachable from the data-source page, and every card the
+    /// page renders must be a connector the API accepts.
+    ///
+    /// This is the invariant that was silently broken: the page renders one card per schema key, the keys are
+    /// upper-cased (`SALESFORCE`, `GOOGLE_CLOUD_STORAGE`, `OCI_STORAGE`), and the API compared them verbatim
+    /// against the lower-case registry kinds — so **every** card posted a type the API rejected. A test that
+    /// only opened the modal could not see it; a test that maps each rendered key through the same path the
+    /// request takes can.
+    #[test]
+    fn every_rendered_card_is_accepted_and_every_connector_has_a_card() {
+        let schema = schema_for_ui();
+        let keys: Vec<String> = schema
+            .as_object()
+            .expect("the UI schema is an object keyed by source name")
+            .keys()
+            .cloned()
+            .collect();
+        assert!(
+            !keys.is_empty(),
+            "the data-source page would render no cards at all"
+        );
+
+        // Every rendered card must survive the request path.
+        for key in &keys {
+            let normalized = normalize_kind(key);
+            assert!(
+                is_supported_kind(&normalized),
+                "the page renders a card `{key}` that normalises to `{normalized}`, which the API rejects"
+            );
+        }
+
+        // The page does not render cards from this schema: it renders one card per entry of the source-info
+        // catalogue, and a card without schema fields would open an empty modal. Both lists must therefore
+        // agree with each other and with the registry — checking only two of the three is how five connectors
+        // ended up with fields but no card.
+        let info = super::source_info_for_ui();
+        let cards: Vec<String> = info
+            .as_object()
+            .expect("the source-info manifest is an object keyed by kind")
+            .keys()
+            .cloned()
+            .collect();
+        assert!(!cards.is_empty(), "the page would render no cards at all");
+
+        // Every rendered card must be a connector the API accepts.
+        for card in &cards {
+            let normalized = normalize_kind(card);
+            assert!(
+                is_supported_kind(&normalized),
+                "the page renders a card `{card}` that normalises to `{normalized}`, which the API rejects"
+            );
+            assert!(
+                keys.iter().any(|key| normalize_kind(key) == normalized),
+                "the card `{card}` has no form schema, so its modal would open with no fields"
+            );
+        }
+
+        // Every registry kind must have a card, except the ones the page reaches through another control.
+        let via_other_control = ["local", "webdav", "blob", "azure_blob"];
+        let mut missing: Vec<&str> = Vec::new();
+        for info in crate::connectors::ConnectorRegistry::kinds() {
+            let kind = info.kind;
+            if via_other_control.contains(&kind) {
+                continue;
+            }
+            let rendered = cards.iter().any(|card| normalize_kind(card) == kind);
+            if !rendered {
+                missing.push(kind);
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "these connectors can be built but have no card on the data-source page, so no user can add \
+             them: {missing:?}"
+        );
+    }
+}

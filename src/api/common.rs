@@ -301,4 +301,61 @@ pub use crate::common::constants::{
     NAME_LENGTH_LIMIT, REQUEST_MAX_WAIT_SEC, REQUEST_WAIT_SEC, RetCode, StatusEnum, TaskStatus,
 };
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    /// A streamed response must deliver every byte of a file larger than the read
+    /// chunk, and must answer the upstream empty-file payload when there is nothing
+    /// to send. The previous buffered version had no such failure mode; the
+    /// streaming one does, so it is pinned here.
+    #[tokio::test]
+    async fn stream_stored_file_delivers_large_files_and_reports_empty_ones() {
+        let dir = std::env::temp_dir().join(format!("rayrag-stream-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let large = dir.join("large.bin");
+        let size = STREAM_CHUNK_BYTES * 3 + 1234;
+        let payload: Vec<u8> = (0..size).map(|index| (index % 251) as u8).collect();
+        std::fs::write(&large, &payload).unwrap();
+
+        let response =
+            stream_stored_file(&large, "application/octet-stream", "inline", "empty").await;
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(axum::http::header::CONTENT_TYPE)
+                .unwrap(),
+            "application/octet-stream"
+        );
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(body.len(), size, "every chunk must arrive");
+        assert_eq!(
+            &body[..],
+            &payload[..],
+            "streamed bytes must match the file"
+        );
+
+        let empty = dir.join("empty.bin");
+        std::fs::write(&empty, b"").unwrap();
+        let response =
+            stream_stored_file(&empty, "text/plain", "inline", "This file is empty.").await;
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["message"], "This file is empty.");
+
+        let missing = dir.join("missing.bin");
+        let response =
+            stream_stored_file(&missing, "text/plain", "inline", "This file is empty.").await;
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["message"], "This file is empty.");
+        std::fs::remove_dir_all(dir).ok();
+    }
+}

@@ -919,4 +919,301 @@ async fn feishu_event(
 
 // ── Tests ───────────────────────────────────────────────────────
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex as StdMutex;
 
+    /// Minimal in-memory channel used to exercise the registry.
+    struct EchoChannel {
+        account_id: String,
+        slot: HandlerSlot,
+    }
+
+    impl EchoChannel {
+        fn new(account_id: &str, _cfg: &serde_json::Value) -> Self {
+            Self {
+                account_id: account_id.to_string(),
+                slot: HandlerSlot::default(),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Channel for EchoChannel {
+        fn channel_id(&self) -> &str {
+            "echo"
+        }
+        fn account_id(&self) -> &str {
+            &self.account_id
+        }
+        fn set_message_handler(&self, handler: MessageHandler) {
+            self.slot.set(handler);
+        }
+        fn handler(&self) -> Option<MessageHandler> {
+            self.slot.get()
+        }
+        async fn start(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn stop(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn send_text(&self, _message: &OutgoingMessage) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn send_markdown(&self, _message: &OutgoingMessage) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Registry bootstrap: bundled channels self-register (RAGFlow
+    /// `registered_channel_ids`), unknown platforms are rejected.
+    #[tokio::test]
+    async fn registry_bootstrap_lists_bundled_channels() {
+        let registry = bootstrap_registry().await;
+        assert_eq!(registry.registered_ids().await, vec!["feishu", "webhook"]);
+        assert!(registry.has("feishu").await);
+        assert!(registry.has("webhook").await);
+        assert!(!registry.has("slack").await);
+    }
+
+    /// Config walking: `channels.<name>.accounts.<id>` with `enabled` flags,
+    /// shared + account config merge, disabled accounts skipped, unknown
+    /// channel skipped (RAGFlow `build_channels`).
+    #[tokio::test]
+    async fn build_channels_walks_accounts_and_merges_config() {
+        let registry = ChannelRegistry::new();
+        let seen = Arc::new(StdMutex::new(Vec::<(String, serde_json::Value)>::new()));
+        let seen_clone = seen.clone();
+        registry
+            .register(
+                "echo",
+                Arc::new(move |account_id, cfg| {
+                    seen_clone
+                        .lock()
+                        .unwrap()
+                        .push((account_id.to_string(), cfg.clone()));
+                    Ok(Arc::new(EchoChannel::new(account_id, cfg)) as Arc<dyn Channel>)
+                }),
+            )
+            .await;
+        let config = serde_json::json!({
+            "channels": {
+                "echo": {
+                    "enabled": true,
+                    "shared_key": "shared-value",
+                    "accounts": {
+                        "a1": {"secret": "s1"},
+                        "a2": {"secret": "s2", "enabled": true},
+                        "a3": {"enabled": false}
+                    }
+                },
+                "ghost": {"enabled": true}
+            }
+        });
+        let instances = registry.build_channels(&config).await;
+        assert_eq!(instances.len(), 2);
+        // JSON map 遍历顺序不稳定 → 集合匹配，不依赖顺序。
+        let mut ids: Vec<&str> = instances.iter().map(|c| c.account_id()).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, vec!["a1", "a2"]);
+        let seen = seen.lock().unwrap();
+        let a1 = seen.iter().find(|(id, _)| id == "a1").unwrap();
+        assert_eq!(a1.1["shared_key"], "shared-value");
+        assert_eq!(a1.1["secret"], "s1");
+        let a2 = seen.iter().find(|(id, _)| id == "a2").unwrap();
+        assert_eq!(a2.1["shared_key"], "shared-value");
+        assert_eq!(a2.1["secret"], "s2");
+        assert!(seen.iter().all(|(id, _)| id != "a3"));
+    }
+
+    /// Bootstrap start/stop hooks + inbound dispatch routing by account id
+    /// (RAGFlow `_start_channel` / `_stop_channel` / `_dispatch`).
+    #[tokio::test]
+    async fn start_all_tracks_running_and_dispatch_inbound_routes_to_handler() {
+        let registry = bootstrap_registry().await;
+        let config = serde_json::json!({
+            "channels": {
+                "webhook": {
+                    "enabled": true,
+                    "callback_url": "http://127.0.0.1:1/unused",
+                    "accounts": { "default": {} }
+                }
+            }
+        });
+        let started = registry.start_all(&config).await;
+        assert_eq!(
+            started,
+            vec![("webhook".to_string(), "default".to_string())]
+        );
+        assert!(registry.get_running("default").await.is_some());
+
+        let received = Arc::new(StdMutex::new(Vec::<IncomingMessage>::new()));
+        let received_clone = received.clone();
+        registry
+            .get_running("default")
+            .await
+            .unwrap()
+            .set_message_handler(Arc::new(
+                move |message: IncomingMessage| -> BoxFuture<'static, ()> {
+                    received_clone.lock().unwrap().push(message);
+                    Box::pin(async {})
+                },
+            ));
+
+        let delivered = registry
+            .dispatch_inbound(
+                "default",
+                IncomingMessage {
+                    channel: "webhook".into(),
+                    account_id: "default".into(),
+                    chat_id: "chat-1".into(),
+                    chat_type: "p2p".into(),
+                    message_id: "m-1".into(),
+                    sender_id: "u-1".into(),
+                    text: "hello".into(),
+                    raw: None,
+                },
+            )
+            .await;
+        assert!(delivered);
+        // Unknown account is not delivered.
+        assert!(
+            !registry
+                .dispatch_inbound(
+                    "missing",
+                    IncomingMessage {
+                        channel: "webhook".into(),
+                        account_id: "missing".into(),
+                        chat_id: "c".into(),
+                        chat_type: "p2p".into(),
+                        message_id: "m".into(),
+                        sender_id: "u".into(),
+                        text: "x".into(),
+                        raw: None,
+                    },
+                )
+                .await
+        );
+        assert_eq!(received.lock().unwrap().len(), 1);
+        assert_eq!(received.lock().unwrap()[0].text, "hello");
+        assert_eq!(received.lock().unwrap()[0].chat_id, "chat-1");
+
+        registry.stop_all().await;
+        assert!(registry.get_running("default").await.is_none());
+    }
+
+    /// Webhook channel outbound: POSTs the RAGFlow `OutgoingMessage` contract
+    /// (`chat_id`, `text`, `reply_to_message_id`, `msg_type`) to callback_url.
+    #[tokio::test]
+    async fn webhook_channel_posts_outgoing_message_contract() {
+        let captured = Arc::new(StdMutex::new(Vec::<serde_json::Value>::new()));
+        let captured_clone = captured.clone();
+        let app = axum::Router::new().route(
+            "/cb",
+            axum::routing::post(move |Json(payload): Json<serde_json::Value>| {
+                captured_clone.lock().unwrap().push(payload);
+                async { StatusCode::OK }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let channel = WebhookChannel::new(
+            "default",
+            &serde_json::json!({ "callback_url": format!("http://{addr}/cb") }),
+        )
+        .unwrap();
+        channel
+            .send_text(&OutgoingMessage {
+                chat_id: "chat-1".into(),
+                text: "hello".into(),
+                reply_to_message_id: None,
+            })
+            .await
+            .unwrap();
+        channel
+            .send_markdown(&OutgoingMessage {
+                chat_id: "chat-1".into(),
+                text: "**hi**".into(),
+                reply_to_message_id: Some("m-9".into()),
+            })
+            .await
+            .unwrap();
+
+        // Let the capture server drain both requests.
+        for _ in 0..50 {
+            if captured.lock().unwrap().len() == 2 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        server.abort();
+
+        let got = captured.lock().unwrap().clone();
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0]["chat_id"], "chat-1");
+        assert_eq!(got[0]["text"], "hello");
+        assert_eq!(got[0]["msg_type"], "text");
+        assert_eq!(got[1]["msg_type"], "markdown");
+        assert_eq!(got[1]["reply_to_message_id"], "m-9");
+    }
+
+    /// Feishu inbound: URL-verification challenge echo + v2.0 message event
+    /// normalization (RAGFlow `FeishuChannel._normalize`).
+    #[tokio::test]
+    async fn feishu_channel_handles_challenge_and_message_event() {
+        let channel = FeishuChannel::new(
+            "default",
+            &serde_json::json!({ "app_id": "cli_test", "app_secret": "secret" }),
+        )
+        .unwrap();
+        assert_eq!(channel.channel_id(), "feishu");
+
+        // URL verification challenge is echoed synchronously.
+        let reply = channel
+            .handle_raw(&serde_json::json!({ "challenge": "abc123", "token": "t" }))
+            .await
+            .unwrap();
+        assert_eq!(reply.unwrap()["challenge"], "abc123");
+
+        // Inbound message event is normalized + dispatched.
+        let received = Arc::new(StdMutex::new(Vec::<IncomingMessage>::new()));
+        let received_clone = received.clone();
+        channel.set_message_handler(Arc::new(
+            move |message: IncomingMessage| -> BoxFuture<'static, ()> {
+                received_clone.lock().unwrap().push(message);
+                Box::pin(async {})
+            },
+        ));
+        let payload = serde_json::json!({
+            "schema": "2.0",
+            "header": { "event_type": "im.message.receive_v1" },
+            "event": {
+                "message": {
+                    "message_id": "om_123",
+                    "chat_id": "oc_456",
+                    "chat_type": "p2p",
+                    "content": "{\"text\":\"你好，飞书\"}"
+                },
+                "sender": { "sender_id": { "open_id": "ou_789" } }
+            }
+        });
+        let reply = channel.handle_raw(&payload).await.unwrap();
+        assert!(reply.is_none());
+
+        let messages = received.lock().unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].channel, "feishu");
+        assert_eq!(messages[0].account_id, "default");
+        assert_eq!(messages[0].chat_id, "oc_456");
+        assert_eq!(messages[0].chat_type, "p2p");
+        assert_eq!(messages[0].message_id, "om_123");
+        assert_eq!(messages[0].sender_id, "ou_789");
+        assert_eq!(messages[0].text, "你好，飞书");
+    }
+}

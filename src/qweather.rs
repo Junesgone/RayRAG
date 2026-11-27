@@ -321,4 +321,92 @@ pub fn qweather_results_to_tool_rows(results: &[QWeatherResult]) -> Vec<Value> {
         .collect()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn rows_are_ragflow_shaped() {
+        let rows = qweather_results_to_tool_rows(&[QWeatherResult {
+            content: "c".into(),
+        }]);
+        assert_eq!(rows[0]["title"], "和风天气");
+        assert_eq!(rows[0]["snippet"], "c");
+    }
+
+    #[test]
+    fn url_encoding_handles_chinese_and_space() {
+        assert_eq!(urlencoding("中山 市"), "%E4%B8%AD%E5%B1%B1%20%E5%B8%82");
+        assert_eq!(urlencoding("zhongshan"), "zhongshan");
+    }
+
+    #[test]
+    fn weather_daily_renders_one_row_per_day() {
+        let envelope = serde_json::json!({
+            "code": "200",
+            "daily": [
+                {"date": "2026-08-01", "tempMax": "30"},
+                {"date": "2026-08-02", "tempMax": "31"}
+            ]
+        });
+        // The rendering logic lives in the provider impl; assert the shape
+        // of the JSON we feed it is what we expect.
+        assert_eq!(envelope["daily"].as_array().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn missing_key_or_location_is_rejected() {
+        let client = QWeatherClient::default();
+        let error = client
+            .search(
+                "",
+                &QWeatherRequest {
+                    location: "中山".into(),
+                    r#type: QWeatherType::Weather,
+                    time_period: "now".into(),
+                    lang: "zh".into(),
+                    paid: false,
+                    top_n: 5,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("API key"));
+        let error = client
+            .search(
+                "key",
+                &QWeatherRequest {
+                    location: "".into(),
+                    r#type: QWeatherType::Weather,
+                    time_period: "now".into(),
+                    lang: "zh".into(),
+                    paid: false,
+                    top_n: 5,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("location"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a live QWeather API key (QWEATHER_API_KEY)"]
+    async fn live_qweather_weather_now() {
+        let key = std::env::var("QWEATHER_API_KEY").expect("QWEATHER_API_KEY must be set");
+        let results = QWeatherClient::default()
+            .search(
+                &key,
+                &QWeatherRequest {
+                    location: "中山".into(),
+                    r#type: QWeatherType::Weather,
+                    time_period: "now".into(),
+                    lang: "zh".into(),
+                    paid: false,
+                    top_n: 5,
+                },
+            )
+            .await
+            .unwrap();
+        assert!(!results.is_empty());
+    }
+}

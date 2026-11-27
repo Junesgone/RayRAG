@@ -799,4 +799,258 @@ pub fn filterout_scraps(
     res.join("\n\n")
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    fn box_at(top: f64, bottom: f64, x0: f64, x1: f64, text: &str, page: usize) -> PdfBox {
+        PdfBox {
+            top,
+            bottom,
+            x0,
+            x1,
+            text: text.to_string(),
+            page_number: page,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn garbled_char_detection() {
+        assert!(is_garbled_char(Some('\u{E000}'))); // PUA
+        assert!(is_garbled_char(Some('\u{F0000}'))); // PUA supplementary
+        assert!(is_garbled_char(Some('\u{FFFD}'))); // replacement char
+        assert!(is_garbled_char(Some('\u{01}'))); // control
+        assert!(is_garbled_char(Some('\u{0085}'))); // C1 control
+        assert!(!is_garbled_char(Some('你')));
+        assert!(!is_garbled_char(Some('a')));
+        assert!(!is_garbled_char(Some(' ')));
+    }
+
+    #[test]
+    fn garbled_text_detection() {
+        assert!(is_garbled_text("\u{E000}\u{E001}\u{E002}", 0.5));
+        assert!(is_garbled_text("(cid:123) hello", 0.5));
+        assert!(!is_garbled_text("你好世界 normal text", 0.5));
+        assert!(!is_garbled_text("", 0.5));
+        assert!(!is_garbled_text("   ", 0.5));
+    }
+
+    #[test]
+    fn subset_font_prefix() {
+        assert!(has_subset_font_prefix("DY1+ZLQDm1-1"));
+        assert!(has_subset_font_prefix("ABC+Helvetica"));
+        assert!(!has_subset_font_prefix("Helvetica"));
+        assert!(!has_subset_font_prefix(""));
+    }
+
+    #[test]
+    fn garbled_by_font_encoding() {
+        // Mostly subset-embedded ASCII punctuation → garbled.
+        let chars: Vec<GarbledChar> = (0..40)
+            .map(|_| GarbledChar {
+                text: "&*#@".to_string(),
+                fontname: "ABCD+Embedded".to_string(),
+            })
+            .collect();
+        assert!(is_garbled_by_font_encoding(&chars, 20));
+
+        // Real CJK text with subset fonts → not garbled.
+        let chars2: Vec<GarbledChar> = (0..40)
+            .map(|_| GarbledChar {
+                text: "中".to_string(),
+                fontname: "ABCD+Embedded".to_string(),
+            })
+            .collect();
+        assert!(!is_garbled_by_font_encoding(&chars2, 20));
+
+        // Too few chars → false.
+        let chars3: Vec<GarbledChar> = (0..5)
+            .map(|_| GarbledChar {
+                text: "&*#@".to_string(),
+                fontname: "ABCD+Embedded".to_string(),
+            })
+            .collect();
+        assert!(!is_garbled_by_font_encoding(&chars3, 20));
+    }
+
+    #[test]
+    fn proj_matches_chapter_patterns() {
+        assert!(match_proj("第一章 总则"));
+        assert!(match_proj("第三条 定义"));
+        assert!(match_proj("（一）范围"));
+        assert!(match_proj("1、总则"));
+        assert!(match_proj("①"));
+        assert!(!match_proj("普通段落文本"));
+        // "第3条" uses an ASCII digit — the pattern only accepts CJK numerals.
+        assert!(!match_proj("第3条 定义"));
+    }
+
+    #[test]
+    fn proj_match_levels() {
+        assert_eq!(proj_match("第一章 总则"), Some(1));
+        assert_eq!(proj_match("第一条 定义"), Some(2));
+        assert_eq!(proj_match("一、概述"), Some(3));
+        assert_eq!(proj_match("（一）范围"), Some(4));
+        assert_eq!(proj_match("1、总则"), Some(5));
+        assert_eq!(proj_match("1.1 小节"), Some(6));
+        assert_eq!(proj_match("结论："), Some(9));
+        assert_eq!(proj_match("12）"), Some(10));
+        assert_eq!(proj_match("（12）"), Some(11));
+        // "三、是" hits pattern 3 (`[零一二三四五六七八九十百]+[、 　]`)
+        // before pattern 12 (`[零一二三四五六七八九十百]+是`).
+        assert_eq!(proj_match("三、是"), Some(3));
+        // Short line → None.
+        assert_eq!(proj_match("ab"), None);
+        // Numeric-only line → None.
+        assert_eq!(proj_match("1.5"), None);
+    }
+
+    #[test]
+    fn sort_x_by_page_stabilizes_columns() {
+        let mut arr = vec![
+            box_at(30.0, 40.0, 100.0, 200.0, "b", 1),
+            box_at(10.0, 20.0, 100.0, 200.0, "a", 1),
+        ];
+        sort_x_by_page(&mut arr, 15.0);
+        assert_eq!(arr[0].text, "a");
+        assert_eq!(arr[1].text, "b");
+    }
+
+    #[test]
+    fn x_y_dis_geometry() {
+        let a = box_at(0.0, 10.0, 0.0, 100.0, "aa", 1);
+        let b = box_at(20.0, 30.0, 100.0, 200.0, "bb", 1);
+        assert_eq!(x_dis(&a, &b), 0.0); // adjacent edges
+        assert_eq!(y_dis(&a, &b), 20.0); // (50 - 10) / 2
+    }
+
+    #[test]
+    fn text_merge_horizontal() {
+        let mut bxs = vec![
+            box_at(0.0, 10.0, 0.0, 100.0, "Hello", 1),
+            box_at(0.5, 10.5, 100.0, 200.0, "World", 1),
+        ];
+        bxs[0].layoutno = "1".to_string();
+        bxs[1].layoutno = "1".to_string();
+        bxs[0].col_id = Some(0);
+        bxs[1].col_id = Some(0);
+        let mh = vec![12.0];
+        text_merge(&mut bxs, &mh);
+        assert_eq!(bxs.len(), 1);
+        assert_eq!(bxs[0].text, "HelloWorld");
+        assert!((bxs[0].x1 - 200.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn text_merge_skips_different_layouts() {
+        let mut bxs = vec![
+            box_at(0.0, 10.0, 0.0, 100.0, "Hello", 1),
+            box_at(0.5, 10.5, 100.0, 200.0, "World", 1),
+        ];
+        bxs[0].layoutno = "1".to_string();
+        bxs[1].layoutno = "2".to_string();
+        let mh = vec![12.0];
+        text_merge(&mut bxs, &mh);
+        assert_eq!(bxs.len(), 2);
+    }
+
+    #[test]
+    fn naive_vertical_merge_joins_lines() {
+        let mut bxs = vec![
+            box_at(0.0, 10.0, 0.0, 200.0, "第一行", 1),
+            box_at(11.0, 21.0, 5.0, 200.0, "第二行", 1),
+        ];
+        bxs[0].layoutno = "1".to_string();
+        bxs[1].layoutno = "1".to_string();
+        let mh = vec![12.0];
+        let mw = vec![8.0];
+        naive_vertical_merge(&mut bxs, &mh, &mw, false);
+        assert_eq!(bxs.len(), 1);
+        assert!(bxs[0].text.contains("第一行"));
+        assert!(bxs[0].text.contains("第二行"));
+    }
+
+    #[test]
+    fn naive_vertical_merge_keeps_detached_boxes() {
+        let mut bxs = vec![
+            box_at(0.0, 10.0, 0.0, 100.0, "左列", 1),
+            box_at(11.0, 21.0, 300.0, 400.0, "右列", 1),
+        ];
+        bxs[0].layoutno = "1".to_string();
+        bxs[1].layoutno = "1".to_string();
+        let mh = vec![12.0];
+        let mw = vec![8.0];
+        naive_vertical_merge(&mut bxs, &mh, &mw, false);
+        // Detached (x1 < x0 of next) → not merged.
+        assert_eq!(bxs.len(), 2);
+    }
+
+    #[test]
+    fn filter_forpages_removes_contents_section() {
+        let mut bxs = vec![
+            box_at(0.0, 10.0, 0.0, 100.0, "目录", 1),
+            box_at(20.0, 30.0, 0.0, 100.0, "第一章 总则", 1),
+            box_at(40.0, 50.0, 0.0, 100.0, "第二条", 1),
+        ];
+        filter_forpages(&mut bxs, 1);
+        // "目录" + prefix-matched "第一章 总则" removed; "第二条" kept.
+        assert_eq!(bxs.len(), 1);
+        assert!(bxs[0].text.contains("第二条"));
+    }
+
+    #[test]
+    fn filter_forpages_removes_dotted_pages() {
+        let mut bxs = vec![
+            box_at(0.0, 10.0, 0.0, 100.0, "····", 1),
+            box_at(20.0, 30.0, 0.0, 100.0, "····", 1),
+            box_at(40.0, 50.0, 0.0, 100.0, "····", 1),
+            box_at(60.0, 70.0, 0.0, 100.0, "····", 1),
+            box_at(80.0, 90.0, 0.0, 100.0, "正文", 2),
+        ];
+        filter_forpages(&mut bxs, 2);
+        assert_eq!(bxs.len(), 1);
+        assert_eq!(bxs[0].page_number, 2);
+    }
+
+    #[test]
+    fn merge_with_same_bullet_joins() {
+        let mut bxs = vec![
+            box_at(0.0, 10.0, 0.0, 100.0, "•第一项", 1),
+            box_at(11.0, 21.0, 0.0, 100.0, "•第二项", 1),
+        ];
+        merge_with_same_bullet(&mut bxs);
+        assert_eq!(bxs.len(), 1);
+        assert!(bxs[0].text.contains('\n'));
+        // Lowercase letters never merge.
+        let mut bxs2 = vec![
+            box_at(0.0, 10.0, 0.0, 100.0, "a first", 1),
+            box_at(11.0, 21.0, 0.0, 100.0, "a second", 1),
+        ];
+        merge_with_same_bullet(&mut bxs2);
+        assert_eq!(bxs2.len(), 2);
+    }
+
+    #[test]
+    fn line_tag_formats_marker() {
+        let b = box_at(10.0, 20.0, 5.0, 95.0, "text", 1);
+        let cum = vec![0.0, 800.0];
+        let heights = vec![2400.0];
+        let tag = line_tag(&b, 3.0, &cum, &heights);
+        assert!(tag.starts_with("@@1\t"));
+        assert!(tag.ends_with("##"));
+        assert!(tag.contains("5.0\t95.0\t10.0\t20.0"));
+    }
+
+    #[test]
+    fn filterout_scraps_keeps_useful_lines() {
+        let mut bxs = vec![box_at(0.0, 10.0, 0.0, 300.0, "第一章 标题", 1)];
+        bxs[0].layout_type = "title".to_string();
+        let mh = vec![12.0];
+        let pw = vec![1800.0];
+        let cum = vec![0.0, 800.0];
+        let ph = vec![2400.0];
+        let out = filterout_scraps(&mut bxs, 3.0, &mh, &pw, &cum, &ph);
+        assert!(out.contains("第一章 标题"));
+    }
+}

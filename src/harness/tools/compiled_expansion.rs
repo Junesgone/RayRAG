@@ -435,4 +435,198 @@ pub async fn expand_with_compiled(
     kbinfos.chunks.len().saturating_sub(before)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    struct MockHost {
+        seeds: Vec<Value>,
+        fwd: Vec<Value>,
+        bwd: Vec<Value>,
+        neighbours: Vec<Value>,
+        pages: Vec<Value>,
+        chunks: Vec<Value>,
+        calls: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl MockHost {
+        fn new() -> Self {
+            Self {
+                seeds: Vec::new(),
+                fwd: Vec::new(),
+                bwd: Vec::new(),
+                neighbours: Vec::new(),
+                pages: Vec::new(),
+                chunks: Vec::new(),
+                calls: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    fn entity_row(name: &str, doc: &str, chunks: &[&str]) -> Value {
+        json!({
+            "id": format!("e:{name}"),
+            "content_with_weight": json!({"name": name}).to_string(),
+            "doc_id": doc,
+            "source_chunk_ids": chunks,
+        })
+    }
+
+    fn relation_row(from: &str, to: &str) -> Value {
+        json!({
+            "id": format!("r:{from}:{to}"),
+            "from_entity_kwd": from,
+            "to_entity_kwd": to,
+            "source_chunk_ids": ["rc"],
+            "doc_id": "d1",
+        })
+    }
+
+    #[async_trait]
+    impl CompiledExpansionHost for MockHost {
+        async fn search_compiled_rows(
+            &self,
+            _kb_id: &str,
+            _tenant_id: &str,
+            _doc_ids: Option<&[String]>,
+            kind: &str,
+            _text: &str,
+            _top_n: usize,
+            extra: &Map<String, Value>,
+            compile_kwd: Option<&str>,
+            template_kind: Option<&str>,
+        ) -> Vec<Value> {
+            self.calls.lock().unwrap().push(format!(
+                "{kind}:{extra:?}:{compile_kwd:?}:{template_kind:?}"
+            ));
+            if kind == "entity" {
+                if extra.contains_key("name_kwd") {
+                    return self.neighbours.clone();
+                }
+                return self.seeds.clone();
+            }
+            if extra.contains_key("from_entity_kwd") {
+                return self.fwd.clone();
+            }
+            if extra.contains_key("to_entity_kwd") {
+                return self.bwd.clone();
+            }
+            Vec::new()
+        }
+
+        async fn search_synthesis_pages(
+            &self,
+            _kb_id: &str,
+            _tenant_id: &str,
+            _doc_ids: Option<&[String]>,
+            _text: &str,
+            compile_kwd: &str,
+            _top_n: usize,
+        ) -> Vec<Value> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("pages:{compile_kwd}"));
+            self.pages.clone()
+        }
+
+        async fn load_chunks_for_doc(&self, _doc_id: &str, chunk_ids: &[String]) -> Vec<Value> {
+            self.chunks
+                .iter()
+                .filter(|chunk| {
+                    chunk
+                        .get("chunk_id")
+                        .and_then(Value::as_str)
+                        .map(|id| chunk_ids.iter().any(|wanted| wanted == id))
+                        .unwrap_or(false)
+                })
+                .cloned()
+                .collect()
+        }
+    }
+
+    #[tokio::test]
+    async fn one_hop_expansion_loads_neighbour_chunks() {
+        let host = MockHost {
+            seeds: vec![entity_row("Alpha", "d1", &["s1"])],
+            fwd: vec![relation_row("Alpha", "Beta")],
+            neighbours: vec![entity_row("Beta", "d2", &["c1", "c2", "c3"])],
+            chunks: vec![
+                json!({"chunk_id": "c1", "content_with_weight": "one", "similarity": 0.5}),
+                json!({"chunk_id": "c2", "content_with_weight": "two", "similarity": 0.4}),
+                json!({"chunk_id": "c3", "content_with_weight": "three", "similarity": 0.3}),
+            ],
+            ..MockHost::new()
+        };
+        let mut seen: HashSet<String> = ["s1".to_string()].into_iter().collect();
+        let chunks = expand_compiled_strategy(
+            &host,
+            "kb1",
+            "t1",
+            None,
+            "alpha query",
+            &mut seen,
+            Some("tree"),
+            None,
+            2,
+        )
+        .await;
+        assert_eq!(chunks.len(), 2, "max_chunks cap");
+        assert!(seen.contains("c1") && seen.contains("c2"));
+    }
+
+    #[tokio::test]
+    async fn synthesis_pages_get_priority_similarity() {
+        let host = MockHost {
+            pages: vec![json!({"id": "w1", "doc_id": "d1", "source_chunk_ids": ["c1"]})],
+            chunks: vec![json!({"chunk_id": "c1", "content_with_weight": "wiki text"})],
+            ..MockHost::new()
+        };
+        let mut seen: HashSet<String> = HashSet::new();
+        let chunks =
+            expand_wiki_page_strategy(&host, "kb1", "t1", None, "q", &mut seen, "wiki_page", 5)
+                .await;
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0]["similarity"], json!(0.9));
+    }
+
+    #[tokio::test]
+    async fn expand_with_compiled_sorts_and_counts() {
+        let host = MockHost {
+            seeds: vec![entity_row("Alpha", "d1", &[])],
+            fwd: vec![relation_row("Alpha", "Beta")],
+            neighbours: vec![entity_row("Beta", "d2", &["c2"])],
+            chunks: vec![json!({"chunk_id": "c2", "content_with_weight": "x", "similarity": 0.95})],
+            ..MockHost::new()
+        };
+        let mut kbinfos = Kbinfos {
+            chunks: vec![
+                json!({"chunk_id": "base", "content_with_weight": "base", "similarity": 0.2}),
+            ],
+            doc_aggs: vec![],
+            pre_summary: None,
+        };
+        let scopes: Vec<KgScope> = vec![("kb1".to_string(), "t1".to_string(), None)];
+        let added = expand_with_compiled(&host, &scopes, "q", "", &mut kbinfos).await;
+        assert_eq!(added, 1);
+        assert_eq!(
+            kbinfos.chunks[0]["chunk_id"],
+            json!("c2"),
+            "compiled chunk sorts by similarity"
+        );
+        // All template kinds + tree + three synthesis kinds were searched.
+        let calls = host.calls.lock().unwrap().clone();
+        assert!(calls.iter().any(|call| call.starts_with("pages:essence")));
+        assert!(
+            calls
+                .iter()
+                .filter(|call| call.contains("Some(\"knowledge_graph\")"))
+                .count()
+                >= 1
+        );
+
+        // Empty scopes short-circuit.
+        let added = expand_with_compiled(&host, &[], "q", "", &mut kbinfos).await;
+        assert_eq!(added, 0);
+    }
+}

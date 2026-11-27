@@ -173,4 +173,110 @@ pub fn enrich_search_apps(value: &mut Value) {
     });
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
 
+    #[test]
+    fn datasets_gain_the_documented_names_without_losing_the_old_ones() {
+        let mut dataset = json!({
+            "id": "kb-1",
+            "embd_id": "BAAI/bge-large-zh-v1.5@BAAI",
+            "owner_id": "user-1",
+            "created_at": 1729763127646_u64,
+            "updated_at": 1729763127647_u64,
+            "doc_count": 2,
+            "parser_config": "{\"chunk_method\":\"naive\",\"chunk_token_num\":512}",
+        });
+        enrich_datasets(&mut dataset);
+        assert_eq!(
+            dataset["embd_id"], "BAAI/bge-large-zh-v1.5@BAAI",
+            "original kept"
+        );
+        assert_eq!(dataset["embedding_model"], "BAAI/bge-large-zh-v1.5@BAAI");
+        assert_eq!(dataset["created_by"], "user-1");
+        assert_eq!(dataset["tenant_id"], "user-1");
+        assert_eq!(dataset["create_time"], 1729763127646_u64);
+        assert_eq!(dataset["update_time"], 1729763127647_u64);
+        assert_eq!(dataset["document_count"], 2);
+        assert_eq!(dataset["chunk_method"], "naive", "lifted out of the config");
+        assert!(
+            dataset["parser_config"].is_object(),
+            "the guide documents an object: {}",
+            dataset["parser_config"]
+        );
+    }
+
+    #[test]
+    fn chats_gain_dataset_ids_and_timestamps() {
+        let mut chat = json!({
+            "id": "c-1",
+            "kb_ids": ["kb-1", "kb-2"],
+            "created_at": 1729232406637_u64,
+            "updated_at": 1729232406638_u64,
+        });
+        enrich_chats(&mut chat);
+        assert_eq!(chat["kb_ids"], json!(["kb-1", "kb-2"]));
+        assert_eq!(chat["dataset_ids"], json!(["kb-1", "kb-2"]));
+        assert_eq!(chat["create_time"], 1729232406637_u64);
+        assert_eq!(chat["update_time"], 1729232406638_u64);
+    }
+
+    #[test]
+    fn files_and_sessions_gain_the_documented_names() {
+        let mut file =
+            json!({"id": "f-1", "name": "a.txt", "file_type": "doc", "created_at": 7_u64});
+        enrich_files(&mut file);
+        assert_eq!(file["file_type"], "doc", "the original stays");
+        assert_eq!(file["type"], "doc");
+        assert_eq!(file["create_time"], 7_u64);
+
+        let mut session =
+            json!({"id": "s-1", "app_id": "chat-1", "created_at": 1_u64, "updated_at": 2_u64});
+        enrich_sessions(&mut session);
+        assert_eq!(session["chat_id"], "chat-1");
+        assert_eq!(session["create_time"], 1_u64);
+        assert_eq!(session["update_time"], 2_u64);
+        // An orphan session has no assistant, and nothing is invented for it.
+        let mut orphan = json!({"id": "s-2"});
+        enrich_sessions(&mut orphan);
+        assert!(orphan.get("chat_id").is_none());
+    }
+
+    #[test]
+    fn a_real_value_is_never_overwritten() {
+        let mut dataset = json!({"embd_id": "old", "embedding_model": "explicit"});
+        enrich_datasets(&mut dataset);
+        assert_eq!(dataset["embedding_model"], "explicit");
+    }
+
+    #[test]
+    fn missing_concepts_are_null_not_invented() {
+        let mut agent = json!({"id": "a-1", "name": "Helper"});
+        enrich_agents(&mut agent);
+        assert_eq!(agent["title"], "Helper");
+        assert_eq!(agent["type"], "agent");
+        assert_eq!(
+            agent["release_time"],
+            Value::Null,
+            "the guide shows null here"
+        );
+        assert!(agent.get("document_count").is_none(), "no invented numbers");
+    }
+
+    #[test]
+    fn a_broken_parser_config_string_is_left_alone_rather_than_dropped() {
+        let mut dataset = json!({"parser_config": "not json"});
+        enrich_datasets(&mut dataset);
+        assert_eq!(dataset["parser_config"], "not json");
+    }
+
+    #[test]
+    fn lists_are_enriched_element_by_element() {
+        let mut list = json!([{"name": "a"}, {"name": "b"}]);
+        enrich_agents(&mut list);
+        assert_eq!(list[0]["title"], "a");
+        assert_eq!(list[1]["title"], "b");
+    }
+}

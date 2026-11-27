@@ -108,4 +108,51 @@ impl PasswordTransport {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rsa::pkcs8::{DecodePublicKey, EncodePrivateKey};
+    use rsa::rand_core::OsRng;
 
+    fn transport() -> PasswordTransport {
+        let private_key = RsaPrivateKey::new(&mut OsRng, 2_048).unwrap();
+        let pem = private_key.to_pkcs8_pem(LineEnding::LF).unwrap();
+        PasswordTransport::from_private_key_pem(pem.as_str()).unwrap()
+    }
+
+    #[test]
+    fn decodes_ragflow_browser_and_cli_wire_form_and_preserves_plaintext() {
+        let transport = transport();
+        let public_key = RsaPublicKey::from_public_key_pem(transport.public_key_pem()).unwrap();
+        let inner = STANDARD.encode("correct horse battery staple");
+        let ciphertext = public_key
+            .encrypt(&mut OsRng, Pkcs1v15Encrypt, inner.as_bytes())
+            .unwrap();
+        let wire = STANDARD.encode(ciphertext);
+
+        assert_eq!(
+            transport.decode(&wire).unwrap(),
+            "correct horse battery staple"
+        );
+        assert_eq!(
+            transport.decode("plain password").unwrap(),
+            "plain password"
+        );
+        assert_eq!(transport.decode("cGxhaW4=").unwrap(), "cGxhaW4=");
+        assert!(!transport.public_key_pem().contains("PRIVATE"));
+    }
+
+    #[test]
+    fn rejects_short_keys_and_pins_fixed_source_metadata_without_key_material() {
+        let private_key = RsaPrivateKey::new(&mut OsRng, 1_024).unwrap();
+        let pem = private_key.to_pkcs8_pem(LineEnding::LF).unwrap();
+        assert!(PasswordTransport::from_private_key_pem(pem.as_str()).is_err());
+
+        assert_eq!(RAGFLOW_PRIVATE_PEM_BYTES, 1_743);
+        assert_eq!(RAGFLOW_PUBLIC_PEM_BYTES, 451);
+        assert_eq!(RAGFLOW_PRIVATE_PEM_BLOB.len(), 40);
+        assert_eq!(RAGFLOW_PUBLIC_PEM_BLOB.len(), 40);
+        assert_eq!(RAGFLOW_PRIVATE_PEM_SHA256.len(), 64);
+        assert_eq!(RAGFLOW_PUBLIC_PEM_SHA256.len(), 64);
+    }
+}

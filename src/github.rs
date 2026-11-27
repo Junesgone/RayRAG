@@ -97,7 +97,10 @@ impl GitHubClient {
         })
     }
 
-    
+    #[cfg(test)]
+    pub(crate) fn new_with_endpoint(endpoint: &str) -> Result<Self> {
+        Self::new(endpoint)
+    }
 
     async fn send_bounded(&self, request: reqwest::RequestBuilder) -> Result<(u16, Vec<u8>)> {
         let response = request.send().await.context("GitHub request failed")?;
@@ -275,4 +278,187 @@ async fn read_bounded_body(response: reqwest::Response) -> Result<Vec<u8>> {
     Ok(body)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::extract::{Query, State};
+    use axum::http::{HeaderMap, StatusCode};
+    use axum::response::IntoResponse;
+    use axum::routing::get;
+    use axum::{Json, Router};
+    use serde_json::json;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+    use tokio::net::TcpListener;
 
+    type CapturedRequest = (HashMap<String, String>, HeaderMap);
+
+    #[derive(Debug, Clone, Default)]
+    struct Recorded {
+        requests: Arc<Mutex<Vec<CapturedRequest>>>,
+    }
+
+    async fn handler(
+        State(recorded): State<Recorded>,
+        Query(query): Query<HashMap<String, String>>,
+        headers: HeaderMap,
+    ) -> impl IntoResponse {
+        recorded
+            .requests
+            .lock()
+            .unwrap()
+            .push((query.clone(), headers));
+        match query.get("q").map(String::as_str) {
+            Some("missing") => (
+                StatusCode::FORBIDDEN,
+                Json(json!({"message": "rate limited"})),
+            ),
+            Some("bad-status") => (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"items": []}))),
+            _ => (
+                StatusCode::OK,
+                Json(json!({
+                    "total_count": 2,
+                    "items": [
+                        {
+                            "name": "ragflow",
+                            "full_name": "infiniflow/ragflow",
+                            "html_url": "https://github.com/infiniflow/ragflow",
+                            "description": "RAG engine",
+                            "watchers": 12000,
+                            "stargazers_count": 12000,
+                            "license": {"spdx_id": "Apache-2.0"}
+                        },
+                        {
+                            "name": "empty-description",
+                            "full_name": "example/empty-description",
+                            "html_url": "https://github.com/example/empty-description",
+                            "description": null,
+                            "watchers": 5,
+                            "stargazers_count": 5
+                        }
+                    ]
+                })),
+            ),
+        }
+    }
+
+    async fn server() -> (GitHubClient, Recorded, tokio::task::JoinHandle<()>) {
+        let recorded = Recorded::default();
+        let app = Router::new()
+            .route("/search/repositories", get(handler))
+            .with_state(recorded.clone());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (
+            GitHubClient::new_with_endpoint(&format!("http://{address}/search/repositories"))
+                .unwrap(),
+            recorded,
+            handle,
+        )
+    }
+
+    #[tokio::test]
+    async fn python_search_preserves_headers_fields_raw_items_and_none_formatting() {
+        let (client, recorded, handle) = server().await;
+        let rows = client
+            .search(&GitHubSearchRequest {
+                query: "language:rust stars:>100".into(),
+                top_n: 10,
+            })
+            .await
+            .unwrap();
+        handle.abort();
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].name, "ragflow");
+        assert_eq!(rows[0].formatted_content(), "RAG engine\n stars:12000");
+        assert_eq!(rows[0].raw["license"]["spdx_id"], "Apache-2.0");
+        assert_eq!(rows[1].formatted_content(), "None\n stars:5");
+        let requests = recorded.requests.lock().unwrap();
+        let (query, headers) = &requests[0];
+        assert_eq!(query["q"], "language:rust stars:>100");
+        assert_eq!(query["sort"], "stars");
+        assert_eq!(query["order"], "desc");
+        assert_eq!(query["per_page"], "10");
+        assert_eq!(headers[CONTENT_TYPE], GITHUB_MEDIA_TYPE);
+        assert_eq!(headers[ACCEPT], "*/*");
+        assert_eq!(headers["x-github-api-version"], GITHUB_API_VERSION);
+        assert_eq!(headers[USER_AGENT], REQUESTS_USER_AGENT);
+    }
+
+    #[tokio::test]
+    async fn go_search_clamps_limit_and_sends_optional_token() {
+        let (client, recorded, handle) = server().await;
+        let envelope = client.search_go("ragflow", 99, "ghp_test").await.unwrap();
+        let defaults = client.search_go("default", -1, "").await.unwrap();
+
+        assert_eq!(envelope.results.len(), 2);
+        assert_eq!(envelope.results[0].full_name, "infiniflow/ragflow");
+        assert_eq!(envelope.results[0].stargazers_count, 12000);
+        assert_eq!(envelope.results[1].description, "");
+        let requests = recorded.requests.lock().unwrap();
+        let (query, headers) = &requests[0];
+        assert_eq!(query["q"], "ragflow");
+        assert_eq!(query["per_page"], "30");
+        assert_eq!(headers[ACCEPT], GITHUB_MEDIA_TYPE);
+        assert_eq!(headers[USER_AGENT], GITHUB_GO_USER_AGENT);
+        assert_eq!(headers[AUTHORIZATION], "Bearer ghp_test");
+        assert_eq!(defaults.results.len(), 2);
+        let (default_query, default_headers) = &requests[1];
+        assert_eq!(default_query["per_page"], "5");
+        assert!(default_headers.get(AUTHORIZATION).is_none());
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn python_missing_items_and_go_non_success_fail_closed() {
+        let (client, _recorded, handle) = server().await;
+        let python_error = client
+            .search(&GitHubSearchRequest {
+                query: "missing".into(),
+                top_n: 5,
+            })
+            .await
+            .unwrap_err();
+        assert!(python_error.to_string().contains("missing items"));
+        let go_error = client.search_go("bad-status", 0, "").await.unwrap_err();
+        assert!(go_error.to_string().contains("upstream returned 503"));
+        let query_error = client.search_go("  ", 5, "").await.unwrap_err();
+        assert!(query_error.to_string().contains("query is required"));
+        handle.abort();
+    }
+
+    #[test]
+    fn python_scalar_rendering_matches_common_json_values() {
+        assert_eq!(python_scalar_string(&Value::Null), "None");
+        assert_eq!(python_scalar_string(&Value::Bool(true)), "True");
+        assert_eq!(python_scalar_string(&json!(12)), "12");
+        assert_eq!(python_scalar_string(&json!("repo")), "repo");
+
+        let decoded: GitHubGoResponse = serde_json::from_value(json!({
+            "items": [{"description": null, "stargazers_count": null}]
+        }))
+        .unwrap();
+        assert_eq!(decoded.items[0].full_name, "");
+        assert_eq!(decoded.items[0].html_url, "");
+        assert_eq!(decoded.items[0].description, "");
+        assert_eq!(decoded.items[0].stargazers_count, 0);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires outbound access to api.github.com"]
+    async fn live_github_repository_search() {
+        let rows = GitHubClient::default()
+            .search(&GitHubSearchRequest {
+                query: "infiniflow ragflow".into(),
+                top_n: 1,
+            })
+            .await
+            .unwrap();
+        assert!(!rows.is_empty());
+        assert!(!rows[0].html_url.is_empty());
+    }
+}

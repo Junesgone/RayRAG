@@ -174,4 +174,76 @@ pub fn mail_configured() -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    fn store(name: &str) -> OtpStore {
+        let path =
+            std::env::temp_dir().join(format!("rr-otp-{}-{}.json", name, std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        OtpStore::new(path)
+    }
+
+    #[test]
+    fn a_code_is_single_use_and_verifies_once() {
+        let store = store("once");
+        let code = store.issue("Ada@Example.com").unwrap();
+        assert_eq!(
+            store.verify("ada@example.com", &code).unwrap(),
+            OtpCheck::Ok
+        );
+        // The verified flag is what authorises the reset, and consuming removes the entry.
+        assert!(store.consume_verified("ada@example.com").unwrap());
+        assert!(!store.consume_verified("ada@example.com").unwrap());
+        assert_eq!(
+            store.verify("ada@example.com", &code).unwrap(),
+            OtpCheck::Missing
+        );
+    }
+
+    #[test]
+    fn wrong_codes_count_down_and_then_stop() {
+        let store = store("attempts");
+        store.issue("a@b.test").unwrap();
+        for expected in (1..=4).rev() {
+            match store.verify("a@b.test", "000000").unwrap() {
+                OtpCheck::WrongCode { remaining } => assert_eq!(remaining, expected),
+                other => panic!("expected a wrong-code result, got {other:?}"),
+            }
+        }
+        assert_eq!(
+            store.verify("a@b.test", "000000").unwrap(),
+            OtpCheck::WrongCode { remaining: 0 }
+        );
+        // Once the allowance is spent the code is refused even if the right one arrives.
+        assert_eq!(
+            store.verify("a@b.test", "000000").unwrap(),
+            OtpCheck::TooManyAttempts
+        );
+    }
+
+    #[test]
+    fn an_unknown_address_is_reported_not_guessed() {
+        let store = store("missing");
+        assert_eq!(
+            store.verify("nobody@test", "123456").unwrap(),
+            OtpCheck::Missing
+        );
+        assert!(!store.consume_verified("nobody@test").unwrap());
+    }
+
+    #[test]
+    fn a_fresh_code_replaces_the_previous_one() {
+        let store = store("replace");
+        let first = store.issue("a@b.test").unwrap();
+        let second = store.issue("a@b.test").unwrap();
+        if first != second {
+            assert!(matches!(
+                store.verify("a@b.test", &first).unwrap(),
+                OtpCheck::WrongCode { .. }
+            ));
+        }
+        assert_eq!(store.verify("a@b.test", &second).unwrap(), OtpCheck::Ok);
+    }
+}

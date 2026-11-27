@@ -595,4 +595,179 @@ pub fn to_grounded(sca: &Value) -> Value {
     sca.get("claims").cloned().unwrap_or(json!({}))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
 
+    struct MockChat {
+        reply: Result<String, String>,
+    }
+
+    #[async_trait]
+    impl HarnessChat for MockChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            _history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            self.reply.clone()
+        }
+        fn max_length(&self) -> usize {
+            8192
+        }
+    }
+
+    fn claim(id: &str, draft: &str, evidence: &[i64]) -> ScClaim {
+        ScClaim {
+            claim_id: id.to_string(),
+            draft: draft.to_string(),
+            evidence_ids: evidence.to_vec(),
+        }
+    }
+
+    #[test]
+    fn rendering_mirrors_upstream() {
+        let reports = vec![
+            ("c1".to_string(), "alpha draft".to_string()),
+            ("c2".to_string(), String::new()),
+        ];
+        assert_eq!(render_reports(&reports), "Claim c1: alpha draft");
+        assert_eq!(render_reports(&[]), "(no claim drafts)");
+
+        let claims = vec![claim("c1", "alpha", &[0]), claim("c2", "beta", &[9, 1])];
+        let kbinfos = Kbinfos {
+            chunks: vec![
+                json!({"content": "Alpha evidence first line here."}),
+                json!({"content": "Beta table likely"}),
+            ],
+            doc_aggs: vec![],
+            pre_summary: None,
+        };
+        let context = render_claim_context(&claims, Some(&kbinfos));
+        assert!(context.contains("Claim c1 (draft):\nalpha"));
+        assert!(context.contains("Evidence: Alpha evidence first line here."));
+        // Evidence id 9 is out of range and skipped; id 1 resolves.
+        assert!(context.contains("Beta table likely"));
+
+        let overall = render_overall_draft(&claims);
+        assert_eq!(overall, "[Claim c1] alpha\n[Claim c2] beta");
+    }
+
+    #[test]
+    fn bounded_excerpt_tables_and_windows() {
+        assert!(is_table_text("| a | b |\n| - | - |\n| 1 | 2 |"));
+        assert!(!is_table_text("plain text"));
+        let table = "| a | b |\n| - | - |\n| 1 | 2 |";
+        assert_eq!(bounded_excerpt(table, "nothing", 5), table);
+        let long = format!("{}needle{}", "x".repeat(400), "y".repeat(400));
+        let excerpt = bounded_excerpt(&long, "needle", 300);
+        assert!(excerpt.contains("needle"));
+        assert!(excerpt.chars().count() <= 302);
+        assert!(excerpt.starts_with('…'));
+        assert!(excerpt.ends_with('…'));
+    }
+
+    #[test]
+    fn coercion_and_clamp() {
+        assert_eq!(coerce_dict(&json!({"a": 1})), Some(json!({"a": 1})));
+        assert_eq!(
+            coerce_dict(&json!([{"a": 1}, {"b": 2}])),
+            Some(json!({"a": 1}))
+        );
+        assert_eq!(
+            coerce_dict(&json!("{\"ok\": true}")),
+            Some(json!({"ok": true}))
+        );
+        assert_eq!(coerce_dict(&json!(42)), None);
+        assert_eq!(clamp01(&json!(1.7)), 1.0);
+        assert_eq!(clamp01(&json!(-3)), 0.0);
+        assert_eq!(clamp01(&json!("0.4")), 0.4);
+        assert_eq!(clamp01(&json!(null)), 1.0);
+    }
+
+    #[tokio::test]
+    async fn unified_review_and_failsafes() {
+        let stats = StatsHandle::new();
+        let claims = vec![claim("c1", "alpha draft", &[])];
+        let reply = serde_json::json!({
+            "is_sufficient": false,
+            "confidence": 0.4,
+            "contradictions": ["conflict"],
+            "reasoning": "reason",
+            "sub_queries": [
+                {"sub_query": "hop one", "satisfied": true},
+                {"sub_query": "hop two", "satisfied": false, "missing_fact": "fact", "search_hint": "hint"}
+            ],
+            "claims": [
+                {"claim_id": "c1", "grounded": true, "ungrounded_assertions": [{"assertion": "bad", "reason": "r"}], "missing_information": [{"what": "w", "search_hint": "h"}]}
+            ]
+        })
+        .to_string();
+        let chat = MockChat { reply: Ok(reply) };
+        let verdict = sufficient_context_agent(Some(&chat), "q", &claims, None, &stats).await;
+        assert_eq!(verdict["is_sufficient"], json!(false));
+        assert_eq!(verdict["confidence"], json!(0.4));
+        assert_eq!(verdict["claims"]["c1"]["grounded"], json!(true));
+        assert_eq!(verdict["sub_queries"][1]["satisfied"], json!(false));
+
+        // Insufficient with empty claims: top-level missing pieces become _global.
+        let reply = json!({"is_sufficient": false, "missing_information": [{"what": "w2", "search_hint": "h2"}], "claims": []}).to_string();
+        let chat = MockChat { reply: Ok(reply) };
+        let verdict = sufficient_context_agent(Some(&chat), "q", &claims, None, &stats).await;
+        assert_eq!(verdict["claims"]["_global"]["grounded"], json!(false));
+        assert_eq!(
+            verdict["claims"]["_global"]["missing_information"][0]["what"],
+            json!("w2")
+        );
+
+        // Insufficient with no structured gap at all: derive coarse gaps.
+        let reply = json!({"is_sufficient": false, "claims": []}).to_string();
+        let chat = MockChat { reply: Ok(reply) };
+        let verdict = sufficient_context_agent(Some(&chat), "q", &claims, None, &stats).await;
+        assert_eq!(
+            verdict["claims"]["_global"]["missing_information"][0]["what"],
+            json!("alpha draft")
+        );
+
+        // No chat / chat failure / no drafts -> {}.
+        assert_eq!(
+            sufficient_context_agent(None, "q", &claims, None, &stats).await,
+            json!({})
+        );
+        let failing = MockChat {
+            reply: Err("boom".to_string()),
+        };
+        assert_eq!(
+            sufficient_context_agent(Some(&failing), "q", &claims, None, &stats).await,
+            json!({})
+        );
+        assert_eq!(
+            sufficient_context_agent(Some(&chat), "q", &[], None, &stats).await,
+            json!({})
+        );
+    }
+
+    #[tokio::test]
+    async fn adapters_mirror_upstream() {
+        let sca = json!({
+            "is_sufficient": false,
+            "confidence": 0.3,
+            "contradictions": ["c"],
+            "sub_queries": [{"sub_query": "s", "satisfied": false}],
+            "claims": {
+                "c1": {"grounded": true, "ungrounded": [], "missing_information": [{"what": "w1", "search_hint": ""}]},
+                "c2": {"grounded": false, "ungrounded": ["u"], "missing_information": [{"what": "w2", "search_hint": ""}]}
+            }
+        });
+        let boost = to_boost(&sca, &[json!({"query": "f"})]);
+        assert_eq!(boost["is_sufficient"], json!(false));
+        assert_eq!(boost["missing"], json!(["w1", "w2"]));
+        assert_eq!(boost["feedback"], json!("missing: w1; w2"));
+        assert_eq!(boost["_sub_queries"][0]["sub_query"], json!("s"));
+        let grounded = to_grounded(&sca);
+        assert_eq!(grounded["c2"]["grounded"], json!(false));
+        assert_eq!(grounded["c2"]["ungrounded"], json!(["u"]));
+    }
+}

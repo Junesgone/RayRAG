@@ -139,4 +139,150 @@ fn nickname_pattern() -> &'static Regex {
         .get_or_init(|| Regex::new(r"^[\w ._'-]+$").expect("upstream nickname pattern compiles"))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
 
+    #[test]
+    fn required_arguments_follow_the_upstream_join() {
+        // The trailing "; " is upstream's, and the names are comma-joined
+        // without a space.
+        assert_eq!(
+            missing_required_arguments(&json!({}), &["nickname", "email", "password"]).as_deref(),
+            Some("required argument are missing: nickname,email,password; ")
+        );
+        assert_eq!(
+            missing_required_arguments(
+                &json!({"nickname": "N"}),
+                &["nickname", "email", "password"]
+            )
+            .as_deref(),
+            Some("required argument are missing: email,password; ")
+        );
+        // Presence is what counts, not truthiness: an empty string passes the
+        // decorator exactly like upstream.
+        assert_eq!(
+            missing_required_arguments(
+                &json!({"nickname": "", "email": "", "password": ""}),
+                &["nickname", "email", "password"]
+            ),
+            None
+        );
+        assert_eq!(
+            missing_required_arguments(
+                &json!({"nickname": null, "email": 1, "password": []}),
+                &["nickname", "email", "password"]
+            ),
+            None
+        );
+        // A non-object body degrades to `{}` upstream.
+        assert_eq!(
+            missing_required_arguments(&json!([1, 2]), &["email"]).as_deref(),
+            Some("required argument are missing: email; ")
+        );
+        assert_eq!(
+            missing_required_arguments(&Value::Null, &["email"]).as_deref(),
+            Some("required argument are missing: email; ")
+        );
+    }
+
+    #[test]
+    fn email_shape_matches_the_upstream_pattern() {
+        for valid in [
+            "admin@rayrag.local",
+            "a.b_c-d@sub.example.co",
+            "user_name@example.com",
+            "用户@例子.中国",
+        ] {
+            assert!(email_is_valid(valid), "{valid} should be accepted");
+        }
+        for invalid in [
+            "",
+            "plain",
+            "@example.com",
+            "user@",
+            "user@example",
+            "user@example.c",
+            "user@example.com\n",
+            "a b@example.com",
+            "user@@example.com",
+        ] {
+            assert!(!email_is_valid(invalid), "{invalid} should be rejected");
+        }
+        assert_eq!(
+            invalid_email_message("nope"),
+            "Invalid email address: nope!"
+        );
+        assert_eq!(
+            duplicate_email_message("a@b.co"),
+            "Email: a@b.co has already registered!"
+        );
+    }
+
+    #[test]
+    fn nickname_validation_matches_the_upstream_messages() {
+        // `nickname_validation.py` reports every failure as ARGUMENT_ERROR.
+        let cases: [(Option<Value>, &str); 6] = [
+            (None, "Nickname is required."),
+            (Some(Value::Null), "Nickname is required."),
+            (Some(json!(12345)), "Nickname must be a string."),
+            (Some(json!("   ")), "Nickname cannot be empty."),
+            (
+                Some(json!("bad/name")),
+                "Nickname contains invalid characters.",
+            ),
+            (
+                Some(json!("x".repeat(NICKNAME_MAX_LENGTH + 1))),
+                "Nickname must be at most 100 characters.",
+            ),
+        ];
+        for (value, expected) in cases {
+            assert_eq!(
+                validate_nickname(value.as_ref()).unwrap_err(),
+                expected,
+                "value: {value:?}"
+            );
+        }
+        // The pattern keeps letters, digits, space and . _ ' -, in any script.
+        assert_eq!(
+            validate_nickname(Some(&json!("  Ada Lovelace  "))).unwrap(),
+            "Ada Lovelace"
+        );
+        assert_eq!(
+            validate_nickname(Some(&json!("O'Neill-2"))).unwrap(),
+            "O'Neill-2"
+        );
+        assert_eq!(validate_nickname(Some(&json!("张三"))).unwrap(), "张三");
+        assert_eq!(
+            validate_nickname(Some(&json!("x".repeat(NICKNAME_MAX_LENGTH)))).unwrap(),
+            "x".repeat(NICKNAME_MAX_LENGTH)
+        );
+        assert_eq!(
+            validate_nickname(Some(&json!(1.5))).unwrap_err(),
+            "Nickname must be a string."
+        );
+        assert_eq!(
+            validate_nickname(Some(&json!(["a"]))).unwrap_err(),
+            "Nickname must be a string."
+        );
+    }
+
+    #[test]
+    fn response_messages_are_the_upstream_strings() {
+        assert_eq!(welcome_message("Ada"), "Ada, welcome aboard!");
+        assert_eq!(
+            registration_failure_message("disk full"),
+            "User registration failure, error: disk full"
+        );
+        assert_eq!(
+            REGISTRATION_DISABLED_MESSAGE,
+            "User registration is disabled!"
+        );
+        // Upstream `RetCode` values.
+        assert_eq!(
+            (ARGUMENT_ERROR, EXCEPTION_ERROR, OPERATING_ERROR),
+            (101, 100, 103)
+        );
+    }
+}

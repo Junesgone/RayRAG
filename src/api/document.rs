@@ -1258,7 +1258,7 @@ fn default_parser_config(chunk_method: &str) -> serde_json::Value {
     let object = config.as_object_mut().unwrap();
     match chunk_method {
         "naive" => {
-            object.insert("layout_recognize".into(), serde_json::json!("DeepDOC"));
+            object.insert("layout_recognize".into(), serde_json::json!("Docling"));
             object.insert("chunk_token_num".into(), serde_json::json!(512));
             object.insert("delimiter".into(), serde_json::json!("\n"));
             object.insert("auto_keywords".into(), serde_json::json!(0));
@@ -3556,4 +3556,110 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+#[cfg(test)]
+mod store_tests {
+    use super::*;
 
+    #[test]
+    fn reparse_counter_release_matches_upstream_semantics() {
+        let path = std::env::temp_dir().join(format!(
+            "rayrag-reparse-release-{}.json",
+            uuid::Uuid::new_v4()
+        ));
+        let docs = DocStore::new(path.to_str().unwrap()).unwrap();
+        let mut doc = sample_doc("doc-1");
+        doc.chunk_count = 7;
+        let kb_id = doc.kb_id.clone();
+        docs.insert(doc).unwrap();
+
+        let release = reparse_counter_release(&docs, "doc-1")
+            .unwrap()
+            .expect("counters released");
+        assert_eq!(release.kb_id, kb_id);
+        assert_eq!(release.chunk_delta, -7);
+
+        // Apply exactly as the handler does, then the second call is a no-op.
+        docs.set_chunk_count("doc-1", 0).unwrap();
+        assert_eq!(docs.get("doc-1").unwrap().chunk_count, 0);
+        assert!(reparse_counter_release(&docs, "doc-1").unwrap().is_none());
+
+        // Missing document → error (upstream LookupError).
+        assert!(reparse_counter_release(&docs, "missing").is_err());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn python_suffix_follows_pathlib_semantics() {
+        assert_eq!(python_suffix("a.tar.gz"), ".gz");
+        assert_eq!(python_suffix("dir.with.dots/a.b"), ".b");
+        assert_eq!(python_suffix("a."), "");
+        assert_eq!(python_suffix(".bashrc"), "");
+        assert_eq!(python_suffix("noext"), "");
+        // The extension guard compares lowercased names on both sides.
+        assert_eq!(python_suffix(&"A.PDF".to_lowercase()), ".pdf");
+    }
+
+    fn sample_doc(id: &str) -> DocRecord {
+        DocRecord {
+            id: id.into(),
+            name: "sample.txt".into(),
+            kb_id: "kb-1".into(),
+            size: 6,
+            storage_name: "sample.txt".into(),
+            content_hash: "hash".into(),
+            indexed_content_hash: String::new(),
+            run: "UNSTARTED".into(),
+            progress: 0.0,
+            progress_msg: String::new(),
+            chunk_count: 0,
+            created_at: 1,
+            updated_at: 1,
+            status: enabled_status(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn failed_persistence_rolls_back_document_mutations() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-doc-rollback-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("docs.json");
+        let store = DocStore::new(path.to_str().unwrap()).unwrap();
+        store.insert(sample_doc("doc-1")).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+
+        assert!(
+            store
+                .update_status("doc-1", "RUNNING", 0.2, "Parsing")
+                .is_err()
+        );
+        let doc = store.get("doc-1").unwrap();
+        assert_eq!(doc.run, "UNSTARTED");
+        assert_eq!(doc.progress, 0.0);
+
+        assert!(store.delete("doc-1").is_err());
+        assert!(store.get("doc-1").is_some());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn corrupt_document_json_fails_startup_instead_of_clearing_store() {
+        let root =
+            std::env::temp_dir().join(format!("rayrag-doc-corrupt-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("docs.json");
+        std::fs::write(&path, b"{not-json").unwrap();
+        let error = match DocStore::new(path.to_str().unwrap()) {
+            Err(error) => error,
+            Ok(_) => panic!("corrupt document JSON must fail startup"),
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to parse document metadata")
+        );
+        std::fs::remove_dir_all(root).ok();
+    }
+}

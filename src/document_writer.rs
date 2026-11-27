@@ -28,7 +28,19 @@ pub struct DocumentWriterOptions<'a> {
 }
 
 impl<'a> DocumentWriterOptions<'a> {
-    
+    #[cfg(test)]
+    fn minimal(generated_at: &'a str) -> Self {
+        Self {
+            header_text: "",
+            footer_text: "",
+            watermark_text: "",
+            add_page_numbers: false,
+            add_timestamp: false,
+            font_size: 0,
+            font_family: "",
+            generated_at,
+        }
+    }
 }
 
 /// Match the fixed Go TXT writer: metadata lines, one blank separator, body,
@@ -615,4 +627,101 @@ const DOCX_PACKAGE_RELS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standa
 <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
 </Relationships>"#;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Read;
 
+    const NOW: &str = "2026-06-15T12:00:00Z";
+
+    #[test]
+    fn text_writers_match_the_fixed_go_layouts() {
+        let mut options = DocumentWriterOptions::minimal(NOW);
+        assert_eq!(write_txt("hello", &options), b"\nhello");
+        assert_eq!(write_markdown("# Hello", &options), b"# Hello");
+
+        options.header_text = "H";
+        options.footer_text = "F";
+        options.add_timestamp = true;
+        assert_eq!(
+            String::from_utf8(write_txt("body", &options)).unwrap(),
+            "H\nGenerated: 2026-06-15T12:00:00Z\n\nbody\nF"
+        );
+        assert_eq!(
+            String::from_utf8(write_markdown("body", &options)).unwrap(),
+            "<!-- generated: 2026-06-15T12:00:00Z -->\n\n<!-- header: H -->\n\nbody\n\n<!-- footer: F -->\n"
+        );
+    }
+
+    #[test]
+    fn html_writer_keeps_the_fixed_wrapper_and_raw_body_contract() {
+        let default_output =
+            String::from_utf8(write_html("body", &DocumentWriterOptions::minimal(NOW))).unwrap();
+        assert!(default_output.contains("font-family: \"sans-serif\""));
+        assert!(default_output.contains("font-size: 11pt"));
+
+        let mut options = DocumentWriterOptions::minimal(NOW);
+        options.header_text = "My Doc";
+        options.watermark_text = "DRAFT";
+        options.add_timestamp = true;
+        options.font_size = 12;
+        options.font_family = "Noto Sans CJK SC";
+        let output = String::from_utf8(write_html("<b>bold</b>", &options)).unwrap();
+        assert!(output.starts_with("<!DOCTYPE html>"));
+        assert!(output.contains("<title>My Doc</title>"));
+        assert!(output.contains("<main>\n<b>bold</b>\n</main>"));
+        assert!(output.contains("<div class=\"watermark\">DRAFT</div>"));
+        assert!(output.contains("Generated: 2026-06-15T12:00:00Z"));
+    }
+
+    #[test]
+    fn docx_writer_emits_valid_zip_with_escaped_body_and_decorations() {
+        let mut options = DocumentWriterOptions::minimal(NOW);
+        options.header_text = "TOP";
+        options.footer_text = "BOTTOM";
+        options.watermark_text = "DRAFT";
+        options.add_page_numbers = true;
+        options.add_timestamp = true;
+        let bytes = write_docx("A < B & 中文", &options).unwrap();
+        assert!(bytes.starts_with(b"PK\x03\x04"));
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut body = String::new();
+        archive
+            .by_name("word/document.xml")
+            .unwrap()
+            .read_to_string(&mut body)
+            .unwrap();
+        assert!(body.contains("A &lt; B &amp; 中文"));
+        let mut header = String::new();
+        archive
+            .by_name("word/header1.xml")
+            .unwrap()
+            .read_to_string(&mut header)
+            .unwrap();
+        assert!(header.contains("TOP"));
+        assert!(header.contains("DRAFT"));
+        let mut footer = String::new();
+        archive
+            .by_name("word/footer1.xml")
+            .unwrap()
+            .read_to_string(&mut footer)
+            .unwrap();
+        assert!(footer.contains(" PAGE "));
+        assert!(footer.contains(NOW));
+        assert!(docx_rs::read_docx(archive.into_inner().get_ref()).is_ok());
+    }
+
+    #[test]
+    fn pdf_writer_is_loadable_and_preserves_unicode_extraction() {
+        let mut options = DocumentWriterOptions::minimal(NOW);
+        options.header_text = "Header";
+        options.add_page_numbers = true;
+        let bytes = write_pdf("Hello 中文", &options).unwrap();
+        assert!(bytes.starts_with(b"%PDF-"));
+        let document = Document::load_mem(&bytes).unwrap();
+        assert_eq!(document.get_pages().len(), 1);
+        let text = document.extract_text(&[1]).unwrap();
+        assert!(text.contains("Hello 中文"), "{text:?}");
+        assert!(text.contains("Page 1"), "{text:?}");
+    }
+}

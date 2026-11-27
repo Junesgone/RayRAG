@@ -623,4 +623,301 @@ pub async fn google_oauth_result(
     }))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    /// Box OAuth flows live in a process-wide registry, so tests that clear it
+    /// must not run concurrently with the round-trip tests that use it (cargo
+    /// runs unit tests in parallel, which used to clear the flow between the
+    /// callback and the result poll).
+    static FLOW_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn flow_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        FLOW_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+    }
+
+    /// A one-shot local token endpoint: answers the next POST with body and
+    /// yields the received request so the submitted form fields can be checked.
+    fn mock_token_endpoint(body: &'static str) -> (String, std::thread::JoinHandle<String>) {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock token endpoint");
+        let address = listener.local_addr().expect("mock address");
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept token request");
+            let mut buffer = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                match stream.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(count) => {
+                        buffer.extend_from_slice(&chunk[..count]);
+                        let text = String::from_utf8_lossy(&buffer).to_string();
+                        if let Some(split) = text.find("\r\n\r\n") {
+                            let expected = text[..split]
+                                .lines()
+                                .find_map(|line| {
+                                    let (name, value) = line.split_once(':')?;
+                                    if name.eq_ignore_ascii_case("content-length") {
+                                        value.trim().parse::<usize>().ok()
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap_or(0);
+                            if buffer.len() >= split + 4 + expected {
+                                break;
+                            }
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.flush();
+            String::from_utf8_lossy(&buffer).to_string()
+        });
+        (format!("http://127.0.0.1:{}/token", address.port()), handle)
+    }
+
+    fn box_flow_for_test() -> BoxFlow {
+        BoxFlow {
+            client_id: "client".into(),
+            client_secret: "secret".into(),
+            redirect_uri: "https://example.com/box/callback".into(),
+            created_at: SystemTime::now(),
+            code: None,
+            access_token: None,
+            refresh_token: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn box_token_exchange_posts_the_code_and_stores_tokens() {
+        let (url, handle) =
+            mock_token_endpoint(r#"{"access_token":"box-access","refresh_token":"box-refresh"}"#);
+        let mut flow = box_flow_for_test();
+        box_token_exchange(&mut flow, "auth-code", Some(&url)).await;
+        assert_eq!(flow.access_token.as_deref(), Some("box-access"));
+        assert_eq!(flow.refresh_token.as_deref(), Some("box-refresh"));
+        let request = handle.join().expect("mock endpoint thread");
+        assert!(request.starts_with("POST /token "), "{request}");
+        assert!(
+            request.contains("grant_type=authorization_code"),
+            "{request}"
+        );
+        assert!(request.contains("code=auth-code"), "{request}");
+        assert!(request.contains("client_id=client"), "{request}");
+        assert!(request.contains("client_secret=secret"), "{request}");
+    }
+
+    #[tokio::test]
+    async fn token_exchange_without_an_endpoint_keeps_the_flow_code() {
+        let mut flow = box_flow_for_test();
+        box_token_exchange(&mut flow, "auth-code", None).await;
+        assert!(flow.access_token.is_none());
+        assert!(flow.refresh_token.is_none());
+    }
+
+    #[tokio::test]
+    async fn google_token_exchange_posts_the_code_and_stores_tokens() {
+        let (url, handle) = mock_token_endpoint(
+            r#"{"access_token":"google-access","refresh_token":"google-refresh"}"#,
+        );
+        let mut flow = GoogleFlow {
+            source: "gmail".into(),
+            client_id: "client".into(),
+            client_secret: "secret".into(),
+            redirect_uri: "https://example.com/gmail/callback".into(),
+            raw_config: "{}".into(),
+            created_at: SystemTime::now(),
+            code: None,
+            access_token: None,
+            refresh_token: None,
+        };
+        google_token_exchange(&mut flow, "auth-code", Some(&url)).await;
+        assert_eq!(flow.access_token.as_deref(), Some("google-access"));
+        assert_eq!(flow.refresh_token.as_deref(), Some("google-refresh"));
+        let request = handle.join().expect("mock endpoint thread");
+        assert!(request.contains("code=auth-code"), "{request}");
+    }
+
+    #[test]
+    fn start_validation_rejects_missing_client_credentials() {
+        let body = BoxStartRequest {
+            client_id: "".into(),
+            client_secret: "".into(),
+            redirect_uri: None,
+        };
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let error = runtime.block_on(box_oauth_start(Json(body))).unwrap_err();
+        assert!(error.1.contains("client_id and client_secret"));
+    }
+
+    #[test]
+    fn flow_registry_is_shared_across_start_result() {
+        let _serial = flow_test_lock();
+        let mut guard = registry().write().unwrap();
+        guard.flows.clear();
+        drop(guard);
+        let flow = BoxFlow {
+            client_id: "c".into(),
+            client_secret: "s".into(),
+            redirect_uri: "https://example.com".into(),
+            created_at: SystemTime::now(),
+            code: Some("code".into()),
+            access_token: None,
+            refresh_token: None,
+        };
+        registry().write().unwrap().flows.insert("f1".into(), flow);
+        let result = registry().write().unwrap().flows.remove("f1");
+        assert_eq!(result.unwrap().code.as_deref(), Some("code"));
+    }
+
+    #[tokio::test]
+    async fn box_oauth_start_callback_result_round_trip() {
+        let _serial = flow_test_lock();
+        {
+            let mut guard = registry().write().unwrap();
+            guard.flows.clear();
+        }
+        let start = box_oauth_start(Json(BoxStartRequest {
+            client_id: "client".into(),
+            client_secret: "secret".into(),
+            redirect_uri: Some("https://example.com/box/callback".into()),
+        }))
+        .await
+        .expect("start succeeds");
+        let flow_id = start["data"]["flow_id"].as_str().unwrap().to_string();
+        assert!(
+            start["data"]["authorization_url"]
+                .as_str()
+                .unwrap()
+                .starts_with("https://account.box.com/api/oauth2/authorize")
+        );
+
+        let pending = box_oauth_result(Json(BoxResultRequest {
+            flow_id: flow_id.clone(),
+        }))
+        .await;
+        assert_eq!(pending["code"], 106);
+
+        let callback = box_oauth_callback(Query(
+            [
+                ("code".to_string(), "mock-code".to_string()),
+                ("state".to_string(), flow_id.clone()),
+            ]
+            .into_iter()
+            .collect(),
+        ))
+        .await;
+        let body = axum::body::to_bytes(callback.into_response().into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        let html = String::from_utf8(body.to_vec()).unwrap();
+        assert!(html.contains("Authorization complete"));
+        assert!(html.contains("ragflow-box-oauth"));
+
+        let done = box_oauth_result(Json(BoxResultRequest { flow_id })).await;
+        assert_eq!(done["code"], 0);
+        assert_eq!(done["data"]["credentials"]["code"], "mock-code");
+        assert_eq!(done["data"]["credentials"]["client_id"], "client");
+    }
+
+    #[tokio::test]
+    async fn google_oauth_start_callback_result_round_trip() {
+        let _serial = flow_test_lock();
+        {
+            let mut guard = google_registry().write().unwrap();
+            guard.flows.clear();
+        }
+        let credentials = serde_json::json!({
+            "web": {
+                "client_id": "google-client",
+                "client_secret": "google-secret",
+                "redirect_uris": ["https://example.com/drive/callback"]
+            }
+        });
+        let start = google_oauth_start(
+            Query(
+                [("type".to_string(), "google-drive".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            Json(GoogleStartRequest {
+                credentials,
+                redirect_uri: Some("https://example.com/drive/callback".into()),
+            }),
+        )
+        .await
+        .expect("google start succeeds");
+        let flow_id = start["data"]["flow_id"].as_str().unwrap().to_string();
+        assert!(
+            start["data"]["authorization_url"]
+                .as_str()
+                .unwrap()
+                .starts_with("https://accounts.google.com/o/oauth2/v2/auth")
+        );
+        assert!(
+            start["data"]["authorization_url"]
+                .as_str()
+                .unwrap()
+                .contains("drive.readonly")
+        );
+
+        let pending = google_oauth_result(
+            Query(
+                [("type".to_string(), "google-drive".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            Json(BoxResultRequest {
+                flow_id: flow_id.clone(),
+            }),
+        )
+        .await;
+        assert_eq!(pending["code"], 106);
+
+        let callback = google_drive_oauth_callback(Query(
+            [
+                ("code".to_string(), "g-code".to_string()),
+                ("state".to_string(), flow_id.clone()),
+            ]
+            .into_iter()
+            .collect(),
+        ))
+        .await;
+        let body = axum::body::to_bytes(callback.into_response().into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        let html = String::from_utf8(body.to_vec()).unwrap();
+        assert!(html.contains("Authorization complete"));
+        assert!(html.contains("ragflow-google-drive-oauth"));
+
+        let done = google_oauth_result(
+            Query(
+                [("type".to_string(), "google-drive".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            Json(BoxResultRequest { flow_id }),
+        )
+        .await;
+        assert_eq!(done["code"], 0);
+        let credentials: serde_json::Value =
+            serde_json::from_str(done["data"]["credentials"].as_str().unwrap()).unwrap();
+        assert_eq!(credentials["web"]["client_id"], "google-client");
+        assert_eq!(credentials["code"], "g-code");
+    }
+}

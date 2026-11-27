@@ -1429,4 +1429,269 @@ fn take_i64(row: &mut Map<String, Value>, key: &str) -> anyhow::Result<i64> {
         .ok_or_else(|| anyhow::anyhow!("Skill field {key} must be an integer"))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    fn temp_path() -> PathBuf {
+        std::env::temp_dir().join(format!("rayrag-skill-index-{}.json", uuid::Uuid::new_v4()))
+    }
+
+    fn skill(id: &str, name: &str, description: &str) -> SkillInfo {
+        SkillInfo {
+            id: id.into(),
+            folder_id: format!("folder-{id}"),
+            name: name.into(),
+            description: description.into(),
+            tags: vec!["rust".into(), "search".into()],
+            content: format!("{description} implementation guide"),
+            version: "2.1.0".into(),
+        }
+    }
+
+    #[test]
+    fn physical_snapshot_uses_exact_infinity_fields_and_restores() {
+        let path = temp_path();
+        let store = SkillIndexStore::new(&path).unwrap();
+        store
+            .index_skills(
+                "tenant-a",
+                "Space-A",
+                vec![skill("skill/a", "Rust Search", "hybrid retrieval")],
+                vec![vec![1.0, 0.0, 0.5]],
+            )
+            .unwrap();
+        let snapshot: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let row = snapshot["indexes"][0]["rows"][0].as_object().unwrap();
+        let expected: HashSet<_> = [
+            "skill_id",
+            "space_id",
+            "folder_id",
+            "name",
+            "tags",
+            "description",
+            "content",
+            "version",
+            "status",
+            "create_time",
+            "update_time",
+            "q_3_vec",
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(
+            row.keys().map(String::as_str).collect::<HashSet<_>>(),
+            expected
+        );
+        assert_eq!(row["skill_id"], "skill_a");
+        assert_eq!(row["space_id"], "Space-A");
+        assert_eq!(row["tags"], "rust, search");
+        assert_eq!(row["version"], "2.1.0");
+        assert_eq!(row["status"], "1");
+        assert_eq!(row["q_3_vec"], serde_json::json!([1.0, 0.0, 0.5]));
+        drop(store);
+
+        let restored = SkillIndexStore::new(&path).unwrap();
+        let infos = restored.skill_infos("tenant-a", "Space-A");
+        assert_eq!(infos.len(), 1);
+        assert_eq!(infos[0].name, "Rust Search");
+        assert!(restored.skill_infos("tenant-b", "Space-A").is_empty());
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn config_upsert_name_replacement_delete_and_search_are_scoped() {
+        let store = SkillIndexStore::in_memory();
+        let config = store
+            .update_config(
+                "tenant-a",
+                UpdateSkillSearchConfigRequest {
+                    space_id: "space".into(),
+                    embd_id: "default".into(),
+                    vector_similarity_weight: 0.5,
+                    similarity_threshold: 0.05,
+                    field_config: SkillFieldConfig::default(),
+                    rerank_id: None,
+                    top_k: 10,
+                },
+            )
+            .unwrap();
+        assert_eq!(config.field_config.name.weight, 3.0);
+        store
+            .index_skills(
+                "tenant-a",
+                "space",
+                vec![
+                    skill("first", "Rust Search", "hybrid retrieval"),
+                    skill("second", "Cooking", "noodles and soup"),
+                ],
+                vec![vec![1.0, 0.0], vec![0.0, 1.0]],
+            )
+            .unwrap();
+        store
+            .index_skills(
+                "tenant-a",
+                "space",
+                vec![skill("new-id", "Rust Search", "updated retrieval")],
+                vec![vec![1.0, 0.0]],
+            )
+            .unwrap();
+        assert_eq!(store.skill_infos("tenant-a", "space").len(), 2);
+
+        let response = store.search(
+            "tenant-a",
+            &SkillSearchRequest {
+                space_id: "space".into(),
+                query: "hybrid retrieval".into(),
+                page: 1,
+                page_size: 10,
+                ..Default::default()
+            },
+            &config,
+            Some(&[1.0, 0.0]),
+        );
+        assert_eq!(response.search_type, "hybrid");
+        assert_eq!(response.skills[0].skill_id, "new-id");
+        assert!(
+            store
+                .search(
+                    "tenant-b",
+                    &SkillSearchRequest {
+                        space_id: "space".into(),
+                        ..Default::default()
+                    },
+                    &SkillSearchConfig::defaults("tenant-b", "space", ""),
+                    None,
+                )
+                .skills
+                .is_empty()
+        );
+        assert!(store.delete_skill("tenant-a", "space", "new-id").unwrap());
+        assert!(!store.delete_skill("tenant-a", "space", "new-id").unwrap());
+    }
+
+    #[test]
+    fn vector_text_defaults_and_semver_match_go_contract() {
+        let value = skill("id", "Name", "Description");
+        assert_eq!(
+            build_vector_text(&value, &SkillFieldConfig::default()),
+            "Name\n\nrust search\n\nDescription"
+        );
+        assert_eq!(increment_semantic_version("1.0.0"), "1.0.1");
+        assert_eq!(increment_semantic_version("1.0.999"), "1.1.0");
+        assert_eq!(increment_semantic_version("bad"), "1.0.0");
+    }
+
+    #[test]
+    fn es_document_uses_raw_skill_id_and_configured_token_fields() {
+        let mut value = skill("skill/a", "Rust 搜索", "semantic cache");
+        value.version.clear();
+        let fields = SkillFieldConfig::default();
+        let (document_id, source) =
+            build_skill_es_document(&value, "", &fields, Some(&[1.0, 0.0, 0.5]), 1234).unwrap();
+        let source = source.as_object().unwrap();
+
+        assert_eq!(document_id, "skill_a");
+        assert_eq!(source["skill_id"], "skill/a");
+        assert_eq!(source["space_id"], "default");
+        assert_eq!(source["tags"], "rust, search");
+        assert_eq!(source["version"], "1.0.0");
+        assert_eq!(source["status"], "1");
+        assert_eq!(source["create_time"], 1234);
+        assert_eq!(source["update_time"], 1234);
+        assert_eq!(source["name_tks"], "rust 搜 索 搜索");
+        assert_eq!(source["tags_tks"], "rust search");
+        assert_eq!(source["description_tks"], "semantic cache");
+        assert!(source.get("content_tks").is_none());
+        assert_eq!(source["q_3_vec"], serde_json::json!([1.0, 0.0, 0.5]));
+        assert_eq!(source.len(), 15);
+
+        let record = SkillIndexRecord {
+            tenant_id: "tenant".into(),
+            skill_id: "skill_a".into(),
+            space_id: "default".into(),
+            folder_id: value.folder_id,
+            name: value.name,
+            tags: value.tags,
+            description: value.description,
+            content: value.content,
+            version: "1.0.0".into(),
+            status: "1".into(),
+            create_time: 1234,
+            update_time: 1234,
+            embedding: vec![1.0, 0.0, 0.5],
+        };
+        let content_query = field_tokens("implementation guide");
+        assert!(keyword_score(&content_query, &record, &fields) < 1e-8);
+        let mut content_fields = fields;
+        content_fields.content.enabled = true;
+        assert!(keyword_score(&content_query, &record, &content_fields) > 0.0);
+    }
+
+    #[test]
+    fn infinity_status_filter_applies_only_to_vector_and_hybrid_search() {
+        let store = SkillIndexStore::in_memory();
+        store
+            .index_skills(
+                "tenant-a",
+                "space",
+                vec![
+                    skill("hidden", "Hidden Skill", "inactive result"),
+                    skill("active", "Active Skill", "enabled result"),
+                ],
+                vec![vec![1.0, 0.0], vec![0.0, 1.0]],
+            )
+            .unwrap();
+        store
+            .state
+            .write()
+            .expect("skill index lock poisoned")
+            .records
+            .iter_mut()
+            .find(|record| record.skill_id == "hidden")
+            .unwrap()
+            .status = "0".into();
+
+        let request = SkillSearchRequest {
+            space_id: "space".into(),
+            query: "Hidden Skill".into(),
+            page: 1,
+            page_size: 10,
+            ..Default::default()
+        };
+        let mut config = SkillSearchConfig::defaults("tenant-a", "space", "default");
+        config.vector_similarity_weight = 0.0;
+        config.similarity_threshold = 0.0;
+        let keyword = store.search("tenant-a", &request, &config, None);
+        assert_eq!(keyword.search_type, "keyword");
+        assert!(
+            keyword
+                .skills
+                .iter()
+                .any(|skill| skill.skill_id == "hidden")
+        );
+
+        let listing = store.search(
+            "tenant-a",
+            &SkillSearchRequest {
+                space_id: "space".into(),
+                page: 1,
+                page_size: 10,
+                ..Default::default()
+            },
+            &config,
+            None,
+        );
+        assert_eq!(listing.total, 2);
+
+        config.vector_similarity_weight = 1.0;
+        let vector = store.search("tenant-a", &request, &config, Some(&[1.0, 0.0]));
+        assert_eq!(vector.search_type, "vector");
+        assert!(vector.skills.iter().all(|skill| skill.skill_id != "hidden"));
+
+        config.vector_similarity_weight = 0.5;
+        let hybrid = store.search("tenant-a", &request, &config, Some(&[1.0, 0.0]));
+        assert_eq!(hybrid.search_type, "hybrid");
+        assert!(hybrid.skills.iter().all(|skill| skill.skill_id != "hidden"));
+    }
+}

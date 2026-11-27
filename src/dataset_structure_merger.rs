@@ -1369,4 +1369,590 @@ pub async fn run_structure_merge(
     hooks.progress(1.0, &format!("Built {rebuilt}/{total} dataset graph(s)."));
 }
 
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
 
+    use super::*;
+    use crate::doc_store::HealthStatus;
+
+    #[derive(Default)]
+    struct MergeStore {
+        rows: Mutex<Vec<DocRow>>,
+    }
+
+    fn condition_allows(row: &DocRow, condition: &FilterCondition) -> bool {
+        condition.iter().all(|(key, expected)| {
+            let Some(actual) = row.get(key) else {
+                return false;
+            };
+            match expected {
+                Value::Array(items) => items.iter().any(|item| {
+                    actual == item
+                        || actual
+                            .as_array()
+                            .map(|values| values.contains(item))
+                            .unwrap_or(false)
+                }),
+                _ => {
+                    actual == expected
+                        || actual
+                            .as_array()
+                            .map(|values| values.contains(expected))
+                            .unwrap_or(false)
+                }
+            }
+        })
+    }
+
+    impl DocStore for MergeStore {
+        fn db_type(&self) -> &'static str {
+            "memory"
+        }
+
+        fn health(&self) -> crate::Result<HealthStatus> {
+            Ok(HealthStatus::green("merge"))
+        }
+
+        fn create_idx(&self, _: &str, _: &str, _: usize) -> crate::Result<()> {
+            Ok(())
+        }
+
+        fn delete_idx(&self, _: &str, _: &str) -> crate::Result<()> {
+            Ok(())
+        }
+
+        fn index_exist(&self, _: &str, _: &str) -> crate::Result<bool> {
+            Ok(true)
+        }
+
+        fn insert(&self, rows: &[DocRow], _: &str, _: &str) -> crate::Result<Vec<String>> {
+            self.rows.lock().unwrap().extend(rows.iter().cloned());
+            Ok(rows
+                .iter()
+                .filter_map(|row| row.get("id").and_then(Value::as_str).map(str::to_string))
+                .collect())
+        }
+
+        fn get(&self, data_id: &str, _: &str, _: &[String]) -> crate::Result<Option<DocRow>> {
+            Ok(self
+                .rows
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|row| row.get("id").and_then(Value::as_str) == Some(data_id))
+                .cloned())
+        }
+
+        fn update(
+            &self,
+            condition: &FilterCondition,
+            new_value: &DocRow,
+            _: &str,
+            _: &str,
+        ) -> crate::Result<bool> {
+            let mut rows = self.rows.lock().unwrap();
+            let mut updated = false;
+            for row in rows.iter_mut() {
+                if condition_allows(row, condition) {
+                    for (key, value) in new_value {
+                        row.insert(key.clone(), value.clone());
+                    }
+                    updated = true;
+                }
+            }
+            Ok(updated)
+        }
+
+        fn delete(&self, condition: &FilterCondition, _: &str, _: &str) -> crate::Result<usize> {
+            let mut rows = self.rows.lock().unwrap();
+            let before = rows.len();
+            rows.retain(|row| !condition_allows(row, condition));
+            Ok(before - rows.len())
+        }
+
+        fn search(&self, query: &SearchQuery) -> crate::Result<crate::doc_store::SearchResponse> {
+            let rows = self.rows.lock().unwrap().clone();
+            let matched: Vec<DocRow> = rows
+                .into_iter()
+                .filter(|row| condition_allows(row, &query.condition))
+                .collect();
+            let total = matched.len();
+            let docs = matched
+                .into_iter()
+                .skip(query.offset)
+                .take(query.limit.max(1))
+                .collect();
+            Ok(crate::doc_store::SearchResponse {
+                total,
+                docs,
+                ..crate::doc_store::SearchResponse::default()
+            })
+        }
+
+        fn sql(&self, _: &str, _: usize) -> crate::Result<Vec<Value>> {
+            Ok(Vec::new())
+        }
+    }
+
+    fn doc_entity(
+        name: &str,
+        entity_type: &str,
+        template: &str,
+        kind: &str,
+        doc: &str,
+        chunk: &str,
+        description: &str,
+        timestamp: f64,
+    ) -> DocRow {
+        let mut row = DocRow::new();
+        row.insert(
+            "id".to_string(),
+            Value::String(format!("doc-entity:{name}:{doc}")),
+        );
+        row.insert(
+            "content_with_weight".to_string(),
+            Value::String(
+                json!({"name": name, "type": entity_type, "description": description, "mention_count": 1})
+                    .to_string(),
+            ),
+        );
+        row.insert(
+            "compile_kwd".to_string(),
+            Value::String("knowledge_graph".to_string()),
+        );
+        row.insert(
+            "knowledge_graph_kwd".to_string(),
+            Value::String("entity".to_string()),
+        );
+        row.insert(
+            "scope_kwd".to_string(),
+            Value::String(SCOPE_KWD_DOC.to_string()),
+        );
+        row.insert("doc_id".to_string(), Value::String(doc.to_string()));
+        row.insert("kb_id".to_string(), Value::String("kb-1".to_string()));
+        row.insert("name_kwd".to_string(), Value::String(name.to_lowercase()));
+        row.insert("source_chunk_ids".to_string(), json!([chunk]));
+        row.insert("mention_count_int".to_string(), json!(1));
+        row.insert("compilation_template_ids".to_string(), json!([template]));
+        row.insert(
+            "compilation_template_kind_kwd".to_string(),
+            Value::String(kind.to_string()),
+        );
+        row.insert("create_timestamp_flt".to_string(), json!(timestamp));
+        row
+    }
+
+    fn doc_relation(
+        src: &str,
+        tgt: &str,
+        template: &str,
+        doc: &str,
+        chunk: &str,
+        timestamp: f64,
+    ) -> DocRow {
+        let mut row = DocRow::new();
+        row.insert(
+            "id".to_string(),
+            Value::String(format!("doc-relation:{src}:{tgt}:{doc}")),
+        );
+        row.insert(
+            "content_with_weight".to_string(),
+            Value::String(json!({"from": src, "to": tgt, "type": "related"}).to_string()),
+        );
+        row.insert(
+            "compile_kwd".to_string(),
+            Value::String("knowledge_graph".to_string()),
+        );
+        row.insert(
+            "knowledge_graph_kwd".to_string(),
+            Value::String("relation".to_string()),
+        );
+        row.insert(
+            "scope_kwd".to_string(),
+            Value::String(SCOPE_KWD_DOC.to_string()),
+        );
+        row.insert("doc_id".to_string(), Value::String(doc.to_string()));
+        row.insert(
+            "from_entity_kwd".to_string(),
+            Value::String(src.to_lowercase()),
+        );
+        row.insert(
+            "to_entity_kwd".to_string(),
+            Value::String(tgt.to_lowercase()),
+        );
+        row.insert("source_chunk_ids".to_string(), json!([chunk]));
+        row.insert("compilation_template_ids".to_string(), json!([template]));
+        row.insert("create_timestamp_flt".to_string(), json!(timestamp));
+        row
+    }
+
+    fn embed3(_texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+        Ok(vec![vec![0.1, 0.2, 0.3]])
+    }
+
+    #[test]
+    fn task_types_and_row_ids_are_stable() {
+        assert!(is_structure_merge_task("structure_graph"));
+        assert!(is_structure_merge_task("Structure"));
+        assert!(!is_structure_merge_task("parse"));
+
+        let meta = meta_row_id("kb", "knowledge_graph", Some("t1"));
+        assert_eq!(meta, meta_row_id("kb", "knowledge_graph", Some("t1")));
+        assert_ne!(meta, meta_row_id("kb", "knowledge_graph", None));
+        let entity = dataset_entity_row_id("kb", "knowledge_graph", Some("t1"), "alpha");
+        let relation =
+            dataset_relation_row_id("kb", "knowledge_graph", Some("t1"), "A", "B", "Related");
+        assert_eq!(
+            relation,
+            dataset_relation_row_id("kb", "knowledge_graph", Some("t1"), "a", "b", "related")
+        );
+        assert_ne!(entity, relation);
+        assert!(bucket_id("alpha", BUCKET_COUNT) < BUCKET_COUNT);
+        assert_eq!(
+            bucket_id("alpha", BUCKET_COUNT),
+            bucket_id("alpha", BUCKET_COUNT)
+        );
+        assert_eq!(struct_entity_name(&json!({"name": " Alpha "})), "Alpha");
+        assert_eq!(
+            struct_entity_name(&json!({"content_with_weight": "{\"name\": \"Beta\"}"})),
+            "Beta"
+        );
+    }
+
+    #[test]
+    fn merge_bucket_merges_entities() {
+        let rows = vec![
+            doc_entity(
+                "Alpha",
+                "Person",
+                "t1",
+                "knowledge_graph",
+                "d1",
+                "c1",
+                "short",
+                1.0,
+            ),
+            doc_entity(
+                "alpha",
+                "Person",
+                "t1",
+                "knowledge_graph",
+                "d2",
+                "c2",
+                "a much longer description",
+                1.0,
+            ),
+            doc_entity(
+                "Beta",
+                "Org",
+                "t1",
+                "knowledge_graph",
+                "d1",
+                "c3",
+                "org text",
+                1.0,
+            ),
+        ];
+        let embed = embed3;
+        let merged = merge_bucket(
+            &rows,
+            "kb-1",
+            "knowledge_graph",
+            Some("t1"),
+            Some("knowledge_graph"),
+            Some(&embed),
+        );
+        assert_eq!(merged.len(), 2);
+        let alpha = merged
+            .iter()
+            .find(|row| row["name_kwd"] == json!("alpha"))
+            .unwrap();
+        assert_eq!(alpha["scope_kwd"], json!(SCOPE_KWD_DATASET));
+        assert_eq!(alpha["available_int"], json!(1));
+        assert_eq!(alpha["mention_count_int"], json!(2));
+        assert_eq!(alpha["doc_ids_kwd"], json!(["d1", "d2"]));
+        assert_eq!(alpha["source_chunk_ids"], json!(["c1", "c2"]));
+        assert_eq!(
+            alpha["compilation_template_kind_kwd"],
+            json!("knowledge_graph")
+        );
+        assert!(alpha.get("q_3_vec").is_some());
+        let payload: Value =
+            serde_json::from_str(alpha["content_with_weight"].as_str().unwrap()).unwrap();
+        assert_eq!(payload["description"], json!("a much longer description"));
+        assert_eq!(payload["mention_count"], json!(2));
+    }
+
+    #[test]
+    fn merge_relations_groups_and_dedups() {
+        let rows = vec![
+            doc_relation("alpha", "beta", "t1", "d1", "c1", 1.0),
+            doc_relation("Alpha", "Beta", "t1", "d2", "c2", 1.0),
+            doc_relation("alpha", "gamma", "t1", "d1", "c3", 1.0),
+        ];
+        let merged = merge_relations(&rows, "kb-1", "knowledge_graph", Some("t1"), None, None);
+        assert_eq!(merged.len(), 2);
+        let first = merged
+            .iter()
+            .find(|row| row["to_entity_kwd"] == json!("beta"))
+            .unwrap();
+        assert_eq!(first["from_entity_kwd"], json!("alpha"));
+        assert_eq!(first["doc_ids_kwd"], json!(["d1", "d2"]));
+        assert_eq!(first["source_chunk_ids"], json!(["c1", "c2"]));
+        assert_eq!(first["knowledge_graph_kwd"], json!("relation"));
+        assert_eq!(first["scope_kwd"], json!("dataset"));
+    }
+
+    #[tokio::test]
+    async fn do_build_full_rebuild_replaces_dataset_rows() {
+        let store = MergeStore::default();
+        {
+            let mut rows = store.rows.lock().unwrap();
+            let mut existing = DocRow::new();
+            existing.insert("id".to_string(), json!("stale-dataset-row"));
+            existing.insert("scope_kwd".to_string(), json!(SCOPE_KWD_DATASET));
+            existing.insert("compile_kwd".to_string(), json!("knowledge_graph"));
+            existing.insert("kb_id".to_string(), json!("kb-1"));
+            existing.insert("compilation_template_ids".to_string(), json!(["t1"]));
+            rows.push(existing);
+            rows.push(doc_entity(
+                "Alpha",
+                "Person",
+                "t1",
+                "knowledge_graph",
+                "d1",
+                "c1",
+                "alpha text",
+                1.0,
+            ));
+            rows.push(doc_relation("alpha", "beta", "t1", "d1", "c2", 1.0));
+        }
+        let embed = embed3;
+        let ok = do_build(
+            &store,
+            "index",
+            "tenant",
+            "kb-1",
+            "knowledge_graph",
+            Some("t1"),
+            Some("knowledge_graph"),
+            Some(&embed),
+            false,
+            &HashSet::new(),
+        )
+        .await;
+        assert!(ok);
+        let rows = store.rows.lock().unwrap().clone();
+        assert!(
+            !rows
+                .iter()
+                .any(|row| row["id"] == json!("stale-dataset-row")),
+            "full rebuild deletes existing dataset rows"
+        );
+        let dataset_rows: Vec<&DocRow> = rows
+            .iter()
+            .filter(|row| row.get("scope_kwd").and_then(Value::as_str) == Some(SCOPE_KWD_DATASET))
+            .collect();
+        assert_eq!(dataset_rows.len(), 2);
+        assert!(
+            dataset_rows
+                .iter()
+                .any(|row| row["knowledge_graph_kwd"] == json!("entity"))
+        );
+        assert!(
+            dataset_rows
+                .iter()
+                .any(|row| row["knowledge_graph_kwd"] == json!("relation"))
+        );
+        let meta = rows.iter().find(|row| {
+            row.get("knowledge_graph_kwd").and_then(Value::as_str) == Some(META_ROW_KWD)
+        });
+        assert!(meta.is_some(), "build timestamp row saved");
+    }
+
+    #[tokio::test]
+    async fn do_build_incremental_honors_time_floor_and_cleans_ghosts() {
+        let store = MergeStore::default();
+        {
+            let mut rows = store.rows.lock().unwrap();
+            rows.push(doc_entity(
+                "Old",
+                "Person",
+                "t1",
+                "knowledge_graph",
+                "d1",
+                "c1",
+                "old",
+                100.0,
+            ));
+            rows.push(doc_entity(
+                "New",
+                "Person",
+                "t1",
+                "knowledge_graph",
+                "d1",
+                "c2",
+                "new",
+                200.0,
+            ));
+            // Ghost dataset row sourced only by the deleted doc d9.
+            rows.push({
+                let mut ghost = DocRow::new();
+                ghost.insert("id".to_string(), json!("ghost-row"));
+                ghost.insert("scope_kwd".to_string(), json!(SCOPE_KWD_DATASET));
+                ghost.insert("compile_kwd".to_string(), json!("knowledge_graph"));
+                ghost.insert("kb_id".to_string(), json!("kb-1"));
+                ghost.insert("doc_ids_kwd".to_string(), json!(["d9"]));
+                ghost.insert("compilation_template_ids".to_string(), json!(["t1"]));
+                ghost
+            });
+            rows.push({
+                let mut marker = DocRow::new();
+                marker.insert("id".to_string(), json!("marker-1"));
+                marker.insert("kb_id".to_string(), json!("kb-1"));
+                marker.insert("deleted_doc_id".to_string(), json!("d9"));
+                marker.insert("knowledge_graph_kwd".to_string(), json!(DELETION_META_KWD));
+                marker
+            });
+        }
+        save_build_time(
+            &store,
+            "index",
+            "kb-1",
+            "knowledge_graph",
+            Some("t1"),
+            150.0,
+        )
+        .await;
+        let ok = do_build(
+            &store,
+            "index",
+            "tenant",
+            "kb-1",
+            "knowledge_graph",
+            Some("t1"),
+            None,
+            None,
+            true,
+            &HashSet::new(),
+        )
+        .await;
+        assert!(ok);
+        let rows = store.rows.lock().unwrap().clone();
+        assert!(
+            !rows.iter().any(|row| row["id"] == json!("ghost-row")),
+            "ghost dataset row removed"
+        );
+        let dataset_rows: Vec<&DocRow> = rows
+            .iter()
+            .filter(|row| row.get("scope_kwd").and_then(Value::as_str) == Some(SCOPE_KWD_DATASET))
+            .collect();
+        assert_eq!(dataset_rows.len(), 1);
+        assert_eq!(dataset_rows[0]["name_kwd"], json!("new"));
+    }
+
+    #[tokio::test]
+    async fn run_structure_merge_filters_eligible_templates() {
+        struct Recorder {
+            messages: Mutex<Vec<String>>,
+            cancel: bool,
+        }
+        impl MergeHooks for Recorder {
+            fn progress(&self, _progress: f32, message: &str) {
+                self.messages.lock().unwrap().push(message.to_string());
+            }
+            fn has_canceled(&self) -> bool {
+                self.cancel
+            }
+        }
+
+        let store = MergeStore::default();
+        {
+            let mut rows = store.rows.lock().unwrap();
+            rows.push(doc_entity(
+                "Alpha",
+                "Person",
+                "t1",
+                "knowledge_graph",
+                "d1",
+                "c1",
+                "alpha",
+                1.0,
+            ));
+            rows.push(doc_entity(
+                "Beta", "Person", "t2", "timeline", "d1", "c2", "beta", 1.0,
+            ));
+        }
+        let embed = embed3;
+        let kind_fn = |template: &str| -> Option<String> {
+            match template {
+                "t1" => Some("knowledge_graph".to_string()),
+                "t2" => Some("timeline".to_string()),
+                _ => None,
+            }
+        };
+        let recorder = Recorder {
+            messages: Mutex::new(Vec::new()),
+            cancel: false,
+        };
+        let ctx = StructureMergeContext {
+            tenant_id: "tenant".to_string(),
+            kb_id: "kb-1".to_string(),
+            language: "English".to_string(),
+            task_type: "structure_graph".to_string(),
+            id: "task-1".to_string(),
+        };
+        run_structure_merge(
+            &ctx,
+            &store,
+            "index",
+            Some(&embed),
+            &kind_fn,
+            &HashSet::new(),
+            &recorder,
+        )
+        .await;
+        let messages = recorder.messages.lock().unwrap().clone();
+        assert!(
+            messages
+                .iter()
+                .any(|message| message == "Scanning doc_graph rows...")
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| message == "Building dataset graph 1/1 ...")
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| message == "Built 1/1 dataset graph(s).")
+        );
+        let rows = store.rows.lock().unwrap().clone();
+        let dataset_rows: Vec<&DocRow> = rows
+            .iter()
+            .filter(|row| row.get("scope_kwd").and_then(Value::as_str) == Some(SCOPE_KWD_DATASET))
+            .collect();
+        assert_eq!(
+            dataset_rows.len(),
+            1,
+            "only the knowledge_graph template builds"
+        );
+        assert_eq!(dataset_rows[0]["name_kwd"], json!("alpha"));
+    }
+
+    #[tokio::test]
+    async fn record_and_consume_deletion_markers() {
+        let store = MergeStore::default();
+        record_doc_deletion(&store, "index", "kb-1", "d9")
+            .await
+            .unwrap();
+        let rows = store.rows.lock().unwrap().clone();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["knowledge_graph_kwd"], json!(DELETION_META_KWD));
+        assert_eq!(rows[0]["deleted_doc_id"], json!("d9"));
+        consume_deletion_markers(&store, "index", "kb-1").await;
+        assert!(store.rows.lock().unwrap().is_empty());
+    }
+}

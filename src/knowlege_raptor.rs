@@ -547,4 +547,191 @@ fn truncate_tokens(text: &str, max_tokens: usize) -> String {
     }
     chars[..low].iter().collect()
 }
+#[cfg(test)]
+mod raptor_tests {
+    use super::*;
+    use serde_json::json;
+    use std::sync::Mutex;
 
+    struct MockBackend {
+        summaries: Mutex<Vec<String>>,
+        canceled: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl RaptorBackend for MockBackend {
+        async fn chat(
+            &self,
+            _system: &str,
+            _history: &[Value],
+            _gen_conf: &Value,
+        ) -> Option<String> {
+            let mut queue = self.summaries.lock().unwrap();
+            if queue.is_empty() {
+                None
+            } else {
+                Some(queue.remove(0))
+            }
+        }
+        async fn encode(&self, text: &str) -> Option<Vec<f32>> {
+            // Deterministic pseudo-embedding from the text length.
+            let base = text.chars().count() as f32;
+            Some(vec![base, base + 1.0, base + 2.0])
+        }
+        fn max_length(&self) -> usize {
+            4096
+        }
+        fn model_name(&self) -> String {
+            "gpt-4o".to_string()
+        }
+        fn is_canceled(&self, _task_id: &str) -> bool {
+            self.canceled
+        }
+    }
+
+    fn vec_of(values: [f32; 3]) -> Vec<f32> {
+        values.to_vec()
+    }
+
+    #[test]
+    fn watershed_splits_on_low_similarity() {
+        let raptor = Raptor4Tree::new(4, "p");
+        // Two groups of nearly identical vectors.
+        let embeddings = vec![
+            vec_of([1.0, 0.0, 0.0]),
+            vec_of([0.99, 0.01, 0.0]),
+            vec_of([0.0, 1.0, 0.0]),
+            vec_of([0.01, 0.99, 0.0]),
+        ];
+        let (n_clusters, labels) = raptor.clustering(&embeddings, "");
+        assert_eq!(n_clusters, 2);
+        assert_eq!(labels[0], labels[1]);
+        assert_eq!(labels[2], labels[3]);
+        assert_ne!(labels[0], labels[2]);
+    }
+
+    #[test]
+    fn watershed_single_and_empty_inputs() {
+        let raptor = Raptor4Tree::new(4, "p");
+        assert_eq!(raptor.clustering(&[], ""), (0, Vec::new()));
+        let one = vec![vec_of([1.0, 0.0, 0.0])];
+        assert_eq!(raptor.clustering(&one, ""), (1, vec![0]));
+    }
+
+    #[tokio::test]
+    async fn call_flat_builds_layers_and_merges_source_ids() {
+        let mut raptor =
+            Raptor4Tree::new(4, "summarize: {cluster_content}").with_small_layer_collapse(8);
+        let backend = MockBackend {
+            summaries: Mutex::new(vec!["Root summary\nbody".to_string()]),
+            canceled: false,
+        };
+        let input = vec![
+            (
+                "alpha".to_string(),
+                vec_of([1.0, 0.0, 0.0]),
+                vec!["c1".to_string()],
+            ),
+            (
+                "beta".to_string(),
+                vec_of([0.99, 0.01, 0.0]),
+                vec!["c2".to_string()],
+            ),
+        ];
+        let progress = |_msg: &str| {};
+        let output = raptor
+            .call(&backend, input, &progress, "", false)
+            .await
+            .unwrap();
+        match output {
+            RaptorCallOutput::Flat { chunks, layers } => {
+                assert_eq!(chunks.len(), 3, "two originals + one summary");
+                assert_eq!(layers, vec![(0, 2), (2, 3)]);
+                let summary = &chunks[2];
+                assert_eq!(summary.title, "Root summary");
+                assert_eq!(
+                    summary.source_chunk_ids,
+                    vec!["c1".to_string(), "c2".to_string()]
+                );
+            }
+            other => panic!("expected flat output, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn call_tree_materializes_single_root() {
+        let mut raptor = Raptor4Tree::new(4, "{cluster_content}");
+        let backend = MockBackend {
+            summaries: Mutex::new(vec!["Top\ndetail".to_string()]),
+            canceled: false,
+        };
+        let input = vec![
+            (
+                "alpha".to_string(),
+                vec_of([1.0, 0.0, 0.0]),
+                vec!["c1".to_string()],
+            ),
+            (
+                "beta".to_string(),
+                vec_of([0.98, 0.02, 0.0]),
+                vec!["c2".to_string()],
+            ),
+        ];
+        let progress = |_msg: &str| {};
+        let output = raptor
+            .call(&backend, input, &progress, "", true)
+            .await
+            .unwrap();
+        match output {
+            RaptorCallOutput::Tree(tree) => {
+                assert_eq!(tree["title"], json!("Top"));
+                assert_eq!(tree["source_chunk_ids"], json!(["c1", "c2"]));
+            }
+            other => panic!("expected tree output, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn cancellation_and_error_budget() {
+        let mut raptor = Raptor4Tree::new(4, "{cluster_content}");
+        let canceled_backend = MockBackend {
+            summaries: Mutex::new(vec![]),
+            canceled: true,
+        };
+        let progress = |_msg: &str| {};
+        let input = vec![
+            ("a".to_string(), vec_of([1.0, 0.0, 0.0]), vec![]),
+            ("b".to_string(), vec_of([0.0, 1.0, 0.0]), vec![]),
+        ];
+        assert_eq!(
+            raptor
+                .call(&canceled_backend, input.clone(), &progress, "t1", false)
+                .await,
+            Err(RaptorError::Cancelled)
+        );
+
+        let mut failing = Raptor4Tree::new(4, "{cluster_content}");
+        failing.max_errors = 1;
+        let failing_backend = MockBackend {
+            summaries: Mutex::new(vec![]),
+            canceled: false,
+        };
+        let result = failing
+            .call(&failing_backend, input, &progress, "", false)
+            .await;
+        assert!(
+            matches!(result, Err(RaptorError::Aborted(_))),
+            "chat failure exhausts the error budget"
+        );
+    }
+
+    #[test]
+    fn truncate_respects_token_budget() {
+        let text = "word ".repeat(2000);
+        let cut = truncate_tokens(&text, 50);
+        assert!(crate::chunk::tokenizer::token_count(&cut) <= 50);
+        assert!(cut.len() < text.len());
+        assert_eq!(truncate_tokens("short", 50), "short");
+        assert!(truncate_tokens("anything", 0).is_empty());
+    }
+}

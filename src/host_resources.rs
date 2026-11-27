@@ -159,4 +159,96 @@ pub fn gpu_summary(gpus: &[GpuInfo]) -> String {
     format!("{} × [{}]", gpus.len(), parts.join("; "))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    #[test]
+    fn nvidia_smi_csv_parses_names_and_memory() {
+        let parsed =
+            parse_nvidia_smi_csv("NVIDIA GeForce RTX 4090, 24564\nNVIDIA A100-SXM4-80GB, 81920\n");
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].name, "NVIDIA GeForce RTX 4090");
+        assert_eq!(parsed[0].memory_bytes, Some(24564 * 1024 * 1024));
+        assert_eq!(parsed[1].memory_bytes, Some(81920 * 1024 * 1024));
+        assert!(parse_nvidia_smi_csv("").is_empty());
+        assert!(parse_nvidia_smi_csv(", 1234").is_empty());
+        let mib = parse_nvidia_smi_csv("RTX 3090, 24576 MiB");
+        assert_eq!(mib[0].memory_bytes, Some(24576 * 1024 * 1024));
+    }
+
+    #[test]
+    fn gpu_summary_is_empty_without_gpus() {
+        assert!(gpu_summary(&[]).is_empty());
+        let summary = gpu_summary(&[GpuInfo {
+            name: "RTX 4090".to_string(),
+            memory_bytes: Some(24564 * 1024 * 1024),
+        }]);
+        assert!(summary.contains("RTX 4090"));
+        assert!(summary.contains("24564 MiB"));
+    }
+
+    #[test]
+    fn mem_available_parses_kilobytes_and_ignores_other_lines() {
+        let sample = "MemTotal:       131602040 kB\nMemFree:         1000000 kB\nMemAvailable:   115793596 kB\nBuffers:               0 kB\n";
+        assert_eq!(parse_mem_available(sample), Some(115_793_596 * 1024));
+        assert_eq!(parse_mem_available("MemTotal: 1 kB\n"), None);
+        assert_eq!(parse_mem_available(""), None);
+    }
+
+    #[test]
+    fn document_tasks_scale_with_cpus_and_memory_but_stay_bounded() {
+        // Small NAS: few cores -> one document at a time, however much memory is free.
+        let small = HostResources {
+            cpus: 2,
+            available_memory_bytes: Some(2 << 30),
+        };
+        assert_eq!(small.document_task_limit(), 1);
+
+        // Four cores but only 2 GiB free: two documents, and no more.
+        let modest = HostResources {
+            cpus: 4,
+            available_memory_bytes: Some(2 << 30),
+        };
+        assert_eq!(modest.document_task_limit(), 2);
+
+        // A roomy workstation: capped by MAX_DOCUMENT_TASKS, never more.
+        let large = HostResources {
+            cpus: 64,
+            available_memory_bytes: Some(256 << 30),
+        };
+        assert_eq!(large.document_task_limit(), MAX_DOCUMENT_TASKS);
+
+        // Something in between: eight cores and 12 GiB free allows four workers.
+        let middle = HostResources {
+            cpus: 8,
+            available_memory_bytes: Some(12 << 30),
+        };
+        assert_eq!(middle.document_task_limit(), 4);
+
+        // Unknown memory falls back to the CPU-derived value, still capped.
+        let unknown = HostResources {
+            cpus: 16,
+            available_memory_bytes: None,
+        };
+        assert_eq!(unknown.document_task_limit(), MAX_DOCUMENT_TASKS);
+        assert!(unknown.summary().contains("unknown"));
+
+        // Never zero, even on a single-core host with almost no memory.
+        let tiny = HostResources {
+            cpus: 1,
+            available_memory_bytes: Some(64 << 20),
+        };
+        assert_eq!(tiny.document_task_limit(), 1);
+    }
+
+    #[test]
+    fn detection_reports_this_host() {
+        let resources = HostResources::detect();
+        assert!(resources.cpus >= 1);
+        // Linux exposes MemAvailable; the summary is always printable.
+        assert!(!resources.summary().is_empty());
+        assert!((1..=MAX_DOCUMENT_TASKS).contains(&resources.document_task_limit()));
+    }
+}

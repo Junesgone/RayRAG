@@ -358,4 +358,65 @@ impl GitLabConnector {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn source_roundtrip() {
+        assert_eq!(
+            DocumentSource::from_str("gitlab"),
+            Some(DocumentSource::GitLab)
+        );
+        assert_eq!(DocumentSource::GitLab.as_str(), "gitlab");
+        assert_eq!(DocumentSource::from_str("blob"), Some(DocumentSource::Blob));
+        assert_eq!(DocumentSource::from_str("unknown"), None);
+    }
+
+    #[test]
+    fn doc_to_markdown_renders_identifier() {
+        let doc = ConnectorDoc {
+            id: "https://gitlab.com/x/y".into(),
+            blob: "hello".into(),
+            source: DocumentSource::GitLab,
+            semantic_identifier: "readme.md".into(),
+            extension: ".md".into(),
+            doc_updated_at: String::new(),
+            size_bytes: 5,
+            metadata: HashMap::new(),
+            raw_bytes: None,
+        };
+        assert!(doc.to_markdown().contains("# readme.md"));
+        assert!(doc.to_markdown().contains("hello"));
+    }
+
+    #[tokio::test]
+    async fn missing_url_bails() {
+        let connector = GitLabConnector::new();
+        let error = connector
+            .fetch(&SourceOptions {
+                url: String::new(),
+                token: "t".into(),
+                target: "1".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("instance URL"));
+    }
+
+    #[tokio::test]
+    async fn missing_target_bails() {
+        let connector = GitLabConnector::new();
+        let error = connector
+            .fetch(&SourceOptions {
+                url: "https://gitlab.com".into(),
+                token: "t".into(),
+                target: String::new(),
+                ..Default::default()
+            })
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("project id"));
+    }
+}

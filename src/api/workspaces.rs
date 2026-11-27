@@ -1741,4 +1741,50 @@ pub async fn dataset_commit_file_content(
     commit_file_content_in(&state, &auth, &id, true, &commit_id, &file_id).await
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn a_fingerprint_is_stable_and_content_dependent() {
+        assert_eq!(fingerprint("hello"), fingerprint("hello"));
+        assert_ne!(fingerprint("hello"), fingerprint("hello "));
+        assert_eq!(fingerprint("").len(), 16);
+    }
+
+    #[test]
+    fn a_tree_state_round_trips_through_its_json_string() {
+        let rows = vec![TreeStateRow {
+            file_id: "file-1".to_string(),
+            entry: StateEntry {
+                hash: "abc".into(),
+                location: ".objects/abc".into(),
+                name: "a.txt".into(),
+                size: 3,
+                status: "1".into(),
+                parent_id: "root".into(),
+            },
+        }];
+        let encoded = tree_state_string(&rows);
+        // Python json.dumps(ensure_ascii=False) separators and key order.
+        assert_eq!(
+            encoded,
+            "{\"file-1\": {\"hash\": \"abc\", \"location\": \".objects/abc\", \"name\": \"a.txt\", \"size\": 3, \"status\": \"1\", \"parent_id\": \"root\"}}"
+        );
+        let commit = WorkspaceCommit {
+            id: "c1".into(),
+            folder_id: "root".into(),
+            scope: "folder".into(),
+            parent_id: None,
+            message: "m".into(),
+            author_id: "u".into(),
+            file_count: 1,
+            tree_state: encoded,
+            tree_entries: rows,
+            create_time: 1,
+        };
+        let decoded = tree_state_of(&commit);
+        assert_eq!(decoded["file-1"].name, "a.txt");
+        assert_eq!(decoded["file-1"].parent_id, "root");
+    }
+}

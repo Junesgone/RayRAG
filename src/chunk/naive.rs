@@ -155,9 +155,125 @@ fn extract_overlap(text: &str, overlap_tokens: usize, position_aware: bool) -> S
     result
 }
 
+#[cfg(test)]
+mod single_tests {
+    use super::*;
+    use crate::{Document, ParserConfig};
 
+    fn doc(content: &str) -> Document {
+        Document {
+            id: uuid::Uuid::new_v4(),
+            name: "sample.txt".to_string(),
+            content: content.to_string(),
+            mime_type: "text/plain".to_string(),
+            size: content.len(),
+            metadata: Default::default(),
+        }
+    }
 
+    #[test]
+    fn single_chunker_returns_whole_document_as_one_chunk() {
+        let d = doc("第一段。\n第二段。\n第三段。");
+        let config = ParserConfig::default();
+        let chunks = SingleChunker::new().chunk(&d, &config).unwrap();
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].content, "第一段。\n第二段。\n第三段。");
+        assert_eq!(chunks[0].position, 0);
+    }
 
+    #[test]
+    fn single_chunker_skips_blank_documents() {
+        let d = doc("   ");
+        let config = ParserConfig::default();
+        assert!(SingleChunker::new().chunk(&d, &config).unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use uuid::Uuid;
+
+    fn test_doc(text: &str) -> Document {
+        Document {
+            id: Uuid::new_v4(),
+            name: "test.txt".to_string(),
+            content: text.to_string(),
+            mime_type: "text/plain".to_string(),
+            size: text.len(),
+            metadata: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn test_empty_document() {
+        let chunker = NaiveChunker::new();
+        let doc = test_doc("");
+        let chunks = chunker.chunk(&doc, &ParserConfig::default()).unwrap();
+        assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn test_single_chunk() {
+        let chunker = NaiveChunker::new();
+        let doc = test_doc("Short text that fits in one chunk.");
+        let chunks = chunker.chunk(&doc, &ParserConfig::default()).unwrap();
+        assert_eq!(chunks.len(), 1);
+    }
+
+    #[test]
+    fn ragflow_position_tags_become_chunk_metadata_and_leave_visible_text() {
+        let chunker = NaiveChunker::new();
+        let mut doc = test_doc(
+            "First positioned paragraph@@1\t10.9\t100.2\t20.8\t40.7##\n\
+             Second positioned paragraph@@2\t50.0\t150.0\t60.0\t90.0##",
+        );
+        doc.metadata.insert(
+            crate::chunk::RAGFLOW_POSITION_TAGS_METADATA.to_string(),
+            "true".to_string(),
+        );
+        let chunks = chunker.chunk(&doc, &ParserConfig::default()).unwrap();
+
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(
+            chunks[0].content,
+            "First positioned paragraph\nSecond positioned paragraph"
+        );
+        assert_eq!(
+            chunks[0].metadata.get("position_int").map(String::as_str),
+            Some("[[1,10,100,20,40],[2,50,150,60,90]]")
+        );
+        assert_eq!(
+            chunks[0].metadata.get("page_num_int").map(String::as_str),
+            Some("[1,2]")
+        );
+        assert_eq!(
+            chunks[0].metadata.get("top_int").map(String::as_str),
+            Some("[20,60]")
+        );
+        assert!(
+            !chunks[0]
+                .metadata
+                .contains_key(crate::chunk::RAGFLOW_POSITION_TAGS_METADATA)
+        );
+        assert_eq!(chunks[0].token_count, token_count(&chunks[0].content));
+    }
+
+    #[test]
+    fn ordinary_text_preserves_position_like_literal_without_parser_marker() {
+        let chunker = NaiveChunker::new();
+        let literal = "Protocol example: @@1\t10.0\t20.0\t30.0\t40.0##";
+        let doc = test_doc(literal);
+        let chunks = chunker.chunk(&doc, &ParserConfig::default()).unwrap();
+
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].content, literal);
+        assert!(!chunks[0].metadata.contains_key("position_int"));
+        assert!(!chunks[0].metadata.contains_key("page_num_int"));
+        assert!(!chunks[0].metadata.contains_key("top_int"));
+    }
+}
 
 /// Whole-document-as-one-chunk strategy — mirrors RAGFlow `rag/app/one.py`
 /// ("One file forms a chunk which maintains original text order").

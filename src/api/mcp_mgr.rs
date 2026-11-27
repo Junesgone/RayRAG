@@ -714,4 +714,97 @@ pub async fn test_mcp_server(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn store_is_tenant_scoped_and_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json").to_string_lossy().into_owned();
+        let store = McpServerStore::new(&path).unwrap();
+        let row = McpServerRecord {
+            id: "mcp-1".into(),
+            name: "search-server".into(),
+            server_type: "streamable-http".into(),
+            url: "https://mcp.example".into(),
+            description: String::new(),
+            variables: serde_json::json!({ "tools": {} }),
+            tenant_id: "tenant-a".into(),
+            create_time: 1,
+            update_time: 1,
+        };
+        store.insert(row).unwrap();
+        assert_eq!(store.list("tenant-a").len(), 1);
+        assert!(store.list("tenant-b").is_empty());
+        let reopened = McpServerStore::new(&path).unwrap();
+        assert!(reopened.get("tenant-a", "mcp-1").is_some());
+        assert!(reopened.get("tenant-b", "mcp-1").is_none());
+        assert!(reopened.delete("tenant-a", "mcp-1").unwrap());
+        assert!(
+            McpServerStore::new(&path)
+                .unwrap()
+                .list("tenant-a")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn name_and_type_validation_match_the_fixed_contract() {
+        assert!(validate_mcp_name("my-server_1").is_ok());
+        assert!(validate_mcp_name("").is_err());
+        assert!(validate_mcp_name("bad name").is_err());
+        assert!(validate_mcp_name(&"x".repeat(65)).is_err());
+        assert!(validate_server_type("sse").is_ok());
+        assert!(validate_server_type("streamable-http").is_ok());
+        assert!(validate_server_type("stdio").is_err());
+    }
+
+    #[test]
+    fn url_guard_accepts_public_and_optional_lan_bypass() {
+        assert!(validate_mcp_url_with_bypass("http://127.0.0.1:8080/mcp", true).is_ok());
+        assert!(validate_mcp_url("ftp://mcp.example.com").is_err());
+        assert!(validate_mcp_url("http://127.0.0.1:8080/mcp").is_err());
+        assert!(validate_mcp_url("http://192.168.1.10/mcp").is_err());
+    }
+
+    #[tokio::test]
+    async fn fetch_mcp_tools_initializes_and_lists_the_catalogue() {
+        let app = axum::Router::new().route(
+            "/mcp",
+            axum::routing::post(|Json(body): Json<serde_json::Value>| async move {
+                let id = body.get("id").cloned().unwrap_or(serde_json::json!(0));
+                let method = body
+                    .get("method")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                let result = match method {
+                    "initialize" => serde_json::json!({
+                        "protocolVersion": "2025-03-26",
+                        "capabilities": { "tools": {} },
+                        "serverInfo": { "name": "audit-mcp", "version": "1.0.0" }
+                    }),
+                    "tools/list" => serde_json::json!({
+                        "tools": [{
+                            "name": "audit_tool",
+                            "description": "Audit tool",
+                            "inputSchema": { "type": "object" }
+                        }]
+                    }),
+                    _ => serde_json::json!({}),
+                };
+                Json(serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": result }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let tools = fetch_mcp_tools(&format!("http://{address}/mcp"), Some("audit-token"))
+            .await
+            .unwrap();
+        server.abort();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "audit_tool");
+        assert_eq!(tools[0].description, "Audit tool");
+    }
+}

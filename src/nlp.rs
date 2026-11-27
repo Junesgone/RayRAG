@@ -894,7 +894,212 @@ fn extract_key_terms(query: &str) -> String {
         .join(" ")
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn test_bm25() {
+        let mut scorer = Bm25Scorer::new();
+        scorer.index(&["the quick brown fox", "the lazy dog", "quick brown rabbit"]);
+        let s1 = scorer.score("quick fox", "the quick brown fox");
+        let s2 = scorer.score("quick fox", "the lazy dog");
+        assert!(s1 > s2, "BM25 should score matching doc higher");
+    }
+
+    #[test]
+    fn test_bm25_matches_cjk_subterms() {
+        let mut scorer = Bm25Scorer::new();
+        scorer.index(&["水产养殖水质管理", "服务器日志分析"]);
+        let matching = scorer.score("水质", "水产养殖水质管理");
+        let unrelated = scorer.score("水质", "服务器日志分析");
+        assert!(matching > unrelated);
+    }
+
+    #[test]
+    fn test_synonym_expand() {
+        let dict = SynonymDict::new();
+        let result = dict.expand("fast car", 3);
+        assert!(result.contains("quick") || result.contains("rapid"));
+    }
+
+    #[test]
+    fn test_synonym_lookup_dict_and_topn() {
+        let dict = SynonymDict::new();
+        let res = dict.lookup("fast", 2);
+        assert_eq!(res.len(), 2);
+        assert!(res.iter().any(|s| s == "quick" || s == "rapid"));
+        // Unknown token → empty (RAGFlow returns [])
+        assert!(dict.lookup("zzzznope", 8).is_empty());
+        // Empty input → empty
+        assert!(dict.lookup("", 8).is_empty());
+    }
+
+    #[test]
+    fn test_synonym_from_json_map() {
+        let mut map = serde_json::Map::new();
+        map.insert("Fast".into(), serde_json::Value::String("quick".into()));
+        map.insert(
+            "汽车".into(),
+            serde_json::Value::Array(vec![
+                serde_json::Value::String("车辆".into()),
+                serde_json::Value::String("机动车".into()),
+            ]),
+        );
+        map.insert("ignored".into(), serde_json::Value::Number(42.into()));
+        let dict = SynonymDict::from_json_map(&map);
+        // Keys lowercased like RAGFlow's {k.lower(): v}
+        assert_eq!(dict.lookup("fast", 8), vec!["quick"]);
+        assert_eq!(dict.lookup("汽车", 8), vec!["车辆", "机动车"]);
+        // Non-string/list values skipped
+        assert!(dict.lookup("ignored", 8).is_empty());
+    }
+
+    #[test]
+    fn test_query_clean() {
+        let cleaned = clean_query("Can you tell me how to use Rust?");
+        assert!(!cleaned.contains("can you"));
+        assert!(!cleaned.contains("tell me"));
+    }
+
+    #[test]
+    fn test_hybrid_score() {
+        let mut scorer = Bm25Scorer::new();
+        scorer.index(&[
+            "rust is a systems programming language",
+            "python is easy to learn",
+        ]);
+        let hybrid = scorer.hybrid_score(
+            "rust systems",
+            "rust is a systems programming language",
+            0.9,
+            0.3,
+        );
+        assert!(hybrid > 0.5);
+    }
+
+    #[test]
+    fn test_term_weight_pretoken_drops_stopwords_and_punct() {
+        let tw = TermWeightComputer::new();
+        let tokens = tw.pretoken("请问 什么是 水产养殖 水质 管理？", true, true);
+        // 请问/什么是 are stop words; ？ becomes # and is dropped
+        assert!(!tokens.iter().any(|t| t == "请问" || t == "什么是"));
+        assert!(!tokens.iter().any(|t| t == "#"));
+        assert!(tokens.iter().any(|t| t == "水产"));
+    }
+
+    #[test]
+    fn test_term_weight_pretoken_drops_digits_when_num_false() {
+        let tw = TermWeightComputer::new();
+        let tokens = tw.pretoken("2026 年 计划", false, true);
+        assert!(!tokens.iter().any(|t| t == "2026"));
+    }
+
+    #[test]
+    fn test_term_weight_merge_single_char_phrases() {
+        let tw = TermWeightComputer::new();
+        // "多 工 位" style CJK run merges into a phrase
+        let merged = tw.token_merge(&["多".into(), "工".into(), "位".into()]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0], "多 工 位");
+    }
+
+    #[test]
+    fn test_term_weight_weights_normalize_and_boost_numbers() {
+        let tw = TermWeightComputer::new();
+        let mut ne = HashMap::new();
+        ne.insert("中山市".to_string(), "loca".to_string());
+        let mut df = HashMap::new();
+        df.insert("水产".to_string(), 1000.0);
+        let tw = tw.with_resources(ne, df);
+        let weights = tw.weights(&["中山市".into(), "水产".into(), "42.5".into()], false);
+        let sum: f64 = weights.iter().map(|(_, w)| w).sum();
+        assert!(
+            (sum - 1.0).abs() < 1e-9,
+            "weights must normalize to 1, got {sum}"
+        );
+        let num_w = weights
+            .iter()
+            .find(|(t, _)| t == "42.5")
+            .map(|(_, w)| *w)
+            .unwrap();
+        let loca_w = weights
+            .iter()
+            .find(|(t, _)| t == "中山市")
+            .map(|(_, w)| *w)
+            .unwrap();
+        // RAGFlow ner map: loca=3 > number=2 — location must beat numbers
+        assert!(
+            loca_w > num_w,
+            "location NER weight (3) should beat number (2)"
+        );
+    }
+
+    #[test]
+    fn test_term_weight_preprocess_merges_phrases() {
+        let tw = TermWeightComputer::new();
+        // preprocess=true runs pretoken+token_merge on each token
+        let weights = tw.weights(&["多 工 位 加工".into()], true);
+        assert!(!weights.is_empty());
+        let sum: f64 = weights.iter().map(|(_, w)| w).sum();
+        assert!((sum - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn token_similarity_exact_match_outscores_partial() {
+        let tw = TermWeightComputer::new();
+        let q: Vec<String> = "水产 养殖".split_whitespace().map(String::from).collect();
+        let exact: Vec<String> = "水产 养殖 水质"
+            .split_whitespace()
+            .map(String::from)
+            .collect();
+        let partial: Vec<String> = "水质 管理".split_whitespace().map(String::from).collect();
+        let scores = tw.token_similarity(&q, &[exact.clone(), partial.clone()]);
+        assert!(
+            scores[0] > scores[1],
+            "exact should beat partial: {scores:?}"
+        );
+        assert!(scores[1] >= 0.0, "score must not go negative");
+    }
+
+    #[test]
+    fn weighted_token_dict_includes_bigrams() {
+        let tw = TermWeightComputer::new();
+        let tks: Vec<String> = "水产 养殖".split_whitespace().map(String::from).collect();
+        let d = tw.weighted_token_dict(&tks);
+        // bigram key 水产养殖 present (unigram+bigram 0.4/0.6 split)
+        assert!(d.contains_key("水产养殖"));
+        assert!(d.contains_key("水产"));
+        assert!(d.contains_key("养殖"));
+    }
+
+    #[test]
+    fn dict_similarity_is_symmetric_ratio() {
+        let mut a = HashMap::new();
+        a.insert("k".to_string(), 1.0);
+        let mut b = HashMap::new();
+        b.insert("k".to_string(), 1.0);
+        b.insert("j".to_string(), 2.0);
+        let s = TermWeightComputer::dict_similarity(&a, &b);
+        assert!((s - 1.0).abs() < 1e-9, "all query weight found: {s}");
+        let mut c = HashMap::new();
+        c.insert("z".to_string(), 1.0);
+        let s2 = TermWeightComputer::dict_similarity(&a, &c);
+        assert!(s2 < 0.01, "no overlap ~ 0: {s2}");
+    }
+
+    #[test]
+    fn hybrid_similarity_falls_back_to_token_only_on_zero_vectors() {
+        let tw = TermWeightComputer::new();
+        let q: Vec<String> = "水产".split_whitespace().map(String::from).collect();
+        let d: Vec<String> = "水产 养殖".split_whitespace().map(String::from).collect();
+        let (fused, tksim, vtsim) =
+            tw.hybrid_similarity(&[], &[vec![0.0, 0.0]], &q, &[d.clone()], 0.3, 0.7);
+        assert_eq!(vtsim[0], 0.0, "zero vectors give zero cosine");
+        assert_eq!(fused, tksim, "fused == token sim when vectors sum to 0");
+        assert!(tksim[0] > 0.0);
+    }
+}
 
 // ── rag_tokenizer core (rag/nlp/rag_tokenizer.py) ─────────────────
 //
@@ -1354,4 +1559,153 @@ pub fn build_keyword_query(question: &str) -> KeywordQuery {
     KeywordQuery { query, keywords }
 }
 
+#[cfg(test)]
+mod rag_tokenizer_tests {
+    use super::*;
 
+    #[test]
+    fn rag_tokenize_cjk_emits_unigrams_and_bigrams() {
+        // 中文 → 中 文 中文 (unigrams + adjacent bigram), space-joined
+        assert_eq!(rag_tokenize("中文"), "中 文 中文");
+        // 4-char run: unigrams then adjacent bigrams (infinity tokenizer order)
+        assert_eq!(rag_tokenize("水产养殖"), "水 产 养 殖 水产 产养 养殖");
+    }
+
+    #[test]
+    fn rag_tokenize_latin_words_kept_whole_and_lowercased() {
+        assert_eq!(rag_tokenize("Hello World"), "hello world");
+        assert_eq!(rag_tokenize("RAGFlow123"), "ragflow123");
+        // mixed EN + ZH
+        let tks = rag_tokenize("使用RAGFlow检索");
+        let parts: Vec<&str> = tks.split_whitespace().collect();
+        assert!(parts.contains(&"ragflow"));
+        assert!(parts.contains(&"使用"));
+        assert!(parts.contains(&"检索"));
+    }
+
+    #[test]
+    fn fine_grained_tokenize_splits_cjk_tokens() {
+        assert_eq!(rag_fine_grained_tokenize("水 产 水产"), "水 产 水 产");
+        assert_eq!(rag_fine_grained_tokenize("hello 水质"), "hello 水 质");
+    }
+
+    #[test]
+    fn str_q2b_converts_fullwidth() {
+        assert_eq!(str_q2b("ＡＢＣ１２３"), "ABC123");
+        assert_eq!(str_q2b("ＲＡＧＦｌｏｗ"), "RAGFlow");
+        assert_eq!(str_q2b("中文　测试"), "中文 测试"); // U+3000 → space
+    }
+
+    #[test]
+    fn tradi2simp_converts_common_characters() {
+        assert_eq!(tradi2simp("繁體中文測試"), "繁体中文测试");
+        assert_eq!(tradi2simp("電腦網絡"), "电脑网络");
+        // unknown chars pass through
+        assert_eq!(tradi2simp("abc"), "abc");
+    }
+
+    #[test]
+    fn is_chinese_detects_ratio() {
+        assert!(is_chinese("这是一段中文"));
+        assert!(!is_chinese("hello world"));
+        assert!(is_chinese("混合mixed中文字符"));
+    }
+
+    #[test]
+    fn query_normalization_pipeline() {
+        // add spaces between EN and ZH (upstream regex semantics:
+        // "RAGFlow使用" → "RAGFlow 使用", matching QueryBase exactly)
+        assert_eq!(add_space_between_eng_zh("使用RAGFlow"), "使用 RAGFlow");
+        assert_eq!(add_space_between_eng_zh("RAGFlow使用"), "RAGFlow 使用");
+        // rm_www strips Chinese question words
+        assert_eq!(rm_www("请问什么是水产养殖"), "水产养殖");
+        // English filler removal — upstream regex semantics: "what " eats
+        // the space before "is", so " is " cannot match (same as RAGFlow)
+        assert_eq!(rm_www("what is the best rust"), "is best rust");
+        // standalone filler at the head does get removed
+        assert_eq!(rm_www("please remove the test"), "remove test");
+        // full pipeline
+        let q = normalize_query("请问如何使用ＲＡＧＦｌｏｗ進行檢索？");
+        assert!(!q.contains("请问"));
+        assert!(q.to_lowercase().contains("ragflow"));
+        assert!(q.contains("检索"));
+    }
+
+    #[test]
+    fn sub_special_char_escapes_and_strips_quotes() {
+        // single quotes removed; colon escaped
+        assert_eq!(sub_special_char("a'b:c"), "ab\\:c");
+        assert_eq!(sub_special_char("x+y"), "x\\+y");
+    }
+
+    #[test]
+    fn is_number_and_alphabet() {
+        assert!(is_number("123"));
+        assert!(is_number("1,234.5"));
+        assert!(!is_number("12a"));
+        assert!(is_alphabet("abcXYZ"));
+        assert!(!is_alphabet("abc1"));
+    }
+
+    #[test]
+    fn term_weight_split_merges_consecutive_english() {
+        let tw = TermWeightComputer::new();
+        // consecutive English tokens merge into one phrase (RAGFlow split)
+        let tks = tw.split("how to use Rust language");
+        assert_eq!(tks, vec!["how to use Rust language"]);
+        // CJK tokens stay separate
+        let tks = tw.split("水产 养殖 水质");
+        assert_eq!(tks, vec!["水产", "养殖", "水质"]);
+        // func NER category prevents merging
+        let mut ne = HashMap::new();
+        ne.insert("the".to_string(), "func".to_string());
+        let tw = tw.with_resources(ne, HashMap::new());
+        let tks = tw.split("the quick brown");
+        assert_eq!(tks, vec!["the", "quick brown"]);
+    }
+
+    #[test]
+    fn postag_weights_place_nouns_above_numbers() {
+        let tw = TermWeightComputer::new();
+        // 中山市: ner=loca(3) × postag=ns(3) = 9;  42.5: ner=2 × postag=2 = 4
+        let mut ne = HashMap::new();
+        ne.insert("中山市".to_string(), "loca".to_string());
+        let tw = tw.with_resources(ne, HashMap::new());
+        let weights = tw.weights(&["中山市".into(), "42.5".into()], false);
+        let loca_w = weights
+            .iter()
+            .find(|(t, _)| t == "中山市")
+            .map(|(_, w)| *w)
+            .unwrap();
+        let num_w = weights
+            .iter()
+            .find(|(t, _)| t == "42.5")
+            .map(|(_, w)| *w)
+            .unwrap();
+        assert!(
+            loca_w > num_w * 2.0,
+            "loca×ns (9) should dominate number (4): {loca_w} vs {num_w}"
+        );
+    }
+
+    #[test]
+    fn build_keyword_query_returns_weighted_terms_and_keywords() {
+        let kq = build_keyword_query("请问什么是水产养殖水质管理");
+        assert!(!kq.query.is_empty(), "query string must be non-empty");
+        assert!(!kq.keywords.is_empty(), "keywords must be non-empty");
+        // stop words 请问/什么 are removed by normalization
+        assert!(!kq.keywords.iter().any(|k| k == "请问" || k == "什么"));
+        // core terms survive
+        assert!(
+            kq.keywords
+                .iter()
+                .any(|k| k.contains("水产") || k.contains("养殖"))
+        );
+        // query contains weighted term syntax (term)^weight
+        assert!(
+            kq.query.contains("^"),
+            "expected weighted syntax, got: {}",
+            kq.query
+        );
+    }
+}

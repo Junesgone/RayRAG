@@ -110,4 +110,58 @@ pub fn delimiter_regex(field: &str) -> Option<Regex> {
     Regex::new(&format!("({pattern})")).ok()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn parses_bare_and_wrapped_tokens_longest_first() {
+        assert_eq!(
+            parse_delimiter_field("#`##`\n"),
+            vec!["##".to_owned(), "#".to_owned(), "\n".to_owned()]
+        );
+        assert_eq!(
+            parse_delimiter_field("ab"),
+            vec!["a".to_owned(), "b".to_owned()]
+        );
+        assert!(parse_delimiter_field("").is_empty());
+        assert_eq!(parse_delimiter_field("`||`"), vec!["||".to_owned()]);
+    }
+
+    #[test]
+    fn dedupes_and_normalizes_newlines() {
+        assert_eq!(
+            parse_delimiter_field("aab"),
+            vec!["a".to_owned(), "b".to_owned()]
+        );
+        assert_eq!(parse_delimiter_field("\r\n\r"), vec!["\n".to_owned()]);
+        assert_eq!(normalize_text_newlines("x\r\ny\rz"), "x\ny\nz");
+    }
+
+    #[test]
+    fn wrapped_detection_and_pattern_compilation() {
+        assert!(has_wrapped_delimiter("a`b`"));
+        assert!(!has_wrapped_delimiter("ab"));
+        assert!(!has_wrapped_delimiter(""));
+        // `regex::escape` also escapes `#` (verbose-mode meta), so assert
+        // matching semantics rather than the exact escaped string.
+        let pattern = compile_delimiter_pattern(&["##".to_owned(), "#".to_owned()]);
+        assert!(!pattern.is_empty());
+        let combined = Regex::new(&format!("({pattern})")).expect("combined regex");
+        assert!(combined.is_match("a##b"));
+        assert!(combined.is_match("a#b"));
+        assert!(compile_delimiter_pattern(&[]).is_empty());
+        let regex = delimiter_regex("`::`").expect("regex");
+        assert!(regex.is_match("a::b"));
+        assert!(delimiter_regex("").is_none());
+    }
+
+    #[test]
+    fn default_delimiter_matches_upstream_constant() {
+        assert_eq!(DEFAULT_DELIMITER, "\n!?;。；！？");
+        let parsed = parse_delimiter_field(DEFAULT_DELIMITER);
+        assert_eq!(parsed.len(), 8, "newline plus seven punctuation marks");
+        assert_eq!(parsed[0], "\n");
+        assert!(parsed.contains(&"。".to_owned()));
+    }
+}

@@ -222,4 +222,164 @@ async fn read_bounded_body(response: reqwest::Response) -> Result<Vec<u8>> {
     Ok(body)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        Json, Router,
+        http::{HeaderMap, StatusCode},
+        routing::post,
+    };
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
 
+    #[test]
+    fn normalization_matches_upstream() {
+        assert_eq!(normalize_search_depth(Some("SNIPPETS")), "snippets");
+        assert_eq!(normalize_search_depth(Some("weird")), "basic");
+        assert_eq!(normalize_search_depth(None), "basic");
+        assert_eq!(normalize_topic(Some("NEWS")).unwrap(), "news");
+        assert_eq!(normalize_topic(None).unwrap(), "general");
+        assert!(normalize_topic(Some("sports")).is_err());
+        assert_eq!(normalize_freshness(Some("any")).unwrap(), "");
+        assert_eq!(normalize_freshness(None).unwrap(), "");
+        assert_eq!(normalize_freshness(Some("week")).unwrap(), "week");
+        assert!(normalize_freshness(Some("hour")).is_err());
+        assert_eq!(resolve_max_results(None, Some(10)), 10);
+        assert_eq!(resolve_max_results(Some(50), Some(10)), 20);
+        assert_eq!(resolve_max_results(Some(0), Some(10)), 1);
+        assert_eq!(resolve_max_results(Some(3), None), 3);
+    }
+
+    #[test]
+    fn payload_results_and_content_follow_upstream() {
+        let payload = build_search_payload("q", "basic", 10, "news", "day");
+        assert_eq!(payload["search_depth"], "basic");
+        assert_eq!(payload["max_results"], 10);
+        assert_eq!(payload["topic"], "news");
+        assert_eq!(payload["freshness"], "day");
+        let without = build_search_payload("q", "snippets", 5, "general", "");
+        assert!(without.get("freshness").is_none());
+
+        let data = json!({
+            "results": [
+                {"title": "a", "url": "u", "content": "  page\n text ", "description": "d"},
+                {"title": "b", "url": "u2", "description": "  snippet  only "},
+                {"title": "c", "url": "u3"},
+                "not-an-object"
+            ]
+        });
+        let results = results_from_response(&data, 10);
+        assert_eq!(results.len(), 3);
+        assert_eq!(result_content(&results[0]), "page text");
+        assert_eq!(result_content(&results[1]), "snippet only");
+        assert_eq!(result_content(&results[2]), "");
+        assert_eq!(results_from_response(&data, 1).len(), 1);
+        assert!(results_from_response(&json!({"results": "nope"}), 5).is_empty());
+    }
+
+    async fn spawn_sequence(
+        statuses: Vec<StatusCode>,
+        capture: Arc<std::sync::Mutex<Vec<Value>>>,
+    ) -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let state = counter.clone();
+        let app = Router::new().route(
+            "/v1/search",
+            post(move |headers: HeaderMap, body: String| {
+                let state = state.clone();
+                let capture = capture.clone();
+                let statuses = statuses.clone();
+                async move {
+                    let index = state.fetch_add(1, Ordering::SeqCst);
+                    capture.lock().unwrap().push(json!({
+                        "authorization": headers.get("authorization").and_then(|v| v.to_str().ok()).unwrap_or_default(),
+                        "user_agent": headers.get("user-agent").and_then(|v| v.to_str().ok()).unwrap_or_default(),
+                        "body": serde_json::from_str::<Value>(&body).unwrap_or(Value::Null),
+                    }));
+                    let status = statuses.get(index).copied().unwrap_or(StatusCode::OK);
+                    if status == StatusCode::OK {
+                        (status, Json(json!({"results": [{"title": "t", "url": "u", "content": "body"}]})))
+                    } else {
+                        (status, Json(json!({"error": "bad"})))
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{address}/v1/search"), counter, server)
+    }
+
+    #[tokio::test]
+    async fn retries_transient_status_then_succeeds_with_expected_headers() {
+        let capture = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (endpoint, counter, server) = spawn_sequence(
+            vec![StatusCode::TOO_MANY_REQUESTS, StatusCode::OK],
+            capture.clone(),
+        )
+        .await;
+        let client = SofyaClient::new_with_endpoint(&endpoint).unwrap();
+        let payload = build_search_payload("q", "basic", 10, "general", "");
+        let data = client
+            .search("sk-s", &payload, 3, Duration::from_millis(1))
+            .await
+            .unwrap();
+        server.abort();
+        assert_eq!(counter.load(Ordering::SeqCst), 2);
+        assert_eq!(data["results"][0]["title"], "t");
+        let seen = capture.lock().unwrap();
+        assert_eq!(seen[0]["authorization"], "Bearer sk-s");
+        assert_eq!(seen[0]["user_agent"], SOFYA_USER_AGENT);
+        assert_eq!(seen[0]["body"]["search_depth"], "basic");
+    }
+
+    #[tokio::test]
+    async fn non_retryable_status_fails_at_once_and_transient_exhaustion_reports_status() {
+        let capture = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (endpoint, counter, server) =
+            spawn_sequence(vec![StatusCode::BAD_REQUEST], capture.clone()).await;
+        let client = SofyaClient::new_with_endpoint(&endpoint).unwrap();
+        let error = client
+            .search(
+                "sk",
+                &build_search_payload("q", "basic", 10, "general", ""),
+                3,
+                Duration::from_millis(1),
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+        server.abort();
+        assert!(error.contains("400"), "{error}");
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+
+        let capture = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (endpoint, counter, server) = spawn_sequence(
+            vec![
+                StatusCode::INTERNAL_SERVER_ERROR,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ],
+            capture.clone(),
+        )
+        .await;
+        let client = SofyaClient::new_with_endpoint(&endpoint).unwrap();
+        let error = client
+            .search(
+                "sk",
+                &build_search_payload("q", "basic", 10, "general", ""),
+                3,
+                Duration::from_millis(1),
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+        server.abort();
+        assert!(error.contains("500"), "{error}");
+        assert_eq!(counter.load(Ordering::SeqCst), 3);
+    }
+}

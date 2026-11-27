@@ -468,4 +468,95 @@ pub async fn chat_completions(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn a_user_message_supplies_the_question_when_question_is_absent() {
+        let message = RagChatMessage {
+            role: "user".into(),
+            content: serde_json::json!("What is RayRAG?"),
+        };
+        assert_eq!(message.text(), "What is RayRAG?");
+        let parts = RagChatMessage {
+            role: "user".into(),
+            content: serde_json::json!([{ "type": "text", "text": "part one " }, { "type": "text", "text": "part two" }]),
+        };
+        assert_eq!(parts.text(), "part one part two");
+    }
+
+    #[test]
+    fn a_frame_carries_every_field_the_guide_documents() {
+        let payload = frame("hello", "msg-1", "sess-1", Some("chat-1"), None);
+        for key in [
+            "answer",
+            "reference",
+            "audio_binary",
+            "prompt",
+            "created_at",
+            "final",
+            "id",
+            "session_id",
+            "chat_id",
+        ] {
+            assert!(payload.get(key).is_some(), "missing {key}: {payload}");
+        }
+        assert_eq!(payload["final"], serde_json::json!(false));
+        assert_eq!(payload["answer"], serde_json::json!("hello"));
+    }
+
+    /// The reference object the guide documents: `chunks` keyed by index, and `doc_aggs` aggregated
+    /// from the document names the retrieval path now carries.
+    #[test]
+    fn the_reference_object_carries_documents_and_their_aggregates() {
+        let reference = |id: &str, doc: &str, with_metadata: bool| crate::llm::ChunkReference {
+            id: id.into(),
+            kb_id: "kb-1".into(),
+            content: "text".into(),
+            similarity: Some(0.5),
+            vector_similarity: Some(0.4),
+            term_similarity: Some(0.6),
+            document_metadata: with_metadata.then(|| {
+                let mut metadata = serde_json::Map::new();
+                metadata.insert("author".into(), serde_json::json!("bob"));
+                metadata
+            }),
+            document_id: Some(format!("doc-{doc}")),
+            document_name: Some(doc.into()),
+        };
+        let payload = crate::api::features::reference_payload(&[
+            reference("chunk-1", "INSTALL.md", true),
+            reference("chunk-2", "INSTALL.md", false),
+            reference("chunk-3", "guide.md", false),
+        ]);
+        assert_eq!(payload["chunks"]["0"]["id"], "chunk-1");
+        assert_eq!(payload["chunks"]["0"]["dataset_id"], "kb-1");
+        assert_eq!(payload["chunks"]["0"]["document_name"], "INSTALL.md");
+        assert_eq!(
+            payload["chunks"]["0"]["document_metadata"]["author"], "bob",
+            "requested metadata travels with its chunk: {payload}"
+        );
+        assert!(
+            payload["chunks"]["1"].get("document_metadata").is_none(),
+            "a chunk without metadata does not invent one"
+        );
+        assert_eq!(payload["chunks"]["2"]["document_name"], "guide.md");
+        assert_eq!(payload["doc_aggs"]["INSTALL.md"]["count"], 2);
+        assert_eq!(
+            payload["doc_aggs"]["INSTALL.md"]["doc_id"],
+            "doc-INSTALL.md"
+        );
+        assert_eq!(payload["doc_aggs"]["guide.md"]["count"], 1);
+    }
+
+    #[test]
+    fn the_legacy_frame_reports_everything_generated_so_far() {
+        let payload = frame("ate", "msg-1", "sess-1", None, Some("generated so far"));
+        assert_eq!(payload["answer"], serde_json::json!("generated so far"));
+        assert!(
+            payload.get("chat_id").is_none(),
+            "a mode without an assistant has no chat_id: {payload}"
+        );
+    }
+}

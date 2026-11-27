@@ -844,7 +844,275 @@ pub fn resolve_chunk_ids(
     (merged, per_chunk)
 }
 
+#[cfg(test)]
+mod wiki_part1_tests {
+    use super::*;
+    use serde_json::json;
 
+    #[test]
+    fn chunk_hash_is_stable_and_rev_sensitive() {
+        let h1 = chunk_hash("hello");
+        let h2 = chunk_hash("hello");
+        assert_eq!(h1, h2);
+        assert_eq!(h1.len(), 16);
+        assert_ne!(h1, chunk_hash("hello "));
+    }
+
+    #[test]
+    fn doc_ids_normalize_scalars_and_lists() {
+        assert!(wiki_doc_ids(&Value::Null).is_empty());
+        assert_eq!(
+            wiki_doc_ids(&json!(" d1 ")).into_iter().collect::<Vec<_>>(),
+            vec!["d1".to_string()]
+        );
+        let ids = wiki_doc_ids(&json!(["d1", ["d2", ""], null, "d3"]));
+        assert_eq!(ids.len(), 3);
+        assert!(ids.contains("d1") && ids.contains("d2") && ids.contains("d3"));
+    }
+
+    #[test]
+    fn compare_chunk_states_buckets() {
+        let mut previous = Map::new();
+        previous.insert("a".to_string(), json!({"hash": "1"}));
+        previous.insert("b".to_string(), json!({"hash": "2"}));
+        previous.insert("c".to_string(), json!({"hash": "3"}));
+        let mut current = Map::new();
+        current.insert("a".to_string(), json!({"hash": "1"}));
+        current.insert("b".to_string(), json!({"hash": "9"}));
+        current.insert("d".to_string(), json!({"hash": "4"}));
+        let delta = compare_chunk_states(&previous, &current);
+        assert_eq!(
+            delta
+                .unchanged_chunk_ids
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a"]
+        );
+        assert_eq!(
+            delta
+                .changed_chunk_ids
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>(),
+            vec!["b"]
+        );
+        assert_eq!(
+            delta
+                .deleted_chunk_ids
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>(),
+            vec!["c"]
+        );
+        assert_eq!(
+            delta
+                .new_chunk_ids
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>(),
+            vec!["d"]
+        );
+    }
+
+    #[test]
+    fn render_schema_body_skips_and_appends() {
+        let fields = vec![
+            json!({"name": "title", "type": "str", "description": "The {title}\nlabel"}),
+            json!({"name": "title", "type": "str"}),
+            json!({"name": "source_chunk_id", "type": "str"}),
+            json!({"name": "count", "type": "int"}),
+        ];
+        let body = render_schema_body(&fields, "en", "FALLBACK", 6);
+        assert!(body.contains("\"title\": \"string — The (title) label\""));
+        assert_eq!(body.matches("\"title\"").count(), 1);
+        assert!(body.contains("\"count\": 0"));
+        assert!(body.ends_with(
+            "\"source_chunk_id\": \"string — exact value from the chunk_id list above\""
+        ));
+        assert_eq!(render_schema_body(&[], "en", "FALLBACK", 6), "FALLBACK");
+        assert_eq!(
+            render_schema_body(&[json!({"type": "str"})], "en", "FALLBACK", 6),
+            "FALLBACK"
+        );
+    }
+
+    #[test]
+    fn custom_rules_and_template_helpers() {
+        let cfg = json!({"guideline": {"rules_for_entities": "Use full names"}});
+        let rules = build_custom_rules(&cfg, "en");
+        assert!(rules.starts_with('\n') && rules.ends_with('\n'));
+        assert!(
+            rules.contains(
+                "## Entity extraction rules (from knowledge base config):\nUse full names"
+            )
+        );
+        assert_eq!(build_custom_rules(&json!({}), "en"), "");
+        assert_eq!(
+            template_custom_rules(&json!({"global_rules": "  be terse  "})),
+            "be terse"
+        );
+        let fields = vec![json!({"type": "person", "description": "who", "rule": "capitalized"})];
+        assert_eq!(
+            type_rules(&fields),
+            "type: person\n  - description: who\n  - rule: capitalized"
+        );
+        let joined = vec![
+            json!({"term": " A "}),
+            json!({"term": ""}),
+            json!({"term": "B"}),
+        ];
+        assert_eq!(pipe_join(&joined, "term"), "A|B");
+        let colon = vec![
+            json!({"term": "A", "definition_excerpt": "d1"}),
+            json!({"term": "B"}),
+        ];
+        assert_eq!(colon_join(&colon, "term", "definition_excerpt"), "A:d1\nB:");
+        let claim = vec![json!({"name": "Statement", "description": "the fact"})];
+        assert_eq!(named_field_description(&claim, "statement"), "the fact");
+        let legacy = vec![json!({"statement": "legacy text"})];
+        assert_eq!(named_field_description(&legacy, "statement"), "legacy text");
+    }
+
+    #[test]
+    fn render_template_is_single_pass() {
+        let out = render_template("A={a} B={b} L={", &[("a", "{b}"), ("b", "x")]);
+        assert_eq!(out, "A={b} B=x L={");
+        assert_eq!(render_template("{unknown}", &[]), "{unknown}");
+    }
+
+    #[test]
+    fn build_user_prompt_defaults_and_legacy_leg() {
+        let prompt = build_user_prompt(&json!({}), "en", "doc1", 2, "C1, C2", "body");
+        assert!(prompt.contains("Document id: doc1"));
+        assert!(prompt.contains("Batch contains 2 packed chunk(s)"));
+        assert!(prompt.contains("person|org|product|regulation|location|system|equipment|other"));
+        assert!(
+            prompt
+                .contains("include|ordered|owns|part_of|caused_by|regulates|uses|located_in|other")
+        );
+        assert!(prompt.contains("named term or topic"));
+        assert!(prompt.contains("factual statement"));
+        let legacy = json!({"output": {"entities": {"fields": [{"name": "e1", "type": "str"}]}}});
+        let prompt2 = build_user_prompt(&legacy, "en", "doc1", 1, "C1", "body");
+        assert!(prompt2.contains("\"e1\": \"string\""));
+        assert!(prompt2.contains(
+            "\"source_chunk_id\": \"string — exact value from the chunk_id list above\""
+        ));
+        let custom = json!({"entity": {"fields": [{"type": "org"}]}, "global_rules": "RULE-X"});
+        let prompt3 = build_user_prompt(&custom, "en", "d", 1, "C1", "b");
+        assert!(prompt3.contains("RULE-X"));
+        assert!(prompt3.contains("type: org"));
+    }
+
+    #[test]
+    fn pick_chunk_text_truthiness() {
+        assert_eq!(pick_chunk_text(&json!({"text": "t"})), "t");
+        assert_eq!(
+            pick_chunk_text(&json!({"text": "", "content_with_weight": "c"})),
+            "c"
+        );
+        assert_eq!(pick_chunk_text(&json!({"content": "z"})), "z");
+        assert_eq!(pick_chunk_text(&json!({"text": 7})), "");
+        assert_eq!(pick_chunk_text(&json!({})), "");
+    }
+
+    #[test]
+    fn scrub_strips_literals_and_bounded_hex() {
+        let ids = vec!["zzz".to_string(), "".to_string()];
+        let out = scrub_known_ids(
+            "pre zzz post |0123456789abcdef| mid a0123456789abcdefz |0123456789abcdef0123456789abcdef| end",
+            &ids,
+        );
+        assert!(!out.contains("zzz"));
+        assert!(!out.contains("|0123456789abcdef|"));
+        assert!(out.contains("a0123456789abcdefz"));
+        assert!(!out.contains("|0123456789abcdef0123456789abcdef|"));
+        assert_eq!(
+            scrub_hex_tokens("x0123456789abcdefy", 16),
+            "x0123456789abcdefy"
+        );
+        assert_eq!(scrub_hex_tokens("(0123456789abcdef)", 16), "()");
+    }
+
+    #[test]
+    fn identifier_shapes() {
+        assert!(looks_like_identifier("C1"));
+        assert!(looks_like_identifier(" c0001 "));
+        assert!(looks_like_identifier("d523a888c5b2a167"));
+        assert!(looks_like_identifier("41a5271858ca11f1bbb9047c16ec874f"));
+        assert!(looks_like_identifier(
+            "123e4567-e89b-12d3-a456-426614174000"
+        ));
+        assert!(!looks_like_identifier("Widget"));
+        assert!(!looks_like_identifier("C123456"));
+        assert!(!looks_like_identifier("xyz"));
+        assert!(item_has_identifier_name("entities", &json!({"name": "C2"})));
+        assert!(item_has_identifier_name("concepts", &json!({"term": "c3"})));
+        assert!(item_has_identifier_name(
+            "claims",
+            &json!({"subject": "abcdef0123456789"})
+        ));
+        assert!(item_has_identifier_name(
+            "relations",
+            &json!({"from": "ok", "to": "C9"})
+        ));
+        assert!(!item_has_identifier_name(
+            "relations",
+            &json!({"from": "A", "to": "B"})
+        ));
+    }
+
+    #[test]
+    fn batch_prompt_and_unwrap() {
+        let packed = vec![
+            json!({"label": "C1", "text": "one"}),
+            json!({"label": "C2", "text": "two"}),
+        ];
+        let (body, labels) = format_batch_prompt(&packed);
+        assert_eq!(labels, vec!["C1".to_string(), "C2".to_string()]);
+        assert_eq!(body, "[CHUNK_ID C1]\none\n\n[CHUNK_ID C2]\ntwo");
+        let unwrapped = unwrap_extract(&json!({
+            "entities": [{"name": "A"}, 5],
+            "concepts": "bad",
+            "topics": ["t1", "  ", 7]
+        }));
+        assert_eq!(unwrapped["entities"].as_array().unwrap().len(), 1);
+        assert_eq!(unwrapped["concepts"].as_array().unwrap().len(), 0);
+        assert_eq!(unwrapped["topics"], json!(["t1"]));
+        let empty = unwrap_extract(&Value::Null);
+        assert_eq!(empty["claims"], json!([]));
+    }
+
+    #[test]
+    fn resolve_chunk_ids_splits_drops_and_copies_topics() {
+        let mut label_to_id = HashMap::new();
+        label_to_id.insert("C1".to_string(), "id1".to_string());
+        label_to_id.insert("C2".to_string(), "id2".to_string());
+        let extract = json!({
+            "entities": [
+                {"name": "Alpha", "source_chunk_id": "C1"},
+                {"name": "Beta", "source_chunk_id": "C9"},
+                {"name": "C2", "source_chunk_id": "C2"}
+            ],
+            "claims": [{"statement": "s", "source_chunk_id": "C2"}],
+            "topics": ["t"]
+        });
+        let (merged, per_chunk) = resolve_chunk_ids(&extract, &label_to_id);
+        let entities = merged["entities"].as_array().unwrap();
+        assert_eq!(entities.len(), 1);
+        assert_eq!(entities[0]["name"], json!("Alpha"));
+        assert_eq!(entities[0]["chunk_ids"], json!(["id1"]));
+        assert!(entities[0].get("source_chunk_id").is_none());
+        assert_eq!(merged["topics"], json!(["t"]));
+        let id2 = &per_chunk["id2"];
+        assert_eq!(id2["claims"].as_array().unwrap().len(), 1);
+        assert_eq!(id2["topics"], json!(["t"]));
+        let id1 = &per_chunk["id1"];
+        assert_eq!(id1["claims"].as_array().unwrap().len(), 0);
+        assert_eq!(id1["entities"].as_array().unwrap().len(), 1);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Part 2 — resume/state store group (`_wiki_merge_extracts` ..
@@ -1401,7 +1669,154 @@ pub fn commit_active_map_state(
     Ok(())
 }
 
+#[cfg(test)]
+mod wiki_part2_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
 
+    #[test]
+    fn merge_extracts_concats_and_dedups_topics() {
+        let merged = merge_extracts(&[
+            json!({"entities": [{"name": "A"}], "topics": ["t1", "t2"]}),
+            json!({"entities": [{"name": "B"}], "claims": [{"statement": "s"}], "topics": ["t2", "t3"]}),
+        ]);
+        assert_eq!(merged["entities"].as_array().unwrap().len(), 2);
+        assert_eq!(merged["claims"].as_array().unwrap().len(), 1);
+        assert_eq!(merged["topics"], json!(["t1", "t2", "t3"]));
+    }
+
+    #[test]
+    fn resume_doc_shape_roundtrips() {
+        let doc = build_resume_doc("c1", "d1", &json!({"topics": ["t"]}), "h1");
+        assert_eq!(doc["compile_kwd"], json!("wiki_map_extract"));
+        assert_eq!(doc["source_chunk_ids"], json!(["c1"]));
+        assert_eq!(doc["chunk_hash_kwd"], json!("h1"));
+        assert_eq!(doc["available_int"], json!(0));
+        assert_eq!(doc["id"].as_str().unwrap().len(), 16);
+        let parsed: Value =
+            serde_json::from_str(doc["content_with_weight"].as_str().unwrap()).unwrap();
+        assert_eq!(parsed["topics"], json!(["t"]));
+    }
+
+    #[test]
+    fn persist_and_load_versions_roundtrip() {
+        let store = MemoryDocStore::new();
+        let mut per_chunk = Map::new();
+        per_chunk.insert(
+            "c1".to_string(),
+            json!({"entities": [{"name": "A"}], "topics": ["t"]}),
+        );
+        let mut hashes = Map::new();
+        hashes.insert("c1".to_string(), Value::String("h1".to_string()));
+        persist_extracts(&store, "t1", "kb1", &per_chunk, "d1", Some(&hashes));
+        let docs = BTreeSet::from(["d1".to_string()]);
+        let versions = load_map_versions(&store, "t1", "kb1", &docs, None);
+        let by_hash = versions.get("c1").expect("chunk versions");
+        assert_eq!(by_hash["h1"]["entities"][0]["name"], json!("A"));
+        let mut wrong = Map::new();
+        wrong.insert("c1".to_string(), Value::String("hX".to_string()));
+        assert!(load_map_versions(&store, "t1", "kb1", &docs, Some(&wrong)).is_empty());
+        let mut right = Map::new();
+        right.insert("c1".to_string(), Value::String("h1".to_string()));
+        assert!(!load_map_versions(&store, "t1", "kb1", &docs, Some(&right)).is_empty());
+    }
+
+    #[test]
+    fn scan_state_excludes_compile_rows() {
+        let store = MemoryDocStore::new();
+        let rows: Vec<DocRow> = vec![
+            json!({"id": "c1", "doc_id": "d1", "content_with_weight": "hello", "available_int": 1})
+                .as_object()
+                .cloned()
+                .unwrap(),
+            json!({"id": "x1", "doc_id": "d1", "content_with_weight": "cached", "available_int": 1, "compile_kwd": "wiki_map_extract"})
+                .as_object()
+                .cloned()
+                .unwrap(),
+        ];
+        store.insert(&rows, &index_name("t1"), "kb1").unwrap();
+        let state =
+            scan_current_chunk_state(&store, "t1", "kb1", &BTreeSet::from(["d1".to_string()]))
+                .unwrap();
+        assert!(state.contains_key("c1"));
+        assert!(!state.contains_key("x1"));
+        assert_eq!(state["c1"]["hash"], json!(chunk_hash("hello")));
+        assert_eq!(state["c1"]["doc_id"], json!("d1"));
+    }
+
+    #[test]
+    fn commit_switches_generation_and_cleans_previous() {
+        let store = MemoryDocStore::new();
+        let mut state = Map::new();
+        let mut entry = Map::new();
+        entry.insert("doc_id".to_string(), Value::String("d1".to_string()));
+        entry.insert("hash".to_string(), Value::String("h1".to_string()));
+        state.insert("c1".to_string(), Value::Object(entry));
+        commit_active_map_state(&store, "t1", "kb1", &state).unwrap();
+        let generation_1 = load_active_map_generation(&store, "t1", "kb1").unwrap();
+        assert_eq!(generation_1.len(), 32);
+        let loaded = load_active_map_state(&store, "t1", "kb1").unwrap();
+        assert_eq!(loaded["c1"]["doc_id"], json!("d1"));
+        assert_eq!(loaded["c1"]["hash"], json!("h1"));
+
+        let mut state2 = Map::new();
+        let mut entry2 = Map::new();
+        entry2.insert("doc_id".to_string(), Value::String("d2".to_string()));
+        entry2.insert("hash".to_string(), Value::String("h2".to_string()));
+        state2.insert("c2".to_string(), Value::Object(entry2));
+        commit_active_map_state(&store, "t1", "kb1", &state2).unwrap();
+        let generation_2 = load_active_map_generation(&store, "t1", "kb1").unwrap();
+        assert_ne!(generation_1, generation_2);
+        let loaded2 = load_active_map_state(&store, "t1", "kb1").unwrap();
+        assert!(loaded2.contains_key("c2"));
+        assert!(!loaded2.contains_key("c1"));
+
+        let mut stale = Map::new();
+        stale.insert(
+            "compile_kwd".to_string(),
+            Value::String(WIKI_MAP_STATE_COMPILE_KWD.to_string()),
+        );
+        stale.insert("type_kwd".to_string(), Value::String(generation_1));
+        let query = SearchQuery {
+            select_fields: vec!["id".to_string()],
+            condition: stale,
+            match_expressions: Vec::new(),
+            offset: 0,
+            limit: 10,
+            index_names: vec![index_name("t1")],
+            dataset_ids: vec!["kb1".to_string()],
+            ..Default::default()
+        };
+        let response = store.search(&query).unwrap();
+        assert_eq!(response.total, 0);
+    }
+
+    #[test]
+    fn extracts_for_state_annotates_selection() {
+        let store = MemoryDocStore::new();
+        let mut per_chunk = Map::new();
+        per_chunk.insert(
+            "c1".to_string(),
+            json!({"entities": [{"name": "Alpha"}], "topics": ["t"]}),
+        );
+        let mut hashes = Map::new();
+        hashes.insert("c1".to_string(), Value::String("h1".to_string()));
+        persist_extracts(&store, "t1", "kb1", &per_chunk, "d1", Some(&hashes));
+        let mut state = Map::new();
+        let mut entry = Map::new();
+        entry.insert("doc_id".to_string(), Value::String("d1".to_string()));
+        entry.insert("hash".to_string(), Value::String("h1".to_string()));
+        state.insert("c1".to_string(), Value::Object(entry));
+        let extracts = load_map_extracts_for_state(&store, "t1", "kb1", &state, None);
+        assert_eq!(extracts.len(), 1);
+        assert_eq!(extracts[0]["doc_id"], json!("d1"));
+        assert_eq!(extracts[0]["_map_version"]["chunk_id"], json!("c1"));
+        assert_eq!(extracts[0]["_map_version"]["hash"], json!("h1"));
+        assert_eq!(extracts[0]["entities"][0]["name"], json!("Alpha"));
+        let none = load_map_extracts_for_state(&store, "t1", "kb1", &state, Some(&BTreeSet::new()));
+        assert!(none.is_empty());
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Part 3 — per-batch extraction and the public MAP entry
@@ -1818,7 +2233,262 @@ pub async fn wiki_map_from_chunks(
     merged
 }
 
+#[cfg(test)]
+mod wiki_part3_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+    use crate::harness::HarnessChat;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
+    struct FakeChat {
+        reply: String,
+        max_length: usize,
+        calls: Mutex<Vec<String>>,
+    }
+
+    impl FakeChat {
+        fn new(reply: &str, max_length: usize) -> Self {
+            Self {
+                reply: reply.to_string(),
+                max_length,
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessChat for FakeChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            let user = history
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            self.calls.lock().unwrap().push(user);
+            Ok(self.reply.clone())
+        }
+
+        fn max_length(&self) -> usize {
+            self.max_length
+        }
+    }
+
+    const REPLY: &str = r#"{
+        "entities": [
+            {"name": "Alpha", "source_chunk_id": "C1"},
+            {"name": "C1", "source_chunk_id": "C2"}
+        ],
+        "concepts": [
+            {"term": "Beta", "definition_excerpt": "d", "source_chunk_id": "C2"}
+        ],
+        "claims": [],
+        "relations": [],
+        "topics": ["t"]
+    }"#;
+
+    #[tokio::test]
+    async fn extract_one_batch_builds_prompt_and_unwraps() {
+        let chat = FakeChat::new(REPLY, 100_000);
+        let packed = vec![
+            PackedEntry {
+                label: "C1".to_string(),
+                chunk_id: "id1".to_string(),
+                text: "a".to_string(),
+            },
+            PackedEntry {
+                label: "C2".to_string(),
+                chunk_id: "id2".to_string(),
+                text: "b".to_string(),
+            },
+        ];
+        let out = wiki_extract_one_batch(&chat, &packed, "d1", "en", 30, &json!({}), 0, 1, None)
+            .await
+            .expect("extract");
+        assert_eq!(out["entities"].as_array().unwrap().len(), 2);
+        let prompt = chat.calls.lock().unwrap()[0].clone();
+        assert!(prompt.contains("Document id: d1"));
+        assert!(prompt.contains("- C1"));
+        assert!(prompt.contains("- C2"));
+        assert!(prompt.contains("[CHUNK_ID C1]"));
+    }
+
+    #[tokio::test]
+    async fn timeout_returns_none_and_fires_callback() {
+        let chat = FakeChat::new(REPLY, 100_000);
+        let packed = vec![PackedEntry {
+            label: "C1".to_string(),
+            chunk_id: "id1".to_string(),
+            text: "a".to_string(),
+        }];
+        let fired = std::sync::Arc::new(AtomicBool::new(false));
+        let flag = fired.clone();
+        let callback = move |_progress: f64, message: &str| {
+            if message.contains("[ERROR]") {
+                flag.store(true, Ordering::SeqCst);
+            }
+        };
+        let out = wiki_extract_one_batch(
+            &chat,
+            &packed,
+            "d1",
+            "en",
+            0,
+            &json!({}),
+            0,
+            1,
+            Some(&callback),
+        )
+        .await;
+        assert!(out.is_none());
+        assert!(fired.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn process_batch_persists_resume_rows() {
+        let store = MemoryDocStore::new();
+        let chat = FakeChat::new(REPLY, 100_000);
+        let packed = vec![
+            PackedEntry {
+                label: "C1".to_string(),
+                chunk_id: "id1".to_string(),
+                text: "a".to_string(),
+            },
+            PackedEntry {
+                label: "C2".to_string(),
+                chunk_id: "id2".to_string(),
+                text: "b".to_string(),
+            },
+        ];
+        let mut hashes = Map::new();
+        hashes.insert("id1".to_string(), Value::String("h1".to_string()));
+        hashes.insert("id2".to_string(), Value::String("h2".to_string()));
+        let merged = wiki_process_batch(
+            &chat,
+            &store,
+            &packed,
+            0,
+            1,
+            "d1",
+            "t1",
+            "kb1",
+            "en",
+            30,
+            None,
+            &json!({}),
+            Some(&hashes),
+        )
+        .await;
+        assert_eq!(merged["entities"][0]["chunk_ids"], json!(["id1"]));
+        assert_eq!(merged["concepts"][0]["chunk_ids"], json!(["id2"]));
+        let versions = load_map_versions(
+            &store,
+            "t1",
+            "kb1",
+            &BTreeSet::from(["d1".to_string()]),
+            None,
+        );
+        assert_eq!(versions["id1"]["h1"]["entities"][0]["name"], json!("Alpha"));
+    }
+
+    #[tokio::test]
+    async fn map_entry_caches_on_second_run() {
+        let store = MemoryDocStore::new();
+        let chat = FakeChat::new(REPLY, 100_000);
+        let chunks = vec![
+            json!({"id": "c1", "text": "hello"}),
+            json!({"id": "c2", "content_with_weight": "world"}),
+        ];
+        let out = wiki_map_from_chunks(
+            &store,
+            &chat,
+            &chunks,
+            "d1",
+            "t1",
+            "kb1",
+            "en",
+            2,
+            30,
+            &json!({}),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(out["_meta"]["requested"], json!(2));
+        assert_eq!(out["_meta"]["cache_hits"], json!(0));
+        assert_eq!(out["_meta"]["extracted"], json!(2));
+        assert_eq!(out["entities"].as_array().unwrap().len(), 1);
+        assert_eq!(out["concepts"].as_array().unwrap().len(), 1);
+        assert_eq!(out["entities"][0]["chunk_ids"], json!(["c1"]));
+        let calls_first = chat.calls.lock().unwrap().len();
+        assert!(calls_first >= 1);
+
+        let out2 = wiki_map_from_chunks(
+            &store,
+            &chat,
+            &chunks,
+            "d1",
+            "t1",
+            "kb1",
+            "en",
+            2,
+            30,
+            &json!({}),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(out2["_meta"]["cache_hits"], json!(2));
+        assert_eq!(out2["_meta"]["extracted"], json!(0));
+        assert_eq!(chat.calls.lock().unwrap().len(), calls_first);
+        assert_eq!(out2["entities"][0]["name"], json!("Alpha"));
+    }
+
+    #[tokio::test]
+    async fn map_entry_target_filter_limits_extraction() {
+        let store = MemoryDocStore::new();
+        let chat = FakeChat::new(REPLY, 100_000);
+        let chunks = vec![
+            json!({"id": "c1", "text": "hello"}),
+            json!({"id": "c2", "text": "world"}),
+        ];
+        let target = BTreeSet::from(["c2".to_string()]);
+        let out = wiki_map_from_chunks(
+            &store,
+            &chat,
+            &chunks,
+            "d1",
+            "t1",
+            "kb1",
+            "en",
+            2,
+            30,
+            &json!({}),
+            None,
+            None,
+            Some(&target),
+            None,
+        )
+        .await;
+        assert_eq!(out["_meta"]["requested"], json!(1));
+        assert_eq!(out["_meta"]["extracted"], json!(1));
+        let prompt = chat.calls.lock().unwrap()[0].clone();
+        assert!(prompt.contains("[CHUNK_ID C1]"));
+        assert!(prompt.contains("world"));
+        assert!(!prompt.contains("hello"));
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Part 4 — KB-wide MAP aggregation, input-hash fingerprint and the REDUCE
@@ -2142,7 +2812,138 @@ pub fn persist_reduce(
     }
 }
 
+#[cfg(test)]
+mod wiki_part4_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
 
+    fn insert_docs(store: &MemoryDocStore, docs: &[Value]) {
+        let rows: Vec<DocRow> = docs
+            .iter()
+            .filter_map(|doc| doc.as_object().cloned())
+            .collect();
+        store.insert(&rows, &index_name("t1"), "kb1").unwrap();
+    }
+
+    #[test]
+    fn load_all_merges_and_skips_disabled() {
+        let store = MemoryDocStore::new();
+        insert_docs(
+            &store,
+            &[
+                build_resume_doc(
+                    "c1",
+                    "d1",
+                    &json!({"entities": [{"name": "A"}], "topics": ["t1"]}),
+                    "h1",
+                ),
+                build_resume_doc(
+                    "c2",
+                    "d2",
+                    &json!({"entities": [{"name": "B"}], "claims": [{"statement": "s"}], "topics": ["t1", "t2"]}),
+                    "h2",
+                ),
+                build_resume_doc(
+                    "c3",
+                    "d3",
+                    &json!({"entities": [{"name": "C"}], "topics": ["t9"]}),
+                    "h3",
+                ),
+            ],
+        );
+        let disabled = BTreeSet::from(["d3".to_string()]);
+        let merged = load_all_map_extracts(&store, "t1", "kb1", &disabled);
+        assert_eq!(merged["entities"].as_array().unwrap().len(), 2);
+        assert_eq!(merged["claims"].as_array().unwrap().len(), 1);
+        assert_eq!(merged["topics"], json!(["t1", "t2"]));
+    }
+
+    #[test]
+    fn all_doc_ids_dedups_and_excludes_disabled() {
+        let store = MemoryDocStore::new();
+        insert_docs(
+            &store,
+            &[
+                build_resume_doc("c1", "d1", &empty_extract(), "h1"),
+                build_resume_doc("c2", "d1", &empty_extract(), "h2"),
+                build_resume_doc("c3", "d2", &empty_extract(), "h3"),
+                build_resume_doc("c4", "d3", &empty_extract(), "h4"),
+            ],
+        );
+        let disabled = BTreeSet::from(["d3".to_string()]);
+        let mut ids = all_map_doc_ids(&store, "t1", "kb1", &disabled);
+        ids.sort();
+        assert_eq!(ids, vec!["d1".to_string(), "d2".to_string()]);
+    }
+
+    #[test]
+    fn input_hash_stable_and_row_sensitive() {
+        let store = MemoryDocStore::new();
+        let disabled = BTreeSet::new();
+        let empty = compute_map_input_hash(&store, "t1", "kb1", &disabled);
+        let expected = format!(
+            "{:016x}",
+            xxhash_rust::xxh3::xxh3_64(format!("|{}", WIKI_PIPELINE_REV).as_bytes())
+        );
+        assert_eq!(empty, expected);
+        insert_docs(
+            &store,
+            &[build_resume_doc("c1", "d1", &empty_extract(), "h1")],
+        );
+        let one = compute_map_input_hash(&store, "t1", "kb1", &disabled);
+        assert_ne!(one, empty);
+        assert_eq!(one, compute_map_input_hash(&store, "t1", "kb1", &disabled));
+        insert_docs(
+            &store,
+            &[build_resume_doc("c2", "d1", &empty_extract(), "h2")],
+        );
+        assert_ne!(compute_map_input_hash(&store, "t1", "kb1", &disabled), one);
+    }
+
+    #[test]
+    fn reduce_resume_roundtrip_and_single_row() {
+        let store = MemoryDocStore::new();
+        assert!(load_reduce_resume(&store, "t1", "kb1").is_none());
+        persist_reduce(
+            &store,
+            "t1",
+            "kb1",
+            &json!({"entities": [{"name": "A"}]}),
+            "IH1",
+            &["d1".to_string(), "d2".to_string()],
+        );
+        let (cached, hash) = load_reduce_resume(&store, "t1", "kb1").expect("resume");
+        assert_eq!(hash, "IH1");
+        assert_eq!(cached["entities"][0]["name"], json!("A"));
+        persist_reduce(
+            &store,
+            "t1",
+            "kb1",
+            &json!({"entities": [{"name": "B"}]}),
+            "IH2",
+            &["d1".to_string()],
+        );
+        let (cached2, hash2) = load_reduce_resume(&store, "t1", "kb1").expect("resume2");
+        assert_eq!(hash2, "IH2");
+        assert_eq!(cached2["entities"][0]["name"], json!("B"));
+        let mut condition = Map::new();
+        condition.insert(
+            "compile_kwd".to_string(),
+            Value::String(WIKI_REDUCE_COMPILE_KWD.to_string()),
+        );
+        let query = SearchQuery {
+            select_fields: vec!["id".to_string()],
+            condition,
+            match_expressions: Vec::new(),
+            offset: 0,
+            limit: 10,
+            index_names: vec![index_name("t1")],
+            dataset_ids: vec!["kb1".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(store.search(&query).unwrap().total, 1);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Part 5 — REDUCE (dedup) main entry (`wiki_reduce_from_extracts`).
@@ -2327,7 +3128,178 @@ pub async fn wiki_reduce_from_extracts(
     reduced
 }
 
+#[cfg(test)]
+mod wiki_part5_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
 
+    fn insert_docs(store: &MemoryDocStore, docs: &[Value]) {
+        let rows: Vec<DocRow> = docs
+            .iter()
+            .filter_map(|doc| doc.as_object().cloned())
+            .collect();
+        store.insert(&rows, &index_name("t1"), "kb1").unwrap();
+    }
+
+    fn seed_rows(store: &MemoryDocStore) {
+        insert_docs(
+            store,
+            &[build_resume_doc(
+                "c1",
+                "d1",
+                &json!({
+                    "entities": [
+                        {"name": "Alpha", "type": "org", "chunk_ids": ["c1"]},
+                        {"name": "alpha!", "type": "org", "chunk_ids": ["c2"]}
+                    ],
+                    "concepts": [
+                        {"term": "Beta", "definition_excerpt": "short", "chunk_ids": ["c1"]},
+                        {"term": "beta", "definition_excerpt": "a much longer definition", "chunk_ids": ["c2"]}
+                    ],
+                    "claims": [{"statement": "s", "chunk_ids": ["c1"]}],
+                    "relations": [{"from": "Alpha", "to": "Beta", "type": "uses", "chunk_ids": ["c1"]}],
+                    "topics": ["t"]
+                }),
+                "h1",
+            )],
+        );
+    }
+
+    #[tokio::test]
+    async fn reduce_dedups_entities_and_concepts() {
+        let store = MemoryDocStore::new();
+        seed_rows(&store);
+        let disabled = BTreeSet::new();
+        let reduced = wiki_reduce_from_extracts(
+            &store,
+            None,
+            None,
+            "t1",
+            "kb1",
+            &disabled,
+            DEFAULT_WIKI_REDUCE_MERGE_THRESHOLD,
+            DEFAULT_WIKI_REDUCE_AMBIGUOUS_LOW,
+            DEFAULT_WIKI_REDUCE_AMBIGUOUS_BATCH,
+            30,
+            false,
+            None,
+        )
+        .await;
+        let entities = reduced["entities"].as_array().unwrap();
+        assert_eq!(entities.len(), 1);
+        assert_eq!(entities[0]["name"], json!("Alpha"));
+        assert_eq!(entities[0]["mention_count"], json!(2));
+        let mut chunk_ids: Vec<String> = entities[0]["chunk_ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|id| id.as_str().map(str::to_string))
+            .collect();
+        chunk_ids.sort();
+        assert_eq!(chunk_ids, vec!["c1".to_string(), "c2".to_string()]);
+        let concepts = reduced["concepts"].as_array().unwrap();
+        assert_eq!(concepts.len(), 1);
+        assert_eq!(concepts[0]["term"], json!("Beta"));
+        assert_eq!(
+            concepts[0]["definition_excerpt"],
+            json!("a much longer definition")
+        );
+        assert_eq!(reduced["claims"].as_array().unwrap().len(), 1);
+        assert_eq!(reduced["relations"].as_array().unwrap().len(), 1);
+        assert_eq!(reduced["topics"], json!(["t"]));
+    }
+
+    #[tokio::test]
+    async fn reduce_cache_hit_and_force_rerun() {
+        let store = MemoryDocStore::new();
+        seed_rows(&store);
+        let disabled = BTreeSet::new();
+        let first = wiki_reduce_from_extracts(
+            &store,
+            None,
+            None,
+            "t1",
+            "kb1",
+            &disabled,
+            DEFAULT_WIKI_REDUCE_MERGE_THRESHOLD,
+            DEFAULT_WIKI_REDUCE_AMBIGUOUS_LOW,
+            DEFAULT_WIKI_REDUCE_AMBIGUOUS_BATCH,
+            30,
+            false,
+            None,
+        )
+        .await;
+        let (_, stored_hash) = load_reduce_resume(&store, "t1", "kb1").expect("resume");
+        assert_eq!(
+            stored_hash,
+            compute_map_input_hash(&store, "t1", "kb1", &disabled)
+        );
+        let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let seen = flag.clone();
+        let callback = move |progress: f64, message: &str| {
+            if progress >= 1.0 && message.contains("cache hit") {
+                seen.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        };
+        let second = wiki_reduce_from_extracts(
+            &store,
+            None,
+            None,
+            "t1",
+            "kb1",
+            &disabled,
+            DEFAULT_WIKI_REDUCE_MERGE_THRESHOLD,
+            DEFAULT_WIKI_REDUCE_AMBIGUOUS_LOW,
+            DEFAULT_WIKI_REDUCE_AMBIGUOUS_BATCH,
+            30,
+            false,
+            Some(&callback),
+        )
+        .await;
+        assert!(flag.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(second["entities"], first["entities"]);
+        let forced = wiki_reduce_from_extracts(
+            &store,
+            None,
+            None,
+            "t1",
+            "kb1",
+            &disabled,
+            DEFAULT_WIKI_REDUCE_MERGE_THRESHOLD,
+            DEFAULT_WIKI_REDUCE_AMBIGUOUS_LOW,
+            DEFAULT_WIKI_REDUCE_AMBIGUOUS_BATCH,
+            30,
+            true,
+            None,
+        )
+        .await;
+        assert_eq!(forced["entities"], first["entities"]);
+    }
+
+    #[tokio::test]
+    async fn reduce_empty_persists_short_circuit() {
+        let store = MemoryDocStore::new();
+        let disabled = BTreeSet::new();
+        let reduced = wiki_reduce_from_extracts(
+            &store,
+            None,
+            None,
+            "t1",
+            "kb1",
+            &disabled,
+            DEFAULT_WIKI_REDUCE_MERGE_THRESHOLD,
+            DEFAULT_WIKI_REDUCE_AMBIGUOUS_LOW,
+            DEFAULT_WIKI_REDUCE_AMBIGUOUS_BATCH,
+            30,
+            false,
+            None,
+        )
+        .await;
+        assert_eq!(reduced["entities"], json!([]));
+        let (cached, _) = load_reduce_resume(&store, "t1", "kb1").expect("resume");
+        assert_eq!(cached["concepts"], json!([]));
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Part 6a — PLAN helpers: page-count heuristic, plan-line formatting,
@@ -2779,7 +3751,265 @@ pub async fn resolve_maybe_items(
     }
 }
 
+#[cfg(test)]
+mod wiki_part6_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+    use crate::embed::Embedder;
+    use crate::harness::HarnessChat;
+    use std::sync::Mutex;
 
+    struct FakeEmbedder {
+        map: HashMap<String, Vec<f32>>,
+        fail: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl Embedder for FakeEmbedder {
+        async fn embed(&self, texts: &[&str]) -> crate::Result<Vec<Vec<f32>>> {
+            if self.fail {
+                return Err(anyhow::anyhow!("embed boom"));
+            }
+            Ok(texts
+                .iter()
+                .map(|text| self.map.get(*text).cloned().unwrap_or_default())
+                .collect())
+        }
+    }
+
+    struct FakeChat {
+        reply: String,
+        delay_ms: u64,
+        calls: Mutex<Vec<String>>,
+    }
+
+    impl FakeChat {
+        fn new(reply: &str) -> Self {
+            Self {
+                reply: reply.to_string(),
+                delay_ms: 0,
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessChat for FakeChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            if self.delay_ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(self.delay_ms)).await;
+            }
+            let user = history
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            self.calls.lock().unwrap().push(user);
+            Ok(self.reply.clone())
+        }
+
+        fn max_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    fn embedder(map: &[(&str, [f32; 2])]) -> FakeEmbedder {
+        FakeEmbedder {
+            map: map
+                .iter()
+                .map(|(name, vec)| (name.to_string(), vec.to_vec()))
+                .collect(),
+            fail: false,
+        }
+    }
+
+    fn insert_page(store: &MemoryDocStore) {
+        let row = json!({
+            "id": "p1",
+            "compile_kwd": "wiki_page",
+            "slug_kwd": "entity/alpha",
+            "title_kwd": "Alpha Page",
+            "page_type_kwd": "entity",
+            "embedding": [1.0, 0.0],
+            "q_2_vec": [1.0, 0.0]
+        });
+        store
+            .insert(
+                &[row.as_object().cloned().unwrap()],
+                &index_name("t1"),
+                "kb1",
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn target_page_count_bounds() {
+        assert_eq!(target_page_count(0), 8);
+        assert_eq!(target_page_count(9), 8);
+        assert_eq!(target_page_count(30), 10);
+        assert_eq!(target_page_count(1000), 60);
+    }
+
+    #[test]
+    fn plan_line_formatters() {
+        let mut reconciliation = Map::new();
+        reconciliation.insert(
+            "Alpha".to_string(),
+            json!({"action": "UPDATE", "page_slug": "entity/alpha"}),
+        );
+        let entity = json!({
+            "name": "Alpha",
+            "type": "org",
+            "mention_count": 3,
+            "aliases": ["A", "Alpha Inc", "ALPHA", "ignored"]
+        });
+        assert_eq!(
+            format_entity_for_plan(&entity, &reconciliation),
+            "  - Alpha (org, 3 mentions, aliases: A, Alpha Inc, ALPHA) → UPDATE entity/alpha"
+        );
+        let concept = json!({"term": "Beta", "mention_count": 2});
+        assert_eq!(
+            format_concept_for_plan(&concept, &reconciliation),
+            "  - Beta (2 mentions) → CREATE"
+        );
+        assert_eq!(
+            format_concept_for_plan(&concept, &reconciliation),
+            "  - Beta (2 mentions) → CREATE"
+        );
+    }
+
+    #[tokio::test]
+    async fn reconcile_classifies_updates_maybes_and_creates() {
+        let store = MemoryDocStore::new();
+        insert_page(&store);
+        let embd = embedder(&[
+            ("Alpha", [1.0, 0.0]),
+            ("Gamma", [0.0, 1.0]),
+            ("Delta", [0.8, 0.6]),
+        ]);
+        let entities = vec![
+            json!({"name": "Alpha", "type": "org"}),
+            json!({"name": "Gamma", "type": "org"}),
+            json!({"name": "Delta", "type": "org"}),
+        ];
+        let reconciliation = reconcile_with_kb(
+            &store,
+            Some(&embd),
+            "t1",
+            "kb1",
+            &entities,
+            &[],
+            DEFAULT_WIKI_PLAN_UPDATE_THRESHOLD,
+            DEFAULT_WIKI_PLAN_MAYBE_THRESHOLD,
+        )
+        .await;
+        assert_eq!(reconciliation["Alpha"]["action"], json!("UPDATE"));
+        assert_eq!(reconciliation["Alpha"]["page_slug"], json!("entity/alpha"));
+        assert_eq!(reconciliation["Alpha"]["page_id"], json!("p1"));
+        assert!(reconciliation["Alpha"]["similarity"].as_f64().unwrap() > 0.99);
+        assert_eq!(reconciliation["Gamma"]["action"], json!("CREATE"));
+        assert_eq!(reconciliation["Gamma"]["page_slug"], Value::Null);
+        assert_eq!(reconciliation["Delta"]["action"], json!("MAYBE"));
+        let delta_sim = reconciliation["Delta"]["similarity"].as_f64().unwrap();
+        assert!(
+            delta_sim > DEFAULT_WIKI_PLAN_MAYBE_THRESHOLD
+                && delta_sim < DEFAULT_WIKI_PLAN_UPDATE_THRESHOLD
+        );
+
+        let empty_store = MemoryDocStore::new();
+        let fresh = reconcile_with_kb(
+            &empty_store,
+            Some(&embd),
+            "t1",
+            "kb1",
+            &entities,
+            &[],
+            DEFAULT_WIKI_PLAN_UPDATE_THRESHOLD,
+            DEFAULT_WIKI_PLAN_MAYBE_THRESHOLD,
+        )
+        .await;
+        assert_eq!(fresh["Alpha"]["action"], json!("CREATE"));
+        assert_eq!(fresh["Alpha"]["page_slug"], Value::Null);
+    }
+
+    #[tokio::test]
+    async fn reconcile_embed_failure_creates_all() {
+        let store = MemoryDocStore::new();
+        insert_page(&store);
+        let failing = FakeEmbedder {
+            map: HashMap::new(),
+            fail: true,
+        };
+        let entities = vec![json!({"name": "Alpha", "type": "org"})];
+        let reconciliation = reconcile_with_kb(
+            &store,
+            Some(&failing),
+            "t1",
+            "kb1",
+            &entities,
+            &[],
+            DEFAULT_WIKI_PLAN_UPDATE_THRESHOLD,
+            DEFAULT_WIKI_PLAN_MAYBE_THRESHOLD,
+        )
+        .await;
+        assert_eq!(reconciliation["Alpha"]["action"], json!("CREATE"));
+        let no_embedder = reconcile_with_kb(
+            &store,
+            None,
+            "t1",
+            "kb1",
+            &entities,
+            &[],
+            DEFAULT_WIKI_PLAN_UPDATE_THRESHOLD,
+            DEFAULT_WIKI_PLAN_MAYBE_THRESHOLD,
+        )
+        .await;
+        assert_eq!(no_embedder["Alpha"]["action"], json!("CREATE"));
+    }
+
+    #[tokio::test]
+    async fn resolve_maybe_flips_and_defaults() {
+        let chat = FakeChat::new("[true, false]");
+        let mut reconciliation = Map::new();
+        reconciliation.insert(
+            "Alpha".to_string(),
+            json!({"action": "MAYBE", "page_slug": "entity/alpha", "page_title": "Alpha Page", "similarity": 0.7}),
+        );
+        reconciliation.insert(
+            "Beta".to_string(),
+            json!({"action": "MAYBE", "page_slug": "entity/beta", "page_title": "Beta Page", "similarity": 0.65}),
+        );
+        resolve_maybe_items(&chat, &mut reconciliation, 50, 30).await;
+        assert_eq!(reconciliation["Alpha"]["action"], json!("UPDATE"));
+        assert_eq!(reconciliation["Beta"]["action"], json!("CREATE"));
+        assert!(chat.calls.lock().unwrap()[0].contains("Entity: \"Alpha\""));
+
+        let malformed = FakeChat::new("not json at all");
+        let mut map2 = Map::new();
+        map2.insert(
+            "Gamma".to_string(),
+            json!({"action": "MAYBE", "similarity": 0.61}),
+        );
+        resolve_maybe_items(&malformed, &mut map2, 50, 30).await;
+        assert_eq!(map2["Gamma"]["action"], json!("CREATE"));
+
+        let mut slow = FakeChat::new("[true]");
+        slow.delay_ms = 50;
+        let mut map3 = Map::new();
+        map3.insert(
+            "Delta".to_string(),
+            json!({"action": "MAYBE", "similarity": 0.62}),
+        );
+        resolve_maybe_items(&slow, &mut map3, 50, 0).await;
+        assert_eq!(map3["Delta"]["action"], json!("CREATE"));
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Part 6b — PLAN planning call and plan row I/O (`_wiki_planning_call` ..
@@ -3369,7 +4599,155 @@ pub fn persist_plan(
     }
 }
 
+#[cfg(test)]
+mod wiki_part6b_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+    use crate::harness::HarnessChat;
+    use std::sync::Mutex;
 
+    struct FakeChat {
+        reply: String,
+        delay_ms: u64,
+        calls: Mutex<Vec<String>>,
+    }
+
+    impl FakeChat {
+        fn new(reply: &str) -> Self {
+            Self {
+                reply: reply.to_string(),
+                delay_ms: 0,
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessChat for FakeChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            if self.delay_ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(self.delay_ms)).await;
+            }
+            let user = history
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            self.calls.lock().unwrap().push(user);
+            Ok(self.reply.clone())
+        }
+
+        fn max_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    const PLAN_REPLY: &str = r#"{
+        "pages": [
+            {"action": "CREATE", "slug": "entity/alpha", "title": "Alpha", "page_type": "entity", "topic": "alpha", "entity_names": ["Alpha"], "priority": 1},
+            {"action": "CREATE", "slug": "entity-Bad_Slug", "title": "Bad", "page_type": "entity", "topic": "bad"},
+            {"action": "CREATE", "slug": "concept/beta", "title": "", "page_type": "concept", "topic": "beta"},
+            {"action": "CREATE", "slug": "topic/gamma", "title": "Gamma", "page_type": "entity", "topic": "gamma"},
+            {"action": "UPDATE", "slug": "entity/not-reconciled", "title": "Nope", "page_type": "entity", "topic": "nope"},
+            {"action": "CREATE", "slug": "concept/delta", "title": "Delta", "page_type": "concept"},
+            42
+        ],
+        "estimated_page_count": 99,
+        "compilation_notes": "n"
+    }"#;
+
+    #[tokio::test]
+    async fn planning_validates_and_drops_bad_pages() {
+        let chat = FakeChat::new(PLAN_REPLY);
+        let entities = vec![json!({"name": "Alpha", "type": "org", "mention_count": 5})];
+        let reconciliation = Map::new();
+        let plan = wiki_planning_call(
+            &chat,
+            &entities,
+            &[],
+            &[json!("t")],
+            &reconciliation,
+            Some("KB"),
+            Some("desc"),
+            8,
+            30,
+        )
+        .await;
+        let pages = plan["pages"].as_array().unwrap();
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0]["slug"], json!("entity/alpha"));
+        assert_eq!(plan["estimated_page_count"], json!(1));
+        assert_eq!(plan["compilation_notes"], json!("n"));
+        let prompt = chat.calls.lock().unwrap()[0].clone();
+        assert!(prompt.contains("Name: KB"));
+        assert!(prompt.contains("Description: desc"));
+        assert!(prompt.contains("Target approximately 8 total pages"));
+        assert!(prompt.contains("  - Alpha (org, 5 mentions) → CREATE"));
+    }
+
+    #[tokio::test]
+    async fn planning_timeout_returns_empty() {
+        let mut chat = FakeChat::new(PLAN_REPLY);
+        chat.delay_ms = 50;
+        let plan = wiki_planning_call(&chat, &[], &[], &[], &Map::new(), None, None, 8, 0).await;
+        assert_eq!(plan["pages"], json!([]));
+        assert_eq!(plan["compilation_notes"], json!("planning timeout"));
+    }
+
+    #[tokio::test]
+    async fn planning_batches_and_dedups_slugs() {
+        let chat = FakeChat::new(PLAN_REPLY);
+        let entities: Vec<Value> = (0..41)
+            .map(|idx| json!({"name": format!("E{idx}"), "type": "org", "mention_count": 1}))
+            .collect();
+        let plan =
+            wiki_planning_call(&chat, &entities, &[], &[], &Map::new(), None, None, 8, 30).await;
+        let calls = chat.calls.lock().unwrap().len();
+        assert_eq!(calls, 2);
+        assert_eq!(plan["compilation_notes"], json!("planned in batches"));
+        assert_eq!(plan["pages"].as_array().unwrap().len(), 1);
+        assert_eq!(plan["estimated_page_count"], json!(1));
+    }
+
+    #[test]
+    fn plan_resume_and_reduce_hash_io() {
+        let store = MemoryDocStore::new();
+        assert!(load_plan_resume(&store, "t1", "kb1").is_none());
+        assert_eq!(load_reduce_input_hash(&store, "t1", "kb1"), "");
+        assert!(load_reduce_result(&store, "t1", "kb1").is_none());
+        persist_plan(
+            &store,
+            "t1",
+            "kb1",
+            &json!({"pages": [{"slug": "entity/alpha"}]}),
+            "PH1",
+            &["d1".to_string()],
+        );
+        let (cached, hash) = load_plan_resume(&store, "t1", "kb1").expect("plan");
+        assert_eq!(hash, "PH1");
+        assert_eq!(cached["pages"][0]["slug"], json!("entity/alpha"));
+        persist_reduce(&store, "t1", "kb1", &json!({"entities": []}), "RH1", &[]);
+        assert_eq!(load_reduce_input_hash(&store, "t1", "kb1"), "RH1");
+        assert!(load_reduce_result(&store, "t1", "kb1").is_some());
+        persist_plan(
+            &store,
+            "t1",
+            "kb1",
+            &json!({"pages": [{"slug": "entity/beta"}]}),
+            "PH2",
+            &[],
+        );
+        let (cached2, hash2) = load_plan_resume(&store, "t1", "kb1").expect("plan2");
+        assert_eq!(hash2, "PH2");
+        assert_eq!(cached2["pages"][0]["slug"], json!("entity/beta"));
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Part 7 — PLAN main entry (`wiki_plan_from_reduction`).
@@ -3593,7 +4971,225 @@ pub async fn wiki_plan_from_reduction(
     plan
 }
 
+#[cfg(test)]
+mod wiki_part7_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+    use crate::harness::HarnessChat;
+    use std::sync::Mutex;
 
+    struct FakeChat {
+        reply: String,
+        calls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessChat for FakeChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            let user = history
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            self.calls.lock().unwrap().push(user);
+            Ok(self.reply.clone())
+        }
+
+        fn max_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    const PLAN_REPLY: &str = r#"{
+        "pages": [
+            {"action": "CREATE", "slug": "entity/alpha", "title": "Alpha", "page_type": "entity", "topic": "alpha", "entity_names": ["Alpha"], "priority": 1}
+        ],
+        "estimated_page_count": 1,
+        "compilation_notes": "n"
+    }"#;
+
+    #[tokio::test]
+    async fn plan_without_reduce_result_persists_empty() {
+        let store = MemoryDocStore::new();
+        let chat = FakeChat {
+            reply: PLAN_REPLY.to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let disabled = BTreeSet::new();
+        let plan = wiki_plan_from_reduction(
+            &store,
+            &chat,
+            None,
+            "t1",
+            "kb1",
+            &disabled,
+            None,
+            None,
+            DEFAULT_WIKI_PLAN_UPDATE_THRESHOLD,
+            DEFAULT_WIKI_PLAN_MAYBE_THRESHOLD,
+            DEFAULT_WIKI_PLAN_RECONCILE_BATCH,
+            30,
+            false,
+            None,
+        )
+        .await;
+        assert_eq!(plan["pages"], json!([]));
+        assert_eq!(
+            plan["compilation_notes"],
+            json!("no REDUCE result available")
+        );
+        assert_eq!(plan["_status"], json!("approved"));
+        assert!(load_plan_resume(&store, "t1", "kb1").is_some());
+        assert!(chat.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn plan_cache_hit_short_circuits() {
+        let store = MemoryDocStore::new();
+        persist_reduce(
+            &store,
+            "t1",
+            "kb1",
+            &json!({"entities": [], "concepts": []}),
+            "RH1",
+            &[],
+        );
+        persist_plan(
+            &store,
+            "t1",
+            "kb1",
+            &json!({"pages": [{"slug": "entity/cached"}], "_status": "approved"}),
+            "RH1",
+            &[],
+        );
+        let chat = FakeChat {
+            reply: PLAN_REPLY.to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let hit = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let seen = hit.clone();
+        let callback = move |progress: f64, message: &str| {
+            if progress >= 1.0 && message.contains("cache hit") {
+                seen.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        };
+        let disabled = BTreeSet::new();
+        let plan = wiki_plan_from_reduction(
+            &store,
+            &chat,
+            None,
+            "t1",
+            "kb1",
+            &disabled,
+            None,
+            None,
+            DEFAULT_WIKI_PLAN_UPDATE_THRESHOLD,
+            DEFAULT_WIKI_PLAN_MAYBE_THRESHOLD,
+            DEFAULT_WIKI_PLAN_RECONCILE_BATCH,
+            30,
+            false,
+            Some(&callback),
+        )
+        .await;
+        assert!(hit.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(plan["pages"][0]["slug"], json!("entity/cached"));
+        assert!(chat.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn plan_full_flow_reconciles_and_persists() {
+        let store = MemoryDocStore::new();
+        persist_reduce(
+            &store,
+            "t1",
+            "kb1",
+            &json!({
+                "entities": [{"name": "Alpha", "type": "org", "mention_count": 5, "chunk_ids": ["c1"]}],
+                "concepts": [{"term": "Beta", "mention_count": 2, "chunk_ids": ["c2"]}],
+                "claims": [],
+                "relations": [],
+                "topics": ["t"]
+            }),
+            "RH2",
+            &["d1".to_string()],
+        );
+        let chat = FakeChat {
+            reply: PLAN_REPLY.to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let disabled = BTreeSet::new();
+        let plan = wiki_plan_from_reduction(
+            &store,
+            &chat,
+            None,
+            "t1",
+            "kb1",
+            &disabled,
+            Some("KB"),
+            Some("desc"),
+            DEFAULT_WIKI_PLAN_UPDATE_THRESHOLD,
+            DEFAULT_WIKI_PLAN_MAYBE_THRESHOLD,
+            DEFAULT_WIKI_PLAN_RECONCILE_BATCH,
+            30,
+            false,
+            None,
+        )
+        .await;
+        assert_eq!(plan["_status"], json!("approved"));
+        assert_eq!(plan["pages"].as_array().unwrap().len(), 1);
+        assert_eq!(plan["_entities"].as_array().unwrap().len(), 1);
+        assert_eq!(plan["_reconciliation"]["Alpha"]["action"], json!("CREATE"));
+        assert!(!chat.calls.lock().unwrap().is_empty());
+        let (_, stored_hash) = load_plan_resume(&store, "t1", "kb1").expect("plan");
+        assert_eq!(stored_hash, "RH2");
+    }
+
+    #[tokio::test]
+    async fn plan_zero_items_persists_short_circuit() {
+        let store = MemoryDocStore::new();
+        persist_reduce(
+            &store,
+            "t1",
+            "kb1",
+            &json!({"entities": [], "concepts": [], "topics": ["t"]}),
+            "RH3",
+            &[],
+        );
+        let chat = FakeChat {
+            reply: PLAN_REPLY.to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let disabled = BTreeSet::new();
+        let plan = wiki_plan_from_reduction(
+            &store,
+            &chat,
+            None,
+            "t1",
+            "kb1",
+            &disabled,
+            None,
+            None,
+            DEFAULT_WIKI_PLAN_UPDATE_THRESHOLD,
+            DEFAULT_WIKI_PLAN_MAYBE_THRESHOLD,
+            DEFAULT_WIKI_PLAN_RECONCILE_BATCH,
+            30,
+            false,
+            None,
+        )
+        .await;
+        assert_eq!(plan["compilation_notes"], json!("no canonical items"));
+        assert_eq!(plan["_topics"], json!(["t"]));
+        assert!(chat.calls.lock().unwrap().is_empty());
+        let (_, hash) = load_plan_resume(&store, "t1", "kb1").expect("plan");
+        assert_eq!(hash, "RH3");
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Part 8 — REFINE prompts and evidence helpers (`WIKI_REFINE_*` constants,
@@ -3827,7 +5423,87 @@ pub fn collect_evidence_chunk_ids(evidence: &[Value]) -> Vec<String> {
     seen
 }
 
+#[cfg(test)]
+mod wiki_part8_tests {
+    use super::*;
 
+    #[test]
+    fn writer_system_defaults_and_overrides() {
+        let default = build_refine_writer_system(None, None);
+        assert!(default.contains("Follow the page structure and writing requirements below."));
+        assert!(default.contains("Page structure could be as following:"));
+        assert!(!default.contains("{template_instruction}"));
+        let custom = build_refine_writer_system(Some("  Be terse.  "), Some("Example body"));
+        assert!(custom.contains("Be terse."));
+        assert!(custom.contains("Example body"));
+        assert_eq!(refine_writer_system(), default);
+    }
+
+    #[test]
+    fn strip_think_removes_leading_block() {
+        assert_eq!(strip_think("abc"), "abc");
+        assert_eq!(strip_think("secret</think>answer"), "answer");
+        assert_eq!(strip_think("secret</think>  \n answer"), "answer");
+    }
+
+    #[test]
+    fn evidence_matching_exact_and_word_boundary() {
+        let plan_item = json!({"entity_names": ["Alpha Corp", "Beta"]});
+        let claims = vec![
+            json!({"statement": "s1", "subject": "alpha corp", "confidence": "explicit", "chunk_ids": ["c1", ""]}),
+            json!({"statement": "s2", "subject": "Alpha Corp Inc", "confidence": "inferred", "chunk_ids": ["c2"]}),
+            json!({"statement": "s3", "subject": "Gamma", "chunk_ids": ["c3"]}),
+            json!({"statement": "s4", "subject": ""}),
+        ];
+        let evidence = assemble_evidence(&plan_item, &claims, None, None);
+        assert_eq!(evidence.len(), 2);
+        assert_eq!(evidence[0]["statement"], json!("s1"));
+        assert_eq!(evidence[0]["chunk_ids"], json!(["c1"]));
+        assert_eq!(evidence[0]["confidence"], json!("explicit"));
+        assert_eq!(evidence[1]["statement"], json!("s2"));
+    }
+
+    #[test]
+    fn evidence_fallback_synthesizes_stub() {
+        let plan_item = json!({"entity_names": ["Alpha"]});
+        let mut entities = Map::new();
+        entities.insert(
+            "alpha".to_string(),
+            json!({"name": "Alpha", "chunk_ids": ["c9", "c9", "c8"]}),
+        );
+        let evidence = assemble_evidence(&plan_item, &[], Some(&entities), None);
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(evidence[0]["_synthetic"], json!(true));
+        assert_eq!(evidence[0]["chunk_ids"], json!(["c9", "c8"]));
+        assert_eq!(evidence[0]["subject"], json!("Alpha"));
+        assert_eq!(evidence[0]["confidence"], json!("inferred"));
+        assert!(assemble_evidence(&plan_item, &[], None, None).is_empty());
+    }
+
+    #[test]
+    fn evidence_blocks_filter_format_and_collect() {
+        let evidence = vec![
+            json!({"statement": "one", "subject": "Alpha", "confidence": "explicit", "chunk_ids": ["c1", "c2"]}),
+            json!({"statement": "", "subject": "Alpha", "confidence": "inferred", "chunk_ids": ["c3"], "_synthetic": true}),
+            json!({"statement": "two", "subject": "Beta", "confidence": "inferred", "chunk_ids": ["c2", "c4"]}),
+        ];
+        let blocks = format_evidence_blocks(&evidence);
+        assert_eq!(
+            blocks,
+            "1. [EXPLICIT] Alpha\n   one\n\n2. [INFERRED] Beta\n   two"
+        );
+        assert_eq!(
+            collect_evidence_chunk_ids(&evidence),
+            vec!["c1", "c2", "c3", "c4"]
+        );
+        assert_eq!(
+            format_evidence_blocks(&[]),
+            "(no pre-extracted evidence — extract facts directly from the source document text above)"
+        );
+        let only_synthetic = vec![json!({"_synthetic": true, "chunk_ids": ["c1"]})];
+        assert!(format_evidence_blocks(&only_synthetic).starts_with("(no pre-extracted evidence"));
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Part 9 — chunk loading, source-context assembly and wikilink rewriting
@@ -4136,7 +5812,112 @@ pub fn wiki_collect_doc_ids(
     out
 }
 
+#[cfg(test)]
+mod wiki_part9_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
 
+    fn seed_chunks(store: &MemoryDocStore) {
+        let rows: Vec<DocRow> = vec![
+            json!({"id": "c1", "doc_id": "d1", "content_with_weight": "hello"})
+                .as_object()
+                .cloned()
+                .unwrap(),
+            json!({"id": "c2", "doc_id": ["d1", "d2"], "content_with_weight": "world"})
+                .as_object()
+                .cloned()
+                .unwrap(),
+        ];
+        store.insert(&rows, &index_name("t1"), "kb1").unwrap();
+    }
+
+    #[test]
+    fn load_chunks_dedups_and_skips_missing() {
+        let store = MemoryDocStore::new();
+        seed_chunks(&store);
+        let ids = vec![
+            "c1".to_string(),
+            "c1".to_string(),
+            "c2".to_string(),
+            "ghost".to_string(),
+        ];
+        let loaded = load_chunks_by_id(&store, "t1", "kb1", &ids);
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded["c1"], json!("hello"));
+        assert_eq!(loaded["c2"], json!("world"));
+        assert!(load_chunks_by_id(&store, "t1", "kb1", &[]).is_empty());
+    }
+
+    #[test]
+    fn source_context_labels_and_truncates() {
+        let store = MemoryDocStore::new();
+        seed_chunks(&store);
+        let evidence = vec![json!({"subject": "Alpha", "chunk_ids": ["c1", "c2"]})];
+        let context = build_source_context(
+            &store,
+            "t1",
+            "kb1",
+            &evidence,
+            WIKI_REFINE_SOURCE_BUDGET_CHARS,
+        );
+        assert_eq!(context, "[CHUNK c1]\nhello\n\n[CHUNK c2]\nworld");
+        let tight = build_source_context(&store, "t1", "kb1", &evidence, 25);
+        assert!(tight.starts_with("[CHUNK c1]\nhello"));
+        assert!(tight.contains("omitted to fit context budget"));
+        assert_eq!(
+            build_source_context(&store, "t1", "kb1", &[], 100),
+            "(no source chunks available)"
+        );
+        let missing = vec![json!({"subject": "Alpha", "chunk_ids": ["ghost"]})];
+        assert_eq!(
+            build_source_context(&store, "t1", "kb1", &missing, 100),
+            "(source chunks could not be loaded)"
+        );
+    }
+
+    #[test]
+    fn transform_links_rewrites_and_filters() {
+        let valid = BTreeSet::from(["entity/alpha".to_string(), "concept/beta".to_string()]);
+        let mut titles = Map::new();
+        titles.insert(
+            "entity/alpha".to_string(),
+            Value::String("Alpha Page".to_string()),
+        );
+        let md = "See [[entity/alpha]] and [[concept/beta|the beta item]] and [[entity/ghost]]. Also [x](artifact/kb1/entity/alpha) and [y](artifact/kb1/entity/ghost) and [ext](https://example.com/z).";
+        let (rendered, outlinks) = transform_links(md, "kb1", Some(&titles), Some(&valid));
+        assert!(rendered.contains("[Alpha Page](artifact/kb1/entity/alpha)"));
+        assert!(rendered.contains("[the beta item](artifact/kb1/concept/beta)"));
+        assert!(rendered.contains("Ghost"));
+        assert!(!rendered.contains("[["));
+        assert!(rendered.contains("[x](artifact/kb1/entity/alpha)"));
+        assert!(rendered.contains("and y and"));
+        assert!(!rendered.contains("artifact/kb1/entity/ghost"));
+        assert!(rendered.contains("[ext](https://example.com/z)"));
+        assert_eq!(
+            outlinks,
+            vec!["entity/alpha".to_string(), "concept/beta".to_string()]
+        );
+        let (plain, plain_out) = transform_links("[[entity/alpha]]", "kb1", None, None);
+        assert_eq!(plain, "[Alpha](artifact/kb1/entity/alpha)");
+        assert_eq!(plain_out, vec!["entity/alpha".to_string()]);
+        let (repeat, repeat_out) =
+            transform_links("[[entity/alpha]] [[entity/alpha]]", "kb1", None, None);
+        assert_eq!(repeat.matches("artifact/kb1/entity/alpha").count(), 2);
+        assert_eq!(repeat_out.len(), 1);
+    }
+
+    #[test]
+    fn collect_doc_ids_dedups_and_tolerates_shapes() {
+        let store = MemoryDocStore::new();
+        seed_chunks(&store);
+        let ids = vec!["c1".to_string(), "c2".to_string(), "ghost".to_string()];
+        assert_eq!(
+            wiki_collect_doc_ids(&store, "t1", "kb1", &ids),
+            vec!["d1".to_string(), "d2".to_string()]
+        );
+        assert!(wiki_collect_doc_ids(&store, "t1", "kb1", &[]).is_empty());
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Part 10 — page I/O and draft persistence (`_wiki_get_existing_page` ..
@@ -4580,7 +6361,227 @@ pub fn wiki_load_refine_resume(
     out
 }
 
+#[cfg(test)]
+mod wiki_part10_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+    use crate::harness::HarnessChat;
+    use std::sync::Mutex;
 
+    struct FakeChat {
+        reply: String,
+        delay_ms: u64,
+        calls: Mutex<Vec<String>>,
+    }
+
+    impl FakeChat {
+        fn new(reply: &str) -> Self {
+            Self {
+                reply: reply.to_string(),
+                delay_ms: 0,
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessChat for FakeChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            if self.delay_ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(self.delay_ms)).await;
+            }
+            let user = history
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            self.calls.lock().unwrap().push(user);
+            Ok(self.reply.clone())
+        }
+
+        fn max_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    struct TestEmb;
+
+    #[async_trait::async_trait]
+    impl crate::embed::Embedder for TestEmb {
+        async fn embed(&self, texts: &[&str]) -> crate::Result<Vec<Vec<f32>>> {
+            Ok(texts.iter().map(|_| vec![1.0, 0.0]).collect())
+        }
+    }
+
+    #[test]
+    fn existing_page_fetch_and_defaults() {
+        let store = MemoryDocStore::new();
+        let row = json!({
+            "id": "p1",
+            "compile_kwd": "wiki_page",
+            "slug_kwd": "entity/alpha",
+            "title_kwd": "Alpha",
+            "page_type_kwd": "entity",
+            "content_with_weight": "# Alpha\n\nBody"
+        });
+        store
+            .insert(
+                &[row.as_object().cloned().unwrap()],
+                &index_name("t1"),
+                "kb1",
+            )
+            .unwrap();
+        let page = wiki_get_existing_page(&store, "t1", "kb1", "entity/alpha").expect("page");
+        assert_eq!(page["id"], json!("p1"));
+        assert_eq!(page["content_md"], json!("# Alpha\n\nBody"));
+        assert_eq!(page["content_md_raw"], page["content_md"]);
+        assert_eq!(page["title"], json!("Alpha"));
+        assert_eq!(page["page_type"], json!("entity"));
+        assert!(wiki_get_existing_page(&store, "t1", "kb1", "entity/ghost").is_none());
+    }
+
+    #[tokio::test]
+    async fn chat_text_strips_think_and_handles_timeout() {
+        let chat = FakeChat::new("scratch</think>final answer");
+        let text = wiki_chat_text(&chat, "sys", "user", 0.1, 30).await;
+        assert_eq!(text, "final answer");
+        let mut slow = FakeChat::new("late");
+        slow.delay_ms = 50;
+        assert_eq!(wiki_chat_text(&slow, "sys", "user", 0.1, 0).await, "");
+    }
+
+    #[tokio::test]
+    async fn write_page_prompt_shapes() {
+        let chat = FakeChat::new("content");
+        let plan_item = json!({"slug": "entity/alpha", "title": "Alpha", "page_type": "entity", "action": "CREATE"});
+        let evidence = vec![json!({"subject": "Alpha", "statement": "s", "chunk_ids": ["c1"]})];
+        let slugs = vec!["entity/alpha".to_string(), "concept/beta".to_string()];
+        let content = wiki_write_page_simple(
+            &chat, &plan_item, &evidence, None, "SOURCE", &slugs, 30, None, None,
+        )
+        .await;
+        assert_eq!(content, "content");
+        let prompt = chat.calls.lock().unwrap()[0].clone();
+        assert!(prompt.contains("- [[concept/beta]]"));
+        assert!(!prompt.contains("- [[entity/alpha]]"));
+        assert!(prompt.contains("CREATE the following wiki page"));
+        assert!(prompt.contains("Evidence checklist (1 items)"));
+        assert!(prompt.contains("[EXPLICIT] Alpha"));
+        assert!(!prompt.contains("Existing page content"));
+
+        let chat2 = FakeChat::new("content2");
+        wiki_write_page_simple(
+            &chat2,
+            &plan_item,
+            &[],
+            Some("OLD BODY"),
+            "SOURCE",
+            &[],
+            30,
+            Some("Be terse."),
+            None,
+        )
+        .await;
+        let prompt2 = chat2.calls.lock().unwrap()[0].clone();
+        assert!(prompt2.contains("Existing page content (UPDATE"));
+        assert!(prompt2.contains("OLD BODY"));
+        assert!(prompt2.contains("(none — this is the only page)"));
+    }
+
+    #[tokio::test]
+    async fn merge_short_circuits_and_shrink_guard() {
+        let chat = FakeChat::new("m");
+        assert_eq!(
+            wiki_merge_page_content(&chat, "short", "new body", "s", 0.7, 30).await,
+            "new body"
+        );
+        assert_eq!(
+            wiki_merge_page_content(&chat, "", "new body", "s", 0.7, 30).await,
+            "new body"
+        );
+        let long_existing = "x".repeat(200);
+        let same = long_existing.clone();
+        assert_eq!(
+            wiki_merge_page_content(&chat, &long_existing, &same, "s", 0.7, 30).await,
+            same
+        );
+        assert_eq!(
+            wiki_merge_page_content(&chat, &long_existing, "", "s", 0.7, 30).await,
+            long_existing
+        );
+        let long_new = "y".repeat(200);
+        let merged = wiki_merge_page_content(&chat, &long_existing, &long_new, "s", 0.7, 30).await;
+        assert_eq!(merged, long_new);
+        let healthy = FakeChat::new(&"z".repeat(300));
+        let good = wiki_merge_page_content(&healthy, &long_existing, &long_new, "s", 0.7, 30).await;
+        assert_eq!(good.chars().count(), 300);
+    }
+
+    #[test]
+    fn summary_extraction_shapes() {
+        assert_eq!(wiki_extract_summary("", 300), "");
+        assert_eq!(
+            wiki_extract_summary(
+                "# Heading\n\nFirst paragraph.\nSecond line.\n\nNext para",
+                300
+            ),
+            "First paragraph. Second line."
+        );
+        assert_eq!(wiki_extract_summary("abcdefghij", 5), "abcde");
+        assert_eq!(wiki_extract_summary("## Only headings\n### More", 300), "");
+    }
+
+    #[tokio::test]
+    async fn draft_persist_and_resume_roundtrip() {
+        let store = MemoryDocStore::new();
+        let page = json!({
+            "slug": "entity/alpha",
+            "title": "Alpha",
+            "content_md": "# Alpha\n\nBody text.",
+            "source_doc_ids": ["d1", "d2"]
+        });
+        wiki_persist_draft(&store, None, "t1", "kb1", &page, "H1").await;
+        let resume = wiki_load_refine_resume(&store, "t1", "kb1");
+        assert_eq!(resume.len(), 1);
+        let (cached, hash) = resume.get("entity/alpha").expect("draft");
+        assert_eq!(hash, "H1");
+        assert_eq!(cached["title"], json!("Alpha"));
+
+        let emb = TestEmb;
+        wiki_persist_draft(&store, Some(&emb), "t1", "kb1", &page, "H2").await;
+        let resume2 = wiki_load_refine_resume(&store, "t1", "kb1");
+        assert_eq!(resume2.len(), 1);
+        assert_eq!(resume2.get("entity/alpha").expect("draft2").1, "H2");
+        let mut condition = Map::new();
+        condition.insert(
+            "compile_kwd".to_string(),
+            Value::String(WIKI_DRAFT_COMPILE_KWD.to_string()),
+        );
+        let query = SearchQuery {
+            select_fields: vec!["id".to_string()],
+            condition,
+            match_expressions: Vec::new(),
+            offset: 0,
+            limit: 10,
+            index_names: vec![index_name("t1")],
+            dataset_ids: vec!["kb1".to_string()],
+            ..Default::default()
+        };
+        let response = store.search(&query).unwrap();
+        assert_eq!(response.total, 1);
+        let stored = response.docs.into_iter().next().unwrap();
+        assert_eq!(stored.get("available_int"), Some(&json!(1)));
+        assert!(stored.get("q_2_vec").is_some());
+        assert!(stored.get("embedding").is_some());
+        assert!(stored.get("title_tks").is_some());
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Part 11 — REFINE main entry (`wiki_refine_from_plan`).
@@ -5084,4 +7085,228 @@ async fn write_refine_page(
     Some(page)
 }
 
+#[cfg(test)]
+mod wiki_part11_tests {
+    use super::*;
+    use crate::doc_store::MemoryDocStore;
+    use crate::harness::HarnessChat;
+    use std::sync::Mutex;
 
+    struct FakeChat {
+        reply: String,
+        calls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessChat for FakeChat {
+        async fn chat(
+            &self,
+            _system: &str,
+            history: &[Value],
+            _gen_conf: &Value,
+        ) -> Result<String, String> {
+            let user = history
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            self.calls.lock().unwrap().push(user);
+            Ok(self.reply.clone())
+        }
+
+        fn max_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    fn seed_plan(store: &MemoryDocStore) {
+        persist_plan(
+            store,
+            "t1",
+            "kb1",
+            &json!({
+                "pages": [
+                    {"action": "CREATE", "slug": "entity/alpha", "title": "Alpha", "page_type": "entity", "topic": "alpha", "entity_names": ["Alpha"], "priority": 1},
+                    {"action": "CREATE", "slug": "concept/beta", "title": "Beta", "page_type": "concept", "topic": "beta", "entity_names": ["Beta"], "priority": 2}
+                ],
+                "_claims": [{"statement": "s", "subject": "Alpha", "chunk_ids": ["c1"]}],
+                "_entities": [{"name": "Alpha", "chunk_ids": ["c1"]}],
+                "_concepts": [{"term": "Beta", "chunk_ids": ["c2"], "definition_excerpt": "d"}]
+            }),
+            "PH",
+            &[],
+        );
+        let rows: Vec<DocRow> = vec![
+            json!({"id": "c1", "doc_id": "d1", "content_with_weight": "alpha source text"})
+                .as_object()
+                .cloned()
+                .unwrap(),
+        ];
+        store.insert(&rows, &index_name("t1"), "kb1").unwrap();
+    }
+
+    #[tokio::test]
+    async fn refine_without_plan_returns_empty() {
+        let store = MemoryDocStore::new();
+        let chat = FakeChat {
+            reply: "body".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let pages = wiki_refine_from_plan(
+            &store,
+            &chat,
+            None,
+            "t1",
+            "kb1",
+            2,
+            30,
+            WIKI_REFINE_SOURCE_BUDGET_CHARS,
+            0.7,
+            false,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert!(pages.is_empty());
+        assert!(chat.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn refine_writes_pages_and_caches() {
+        let store = MemoryDocStore::new();
+        seed_plan(&store);
+        let chat = FakeChat {
+            reply: "# Page\n\nSee [[concept/beta]] for more.".to_string(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let pages = wiki_refine_from_plan(
+            &store,
+            &chat,
+            None,
+            "t1",
+            "kb1",
+            2,
+            30,
+            WIKI_REFINE_SOURCE_BUDGET_CHARS,
+            0.7,
+            false,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(pages.len(), 2);
+        assert_eq!(pages[0]["slug"], json!("entity/alpha"));
+        assert_eq!(pages[1]["slug"], json!("concept/beta"));
+        let alpha_md = pages[0]["content_md"].as_str().unwrap();
+        assert!(alpha_md.contains("artifact/kb1/concept/beta"));
+        assert!(!alpha_md.contains("[["));
+        assert!(
+            pages[0]["summary"]
+                .as_str()
+                .unwrap()
+                .contains("See [Beta](artifact/kb1/concept/beta)")
+        );
+        assert_eq!(pages[0]["action"], json!("CREATE"));
+        let drafts = wiki_load_refine_resume(&store, "t1", "kb1");
+        assert_eq!(drafts.len(), 2);
+        let calls_after_first = chat.calls.lock().unwrap().len();
+        assert_eq!(calls_after_first, 2);
+
+        let pages2 = wiki_refine_from_plan(
+            &store,
+            &chat,
+            None,
+            "t1",
+            "kb1",
+            2,
+            30,
+            WIKI_REFINE_SOURCE_BUDGET_CHARS,
+            0.7,
+            false,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(pages2.len(), 2);
+        assert_eq!(chat.calls.lock().unwrap().len(), calls_after_first);
+        assert_eq!(pages2[0]["slug"], json!("entity/alpha"));
+
+        let pages3 = wiki_refine_from_plan(
+            &store,
+            &chat,
+            None,
+            "t1",
+            "kb1",
+            2,
+            30,
+            WIKI_REFINE_SOURCE_BUDGET_CHARS,
+            0.7,
+            true,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(pages3.len(), 2);
+        assert_eq!(chat.calls.lock().unwrap().len(), calls_after_first + 2);
+    }
+
+    #[tokio::test]
+    async fn refine_update_reads_existing_and_merges() {
+        let store = MemoryDocStore::new();
+        seed_plan(&store);
+        let existing = "# Alpha\n\n".to_string() + &"old detail ".repeat(30);
+        let row = json!({
+            "id": "p1",
+            "compile_kwd": "wiki_page",
+            "slug_kwd": "entity/alpha",
+            "title_kwd": "Alpha",
+            "page_type_kwd": "entity",
+            "content_with_weight": existing
+        });
+        store
+            .insert(
+                &[row.as_object().cloned().unwrap()],
+                &index_name("t1"),
+                "kb1",
+            )
+            .unwrap();
+        let short_reply = "# Alpha\n\nnew body only".to_string();
+        let chat = FakeChat {
+            reply: short_reply.clone(),
+            calls: Mutex::new(Vec::new()),
+        };
+        let plan_override = json!({
+            "pages": [{"action": "UPDATE", "slug": "entity/alpha", "title": "Alpha", "page_type": "entity", "topic": "alpha", "entity_names": ["Alpha"], "priority": 1}],
+            "_claims": [],
+            "_entities": [{"name": "Alpha", "chunk_ids": ["c1"]}],
+            "_concepts": []
+        });
+        persist_plan(&store, "t1", "kb1", &plan_override, "PH2", &[]);
+        let pages = wiki_refine_from_plan(
+            &store,
+            &chat,
+            None,
+            "t1",
+            "kb1",
+            2,
+            30,
+            WIKI_REFINE_SOURCE_BUDGET_CHARS,
+            0.7,
+            false,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0]["action"], json!("UPDATE"));
+        let raw = pages[0]["content_md_raw"].as_str().unwrap();
+        assert!(raw.contains("new body only"));
+        assert!(chat.calls.lock().unwrap().len() >= 2);
+    }
+}

@@ -814,4 +814,508 @@ pub async fn apply_meta_data_filter(
     Ok(Some(doc_ids))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
 
+    fn metas_from(entries: &[(&str, &[(&str, &[&str])])]) -> FlattenedMetadata {
+        let mut metas = FlattenedMetadata::new();
+        for (key, values) in entries {
+            let mut row = BTreeMap::new();
+            for (value, docs) in *values {
+                row.insert(
+                    value.to_string(),
+                    docs.iter().map(|doc| doc.to_string()).collect(),
+                );
+            }
+            metas.insert(key.to_string(), row);
+        }
+        metas
+    }
+
+    fn condition(key: &str, op: &str, value: Value) -> MetaCondition {
+        MetaCondition {
+            key: key.to_string(),
+            op: op.to_string(),
+            value,
+        }
+    }
+
+    /// The operator expectations of
+    /// `test/unit_test/common/test_metadata_filter_operators.py`.
+    #[test]
+    fn operators_match_the_upstream_expectations() {
+        let cases: Vec<(FlattenedMetadata, MetaCondition, Vec<&str>)> = vec![
+            (
+                metas_from(&[(
+                    "version",
+                    &[("hello earth", &["doc1"]), ("hello mars", &["doc2"])],
+                )]),
+                condition("version", "contains", json!("earth")),
+                vec!["doc1"],
+            ),
+            (
+                metas_from(&[(
+                    "version",
+                    &[("hello earth", &["doc1"]), ("hello mars", &["doc2"])],
+                )]),
+                condition("version", "not contains", json!("earth")),
+                vec!["doc2"],
+            ),
+            (
+                metas_from(&[(
+                    "status",
+                    &[
+                        ("active", &["doc1"]),
+                        ("pending", &["doc2"]),
+                        ("done", &["doc3"]),
+                    ],
+                )]),
+                condition("status", "in", json!("active,pending")),
+                vec!["doc1", "doc2"],
+            ),
+            (
+                metas_from(&[(
+                    "status",
+                    &[
+                        ("active", &["doc1"]),
+                        ("pending", &["doc2"]),
+                        ("done", &["doc3"]),
+                    ],
+                )]),
+                condition("status", "not in", json!("active,pending")),
+                vec!["doc3"],
+            ),
+            (
+                metas_from(&[(
+                    "product",
+                    &[("F2", &["doc1"]), ("F11", &["doc2"]), ("G1", &["doc3"])],
+                )]),
+                condition("product", "in", json!(["F2", "F11"])),
+                vec!["doc1", "doc2"],
+            ),
+            (
+                metas_from(&[(
+                    "product",
+                    &[("F2", &["doc1"]), ("F11", &["doc2"]), ("G1", &["doc3"])],
+                )]),
+                condition("product", "not in", json!(["F2", "F11"])),
+                vec!["doc3"],
+            ),
+            (
+                metas_from(&[("name", &[("prefix_value", &["doc1"]), ("other", &["doc2"])])]),
+                condition("name", "start with", json!("pre")),
+                vec!["doc1"],
+            ),
+            (
+                metas_from(&[(
+                    "file",
+                    &[("report.pdf", &["doc1"]), ("image.png", &["doc2"])],
+                )]),
+                condition("file", "end with", json!(".pdf")),
+                vec!["doc1"],
+            ),
+            (
+                metas_from(&[("notes", &[("", &["doc1"]), ("non-empty", &["doc2"])])]),
+                condition("notes", "empty", json!("")),
+                vec!["doc1"],
+            ),
+            (
+                metas_from(&[("notes", &[("", &["doc1"]), ("non-empty", &["doc2"])])]),
+                condition("notes", "not empty", json!("")),
+                vec!["doc2"],
+            ),
+            (
+                metas_from(&[("score", &[("5", &["doc1"]), ("6", &["doc2"])])]),
+                condition("score", "=", json!("5")),
+                vec!["doc1"],
+            ),
+            (
+                metas_from(&[("score", &[("5", &["doc1"]), ("6", &["doc2"])])]),
+                condition("score", "≠", json!("5")),
+                vec!["doc2"],
+            ),
+            (
+                metas_from(&[("score", &[("10", &["doc1"]), ("2", &["doc2"])])]),
+                condition("score", ">", json!("5")),
+                vec!["doc1"],
+            ),
+            (
+                metas_from(&[("score", &[("10", &["doc1"]), ("2", &["doc2"])])]),
+                condition("score", "<", json!("5")),
+                vec!["doc2"],
+            ),
+            (
+                metas_from(&[(
+                    "score",
+                    &[("5", &["doc1"]), ("6", &["doc2"]), ("4", &["doc3"])],
+                )]),
+                condition("score", "≥", json!("5")),
+                vec!["doc1", "doc2"],
+            ),
+            (
+                metas_from(&[(
+                    "score",
+                    &[("5", &["doc1"]), ("6", &["doc2"]), ("4", &["doc3"])],
+                )]),
+                condition("score", "≤", json!("5")),
+                vec!["doc1", "doc3"],
+            ),
+        ];
+        for (metas, filter, expected) in cases {
+            let actual = meta_filter(&metas, std::slice::from_ref(&filter), "and");
+            let mut actual_sorted = actual.clone();
+            actual_sorted.sort();
+            let mut expected_sorted: Vec<String> =
+                expected.iter().map(|value| value.to_string()).collect();
+            expected_sorted.sort();
+            assert_eq!(
+                actual_sorted, expected_sorted,
+                "{} {} {}",
+                filter.key, filter.op, filter.value
+            );
+        }
+    }
+
+    #[test]
+    fn logic_intersects_unions_and_short_circuits() {
+        // Mirrors the upstream test: only Alice is present, so `contains
+        // "Toby"` matches nothing and the `and` chain short-circuits.
+        let metas = metas_from(&[
+            ("author", &[("Alice", &["doc1"])]),
+            ("page_count", &[("40", &["doc2"]), ("10", &["doc3"])]),
+        ]);
+        // `and` with a first condition that matches nothing returns early.
+        assert_eq!(
+            meta_filter(
+                &metas,
+                &[
+                    condition("author", "contains", json!("Toby")),
+                    condition("page_count", ">", json!("30")),
+                ],
+                "and"
+            ),
+            Vec::<String>::new()
+        );
+        // A second, matching pair intersects down to the shared document.
+        let metas = metas_from(&[
+            ("author", &[("Toby Jones", &["doc1"]), ("Alice", &["doc2"])]),
+            ("page_count", &[("40", &["doc1"]), ("10", &["doc2"])]),
+        ]);
+        assert_eq!(
+            meta_filter(
+                &metas,
+                &[
+                    condition("author", "contains", json!("Toby")),
+                    condition("page_count", ">", json!("30")),
+                ],
+                "and"
+            ),
+            vec!["doc1".to_string()]
+        );
+        // `or` keeps the second condition's matches.
+        let metas = metas_from(&[
+            ("author", &[("Alice", &["doc1"])]),
+            ("page_count", &[("40", &["doc2"]), ("10", &["doc3"])]),
+        ]);
+        assert_eq!(
+            meta_filter(
+                &metas,
+                &[
+                    condition("author", "contains", json!("Toby")),
+                    condition("page_count", ">", json!("30")),
+                ],
+                "or"
+            ),
+            vec!["doc2".to_string()]
+        );
+        // An unknown key contributes nothing.
+        assert_eq!(
+            meta_filter(&metas, &[condition("missing", "=", json!("x"))], "and"),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn comparison_values_go_through_python_literal_eval() {
+        // `"5" > "30"` is True as text but False as numbers; upstream compares
+        // numbers, so only the small value matches.
+        let metas = metas_from(&[("pages", &[("5", &["doc1"]), ("30", &["doc2"])])]);
+        assert_eq!(
+            meta_filter(&metas, &[condition("pages", ">", json!("30"))], "and"),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            meta_filter(&metas, &[condition("pages", "<", json!("30"))], "and"),
+            vec!["doc1".to_string()]
+        );
+        // Date-shaped values compare as strings and never match free text.
+        let metas = metas_from(&[(
+            "listing_date",
+            &[("2026-07-01", &["doc1"]), ("July", &["doc2"])],
+        )]);
+        assert_eq!(
+            meta_filter(
+                &metas,
+                &[
+                    condition("listing_date", "≥", json!("2026-07-01")),
+                    condition("listing_date", "<", json!("2026-08-01")),
+                ],
+                "and"
+            ),
+            vec!["doc1".to_string()]
+        );
+        // A non-date value against a date query is skipped entirely, even under
+        // `or`.
+        assert_eq!(
+            meta_filter(
+                &metas,
+                &[condition("listing_date", "=", json!("2026-07-01"))],
+                "or"
+            ),
+            vec!["doc1".to_string()]
+        );
+    }
+
+    #[test]
+    fn convert_conditions_maps_the_ui_operators() {
+        let condition = json!({
+            "conditions": [
+                {"name": "color", "comparison_operator": "is", "value": "red"},
+                {"name": "color", "comparison_operator": "not is", "value": "blue"},
+                {"name": "pages", "comparison_operator": ">=", "value": "10"},
+                {"name": "pages", "comparison_operator": "<=", "value": "20"},
+                {"name": "pages", "comparison_operator": "!=", "value": "15"},
+            ]
+        });
+        let converted = convert_conditions(Some(&condition));
+        let ops: Vec<&str> = converted.iter().map(|item| item.op.as_str()).collect();
+        assert_eq!(ops, vec!["=", "≠", "≥", "≤", "≠"]);
+        assert_eq!(converted[0].key, "color");
+        assert_eq!(converted[0].value, json!("red"));
+        assert!(convert_conditions(None).is_empty());
+    }
+
+    #[test]
+    fn generated_filters_parse_think_blocks_and_fences() {
+        let answer = "```json\n{\"logic\": \"or\", \"conditions\": [{\"key\": \"a\", \"op\": \"=\", \"value\": \"1\"}]}\n```";
+        let parsed = parse_generated_filters(answer).expect("fenced JSON parses");
+        assert_eq!(parsed.logic, "or");
+        assert_eq!(parsed.conditions.len(), 1);
+        // A reasoning block is dropped before parsing.
+        let answer = "thinking…</think>\n{\"conditions\": [{\"key\": \"b\", \"op\": \">\", \"value\": \"2\"}]}";
+        let parsed = parse_generated_filters(answer).expect("think block stripped");
+        assert_eq!(parsed.logic_or_default(), "and");
+        assert_eq!(parsed.conditions[0].key, "b");
+        // Anything else falls back to "no conditions" upstream.
+        assert!(parse_generated_filters("no json here").is_none());
+        assert!(parse_generated_filters("{\"logic\": \"and\"}").is_none());
+        assert!(parse_generated_filters("{\"conditions\": \"nope\"}").is_none());
+        // Tolerated json_repair shapes: single quotes, trailing comma.
+        let parsed =
+            parse_generated_filters("{'conditions': [{'key': 'c', 'op': '=', 'value': '3'},],}")
+                .expect("repaired");
+        assert_eq!(parsed.conditions[0].key, "c");
+    }
+
+    #[test]
+    fn prompt_renders_the_upstream_template() {
+        let metas = metas_from(&[("color", &[("red", &["doc1"]), ("blue", &["doc2"])])]);
+        let prompt = render_prompt(&metas, "red items", None, "2026-09-22");
+        assert!(prompt.starts_with("You are a metadata filtering condition generator."));
+        assert!(prompt.contains("- Today's date: 2026-09-22"));
+        // Values are sorted because the flattened map is a `BTreeMap`; upstream
+        // keeps the order the metadata rows were read in.
+        assert!(prompt.contains("- Available metadata keys: {\"color\": [\"blue\", \"red\"]}"));
+        assert!(prompt.contains("- User query: \"red items\""));
+        assert!(
+            !prompt.contains("Operator constraints"),
+            "the Jinja `{{% if constraints %}}` line must disappear"
+        );
+        assert!(!prompt.contains("{current_date}") && !prompt.contains("{user_question}"));
+
+        let constraints = BTreeMap::from([("color".to_string(), "≠".to_string())]);
+        let prompt = render_prompt(&metas, "red items", Some(&constraints), "2026-09-22");
+        // `json.dumps` is ASCII-only, so even the operator is escaped.
+        assert!(prompt.contains("- Operator constraints: {\"color\": \"\\u2260\"}"));
+        // Upstream `json.dumps` is ASCII-only.
+        let metas = metas_from(&[("作者", &[("张三", &["doc1"])])]);
+        let prompt = render_prompt(&metas, "张三", None, "2026-09-22");
+        assert!(prompt.contains("\\u4f5c\\u8005"));
+        assert!(prompt.contains("- User query: \"张三\""));
+    }
+
+    #[test]
+    fn python_json_string_matches_json_dumps() {
+        let mut out = String::new();
+        python_json_string("a\"b\\c\nd\te\u{1}f", &mut out);
+        assert_eq!(out, "\"a\\\"b\\\\c\\nd\\te\\u0001f\"");
+        let mut out = String::new();
+        python_json_string("中", &mut out);
+        assert_eq!(out, "\"\\u4e2d\"");
+        let mut out = String::new();
+        python_json_string("😀", &mut out);
+        assert_eq!(out, "\"\\ud83d\\ude00\"");
+    }
+
+    #[tokio::test]
+    async fn manual_filters_use_the_upstream_sentinel() {
+        let filter = json!({
+            "method": "manual",
+            "logic": "and",
+            "manual": [{"key": "color", "op": "=", "value": "green"}],
+        });
+        let metas = metas_from(&[("color", &[("red", &["doc1"])])]);
+        let applied = apply_meta_data_filter(&filter, "q", None, &[], || metas.clone())
+            .await
+            .unwrap();
+        assert_eq!(applied, Some(vec!["-999".to_string()]));
+
+        // A matching manual filter returns the matched ids.
+        let filter = json!({
+            "method": "manual",
+            "manual": [{"key": "color", "op": "=", "value": "red"}],
+        });
+        let applied = apply_meta_data_filter(&filter, "q", None, &[], || metas.clone())
+            .await
+            .unwrap();
+        assert_eq!(applied, Some(vec!["doc1".to_string()]));
+
+        // An unrecognised method leaves the base ids untouched, like upstream.
+        let filter = json!({"method": "nonsense"});
+        let applied =
+            apply_meta_data_filter(&filter, "q", None, &["base".to_string()], || metas.clone())
+                .await
+                .unwrap();
+        assert_eq!(applied, Some(vec!["base".to_string()]));
+    }
+
+    /// `test/unit_test/common/test_apply_semi_auto_meta_data_filter.py`: the
+    /// selected keys restrict the metadata handed to the model and the row
+    /// operators become constraints.
+    #[test]
+    fn semi_auto_passes_selected_keys_and_constraints() {
+        let filter = json!({
+            "method": "semi_auto",
+            "semi_auto": [{"key": "key1", "op": ">"}, "key2"],
+        });
+        let metas = metas_from(&[
+            ("key1", &[("10", &["doc1"])]),
+            ("key2", &[("val2", &["doc2"])]),
+        ]);
+        let mut selected = Vec::new();
+        let mut constraints: BTreeMap<String, String> = BTreeMap::new();
+        for item in filter["semi_auto"].as_array().unwrap() {
+            match item {
+                Value::String(key) => selected.push(key.clone()),
+                Value::Object(entry) => {
+                    let key = entry["key"].as_str().unwrap();
+                    selected.push(key.to_string());
+                    if let Some(op) = entry.get("op").and_then(Value::as_str) {
+                        constraints.insert(key.to_string(), op.to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(selected, vec!["key1".to_string(), "key2".to_string()]);
+        assert_eq!(
+            constraints,
+            BTreeMap::from([("key1".to_string(), ">".to_string())])
+        );
+        let restricted: FlattenedMetadata = selected
+            .iter()
+            .filter(|key| metas.contains_key(key.as_str()))
+            .map(|key| (key.clone(), metas[key].clone()))
+            .collect();
+        assert_eq!(restricted.len(), 2);
+        let prompt = render_prompt(
+            &restricted,
+            "find key1 > 5",
+            Some(&constraints),
+            "2026-09-22",
+        );
+        assert!(prompt.contains("\"key1\": [\"10\"]"));
+        assert!(prompt.contains("- Operator constraints: {\"key1\": \">\"}"));
+    }
+
+    /// `gen_meta_filter` feeds the prompt to the model and parses its answer.
+    #[tokio::test]
+    async fn gen_meta_filter_reads_the_model_reply() {
+        struct FakeChat;
+        #[async_trait::async_trait]
+        impl ChatModel for FakeChat {
+            fn model_name(&self) -> &str {
+                "fake"
+            }
+            async fn chat(&self, system: &str, history: &[ChatMessage]) -> anyhow::Result<String> {
+                assert!(system.contains("- User query: \"find val1\""));
+                assert_eq!(history[0].content, "Generate filters:");
+                Ok("```json\n{\"logic\": \"and\", \"conditions\": [{\"key\": \"key1\", \"op\": \"=\", \"value\": \"val1\"}]}\n```".to_string())
+            }
+            async fn chat_stream(
+                &self,
+                _system: &str,
+                _history: &[ChatMessage],
+                _on_chunk: Box<dyn for<'a> FnMut(&'a str) + Send>,
+            ) -> anyhow::Result<String> {
+                unimplemented!()
+            }
+        }
+        let metas = metas_from(&[
+            ("key1", &[("val1", &["doc1"])]),
+            ("key2", &[("val2", &["doc2"])]),
+        ]);
+        let generated = gen_meta_filter(&FakeChat, &metas, "find val1", None)
+            .await
+            .unwrap();
+        assert_eq!(generated.conditions.len(), 1);
+        assert_eq!(
+            meta_filter(&metas, &generated.conditions, generated.logic_or_default()),
+            vec!["doc1".to_string()]
+        );
+
+        // A model that answers nonsense yields no conditions (upstream's
+        // `{"conditions": []}` fallback) and therefore no filtering.
+        struct SilentChat;
+        #[async_trait::async_trait]
+        impl ChatModel for SilentChat {
+            fn model_name(&self) -> &str {
+                "silent"
+            }
+            async fn chat(
+                &self,
+                _system: &str,
+                _history: &[ChatMessage],
+            ) -> anyhow::Result<String> {
+                Ok("I cannot help with that.".to_string())
+            }
+            async fn chat_stream(
+                &self,
+                _system: &str,
+                _history: &[ChatMessage],
+                _on_chunk: Box<dyn for<'a> FnMut(&'a str) + Send>,
+            ) -> anyhow::Result<String> {
+                unimplemented!()
+            }
+        }
+        let generated = gen_meta_filter(&SilentChat, &metas, "q", None)
+            .await
+            .unwrap();
+        assert!(generated.conditions.is_empty());
+        assert!(
+            meta_filter(&metas, &generated.conditions, generated.logic_or_default()).is_empty()
+        );
+    }
+
+    #[test]
+    fn date_shape_detection_matches_upstream() {
+        assert!(is_date_shaped("2026-07-01"));
+        assert!(!is_date_shaped("2026-7-1"));
+        assert!(!is_date_shaped("2026-07-01 "));
+        assert!(!is_date_shaped("July"));
+        assert!(!is_date_shaped("20260701"));
+        assert!(!is_date_shaped("2026-07-0a"));
+    }
+}

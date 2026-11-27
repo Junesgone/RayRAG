@@ -128,4 +128,57 @@ pub const PIPELINE_SPECIAL_PROGRESS_FREEZE_TASK_TYPES: [&str; 5] =
 pub const KNOWLEDGEBASE_FOLDER_NAME: &str = ".knowledgebase";
 pub const SKILLS_FOLDER_NAME: &str = "skills";
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn serialized_type_keeps_int_enum_wire_values() {
+        assert_eq!(SerializedType::Pickle.as_u8(), 1);
+        assert_eq!(SerializedType::try_from(2), Ok(SerializedType::Json));
+        assert!(SerializedType::try_from(0).is_err());
+        assert_eq!(serde_json::to_value(SerializedType::Json).unwrap(), 2);
+        assert_eq!(
+            serde_json::from_value::<SerializedType>(serde_json::json!(1)).unwrap(),
+            SerializedType::Pickle
+        );
+    }
+
+    #[test]
+    fn string_enums_match_fixed_ragflow_values() {
+        assert_eq!(
+            serde_json::to_value(InputType::LoadState).unwrap(),
+            "load_state"
+        );
+        assert_eq!(InputType::SlimRetrieval.as_str(), "slim_retrieval");
+        assert_eq!(
+            serde_json::to_value(CanvasCategory::Agent).unwrap(),
+            "agent_canvas"
+        );
+        assert_eq!(CanvasCategory::DataFlow.as_str(), "dataflow_canvas");
+        assert_eq!(
+            "dataflow_canvas".parse::<CanvasCategory>().unwrap(),
+            CanvasCategory::DataFlow
+        );
+        assert!("ingestion".parse::<CanvasCategory>().is_err());
+        assert_eq!(TenantPermission::Team.as_str(), "team");
+        assert_eq!(UserTenantRole::Invite.as_str(), "invite");
+    }
+
+    #[test]
+    fn file_and_pipeline_sets_match_fixed_membership() {
+        assert_eq!(VALID_FILE_TYPES.len(), 7);
+        assert!(VALID_FILE_TYPES.contains(&FileType::Virtual));
+        assert!(VALID_FILE_TYPES.contains(&FileType::Folder));
+        assert_eq!(VALID_PIPELINE_TASK_TYPES.len(), 7);
+        assert!(VALID_PIPELINE_TASK_TYPES.contains(&PipelineTaskType::Artifact));
+        assert!(VALID_PIPELINE_TASK_TYPES.contains(&PipelineTaskType::Skill));
+        assert!(!VALID_PIPELINE_TASK_TYPES.contains(&PipelineTaskType::Memory));
+        assert_eq!(
+            PIPELINE_SPECIAL_PROGRESS_FREEZE_TASK_TYPES,
+            ["raptor", "graphrag", "mindmap", "artifact", "skill"]
+        );
+        assert_eq!(KNOWLEDGEBASE_FOLDER_NAME, ".knowledgebase");
+        assert_eq!(SKILLS_FOLDER_NAME, "skills");
+    }
+}

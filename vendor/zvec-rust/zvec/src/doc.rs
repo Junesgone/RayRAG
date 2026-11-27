@@ -582,4 +582,45 @@ pub fn free_docs(docs: Vec<Doc>) {
     drop(docs);
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn from_borrowed_does_not_own() {
+        // A borrowed doc should not destroy the handle on drop
+        let doc = Doc::from_borrowed(std::ptr::null_mut());
+        assert!(!doc.owned);
+        assert!(doc.handle.is_null());
+    }
+
+    #[test]
+    fn from_raw_takes_ownership() {
+        let doc = unsafe { Doc::from_raw(std::ptr::null_mut()) };
+        assert!(doc.owned);
+        // Drop with null handle is safe (no-op)
+    }
+
+    #[test]
+    fn try_set_pk_accepts_plain_key() {
+        let mut doc = Doc::new().expect("create doc");
+        doc.try_set_pk("pk-1").expect("plain pk is accepted");
+        assert_eq!(doc.get_pk(), Some("pk-1"));
+    }
+
+    #[test]
+    fn try_set_pk_rejects_interior_nul() {
+        let mut doc = Doc::new().expect("create doc");
+        let err = doc
+            .try_set_pk("pk\0-1")
+            .expect_err("an interior nul byte must be rejected");
+        assert_eq!(err.code, ErrorCode::InvalidArgument);
+    }
+
+    #[test]
+    #[should_panic(expected = "pk must not contain null bytes")]
+    fn set_pk_panics_on_interior_nul() {
+        let mut doc = Doc::new().expect("create doc");
+        doc.set_pk("pk\0-1");
+    }
+}

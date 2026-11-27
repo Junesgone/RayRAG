@@ -862,4 +862,51 @@ pub async fn compile_artifacts(
     .into_response()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
 
+    #[test]
+    fn engine_chunks_are_folded_into_the_compile_state() {
+        let mut current = serde_json::Map::new();
+        current.insert(
+            "docstore-only".into(),
+            serde_json::json!({"doc_id": "d0", "hash": "h0"}),
+        );
+        let mut per_doc: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+        per_doc.insert(
+            "d1".into(),
+            vec![serde_json::json!({"id": "engine-1", "text": "Alpha is text"})],
+        );
+        merge_engine_chunks_into_state(&mut current, &per_doc);
+        assert_eq!(current.len(), 2);
+        let row = current.get("engine-1").expect("engine chunk folded");
+        assert_eq!(row["doc_id"], "d1");
+        assert_eq!(
+            row["hash"],
+            crate::harness::knowlege_wiki::chunk_hash("Alpha is text")
+        );
+        // A doc-store row that was already present keeps its value.
+        assert_eq!(current["docstore-only"]["hash"], "h0");
+    }
+
+    #[test]
+    fn engine_fold_overrides_a_stale_docstore_hash() {
+        let mut current = serde_json::Map::new();
+        current.insert(
+            "chunk-1".into(),
+            serde_json::json!({"doc_id": "d1", "hash": "stale"}),
+        );
+        let mut per_doc: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+        per_doc.insert(
+            "d1".into(),
+            vec![serde_json::json!({"id": "chunk-1", "text": "fresh"})],
+        );
+        merge_engine_chunks_into_state(&mut current, &per_doc);
+        assert_eq!(
+            current["chunk-1"]["hash"],
+            crate::harness::knowlege_wiki::chunk_hash("fresh")
+        );
+    }
+}

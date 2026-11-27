@@ -305,4 +305,107 @@ fn convert_files(
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    fn store_with_tempdir() -> (crate::api::file_mgr::FileStore, tempfile::TempDir) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store =
+            crate::api::file_mgr::FileStore::new(&dir.path().join("files").to_string_lossy())
+                .expect("store");
+        (store, dir)
+    }
+
+    fn record(id: &str, name: &str, parent: &str, kind: &str) -> FileRecord {
+        FileRecord {
+            id: id.into(),
+            name: name.into(),
+            owner_id: "u1".into(),
+            parent_id: parent.into(),
+            size: 3,
+            file_type: kind.into(),
+            ..Default::default()
+        }
+    }
+
+    fn response_body(response: Response) -> Value {
+        let bytes = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(axum::body::to_bytes(response.into_body(), usize::MAX))
+            .unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[test]
+    fn missing_body_fields_keep_upstream_wording() {
+        let response = parse_link_body(&json!({})).err().expect("missing fields");
+        let body = response_body(response);
+        assert_eq!(body["code"], 101);
+        assert_eq!(
+            body["message"],
+            "required argument are missing: file_ids,kb_ids; "
+        );
+    }
+
+    #[test]
+    fn unknown_file_and_dataset_keep_upstream_wording() {
+        let files = parse_link_body(&json!({"file_ids": [1], "kb_ids": []}));
+        let body = response_body(files.err().expect("file type"));
+        assert_eq!(body["message"], "File not found!");
+
+        let kbs = parse_link_body(&json!({"file_ids": [], "kb_ids": {}}));
+        let body = response_body(kbs.err().expect("kb type"));
+        assert_eq!(body["message"], "Can't find this dataset!");
+    }
+
+    #[test]
+    fn folder_ids_expand_to_their_children() {
+        let (store, _dir) = store_with_tempdir();
+        store
+            .add_unique(record("folder-1", "Docs", "root", "folder"))
+            .expect("folder");
+        store
+            .add_unique(record("file-a", "a.txt", "folder-1", "doc"))
+            .expect("a");
+        store
+            .add_unique(record("file-b", "b.txt", "folder-1", "doc"))
+            .expect("b");
+        let (files, missing) = expand_files(&store, "u1", false, &["folder-1".to_string()]);
+        assert!(missing.is_empty(), "{missing:?}");
+        let mut names: Vec<String> = files
+            .iter()
+            .filter_map(|id| store.get(id).map(|f| f.name))
+            .collect();
+        names.sort();
+        assert_eq!(names, vec!["a.txt".to_string(), "b.txt".to_string()]);
+        assert!(!files.contains(&"folder-1".to_string()));
+    }
+
+    #[test]
+    fn unknown_or_foreign_files_are_reported() {
+        let (store, _dir) = store_with_tempdir();
+        let mut foreign = record("file-x", "x.txt", "root", "doc");
+        foreign.owner_id = "someone-else".into();
+        store.add_unique(foreign).expect("foreign");
+        let (files, missing) = expand_files(
+            &store,
+            "u1",
+            false,
+            &["file-x".to_string(), "nope".to_string()],
+        );
+        assert!(files.is_empty());
+        let mut reported = missing.clone();
+        reported.sort();
+        assert_eq!(reported, vec!["file-x".to_string(), "nope".to_string()]);
+    }
+
+    #[test]
+    fn mode_defaults_to_replace_and_is_lowercased() {
+        assert_eq!(query_mode(None), "replace");
+        assert_eq!(query_mode(Some("mode=ADD")), "add");
+        assert_eq!(query_mode(Some("x=1&mode=replace")), "replace");
+    }
+}

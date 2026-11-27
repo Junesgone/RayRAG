@@ -1345,4 +1345,356 @@ pub fn factory_known(provider_id: &str, provider_name: &str) -> bool {
             && factory_catalog().contains_key(&normalize_provider_name(provider_name)))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn catalog_has_all_ragflow_factories() {
+        // RAGFlow v0.25.2 conf/llm_factories.json lists 63 factories.
+        assert!(preset_count() >= 63);
+        // Spot-check the factory ids that RayRAG must mirror.
+        for id in [
+            "OpenAI",
+            "Tongyi-Qianwen",
+            "ZHIPU-AI",
+            "Moonshot",
+            "DeepSeek",
+            "MiniMax",
+            "SILICONFLOW",
+            "Tencent Hunyuan",
+            "BaiduYiyan",
+            "VolcEngine",
+            "Ollama",
+            "Xinference",
+            "Anthropic",
+            "Gemini",
+        ] {
+            assert!(provider_preset(id).is_some(), "missing preset for {id}");
+        }
+    }
+
+    #[test]
+    fn fixture_keys_resolve_to_presets_and_keep_domestic_flags() {
+        // Every model-catalog fixture key either matches a preset directly or
+        // resolves through FIXTURE_TO_PRESET, and the domestic classification
+        // follows the RAGFlow factory (CN providers stay domestic).
+        for (fixture, factory) in FIXTURE_TO_PRESET {
+            let preset = provider_preset(fixture)
+                .unwrap_or_else(|| panic!("fixture {fixture} must resolve to a preset"));
+            assert_eq!(
+                normalize_provider_name(preset.id),
+                normalize_provider_name(factory),
+                "fixture {fixture} resolved to wrong preset {}",
+                preset.id
+            );
+        }
+        // Domestic CN providers must stay marked reachable without a proxy.
+        for id in [
+            "aliyun",
+            "baidu",
+            "hunyuan",
+            "xunfei",
+            "gitee",
+            "xiaomi",
+            "qiniu",
+            "huaweicloud",
+        ] {
+            assert!(
+                provider_is_domestic(id, id),
+                "{id} must be classified domestic (CN provider)"
+            );
+        }
+        // International providers keep their annotation.
+        assert!(!provider_is_domestic("voyage", "voyage"));
+        assert!(!provider_is_domestic("orcarouter", "orcarouter"));
+        // Newly added presets carry a default endpoint.
+        for id in ["Xiaomi", "Qiniu", "HuaweiCloud", "TokenHub", "OrcaRouter"] {
+            let preset = provider_preset(id).unwrap();
+            assert!(!preset.base_url.is_empty(), "{id} preset needs a base_url");
+        }
+    }
+
+    #[test]
+    fn canonical_names_bridge_legacy_fixture_identities() {
+        assert_eq!(
+            canonical_provider_name("aliyun", "Aliyun"),
+            "Tongyi-Qianwen"
+        );
+        assert_eq!(canonical_provider_name("google", "Google"), "Google Cloud");
+        assert_eq!(
+            canonical_provider_name("hunyuan", "HunYuan"),
+            "Tencent Hunyuan"
+        );
+        assert_eq!(canonical_provider_name("nvidia", "Nvidia"), "NVIDIA");
+        assert_eq!(canonical_provider_name("custom", "My Custom"), "My Custom");
+    }
+
+    #[test]
+    fn lookups_are_case_and_hyphen_insensitive() {
+        assert!(provider_preset("zhipu-ai").is_some());
+        assert!(provider_preset("ZHIPU AI").is_some());
+        assert!(provider_preset_by_name("zhipu ai").is_some());
+        assert_eq!(
+            provider_preset("deepseek").map(|p| p.dialect),
+            Some(ProviderDialect::OpenAiCompatible)
+        );
+    }
+
+    #[test]
+    fn domestic_flags_are_sane() {
+        assert!(provider_is_domestic("ZHIPU-AI", "ZHIPU-AI"));
+        assert!(provider_is_domestic("DeepSeek", "DeepSeek"));
+        assert!(provider_is_domestic("SILICONFLOW", "SILICONFLOW"));
+        assert!(provider_is_domestic("MiniMax", "MiniMax"));
+        assert!(provider_is_domestic(
+            "OpenAI-API-Compatible",
+            "OpenAI-API-Compatible"
+        ));
+        assert!(!provider_is_domestic("OpenAI", "OpenAI"));
+        assert!(!provider_is_domestic("Anthropic", "Anthropic"));
+        assert!(!provider_is_domestic("", ""));
+    }
+
+    #[test]
+    fn base_urls_point_at_domestic_endpoints() {
+        assert_eq!(
+            provider_default_base("DeepSeek", "DeepSeek"),
+            Some("https://api.deepseek.com/v1")
+        );
+        assert_eq!(
+            provider_default_base("SILICONFLOW", "SILICONFLOW"),
+            Some("https://api.siliconflow.cn/v1")
+        );
+        assert_eq!(
+            provider_default_base("Tongyi-Qianwen", "Tongyi-Qianwen"),
+            Some("https://dashscope.aliyuncs.com/compatible-mode/v1")
+        );
+        // Local engines default to loopback.
+        assert_eq!(
+            provider_default_base("Ollama", "Ollama"),
+            Some("http://127.0.0.1:11434")
+        );
+        assert_eq!(
+            provider_default_base("OpenAI-API-Compatible", "OpenAI-API-Compatible"),
+            Some("http://127.0.0.1:8088/v1")
+        );
+    }
+
+    #[test]
+    fn capability_routing() {
+        assert!(provider_has_kind(
+            "ZHIPU-AI",
+            "ZHIPU-AI",
+            ProviderKind::Rerank
+        ));
+        assert!(provider_has_kind(
+            "SILICONFLOW",
+            "SILICONFLOW",
+            ProviderKind::Embedding
+        ));
+        assert!(!provider_has_kind(
+            "DeepSeek",
+            "DeepSeek",
+            ProviderKind::Rerank
+        ));
+        assert!(provider_has_kind(
+            "Xinference",
+            "Xinference",
+            ProviderKind::SpeechToText
+        ));
+        assert!(provider_has_kind(
+            "PaddleOCR",
+            "PaddleOCR",
+            ProviderKind::Ocr
+        ));
+        assert!(!provider_has_kind("OpenAI", "OpenAI", ProviderKind::Ocr));
+    }
+
+    #[test]
+    fn key_env_conventions() {
+        assert_eq!(provider_api_key_env("ZHIPU-AI", ""), Some("ZHIPU_API_KEY"));
+        assert_eq!(
+            provider_api_key_env("DeepSeek", ""),
+            Some("DEEPSEEK_API_KEY")
+        );
+        assert_eq!(provider_api_key_env("VolcEngine", ""), Some("ARK_API_KEY"));
+        assert_eq!(provider_api_key_env("Ollama", ""), Some("OLLAMA_API_KEY"));
+    }
+
+    #[test]
+    fn domestic_providers_are_sorted_first() {
+        let chats = presets_for(ProviderKind::Chat);
+        let first_non_domestic = chats
+            .iter()
+            .position(|preset| !preset.domestic)
+            .unwrap_or(chats.len());
+        assert!(
+            chats[..first_non_domestic]
+                .iter()
+                .all(|preset| preset.domestic),
+            "all domestic presets must come before international ones"
+        );
+    }
+
+    #[test]
+    fn no_duplicate_normalized_ids() {
+        let mut seen = std::collections::HashSet::new();
+        for preset in PROVIDER_PRESETS {
+            let key = normalize_provider_name(preset.id);
+            assert!(
+                seen.insert(key),
+                "duplicate normalized provider id: {}",
+                preset.id
+            );
+        }
+    }
+
+    #[test]
+    fn full_catalog_covers_all_presets() {
+        // Every factory preset that exists upstream should be present in the
+        // embedded full catalog. Factories that ship an empty model list in
+        // the upstream JSON rely on dynamic model discovery (e.g. VolcEngine
+        // /api/v3/models, Ollama /api/tags) — that is legitimate. Only
+        // completely unknown factories (or local engines without an upstream
+        // entry) may be absent.
+        for preset in PROVIDER_PRESETS {
+            let models = factory_full_models(preset.id, preset.name);
+            if !models.is_empty() {
+                continue;
+            }
+            let known = factory_known(preset.id, preset.name);
+            assert!(
+                known
+                    || preset.id == "OpenAI-API-Compatible"
+                    || preset.id == "SoMark"
+                    || preset.id == "Builtin"
+                    // CN providers shipped as conf/models fixtures but absent
+                    // from the upstream llm_factories factory list (2026-08-06).
+                    || preset.id == "Qiniu"
+                    || preset.id == "HuaweiCloud"
+                    || preset.id == "TokenHub"
+                    || preset.id == "OrcaRouter"
+                    // Code-only upstream classes (rag/llm/*.py) that are absent
+                    // from conf/llm_factories.json: LeptonAI chat, PerfXCloud embed.
+                    || preset.id == "LeptonAI"
+                    || preset.id == "PerfXCloud",
+                "factory {} ({}) missing from embedded catalog",
+                preset.id,
+                preset.name
+            );
+        }
+    }
+
+    #[test]
+    fn full_catalog_model_types_are_valid() {
+        let models = factory_full_models("SILICONFLOW", "SILICONFLOW");
+        assert!(!models.is_empty());
+        for m in &models {
+            assert!(
+                matches!(
+                    m.t,
+                    "chat"
+                        | "embedding"
+                        | "rerank"
+                        | "reranker"
+                        | "image2text"
+                        | "speech2text"
+                        | "tts"
+                        | "moderation"
+                ),
+                "unexpected model type {} for {}",
+                m.t,
+                m.n
+            );
+        }
+    }
+
+    #[test]
+    fn full_catalog_matches_upstream_counts() {
+        // DeepSeek now ships the V4.1-Flash application model (deepseek-flash)
+        // alongside the V4 Flash/Pro aliases and the legacy chat/reasoner names.
+        let ds = factory_full_models("DeepSeek", "DeepSeek");
+        assert!(!ds.is_empty(), "DeepSeek catalog must not be empty");
+        assert!(
+            ds.iter().any(|m| m.n == "deepseek-flash"),
+            "DeepSeek catalog missing deepseek-flash: {:?}",
+            ds.iter().map(|m| m.n).collect::<Vec<_>>()
+        );
+        assert!(
+            ds.iter().any(|m| m.n == "deepseek-chat"
+                || m.n == "deepseek-v4-chat"
+                || m.n.contains("deepseek-v4")),
+            "DeepSeek catalog missing expected models: {:?}",
+            ds.iter().map(|m| m.n).collect::<Vec<_>>()
+        );
+        // Embedding models exist for at least one domestic provider.
+        let emb: Vec<_> = factory_full_models("Tongyi-Qianwen", "Tongyi-Qianwen")
+            .into_iter()
+            .filter(|m| m.t == "embedding")
+            .collect();
+        assert!(!emb.is_empty(), "Tongyi embedding models missing");
+        // Rerank models exist for at least one provider.
+        let rr: Vec<_> = factory_full_models("SILICONFLOW", "SILICONFLOW")
+            .into_iter()
+            .filter(|m| m.t == "rerank" || m.t == "reranker")
+            .collect();
+        assert!(!rr.is_empty(), "SILICONFLOW rerank models missing");
+    }
+
+    /// `un-add-model.tsx::mapModelKey` — every alias maps to the upstream pill
+    /// label, surrounding whitespace is trimmed, and unknown keys yield `None`
+    /// so the caller can reproduce the `|| tag.trim()` fallback.
+    #[test]
+    fn capability_short_label_matches_upstream_map_model_key() {
+        for (key, label) in [
+            ("chat", "LLM"),
+            ("embedding", "Embedding"),
+            ("rerank", "Rerank"),
+            ("tts", "TTS"),
+            ("asr", "ASR"),
+            ("speech2text", "ASR"),
+            ("image2text", "VLM"),
+            ("vision", "VLM"),
+            ("ocr", "OCR"),
+        ] {
+            assert_eq!(capability_short_label_from_str(key), Some(label), "{key}");
+        }
+        assert_eq!(
+            capability_short_label_from_str("  embedding  "),
+            Some("Embedding")
+        );
+        assert_eq!(capability_short_label_from_str("audio"), None);
+        assert_eq!(capability_short_label(ProviderKind::ImageToText), "VLM");
+        assert_eq!(capability_short_label(ProviderKind::SpeechToText), "ASR");
+        assert_eq!(capability_short_label(ProviderKind::Chat), "LLM");
+    }
+
+    /// `un-add-model.tsx::orderMap` + `sortModelTypes` — canonical order is
+    /// chat, embedding, rerank, tts, asr/speech2text, image2text/vision, ocr,
+    /// and an unranked capability sinks behind all known ones.
+    #[test]
+    fn sort_model_types_follows_upstream_order_map() {
+        for (key, order) in [
+            ("chat", 1),
+            ("embedding", 2),
+            ("rerank", 3),
+            ("tts", 4),
+            ("asr", 5),
+            ("speech2text", 5),
+            ("image2text", 6),
+            ("vision", 6),
+            ("ocr", 7),
+        ] {
+            assert_eq!(model_type_sort_order(key), order, "{key}");
+        }
+        assert_eq!(model_type_sort_order("audio"), 999);
+
+        let mut tags = ["ocr", "vision", "chat", "audio", "rerank", "speech2text"];
+        sort_model_types(&mut tags);
+        assert_eq!(
+            tags,
+            ["chat", "rerank", "speech2text", "vision", "ocr", "audio"]
+        );
+    }
+}

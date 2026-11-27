@@ -118,7 +118,10 @@ impl ArxivClient {
         })
     }
 
-    
+    #[cfg(test)]
+    pub(crate) fn new_with_endpoints(python_endpoint: &str, go_endpoint: &str) -> Result<Self> {
+        Self::new(python_endpoint, go_endpoint)
+    }
 
     async fn get_feed(&self, url: reqwest::Url) -> Result<ParsedArxivFeed> {
         let response = self
@@ -430,4 +433,191 @@ async fn read_bounded_body(response: reqwest::Response) -> Result<Vec<u8>> {
     Ok(body)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::Router;
+    use axum::body::Body;
+    use axum::extract::State;
+    use axum::http::{HeaderMap, StatusCode, Uri};
+    use axum::response::{IntoResponse, Response};
+    use axum::routing::get;
+    use std::sync::{Arc, Mutex};
 
+    const FEED: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/">
+  <opensearch:totalResults>2</opensearch:totalResults>
+  <entry>
+    <id>http://arxiv.org/abs/2501.12345v1</id>
+    <title>Retrieval &amp; Generation
+      Systems</title>
+    <summary>  We present a method
+      combining retrieval and generation.  </summary>
+    <author><name>Alice Liddell</name></author>
+    <author><name>Bob Builder</name></author>
+    <link href="http://arxiv.org/pdf/2501.12345v1" rel="related" type="application/pdf" title="pdf"/>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2409.99999v2</id>
+    <title><![CDATA[Single-Author Paper]]></title>
+    <summary>Brief.</summary>
+    <author><name>Carol Danvers</name></author>
+  </entry>
+</feed>"#;
+
+    #[derive(Clone, Default)]
+    struct Recorded(Arc<Mutex<Vec<(Uri, HeaderMap)>>>);
+
+    async fn feed_handler(
+        State(recorded): State<Recorded>,
+        uri: Uri,
+        headers: HeaderMap,
+    ) -> impl IntoResponse {
+        recorded.0.lock().unwrap().push((uri, headers));
+        (
+            [(&axum::http::header::CONTENT_TYPE, "application/atom+xml")],
+            FEED,
+        )
+    }
+
+    async fn status_handler() -> impl IntoResponse {
+        (StatusCode::BAD_GATEWAY, "upstream unavailable")
+    }
+
+    async fn large_handler() -> Response {
+        Response::new(Body::from(vec![b'x'; MAX_ARXIV_RESPONSE_BODY + 1]))
+    }
+
+    async fn server() -> (ArxivClient, Recorded, tokio::task::JoinHandle<()>) {
+        let recorded = Recorded::default();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/api/query", listener.local_addr().unwrap());
+        let app = Router::new()
+            .route("/api/query", get(feed_handler))
+            .with_state(recorded.clone());
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (
+            ArxivClient::new_with_endpoints(&endpoint, &endpoint).unwrap(),
+            recorded,
+            handle,
+        )
+    }
+
+    #[tokio::test]
+    async fn python_contract_preserves_query_sort_and_sdk_page_size() {
+        let (client, recorded, handle) = server().await;
+        let papers = client
+            .search(&ArxivSearchRequest {
+                query: "ti:retrieval AND au:Lewis".into(),
+                top_n: 2,
+                sort_by: ArxivSortBy::LastUpdatedDate,
+            })
+            .await
+            .unwrap();
+        handle.abort();
+
+        assert_eq!(papers.len(), 2);
+        assert_eq!(papers[0].title, "Retrieval & Generation Systems");
+        assert_eq!(papers[0].authors, ["Alice Liddell", "Bob Builder"]);
+        assert_eq!(
+            papers[0].pdf_url.as_deref(),
+            Some("http://arxiv.org/pdf/2501.12345v1")
+        );
+        assert_eq!(papers[1].title, "Single-Author Paper");
+        assert_eq!(papers[1].pdf_url, None);
+
+        let requests = recorded.0.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        let request_url =
+            reqwest::Url::parse(&format!("http://localhost{}", requests[0].0)).unwrap();
+        let query: std::collections::HashMap<_, _> =
+            request_url.query_pairs().into_owned().collect();
+        assert_eq!(query["search_query"], "ti:retrieval AND au:Lewis");
+        assert_eq!(query["sortBy"], "lastUpdatedDate");
+        assert_eq!(query["sortOrder"], "descending");
+        assert_eq!(query["start"], "0");
+        assert_eq!(query["max_results"], "100");
+        assert_eq!(requests[0].1[reqwest::header::USER_AGENT], ARXIV_USER_AGENT);
+    }
+
+    #[tokio::test]
+    async fn go_contract_prefixes_all_defaults_five_and_derives_pdf_url() {
+        let (client, recorded, handle) = server().await;
+        let envelope = client.search_go("transformer", 0).await.unwrap();
+        handle.abort();
+
+        assert_eq!(envelope.results.len(), 2);
+        assert_eq!(
+            envelope.results[1].pdf_url,
+            "http://arxiv.org/pdf/2409.99999v2"
+        );
+        assert_eq!(
+            envelope.results[0].summary,
+            "We present a method combining retrieval and generation."
+        );
+        let requests = recorded.0.lock().unwrap();
+        let query = requests[0].0.query().unwrap();
+        assert!(query.contains("search_query=all%3Atransformer"));
+        assert!(query.contains("max_results=5"));
+        assert!(!query.contains("sortBy"));
+    }
+
+    #[tokio::test]
+    async fn http_status_and_body_limit_fail_closed() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let app = Router::new()
+            .route("/status", get(status_handler))
+            .route("/large", get(large_handler));
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client =
+            ArxivClient::new_with_endpoints(&format!("{base}/status"), &format!("{base}/large"))
+                .unwrap();
+
+        let status = client
+            .search(&ArxivSearchRequest {
+                query: "rust".into(),
+                top_n: 1,
+                sort_by: ArxivSortBy::Relevance,
+            })
+            .await
+            .unwrap_err();
+        assert!(status.to_string().contains("502 Bad Gateway"));
+
+        let large = client.search_go("rust", 1).await.unwrap_err();
+        assert!(large.to_string().contains("exceeds 16777216 bytes"));
+        handle.abort();
+    }
+
+    #[test]
+    fn malformed_xml_fails_and_pdf_fallback_matches_go_path() {
+        let error = parse_arxiv_atom(b"<feed><entry>").unwrap_err();
+        assert!(error.to_string().contains("decode atom XML"));
+        let error = parse_arxiv_atom(b"<feed>").unwrap_err();
+        assert!(error.to_string().contains("unclosed feed root"));
+        assert_eq!(
+            derive_arxiv_pdf_url("http://arxiv.org/abs/2501.12345v1"),
+            "http://arxiv.org/pdf/2501.12345v1"
+        );
+        assert_eq!(derive_arxiv_pdf_url("not a url"), "not a url");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live access to the public arXiv API"]
+    async fn live_arxiv_search() {
+        let papers = ArxivClient::default()
+            .search(&ArxivSearchRequest {
+                query: "rust programming language".into(),
+                top_n: 1,
+                sort_by: ArxivSortBy::Relevance,
+            })
+            .await
+            .unwrap();
+        assert!(!papers.is_empty());
+        assert!(!papers[0].entry_id.is_empty());
+    }
+}
