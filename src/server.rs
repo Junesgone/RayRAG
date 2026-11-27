@@ -4414,6 +4414,16 @@ async fn query_graphrag(
                         .graphs
                         .context_for_query(std::slice::from_ref(&dataset_id), question);
                 }
+                if let (Some(llm), Some(context_text)) = (state.llm.as_ref(), context.first()) {
+                    match crate::graphrag::answer_from_context(llm, question, context_text, "local")
+                        .await
+                    {
+                        Ok(value) => answer = Some(value),
+                        Err(error) => {
+                            tracing::warn!(%error, dataset_id, "GraphRAG local answer failed");
+                        }
+                    }
+                }
             }
             _ => {
                 context = state

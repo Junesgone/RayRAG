@@ -113,6 +113,24 @@ pub async fn global_search(
     Ok(response)
 }
 
+/// Local GraphRAG answer: ground the response in the entity/relation/community
+/// context returned by KgSearch instead of showing raw context to the user.
+pub async fn answer_from_context(
+    llm: &LlmClient,
+    question: &str,
+    context: &str,
+    mode: &str,
+) -> Result<String> {
+    let system = format!(
+        "You answer using Microsoft GraphRAG {mode} search context. Use only the context below; cite entity/relationship/community names. If the context is insufficient, say so.\n\n{context}"
+    );
+    llm.chat(&[
+        crate::llm::ChatMessage::new("system", system),
+        crate::llm::ChatMessage::new("user", question),
+    ])
+    .await
+}
+
 /// COMMUNITY_REPORT_PROMPT — verbatim from
 /// rag/graphrag/general/community_report_prompt.py (Microsoft GraphRAG,
 /// MIT). `{entity_df}` / `{relation_df}` are filled at call time.
