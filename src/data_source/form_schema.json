@@ -2340,8 +2340,8 @@
       "type": "Number",
       "required": false,
       "placeholder": "20",
-      "tooltip_en": "Per-file size ceiling in MiB. Leave empty to use BLOB_STORAGE_SIZE_THRESHOLD (20 MiB by default); 0 means unlimited.",
-      "tooltip_zh": "单个文件大小上限（MiB）。留空使用 BLOB_STORAGE_SIZE_THRESHOLD（默认 20 MiB）；0 表示不限制。"
+      "tooltip_en": "Optional per-file size ceiling in MiB. Leave empty or set 0 for no limit.",
+      "tooltip_zh": "可选的单个文件大小上限（MiB）。留空或填 0 表示不限制。"
     }
   ],
   "ZENDESK": [

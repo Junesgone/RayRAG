@@ -630,6 +630,8 @@ Markdown。PDF 文本层由 `pdf-text` 路径处理；需要扫描件 OCR、版�
 会记录原因并继续走 RayRAG 的原生解析/OCR 流水线，不会静默伪装成 Docling 成功；扫描件
 配置了 OCR 提供商时仍会进入 OCR，而不是被普通 PDF 解析路径截断。
 
+知识库不设人为的每文件大小或文件数量上限；上传按流写入磁盘，数据源同步由自适应批次预算保护内存，而不是靠固定 64 MiB/32 文件门槛。需要硬上限时再设置 `RAYRAG_MAX_UPLOAD_BYTES`、`BLOB_STORAGE_SIZE_THRESHOLD` 或单数据源的 `max_file_size_mb`。
+
 ```bash
 export DOCLING_SERVER_URL=http://127.0.0.1:5001
 export DOCLING_API_KEY='<optional-secret>'

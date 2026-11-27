@@ -316,7 +316,7 @@ The embedded Rust Docling converter is the default parser for PDF/DOCX/PPTX/XLSX
 it needs no Python and no model download for text-layer PDFs. Scanned PDFs and images additionally
 need an OCR / vision model configured (`OCR` tab, or a `VLM` default model). Mainland-China OCR
 options include PaddleOCR, MinerU, SoMark, OpenDataLoader, a remote Docling service and OXR, or a
-local vision model.
+local vision model. Knowledge bases impose no artificial per-file size or file-count cap; the host's disk and available memory are the practical bound.
 
 **Q9 — why is my reranker unavailable?**
 If the GPU is fully occupied by the chat model, the reranker cannot load. Move it to another

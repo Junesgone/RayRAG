@@ -215,9 +215,10 @@ fn connector_allows_images(extra: &HashMap<String, String>) -> bool {
         .unwrap_or(false)
 }
 
-/// Per-file ceiling for data-source downloads. `BLOB_STORAGE_SIZE_THRESHOLD`
-/// is RAGFlow's own variable (default 20 MiB); `RAYRAG_CONNECTOR_MAX_FILE_BYTES`
-/// is a RayRAG-specific override, and `0` disables the ceiling.
+/// Optional per-file ceiling for data-source downloads. With neither variable
+/// set there is no size limit; `BLOB_STORAGE_SIZE_THRESHOLD` is RAGFlow's own
+/// variable, `RAYRAG_CONNECTOR_MAX_FILE_BYTES` is a RayRAG-specific override,
+/// and `0` explicitly disables the ceiling.
 fn connector_max_file_bytes() -> Option<u64> {
     for key in [
         "RAYRAG_CONNECTOR_MAX_FILE_BYTES",
@@ -235,7 +236,10 @@ fn connector_max_file_bytes() -> Option<u64> {
             }
         }
     }
-    Some(20 * 1024 * 1024)
+    // No artificial ceiling by default: a knowledge base may contain files of
+    // any size. Operators can still set BLOB_STORAGE_SIZE_THRESHOLD or the
+    // per-source max_file_size_mb when they want a guard.
+    None
 }
 
 /// Per-source override (`config.max_file_size_mb`, 0 = unlimited) on top of

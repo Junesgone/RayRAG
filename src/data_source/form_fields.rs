@@ -171,6 +171,10 @@ impl FormValidation {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FormFieldSpec {
     pub label: String,
+    /// Chinese label for the schema-driven detail form; omitted when the
+    /// upstream field has no localized label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_zh: Option<String>,
     /// Dot-path into the connector `config` object, e.g.
     /// `config.credentials.client_id`.
     pub name: String,
@@ -470,6 +474,18 @@ mod tests {
             .iter()
             .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
             .collect()
+    }
+
+    #[test]
+    fn webdav_new_options_keep_their_chinese_labels() {
+        for (name, label) in [
+            ("config.include_hidden", "包含隐藏文件"),
+            ("config.allow_images", "允许图片"),
+            ("config.max_file_size_mb", "单文件上限（MB）"),
+        ] {
+            let field = find("webdav", name);
+            assert_eq!(field.label_zh.as_deref(), Some(label), "{name}");
+        }
     }
 
     #[test]
